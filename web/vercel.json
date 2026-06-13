@@ -1,0 +1,12 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/v5/(.*)",
+      "destination": "https://www.okx.com/api/v5/$1"
+    },
+    {
+      "source": "/((?!.*\\.).*)",
+      "destination": "/index.html"
+    }
+  ]
+}
