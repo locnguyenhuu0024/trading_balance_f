@@ -5,30 +5,54 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/fractal_model.dart';
 
-final fractalDataProvider = FutureProvider.autoDispose<List<FractalData>>((ref) async {
+// THÊM MỚI: Provider lưu trữ Tháng và Năm do người dùng chọn
+final selectedMonthProvider = StateProvider<DateTime>((ref) {
+  final now = DateTime.now();
+  return DateTime(now.year, now.month);
+});
+
+final selectedYearProvider = StateProvider<int>((ref) {
+  return DateTime.now().year;
+});
+
+final fractalDataProvider = FutureProvider.autoDispose<List<FractalData>>((
+  ref,
+) async {
   final dio = Dio(BaseOptions(baseUrl: 'https://www.okx.com'));
 
+  final targetMonth = ref.watch(selectedMonthProvider);
+  final targetYear = ref.watch(selectedYearProvider);
+
   final results = await Future.wait([
-    _fetchAndProcess(dio, 'D1', '1H', 24),
-    _fetchAndProcess(dio, 'W1', '4H', 42),
-    _fetchAndProcess(dio, 'M1', '1D', 31),
-    _fetchAndProcess(dio, 'Y1', '1W', 53),
+    _fetchAndProcess(dio, 'D1', '1H', 24, null),
+    _fetchAndProcess(dio, 'W1', '4H', 42, null),
+    _fetchAndProcess(
+      dio,
+      'M1',
+      '1D',
+      31,
+      targetMonth,
+    ), // Truyền Tháng được chọn
+    _fetchAndProcess(
+      dio,
+      'Y1',
+      '1M',
+      12,
+      DateTime(targetYear),
+    ), // Truyền Năm được chọn
   ]);
 
   return results.whereType<FractalData>().toList();
 });
 
-Future<FractalData?> _fetchAndProcess(Dio dio, String timeframe, String barId, int limit) async {
+Future<FractalData?> _fetchAndProcess(
+  Dio dio,
+  String timeframe,
+  String barId,
+  int limit,
+  DateTime? targetDate,
+) async {
   try {
-    final response = await dio.get(
-      '/api/v5/market/candles',
-      queryParameters: {'instId': 'BTC-USDT', 'bar': barId, 'limit': limit},
-    );
-
-    if (response.data['code'] != '0') return null;
-    final List rawCandles = response.data['data'];
-    if (rawCandles.isEmpty) return null;
-
     final now = DateTime.now().toUtc();
     DateTime startTime;
     DateTime endTime;
@@ -40,16 +64,26 @@ Future<FractalData?> _fetchAndProcess(Dio dio, String timeframe, String barId, i
         break;
       case 'W1':
         final mondayOffset = now.weekday - 1;
-        startTime = DateTime.utc(now.year, now.month, now.day).subtract(Duration(days: mondayOffset));
+        startTime = DateTime.utc(
+          now.year,
+          now.month,
+          now.day,
+        ).subtract(Duration(days: mondayOffset));
         endTime = startTime.add(const Duration(days: 7));
         break;
       case 'M1':
-        startTime = DateTime.utc(now.year, now.month, 1);
-        endTime = DateTime.utc(now.year, now.month + 1, 1);
+        final date = targetDate ?? now;
+        startTime = DateTime.utc(date.year, date.month, 1);
+        endTime = DateTime.utc(date.year, date.month + 1, 1);
+        limit = endTime
+            .difference(startTime)
+            .inDays; // Tự động tính số ngày trong tháng (28, 29, 30, 31)
         break;
       case 'Y1':
-        startTime = DateTime.utc(now.year, 1, 1);
-        endTime = DateTime.utc(now.year + 1, 1, 1);
+        final date = targetDate ?? now;
+        startTime = DateTime.utc(date.year, 1, 1);
+        endTime = DateTime.utc(date.year + 1, 1, 1);
+        limit = 12; // 1 năm luôn có 12 tháng
         break;
       default:
         return null;
@@ -59,20 +93,53 @@ Future<FractalData?> _fetchAndProcess(Dio dio, String timeframe, String barId, i
     final endMs = endTime.millisecondsSinceEpoch;
     final quarterDuration = (endMs - startMs) / 4;
 
-    // THAY ĐỔI: Kiểm tra khung thời gian để quyết định có gắn chữ Q hay không
+    // THAY ĐỔI: Dùng API history để có thể xem lại dữ liệu của các năm/tháng cũ
+    List rawCandles = [];
+    final afterTs = endMs.toString();
+
+    try {
+      final response = await dio.get(
+        '/api/v5/market/history-candles',
+        queryParameters: {
+          'instId': 'BTC-USDT',
+          'bar': barId,
+          'limit': limit,
+          'after': afterTs,
+        },
+      );
+      if (response.data['code'] == '0') rawCandles = response.data['data'];
+    } catch (_) {}
+
+    // Fallback nếu API History bị chặn
+    if (rawCandles.isEmpty) {
+      try {
+        final response = await dio.get(
+          '/api/v5/market/candles',
+          queryParameters: {
+            'instId': 'BTC-USDT',
+            'bar': barId,
+            'limit': limit,
+            'after': afterTs,
+          },
+        );
+        if (response.data['code'] == '0') rawCandles = response.data['data'];
+      } catch (_) {}
+    }
+
+    if (rawCandles.isEmpty) return null;
+
     final prefix = timeframe == 'Y1' ? 'Q' : '';
     List<QuarterData> quarters = [
       QuarterData('${prefix}1'),
       QuarterData('${prefix}2'),
       QuarterData('${prefix}3'),
-      QuarterData('${prefix}4')
+      QuarterData('${prefix}4'),
     ];
 
-    // THÊM MỚI: Tính toán thời gian bắt đầu cho từng đốt (Chuyển sang giờ Local)
     for (int i = 0; i < 4; i++) {
       quarters[i].startTime = DateTime.fromMillisecondsSinceEpoch(
-          (startMs + i * quarterDuration).toInt(),
-          isUtc: true
+        (startMs + i * quarterDuration).toInt(),
+        isUtc: true,
       ).toLocal();
     }
 
@@ -112,22 +179,55 @@ Future<FractalData?> _fetchAndProcess(Dio dio, String timeframe, String barId, i
 
     for (int i = 0; i < 4; i++) {
       if (!quarters[i].isEmpty) {
-        if (quarters[i].high! > maxHigh) { maxHigh = quarters[i].high!; maxHighQ = i; }
-        if (quarters[i].low! < minLow) { minLow = quarters[i].low!; minLowQ = i; }
+        if (quarters[i].high! > maxHigh) {
+          maxHigh = quarters[i].high!;
+          maxHighQ = i;
+        }
+        if (quarters[i].low! < minLow) {
+          minLow = quarters[i].low!;
+          minLowQ = i;
+        }
       }
     }
 
     if (maxHighQ != -1) quarters[maxHighQ].hasAbsoluteHigh = true;
     if (minLowQ != -1) quarters[minLowQ].hasAbsoluteLow = true;
 
-    for (var q in quarters) {
-      // Xác định màu sắc (Xanh hay Đỏ)
-      if (!q.isEmpty) {
-        // q.isGreen là getter trong model dựa trên giá open/close
+    // THÊM MỚI: Parse dữ liệu các Nến nhỏ (SubCandles)
+    List<SubCandle> subCandles = [];
+    if (timeframe == 'M1' || timeframe == 'Y1') {
+      // Đảo ngược list để hiển thị nến từ cũ đến mới (từ trái qua phải)
+      final chronoCandles = rawCandles.reversed.toList();
+      for (var c in chronoCandles) {
+        int ts = int.parse(c[0]);
+        if (ts < startMs || ts >= endMs) continue;
+
+        final dt = DateTime.fromMillisecondsSinceEpoch(
+          ts,
+          isUtc: true,
+        ).toLocal();
+        String label = timeframe == 'M1'
+            ? dt.day.toString()
+            : dt.month.toString();
+
+        subCandles.add(
+          SubCandle(
+            label,
+            double.parse(c[1]),
+            double.parse(c[2]),
+            double.parse(c[3]),
+            double.parse(c[4]),
+          ),
+        );
       }
     }
 
-    return FractalData(timeframeLabel: timeframe, quarters: quarters, currentPrice: currentPrice);
+    return FractalData(
+      timeframeLabel: timeframe,
+      quarters: quarters,
+      currentPrice: currentPrice,
+      subCandles: subCandles, // Gắn vào Object trả về
+    );
   } catch (e) {
     return null;
   }

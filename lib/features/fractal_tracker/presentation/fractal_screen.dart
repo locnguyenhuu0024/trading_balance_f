@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'providers/fractal_provider.dart';
+import '../data/fractal_model.dart';
 
 class FractalScreen extends ConsumerWidget {
   const FractalScreen({super.key});
@@ -24,19 +25,28 @@ class FractalScreen extends ConsumerWidget {
         foregroundColor: textColor,
         elevation: 0,
         centerTitle: true,
-        title: const Text('BMAG Tracker (BTC)', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+        title: const Text(
+          'BMAG Tracker (BTC)',
+          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: () => ref.invalidate(fractalDataProvider),
-          )
+          ),
         ],
       ),
       body: fractalAsync.when(
-        loading: () => Center(child: CircularProgressIndicator(color: textColor)),
-        error: (err, stack) => Center(child: Text('Lỗi tải dữ liệu', style: TextStyle(color: textColor))),
+        // skipLoadingOnReload giúp màn hình không bị chớp khi đổi tháng/năm
+        skipLoadingOnReload: true,
+        loading: () =>
+            Center(child: CircularProgressIndicator(color: textColor)),
+        error: (err, stack) => Center(
+          child: Text('Lỗi tải dữ liệu', style: TextStyle(color: textColor)),
+        ),
         data: (data) {
-          if (data.isEmpty) return const Center(child: Text('Không có dữ liệu'));
+          if (data.isEmpty)
+            return const Center(child: Text('Không có dữ liệu'));
 
           return RefreshIndicator(
             onRefresh: () async => ref.invalidate(fractalDataProvider),
@@ -46,10 +56,15 @@ class FractalScreen extends ConsumerWidget {
               children: [
                 Text(
                   'MA TRẬN ĐỒNG PHA (CONFLUENCE)',
-                  style: TextStyle(color: isDark ? Colors.grey.shade400 : Colors.grey.shade600, fontSize: 12, fontWeight: FontWeight.bold),
+                  style: TextStyle(
+                    color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
                 const SizedBox(height: 16),
-                ...data.map((fData) => _buildFractalRow(fData, isDark)),
+                // Truyền tham số `ref` vào để widget con gọi lệnh thay đổi Provider
+                ...data.map((fData) => _buildFractalRow(fData, isDark, ref)),
                 const SizedBox(height: 32),
                 _buildLegend(isDark),
               ],
@@ -60,32 +75,35 @@ class FractalScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildFractalRow(dynamic data, bool isDark) {
+  Widget _buildFractalRow(dynamic data, bool isDark, WidgetRef ref) {
     final cardColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
+    final textColor = isDark ? Colors.white : Colors.black;
 
-    // Tính toán thời lượng của 1 ô (Quarter Duration) và Tiến trình của cả khung
+    // Tính toán thời lượng của 1 ô và Tiến trình của cả khung
     Duration? quarterDuration;
     double progress = 0.0;
 
-    if (data.quarters.length == 4 && data.quarters[0].startTime != null && data.quarters[1].startTime != null) {
+    if (data.quarters.length == 4 &&
+        data.quarters[0].startTime != null &&
+        data.quarters[1].startTime != null) {
       final startTime = data.quarters[0].startTime!;
       quarterDuration = data.quarters[1].startTime!.difference(startTime);
-
-      // Khung thời gian kết thúc = Bắt đầu của Q4 + Thời lượng 1 ô
       final endTime = data.quarters[3].startTime!.add(quarterDuration);
 
       final totalMs = endTime.difference(startTime).inMilliseconds;
       final elapsedMs = DateTime.now().difference(startTime).inMilliseconds;
 
       if (totalMs > 0) {
-        progress = (elapsedMs / totalMs).clamp(0.0, 1.0); // Giới hạn tiến trình từ 0% đến 100%
+        progress = (elapsedMs / totalMs).clamp(0.0, 1.0);
       }
     }
 
-    // Tìm Cực đại (Max) và Cực tiểu (Min) của toàn bộ khung thời gian
+    // Tìm Mở cửa (Open), Cực đại (Max) và Cực tiểu (Min)
+    double? openPrice;
     double? maxHigh;
     double? minLow;
     for (dynamic q in data.quarters) {
+      if (q.open != null && openPrice == null) openPrice = q.open;
       if (q.high != null) {
         if (maxHigh == null || q.high > maxHigh) maxHigh = q.high;
       }
@@ -94,7 +112,88 @@ class FractalScreen extends ConsumerWidget {
       }
     }
 
+    // Cập nhật đỉnh đáy theo giá realtime để bao quát
+    if (maxHigh != null && data.currentPrice > maxHigh)
+      maxHigh = data.currentPrice;
+    if (minLow != null && data.currentPrice < minLow)
+      minLow = data.currentPrice;
+
     final currencyFormat = NumberFormat("#,##0.00", "en_US");
+
+    // THIẾT KẾ PHẦN TIÊU ĐỀ: HIỂN THỊ NÚT CHỌN THÁNG / NĂM
+    Widget headerWidget;
+    if (data.timeframeLabel == 'M1') {
+      final month = ref.watch(selectedMonthProvider);
+      headerWidget = Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            icon: Icon(Icons.chevron_left, color: textColor, size: 26),
+            onPressed: () => ref.read(selectedMonthProvider.notifier).state =
+                DateTime(month.year, month.month - 1),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            'Tháng ${month.month}/${month.year}',
+            style: TextStyle(
+              fontWeight: FontWeight.w800,
+              fontSize: 16,
+              color: textColor,
+            ),
+          ),
+          const SizedBox(width: 8),
+          IconButton(
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            icon: Icon(Icons.chevron_right, color: textColor, size: 26),
+            onPressed: () => ref.read(selectedMonthProvider.notifier).state =
+                DateTime(month.year, month.month + 1),
+          ),
+        ],
+      );
+    } else if (data.timeframeLabel == 'Y1') {
+      final year = ref.watch(selectedYearProvider);
+      headerWidget = Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            icon: Icon(Icons.chevron_left, color: textColor, size: 26),
+            onPressed: () =>
+                ref.read(selectedYearProvider.notifier).state = year - 1,
+          ),
+          const SizedBox(width: 8),
+          Text(
+            'Năm $year',
+            style: TextStyle(
+              fontWeight: FontWeight.w800,
+              fontSize: 16,
+              color: textColor,
+            ),
+          ),
+          const SizedBox(width: 8),
+          IconButton(
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            icon: Icon(Icons.chevron_right, color: textColor, size: 26),
+            onPressed: () =>
+                ref.read(selectedYearProvider.notifier).state = year + 1,
+          ),
+        ],
+      );
+    } else {
+      headerWidget = Text(
+        'Khung ${data.timeframeLabel}',
+        style: TextStyle(
+          fontWeight: FontWeight.w800,
+          fontSize: 16,
+          color: textColor,
+        ),
+      );
+    }
 
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
@@ -102,7 +201,9 @@ class FractalScreen extends ConsumerWidget {
       decoration: BoxDecoration(
         color: cardColor,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: isDark ? Colors.grey.shade800 : Colors.grey.shade300),
+        border: Border.all(
+          color: isDark ? Colors.grey.shade800 : Colors.grey.shade300,
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -110,40 +211,104 @@ class FractalScreen extends ConsumerWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                'Khung ${data.timeframeLabel}',
-                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16, color: isDark ? Colors.white : Colors.black),
-              ),
+              headerWidget, // Nút chọn tháng/năm ở đây
               Text(
                 '\$${currencyFormat.format(data.currentPrice)}',
-                style: TextStyle(color: isDark ? Colors.white : Colors.black, fontSize: 15, fontWeight: FontWeight.bold),
-              )
+                style: TextStyle(
+                  color: isDark ? Colors.white : Colors.black,
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             ],
           ),
-          const SizedBox(height: 6),
-          // THÊM DÒNG: Hiển thị giá Đỉnh và Đáy của khung
+          const SizedBox(height: 10),
+
+          // DÒNG THÔNG SỐ GIÁ TRỊ (MỞ - ĐỈNH - ĐÁY)
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                '🔥 Đỉnh: ${maxHigh != null ? currencyFormat.format(maxHigh) : '--'}',
-                style: TextStyle(color: isDark ? Colors.grey.shade400 : Colors.grey.shade600, fontSize: 11, fontWeight: FontWeight.w600),
+                'Mở: ${openPrice != null ? currencyFormat.format(openPrice) : '--'}',
+                style: TextStyle(
+                  color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
               Text(
-                '💧 Đáy: ${minLow != null ? currencyFormat.format(minLow) : '--'}',
-                style: TextStyle(color: isDark ? Colors.grey.shade400 : Colors.grey.shade600, fontSize: 11, fontWeight: FontWeight.w600),
-              )
+                '🔥 ${maxHigh != null ? currencyFormat.format(maxHigh) : '--'}',
+                style: TextStyle(
+                  color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              Text(
+                '💧 ${minLow != null ? currencyFormat.format(minLow) : '--'}',
+                style: TextStyle(
+                  color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 16),
 
-          // Row chứa 4 ô thời gian
+          // Row chứa 4 ô Quarter thời gian
           Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: data.quarters.map<Widget>((q) => Expanded(
-              child: _buildQuarterBlock(q, quarterDuration, data.timeframeLabel, isDark),
-            )).toList(),
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: data.quarters
+                .map<Widget>(
+                  (q) => Expanded(
+                    child: _buildQuarterBlock(
+                      q,
+                      quarterDuration,
+                      data.timeframeLabel,
+                      isDark,
+                      minLow,
+                      maxHigh,
+                    ),
+                  ),
+                )
+                .toList(),
           ),
+
+          // THÊM MỚI: BIỂU ĐỒ NẾN CHI TIẾT THEO NGÀY/THÁNG BÊN DƯỚI
+          if (data.subCandles.isNotEmpty) ...[
+            Divider(
+              height: 24,
+              color: isDark ? Colors.grey.shade800 : Colors.grey.shade200,
+            ),
+            Text(
+              data.timeframeLabel == 'M1'
+                  ? 'Diễn biến từng ngày'
+                  : 'Diễn biến từng tháng',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+                color: isDark ? Colors.white70 : Colors.black87,
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              height: 60, // Chiều cao cố định cho cụm nến mini
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: data.subCandles.map<Widget>((sc) {
+                  return Expanded(
+                    child: _buildMiniCandle(
+                      sc,
+                      minLow ?? 0,
+                      maxHigh ?? 0,
+                      isDark,
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+          ],
 
           const SizedBox(height: 16),
 
@@ -154,8 +319,26 @@ class FractalScreen extends ConsumerWidget {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text('Tiến trình thời gian:', style: TextStyle(fontSize: 10, color: isDark ? Colors.grey.shade500 : Colors.grey.shade600, fontWeight: FontWeight.w600)),
-                  Text('${(progress * 100).toStringAsFixed(1)}%', style: TextStyle(fontSize: 10, color: isDark ? Colors.grey.shade400 : Colors.grey.shade800, fontWeight: FontWeight.bold)),
+                  Text(
+                    'Tiến trình thời gian:',
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: isDark
+                          ? Colors.grey.shade500
+                          : Colors.grey.shade600,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  Text(
+                    '${(progress * 100).toStringAsFixed(1)}%',
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: isDark
+                          ? Colors.grey.shade400
+                          : Colors.grey.shade800,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ],
               ),
               const SizedBox(height: 6),
@@ -164,8 +347,12 @@ class FractalScreen extends ConsumerWidget {
                 child: LinearProgressIndicator(
                   value: progress,
                   minHeight: 6,
-                  backgroundColor: isDark ? Colors.grey.shade800 : Colors.grey.shade200,
-                  valueColor: AlwaysStoppedAnimation<Color>(isDark ? Colors.white70 : Colors.blueAccent),
+                  backgroundColor: isDark
+                      ? Colors.grey.shade800
+                      : Colors.grey.shade200,
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    isDark ? Colors.white70 : Colors.blueAccent,
+                  ),
                 ),
               ),
             ],
@@ -175,8 +362,164 @@ class FractalScreen extends ConsumerWidget {
     );
   }
 
-  // Nhận thêm biến quarterDuration để tính toán thời gian kết thúc
-  Widget _buildQuarterBlock(dynamic q, Duration? quarterDuration, String timeframe, bool isDark) {
+  // WIDGET MỚI: VẼ NẾN MINI (HIỂN THỊ THEO NGÀY HOẶC THÁNG)
+  Widget _buildMiniCandle(
+    SubCandle sc,
+    double overallMin,
+    double overallMax,
+    bool isDark,
+  ) {
+    final range = overallMax - overallMin;
+    if (range <= 0) return const SizedBox();
+
+    const double chartHeight = 45.0; // Dành 15px phía dưới cho text
+
+    double getY(double price) {
+      final clampedPrice = price.clamp(overallMin, overallMax);
+      return chartHeight - ((clampedPrice - overallMin) / range) * chartHeight;
+    }
+
+    final topY = getY(sc.high);
+    final bottomY = getY(sc.low);
+    final openY = getY(sc.open);
+    final closeY = getY(sc.close);
+
+    final isGreen = sc.close >= sc.open;
+    final color = isGreen ? Colors.green : Colors.redAccent;
+
+    double bodyTop = openY < closeY ? openY : closeY;
+    double bodyBottom = openY > closeY ? openY : closeY;
+    double bodyHeight = bodyBottom - bodyTop;
+
+    // Nến mỏng manh quá thì ép hiển thị ít nhất 1px
+    if (bodyHeight < 1.0) bodyHeight = 1.0;
+
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [
+        SizedBox(
+          height: chartHeight,
+          width: double.infinity,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              Positioned(
+                top: topY,
+                height: bottomY - topY,
+                width: 1.0, // Râu nến mini siêu mảnh
+                child: Container(
+                  color: isDark ? Colors.grey.shade600 : Colors.grey.shade400,
+                ),
+              ),
+              Positioned(
+                top: bodyTop,
+                height: bodyHeight,
+                width: 4.0, // Thân nến mini vừa đủ xem
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: color,
+                    borderRadius: BorderRadius.circular(1.0),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          sc.label,
+          style: TextStyle(
+            fontSize: 7.5, // Chữ nhỏ xíu để nhét đủ 31 ngày
+            color: isDark ? Colors.grey.shade500 : Colors.grey.shade600,
+            fontWeight: FontWeight.bold,
+          ),
+          textAlign: TextAlign.center,
+          maxLines: 1,
+        ),
+      ],
+    );
+  }
+
+  // WIDGET VẼ CÂY NẾN DỌC TỔNG CỦA QUARTER
+  Widget _buildVerticalCandle(
+    double overallMin,
+    double overallMax,
+    dynamic q,
+    bool isDark,
+  ) {
+    const double height = 60.0;
+
+    if (q.isEmpty ||
+        q.open == null ||
+        q.close == null ||
+        q.high == null ||
+        q.low == null) {
+      return const SizedBox(height: height);
+    }
+
+    final range = overallMax - overallMin;
+    if (range <= 0) return const SizedBox(height: height);
+
+    double getY(double price) {
+      final clampedPrice = price.clamp(overallMin, overallMax);
+      return height - ((clampedPrice - overallMin) / range) * height;
+    }
+
+    final topY = getY(q.high!);
+    final bottomY = getY(q.low!);
+    final openY = getY(q.open!);
+    final closeY = getY(q.close!);
+
+    final isGreen = q.close! >= q.open!;
+    final color = isGreen ? Colors.green : Colors.redAccent;
+
+    double bodyTop = openY < closeY ? openY : closeY;
+    double bodyBottom = openY > closeY ? openY : closeY;
+    double bodyHeight = bodyBottom - bodyTop;
+
+    if (bodyHeight < 2.0) {
+      bodyHeight = 2.0;
+    }
+
+    return SizedBox(
+      height: height,
+      width: double.infinity,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Positioned(
+            top: topY,
+            height: bottomY - topY,
+            width: 1.5,
+            child: Container(
+              color: isDark ? Colors.grey.shade600 : Colors.grey.shade400,
+            ),
+          ),
+          Positioned(
+            top: bodyTop,
+            height: bodyHeight,
+            width: 8,
+            child: Container(
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.95),
+                borderRadius: BorderRadius.circular(1.5),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // WIDGET KHỐI QUARTER (Đã kết hợp thêm Cây nến dọc phía trên)
+  Widget _buildQuarterBlock(
+    dynamic q,
+    Duration? quarterDuration,
+    String timeframe,
+    bool isDark,
+    double? minLow,
+    double? maxHigh,
+  ) {
     final isEmpty = q.isEmpty;
     final isGreen = q.isGreen;
 
@@ -184,27 +527,37 @@ class FractalScreen extends ConsumerWidget {
     if (isEmpty) {
       blockColor = isDark ? Colors.grey.shade800 : Colors.grey.shade200;
     } else {
-      blockColor = isGreen ? Colors.green.withOpacity(0.15) : Colors.redAccent.withOpacity(0.15);
+      blockColor = isGreen
+          ? Colors.green.withOpacity(0.15)
+          : Colors.redAccent.withOpacity(0.15);
     }
 
     Color textColor = isEmpty
         ? (isDark ? Colors.grey.shade600 : Colors.grey.shade400)
         : (isGreen ? Colors.green : Colors.redAccent);
 
-    // Tính toán thời gian bắt đầu và kết thúc
     String timeStr = '';
     if (q.startTime != null && quarterDuration != null) {
       final endTime = q.startTime!.add(quarterDuration);
 
       if (timeframe == 'D1') {
-        timeStr = '${DateFormat('HH:mm').format(q.startTime!)}\n-\n${DateFormat('HH:mm').format(endTime)}';
+        timeStr =
+            '${DateFormat('HH:mm').format(q.startTime!)}\n-\n${DateFormat('HH:mm').format(endTime)}';
       } else {
-        timeStr = '${DateFormat('dd/MM HH:mm').format(q.startTime!)}\n-\n${DateFormat('dd/MM HH:mm').format(endTime)}';
+        timeStr =
+            '${DateFormat('dd/MM HH:mm').format(q.startTime!)}\n-\n${DateFormat('dd/MM HH:mm').format(endTime)}';
       }
     }
 
     return Column(
       children: [
+        // --- Cây Nến Dọc Quý ---
+        if (minLow != null && maxHigh != null)
+          _buildVerticalCandle(minLow, maxHigh, q, isDark),
+
+        const SizedBox(height: 8),
+
+        // --- Ô Vuông Hiển thị ---
         Container(
           margin: const EdgeInsets.symmetric(horizontal: 2),
           height: 36,
@@ -212,26 +565,46 @@ class FractalScreen extends ConsumerWidget {
           decoration: BoxDecoration(
             color: blockColor,
             borderRadius: BorderRadius.circular(8),
-            border: isEmpty ? null : Border.all(color: textColor.withOpacity(0.5), width: 1),
+            border: isEmpty
+                ? null
+                : Border.all(color: textColor.withOpacity(0.5), width: 1),
           ),
           child: Stack(
             alignment: Alignment.center,
             children: [
-              Text(q.name, style: TextStyle(color: textColor, fontWeight: FontWeight.bold, fontSize: 12)),
-              if (q.hasAbsoluteHigh) const Positioned(top: 2, right: 2, child: Text('🔥', style: TextStyle(fontSize: 10))),
-              if (q.hasAbsoluteLow) const Positioned(bottom: 2, right: 2, child: Text('💧', style: TextStyle(fontSize: 10))),
+              Text(
+                q.name,
+                style: TextStyle(
+                  color: textColor,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12,
+                ),
+              ),
+              if (q.hasAbsoluteHigh)
+                const Positioned(
+                  top: 2,
+                  right: 2,
+                  child: Text('🔥', style: TextStyle(fontSize: 10)),
+                ),
+              if (q.hasAbsoluteLow)
+                const Positioned(
+                  bottom: 2,
+                  right: 2,
+                  child: Text('💧', style: TextStyle(fontSize: 10)),
+                ),
             ],
           ),
         ),
         const SizedBox(height: 6),
-        // HIỂN THỊ THỜI GIAN BẮT ĐẦU & KẾT THÚC
+
+        // --- Thời gian bên dưới ---
         Text(
           timeStr,
           style: TextStyle(
             fontSize: 9,
             color: isDark ? Colors.grey.shade500 : Colors.grey.shade600,
             fontWeight: FontWeight.w600,
-            height: 1.3, // Khoảng cách giữa các dòng
+            height: 1.3,
           ),
           textAlign: TextAlign.center,
           maxLines: 3,
@@ -246,13 +619,29 @@ class FractalScreen extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('HƯỚNG DẪN XEM:', style: TextStyle(color: tColor, fontSize: 11, fontWeight: FontWeight.bold)),
+        Text(
+          'HƯỚNG DẪN XEM:',
+          style: TextStyle(
+            color: tColor,
+            fontSize: 11,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
         const SizedBox(height: 8),
-        Text('🔥: Cực đại (Đỉnh cao nhất của khung)', style: TextStyle(color: tColor, fontSize: 12)),
+        Text(
+          '🔥: Cực đại (Đỉnh cao nhất của khung)',
+          style: TextStyle(color: tColor, fontSize: 12),
+        ),
         const SizedBox(height: 4),
-        Text('💧: Cực tiểu (Đáy thấp nhất của khung)', style: TextStyle(color: tColor, fontSize: 12)),
+        Text(
+          '💧: Cực tiểu (Đáy thấp nhất của khung)',
+          style: TextStyle(color: tColor, fontSize: 12),
+        ),
         const SizedBox(height: 4),
-        Text('Màu nhạt: Khoảng thời gian chưa diễn ra.', style: TextStyle(color: tColor, fontSize: 12)),
+        Text(
+          'Biểu đồ nến dọc thể hiện độ dài ngắn (biên độ giá) của từng phân đoạn thời gian nhỏ.',
+          style: TextStyle(color: tColor, fontSize: 12),
+        ),
       ],
     );
   }
