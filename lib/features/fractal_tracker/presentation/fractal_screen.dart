@@ -1,17 +1,42 @@
 // File Name: fractal_screen.dart
 // File Path: lib/features/fractal_tracker/presentation/fractal_screen.dart
 
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'providers/fractal_provider.dart';
 import '../data/fractal_model.dart';
 
-class FractalScreen extends ConsumerWidget {
+// CHUYỂN ĐỔI THÀNH ConsumerStatefulWidget ĐỂ DÙNG TIMER
+class FractalScreen extends ConsumerStatefulWidget {
   const FractalScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<FractalScreen> createState() => _FractalScreenState();
+}
+
+class _FractalScreenState extends ConsumerState<FractalScreen> {
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    // THÊM MỚI: Tự động invalidate (làm mới) provider mỗi 1 giây
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      ref.invalidate(fractalDataProvider);
+    });
+  }
+
+  @override
+  void dispose() {
+    // Nhớ tắt Timer khi thoát màn hình để giải phóng bộ nhớ
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final fractalAsync = ref.watch(fractalDataProvider);
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
@@ -37,7 +62,7 @@ class FractalScreen extends ConsumerWidget {
         ],
       ),
       body: fractalAsync.when(
-        // skipLoadingOnReload giúp màn hình không bị chớp khi đổi tháng/năm
+        // Rất quan trọng: Bỏ qua trạng thái Loading khi reload để app không bị chớp mỗi giây
         skipLoadingOnReload: true,
         loading: () =>
             Center(child: CircularProgressIndicator(color: textColor)),
@@ -54,17 +79,47 @@ class FractalScreen extends ConsumerWidget {
               padding: const EdgeInsets.all(16),
               physics: const AlwaysScrollableScrollPhysics(),
               children: [
-                Text(
-                  'MA TRẬN ĐỒNG PHA (CONFLUENCE)',
-                  style: TextStyle(
-                    color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                  ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'MA TRẬN ĐỒNG PHA (CONFLUENCE)',
+                      style: TextStyle(
+                        color: isDark
+                            ? Colors.grey.shade400
+                            : Colors.grey.shade600,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    // Thêm chấm xanh nhấp nháy biểu thị trạng thái LIVE
+                    Row(
+                      children: [
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: const BoxDecoration(
+                            color: Colors.green,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          'LIVE',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            color: isDark
+                                ? Colors.grey.shade400
+                                : Colors.grey.shade600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 16),
-                // Truyền tham số `ref` vào để widget con gọi lệnh thay đổi Provider
-                ...data.map((fData) => _buildFractalRow(fData, isDark, ref)),
+                ...data.map((fData) => _buildFractalRow(fData, isDark)),
                 const SizedBox(height: 32),
                 _buildLegend(isDark),
               ],
@@ -75,11 +130,10 @@ class FractalScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildFractalRow(dynamic data, bool isDark, WidgetRef ref) {
+  Widget _buildFractalRow(dynamic data, bool isDark) {
     final cardColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
     final textColor = isDark ? Colors.white : Colors.black;
 
-    // Tính toán thời lượng của 1 ô và Tiến trình của cả khung
     Duration? quarterDuration;
     double progress = 0.0;
 
@@ -98,7 +152,6 @@ class FractalScreen extends ConsumerWidget {
       }
     }
 
-    // Tìm Mở cửa (Open), Cực đại (Max) và Cực tiểu (Min)
     double? openPrice;
     double? maxHigh;
     double? minLow;
@@ -112,7 +165,6 @@ class FractalScreen extends ConsumerWidget {
       }
     }
 
-    // Cập nhật đỉnh đáy theo giá realtime để bao quát
     if (maxHigh != null && data.currentPrice > maxHigh)
       maxHigh = data.currentPrice;
     if (minLow != null && data.currentPrice < minLow)
@@ -120,7 +172,6 @@ class FractalScreen extends ConsumerWidget {
 
     final currencyFormat = NumberFormat("#,##0.00", "en_US");
 
-    // THIẾT KẾ PHẦN TIÊU ĐỀ: HIỂN THỊ NÚT CHỌN THÁNG / NĂM
     Widget headerWidget;
     if (data.timeframeLabel == 'M1') {
       final month = ref.watch(selectedMonthProvider);
@@ -211,7 +262,7 @@ class FractalScreen extends ConsumerWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              headerWidget, // Nút chọn tháng/năm ở đây
+              headerWidget,
               Text(
                 '\$${currencyFormat.format(data.currentPrice)}',
                 style: TextStyle(
@@ -224,7 +275,6 @@ class FractalScreen extends ConsumerWidget {
           ),
           const SizedBox(height: 10),
 
-          // DÒNG THÔNG SỐ GIÁ TRỊ (MỞ - ĐỈNH - ĐÁY)
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -256,7 +306,6 @@ class FractalScreen extends ConsumerWidget {
           ),
           const SizedBox(height: 16),
 
-          // Row chứa 4 ô Quarter thời gian
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: data.quarters
@@ -275,7 +324,6 @@ class FractalScreen extends ConsumerWidget {
                 .toList(),
           ),
 
-          // THÊM MỚI: BIỂU ĐỒ NẾN CHI TIẾT THEO NGÀY/THÁNG BÊN DƯỚI
           if (data.subCandles.isNotEmpty) ...[
             Divider(
               height: 24,
@@ -293,7 +341,7 @@ class FractalScreen extends ConsumerWidget {
             ),
             const SizedBox(height: 12),
             SizedBox(
-              height: 60, // Chiều cao cố định cho cụm nến mini
+              height: 60,
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: data.subCandles.map<Widget>((sc) {
@@ -312,7 +360,6 @@ class FractalScreen extends ConsumerWidget {
 
           const SizedBox(height: 16),
 
-          // Thanh Progress bar
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -362,7 +409,6 @@ class FractalScreen extends ConsumerWidget {
     );
   }
 
-  // WIDGET MỚI: VẼ NẾN MINI (HIỂN THỊ THEO NGÀY HOẶC THÁNG)
   Widget _buildMiniCandle(
     SubCandle sc,
     double overallMin,
@@ -372,7 +418,7 @@ class FractalScreen extends ConsumerWidget {
     final range = overallMax - overallMin;
     if (range <= 0) return const SizedBox();
 
-    const double chartHeight = 45.0; // Dành 15px phía dưới cho text
+    const double chartHeight = 45.0;
 
     double getY(double price) {
       final clampedPrice = price.clamp(overallMin, overallMax);
@@ -391,7 +437,6 @@ class FractalScreen extends ConsumerWidget {
     double bodyBottom = openY > closeY ? openY : closeY;
     double bodyHeight = bodyBottom - bodyTop;
 
-    // Nến mỏng manh quá thì ép hiển thị ít nhất 1px
     if (bodyHeight < 1.0) bodyHeight = 1.0;
 
     return Column(
@@ -406,7 +451,7 @@ class FractalScreen extends ConsumerWidget {
               Positioned(
                 top: topY,
                 height: bottomY - topY,
-                width: 1.0, // Râu nến mini siêu mảnh
+                width: 1.0,
                 child: Container(
                   color: isDark ? Colors.grey.shade600 : Colors.grey.shade400,
                 ),
@@ -414,7 +459,7 @@ class FractalScreen extends ConsumerWidget {
               Positioned(
                 top: bodyTop,
                 height: bodyHeight,
-                width: 4.0, // Thân nến mini vừa đủ xem
+                width: 4.0,
                 child: Container(
                   decoration: BoxDecoration(
                     color: color,
@@ -429,7 +474,7 @@ class FractalScreen extends ConsumerWidget {
         Text(
           sc.label,
           style: TextStyle(
-            fontSize: 7.5, // Chữ nhỏ xíu để nhét đủ 31 ngày
+            fontSize: 7.5,
             color: isDark ? Colors.grey.shade500 : Colors.grey.shade600,
             fontWeight: FontWeight.bold,
           ),
@@ -440,7 +485,6 @@ class FractalScreen extends ConsumerWidget {
     );
   }
 
-  // WIDGET VẼ CÂY NẾN DỌC TỔNG CỦA QUARTER
   Widget _buildVerticalCandle(
     double overallMin,
     double overallMax,
@@ -511,7 +555,6 @@ class FractalScreen extends ConsumerWidget {
     );
   }
 
-  // WIDGET KHỐI QUARTER (Đã kết hợp thêm Cây nến dọc phía trên)
   Widget _buildQuarterBlock(
     dynamic q,
     Duration? quarterDuration,
@@ -551,13 +594,11 @@ class FractalScreen extends ConsumerWidget {
 
     return Column(
       children: [
-        // --- Cây Nến Dọc Quý ---
         if (minLow != null && maxHigh != null)
           _buildVerticalCandle(minLow, maxHigh, q, isDark),
 
         const SizedBox(height: 8),
 
-        // --- Ô Vuông Hiển thị ---
         Container(
           margin: const EdgeInsets.symmetric(horizontal: 2),
           height: 36,
@@ -597,7 +638,6 @@ class FractalScreen extends ConsumerWidget {
         ),
         const SizedBox(height: 6),
 
-        // --- Thời gian bên dưới ---
         Text(
           timeStr,
           style: TextStyle(
