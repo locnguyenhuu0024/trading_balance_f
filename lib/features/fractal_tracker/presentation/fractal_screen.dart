@@ -38,6 +38,9 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
   @override
   Widget build(BuildContext context) {
     final fractalAsync = ref.watch(fractalDataProvider);
+    final selectedCoin = ref.watch(
+      selectedCoinProvider,
+    ); // THÊM MỚI: Lấy coin đang chọn
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     final bgColor = isDark ? const Color(0xFF121212) : Colors.grey.shade50;
@@ -50,11 +53,30 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
         foregroundColor: textColor,
         elevation: 0,
         centerTitle: true,
-        title: const Text(
-          'BMAG Tracker (BTC)',
-          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+        // THAY ĐỔI: Chuyển title thành nút bấm để chọn coin
+        title: GestureDetector(
+          onTap: () => _showCoinSelector(context, ref, selectedCoin, isDark),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'BMAG Tracker ($selectedCoin)',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 16,
+                ),
+              ),
+              const Icon(Icons.arrow_drop_down),
+            ],
+          ),
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.search),
+            tooltip: 'Đổi Coin',
+            onPressed: () =>
+                _showCoinSelector(context, ref, selectedCoin, isDark),
+          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: () => ref.invalidate(fractalDataProvider),
@@ -683,6 +705,142 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
           style: TextStyle(color: tColor, fontSize: 12),
         ),
       ],
+    );
+  }
+
+  // THÊM MỚI: Popup Dialog để tìm và chọn Coin
+  void _showCoinSelector(
+    BuildContext context,
+    WidgetRef ref,
+    String currentCoin,
+    bool isDark,
+  ) {
+    final textController = TextEditingController(text: currentCoin);
+    // Danh sách gợi ý nhanh
+    final commonCoins = [
+      'BTC',
+      'ETH',
+      'SOL',
+      'BNB',
+      'XRP',
+      'SUI',
+      'PEPE',
+      'DOGE',
+      'LINK',
+    ];
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+          title: Text(
+            'Chọn Coin',
+            style: TextStyle(
+              color: isDark ? Colors.white : Colors.black,
+              fontWeight: FontWeight.bold,
+              fontSize: 18,
+            ),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              TextField(
+                controller: textController,
+                autofocus: true,
+                textCapitalization: TextCapitalization.characters,
+                style: TextStyle(
+                  color: isDark ? Colors.white : Colors.black,
+                  fontWeight: FontWeight.bold,
+                ),
+                decoration: InputDecoration(
+                  hintText: 'Nhập mã (VD: APT, ARB...)',
+                  hintStyle: TextStyle(
+                    color: isDark ? Colors.grey.shade600 : Colors.grey.shade400,
+                  ),
+                  suffixText: '-USDT',
+                  suffixStyle: TextStyle(
+                    color: isDark ? Colors.grey.shade500 : Colors.grey.shade400,
+                  ),
+                  focusedBorder: const UnderlineInputBorder(
+                    borderSide: BorderSide(color: Colors.blueAccent),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              Text(
+                'Gợi ý nhanh:',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: commonCoins.map((coin) {
+                  return InkWell(
+                    onTap: () {
+                      ref.read(selectedCoinProvider.notifier).state = coin;
+                      Navigator.pop(context);
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: isDark
+                            ? Colors.grey.shade800
+                            : Colors.grey.shade200,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        coin,
+                        style: TextStyle(
+                          color: isDark ? Colors.white : Colors.black,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text(
+                'Huỷ',
+                style: TextStyle(
+                  color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
+                ),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                final newCoin = textController.text.trim().toUpperCase();
+                if (newCoin.isNotEmpty) {
+                  ref.read(selectedCoinProvider.notifier).state = newCoin;
+                }
+                Navigator.pop(context);
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: isDark ? Colors.white : Colors.black,
+                foregroundColor: isDark ? Colors.black : Colors.white,
+              ),
+              child: const Text(
+                'Đồng ý',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }
