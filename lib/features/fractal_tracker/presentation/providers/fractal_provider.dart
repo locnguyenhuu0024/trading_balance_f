@@ -36,6 +36,32 @@ String fractalSubCandleLabel(String timeframe, int timestampMs) {
   };
 }
 
+int fractalQuarterIndex({
+  required String timeframe,
+  required int candleTimestampMs,
+  required int startMs,
+  required int endMs,
+}) {
+  final representativeMs = timeframe == 'Y1'
+      ? _yearMonthlyCandleMidpointMs(candleTimestampMs)
+      : candleTimestampMs;
+  final quarterDuration = (endMs - startMs) / 4;
+  final index = ((representativeMs - startMs) / quarterDuration).floor();
+
+  return index.clamp(0, 3);
+}
+
+int _yearMonthlyCandleMidpointMs(int candleTimestampMs) {
+  final candleStart = DateTime.fromMillisecondsSinceEpoch(
+    candleTimestampMs,
+    isUtc: true,
+  );
+  final nextMonth = DateTime.utc(candleStart.year, candleStart.month + 1);
+  return candleStart.millisecondsSinceEpoch +
+      (nextMonth.millisecondsSinceEpoch - candleStart.millisecondsSinceEpoch) ~/
+          2;
+}
+
 final fractalDataProvider = FutureProvider.autoDispose<List<FractalData>>((
   ref,
 ) async {
@@ -190,8 +216,12 @@ Future<FractalData?> _fetchAndProcess(
       int ts = int.parse(c[0]);
       if (ts < startMs || ts >= endMs) continue;
 
-      int qIndex = ((ts - startMs) / quarterDuration).floor();
-      if (qIndex < 0 || qIndex > 3) continue;
+      int qIndex = fractalQuarterIndex(
+        timeframe: timeframe,
+        candleTimestampMs: ts,
+        startMs: startMs,
+        endMs: endMs,
+      );
 
       QuarterData q = quarters[qIndex];
       double open = double.parse(c[1]);

@@ -15,5 +15,27 @@ void main() {
       expect(fractalSubCandleLabel('M1', julyFirstUtc), '1');
       expect(fractalSubCandleLabel('Y1', januaryUtc), '1');
     });
+
+    test(
+      'assigns a year monthly candle to the quarter it mostly belongs to',
+      () {
+        final startMs = DateTime.utc(2026).millisecondsSinceEpoch;
+        final endMs = DateTime.utc(2027).millisecondsSinceEpoch;
+        final julyMonthlyCandleMs = DateTime.utc(
+          2026,
+          7,
+        ).millisecondsSinceEpoch;
+
+        expect(
+          fractalQuarterIndex(
+            timeframe: 'Y1',
+            candleTimestampMs: julyMonthlyCandleMs,
+            startMs: startMs,
+            endMs: endMs,
+          ),
+          2,
+        );
+      },
+    );
   });
 }
