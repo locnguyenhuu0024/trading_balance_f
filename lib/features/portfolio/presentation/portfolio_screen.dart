@@ -291,7 +291,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
                     decoration: BoxDecoration(color: iconBgColor, shape: BoxShape.circle),
                     alignment: Alignment.center, clipBehavior: Clip.antiAlias,
                     child: Image.network(
-                      'https://assets.coincap.io/assets/icons/${coin.ccy.toLowerCase()}@2x.png',
+                      'https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/128/color/${coin.ccy.toLowerCase()}.png',
                       width: 34, height: 34, fit: BoxFit.cover,
                       errorBuilder: (c, e, s) => Text(coin.ccy.isNotEmpty ? coin.ccy.substring(0, 1).toUpperCase() : '?', style: TextStyle(fontWeight: FontWeight.bold, color: textColor, fontSize: 14)),
                     ),

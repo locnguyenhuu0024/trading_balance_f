@@ -171,7 +171,7 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
                           alignment: Alignment.center,
                           clipBehavior: Clip.antiAlias,
                           child: Image.network(
-                            'https://assets.coincap.io/assets/icons/${t.coinSymbol.toLowerCase()}@2x.png',
+                            'https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/128/color/${t.coinSymbol.toLowerCase()}.png',
                             width: 36,
                             height: 36,
                             fit: BoxFit.cover,

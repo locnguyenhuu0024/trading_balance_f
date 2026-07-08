@@ -264,7 +264,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                         alignment: Alignment.center,
                         clipBehavior: Clip.antiAlias,
                         child: Image.network(
-                          'https://assets.coincap.io/assets/icons/${baseCoin.toLowerCase()}@2x.png',
+                          'https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/128/color/${baseCoin.toLowerCase()}.png',
                           width: 20,
                           height: 20,
                           fit: BoxFit.cover,
@@ -432,7 +432,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                         alignment: Alignment.center,
                         clipBehavior: Clip.antiAlias,
                         child: Image.network(
-                          'https://assets.coincap.io/assets/icons/${baseCoin.toLowerCase()}@2x.png',
+                          'https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/128/color/${baseCoin.toLowerCase()}.png',
                           width: 20,
                           height: 20,
                           fit: BoxFit.cover,
