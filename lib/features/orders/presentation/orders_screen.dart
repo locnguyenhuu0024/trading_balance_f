@@ -4,6 +4,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/widgets/crypto_icon.dart';
 import 'providers/order_provider.dart';
 import '../data/okx_order_model.dart';
 import '../data/okx_position_model.dart';
@@ -257,24 +258,12 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                 Expanded(
                   child: Row(
                     children: [
-                      Container(
-                        width: 20,
-                        height: 20,
-                        decoration: BoxDecoration(color: iconBgColor, shape: BoxShape.circle),
-                        alignment: Alignment.center,
-                        clipBehavior: Clip.antiAlias,
-                        child: Image.network(
-                          'https://assets.coincap.io/assets/icons/${baseCoin.toLowerCase()}@2x.png',
-                          width: 20,
-                          height: 20,
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) {
-                            return Text(
-                              baseCoin.isNotEmpty ? baseCoin.substring(0, 1).toUpperCase() : '?',
-                              style: TextStyle(fontWeight: FontWeight.bold, color: textColor, fontSize: 10),
-                            );
-                          },
-                        ),
+                      CryptoIcon(
+                        symbol: baseCoin,
+                        size: 20,
+                        backgroundColor: iconBgColor,
+                        textColor: textColor,
+                        textSize: 10,
                       ),
                       const SizedBox(width: 6),
                       Expanded(
@@ -425,24 +414,12 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                 Expanded(
                   child: Row(
                     children: [
-                      Container(
-                        width: 20,
-                        height: 20,
-                        decoration: BoxDecoration(color: iconBgColor, shape: BoxShape.circle),
-                        alignment: Alignment.center,
-                        clipBehavior: Clip.antiAlias,
-                        child: Image.network(
-                          'https://assets.coincap.io/assets/icons/${baseCoin.toLowerCase()}@2x.png',
-                          width: 20,
-                          height: 20,
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) {
-                            return Text(
-                              baseCoin.isNotEmpty ? baseCoin.substring(0, 1).toUpperCase() : '?',
-                              style: TextStyle(fontWeight: FontWeight.bold, color: textColor, fontSize: 10),
-                            );
-                          },
-                        ),
+                      CryptoIcon(
+                        symbol: baseCoin,
+                        size: 20,
+                        backgroundColor: iconBgColor,
+                        textColor: textColor,
+                        textSize: 10,
                       ),
                       const SizedBox(width: 6),
                       Expanded(

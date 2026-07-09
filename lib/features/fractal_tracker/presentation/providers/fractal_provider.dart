@@ -5,7 +5,6 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/fractal_model.dart';
 
-// THÊM MỚI: Provider lưu trữ Tháng và Năm do người dùng chọn
 final selectedMonthProvider = StateProvider<DateTime>((ref) {
   final now = DateTime.now();
   return DateTime(now.year, now.month);
@@ -15,6 +14,54 @@ final selectedYearProvider = StateProvider<int>((ref) {
   return DateTime.now().year;
 });
 
+// THÊM MỚI: Provider quản lý Coin đang chọn, mặc định là BTC
+final selectedCoinProvider = StateProvider<String>((ref) => 'BTC');
+
+String fractalBarForTimeframe(String timeframe) {
+  return switch (timeframe) {
+    'D1' => '1H',
+    'W1' => '4H',
+    'M1' => '1Dutc',
+    'Y1' => '1Mutc',
+    _ => throw ArgumentError.value(timeframe, 'timeframe'),
+  };
+}
+
+String fractalSubCandleLabel(String timeframe, int timestampMs) {
+  final dt = DateTime.fromMillisecondsSinceEpoch(timestampMs, isUtc: true);
+  return switch (timeframe) {
+    'M1' => dt.day.toString(),
+    'Y1' => dt.month.toString(),
+    _ => throw ArgumentError.value(timeframe, 'timeframe'),
+  };
+}
+
+int fractalQuarterIndex({
+  required String timeframe,
+  required int candleTimestampMs,
+  required int startMs,
+  required int endMs,
+}) {
+  final representativeMs = timeframe == 'Y1'
+      ? _yearMonthlyCandleMidpointMs(candleTimestampMs)
+      : candleTimestampMs;
+  final quarterDuration = (endMs - startMs) / 4;
+  final index = ((representativeMs - startMs) / quarterDuration).floor();
+
+  return index.clamp(0, 3);
+}
+
+int _yearMonthlyCandleMidpointMs(int candleTimestampMs) {
+  final candleStart = DateTime.fromMillisecondsSinceEpoch(
+    candleTimestampMs,
+    isUtc: true,
+  );
+  final nextMonth = DateTime.utc(candleStart.year, candleStart.month + 1);
+  return candleStart.millisecondsSinceEpoch +
+      (nextMonth.millisecondsSinceEpoch - candleStart.millisecondsSinceEpoch) ~/
+          2;
+}
+
 final fractalDataProvider = FutureProvider.autoDispose<List<FractalData>>((
   ref,
 ) async {
@@ -22,24 +69,41 @@ final fractalDataProvider = FutureProvider.autoDispose<List<FractalData>>((
 
   final targetMonth = ref.watch(selectedMonthProvider);
   final targetYear = ref.watch(selectedYearProvider);
+  final targetCoin = ref.watch(selectedCoinProvider); // THÊM MỚI
 
   final results = await Future.wait([
-    _fetchAndProcess(dio, 'D1', '1H', 24, null),
-    _fetchAndProcess(dio, 'W1', '4H', 42, null),
+    _fetchAndProcess(
+      dio,
+      'D1',
+      fractalBarForTimeframe('D1'),
+      24,
+      null,
+      targetCoin,
+    ),
+    _fetchAndProcess(
+      dio,
+      'W1',
+      fractalBarForTimeframe('W1'),
+      42,
+      null,
+      targetCoin,
+    ),
     _fetchAndProcess(
       dio,
       'M1',
-      '1D',
+      fractalBarForTimeframe('M1'),
       31,
       targetMonth,
-    ), // Truyền Tháng được chọn
+      targetCoin,
+    ),
     _fetchAndProcess(
       dio,
       'Y1',
-      '1M',
+      fractalBarForTimeframe('Y1'),
       12,
       DateTime(targetYear),
-    ), // Truyền Năm được chọn
+      targetCoin,
+    ),
   ]);
 
   return results.whereType<FractalData>().toList();
@@ -51,16 +115,21 @@ Future<FractalData?> _fetchAndProcess(
   String barId,
   int limit,
   DateTime? targetDate,
+  String coin,
 ) async {
   try {
     final now = DateTime.now().toUtc();
     DateTime startTime;
     DateTime endTime;
 
+    // Kiểm tra xem khung thời gian đang xem có phải là thời điểm hiện tại không
+    bool isCurrentPeriod = false;
+
     switch (timeframe) {
       case 'D1':
         startTime = DateTime.utc(now.year, now.month, now.day);
         endTime = startTime.add(const Duration(days: 1));
+        isCurrentPeriod = true;
         break;
       case 'W1':
         final mondayOffset = now.weekday - 1;
@@ -70,20 +139,21 @@ Future<FractalData?> _fetchAndProcess(
           now.day,
         ).subtract(Duration(days: mondayOffset));
         endTime = startTime.add(const Duration(days: 7));
+        isCurrentPeriod = true;
         break;
       case 'M1':
         final date = targetDate ?? now;
         startTime = DateTime.utc(date.year, date.month, 1);
         endTime = DateTime.utc(date.year, date.month + 1, 1);
-        limit = endTime
-            .difference(startTime)
-            .inDays; // Tự động tính số ngày trong tháng (28, 29, 30, 31)
+        limit = endTime.difference(startTime).inDays;
+        isCurrentPeriod = (date.year == now.year && date.month == now.month);
         break;
       case 'Y1':
         final date = targetDate ?? now;
         startTime = DateTime.utc(date.year, 1, 1);
         endTime = DateTime.utc(date.year + 1, 1, 1);
-        limit = 12; // 1 năm luôn có 12 tháng
+        limit = 12;
+        isCurrentPeriod = (date.year == now.year);
         break;
       default:
         return null;
@@ -93,30 +163,16 @@ Future<FractalData?> _fetchAndProcess(
     final endMs = endTime.millisecondsSinceEpoch;
     final quarterDuration = (endMs - startMs) / 4;
 
-    // THAY ĐỔI: Dùng API history để có thể xem lại dữ liệu của các năm/tháng cũ
     List rawCandles = [];
     final afterTs = endMs.toString();
 
-    try {
-      final response = await dio.get(
-        '/api/v5/market/history-candles',
-        queryParameters: {
-          'instId': 'BTC-USDT',
-          'bar': barId,
-          'limit': limit,
-          'after': afterTs,
-        },
-      );
-      if (response.data['code'] == '0') rawCandles = response.data['data'];
-    } catch (_) {}
-
-    // Fallback nếu API History bị chặn
-    if (rawCandles.isEmpty) {
+    // Hàm gọi API
+    Future<void> fetchApi(String endpoint) async {
       try {
         final response = await dio.get(
-          '/api/v5/market/candles',
+          endpoint,
           queryParameters: {
-            'instId': 'BTC-USDT',
+            'instId': '$coin-USDT',
             'bar': barId,
             'limit': limit,
             'after': afterTs,
@@ -124,6 +180,17 @@ Future<FractalData?> _fetchAndProcess(
         );
         if (response.data['code'] == '0') rawCandles = response.data['data'];
       } catch (_) {}
+    }
+
+    // THAY ĐỔI QUAN TRỌNG:
+    // Nếu là khoảng thời gian hiện tại -> Gọi API lấy nến đang chạy (chứa nến của hôm nay/tháng này)
+    // Nếu là quá khứ -> Gọi API History để lấy chính xác dữ liệu cũ
+    if (isCurrentPeriod) {
+      await fetchApi('/api/v5/market/candles');
+      if (rawCandles.isEmpty) await fetchApi('/api/v5/market/history-candles');
+    } else {
+      await fetchApi('/api/v5/market/history-candles');
+      if (rawCandles.isEmpty) await fetchApi('/api/v5/market/candles');
     }
 
     if (rawCandles.isEmpty) return null;
@@ -149,8 +216,12 @@ Future<FractalData?> _fetchAndProcess(
       int ts = int.parse(c[0]);
       if (ts < startMs || ts >= endMs) continue;
 
-      int qIndex = ((ts - startMs) / quarterDuration).floor();
-      if (qIndex < 0 || qIndex > 3) continue;
+      int qIndex = fractalQuarterIndex(
+        timeframe: timeframe,
+        candleTimestampMs: ts,
+        startMs: startMs,
+        endMs: endMs,
+      );
 
       QuarterData q = quarters[qIndex];
       double open = double.parse(c[1]);
@@ -193,22 +264,15 @@ Future<FractalData?> _fetchAndProcess(
     if (maxHighQ != -1) quarters[maxHighQ].hasAbsoluteHigh = true;
     if (minLowQ != -1) quarters[minLowQ].hasAbsoluteLow = true;
 
-    // THÊM MỚI: Parse dữ liệu các Nến nhỏ (SubCandles)
+    // Parse dữ liệu các Nến nhỏ (SubCandles)
     List<SubCandle> subCandles = [];
     if (timeframe == 'M1' || timeframe == 'Y1') {
-      // Đảo ngược list để hiển thị nến từ cũ đến mới (từ trái qua phải)
       final chronoCandles = rawCandles.reversed.toList();
       for (var c in chronoCandles) {
         int ts = int.parse(c[0]);
         if (ts < startMs || ts >= endMs) continue;
 
-        final dt = DateTime.fromMillisecondsSinceEpoch(
-          ts,
-          isUtc: true,
-        ).toLocal();
-        String label = timeframe == 'M1'
-            ? dt.day.toString()
-            : dt.month.toString();
+        final label = fractalSubCandleLabel(timeframe, ts);
 
         subCandles.add(
           SubCandle(
@@ -226,7 +290,7 @@ Future<FractalData?> _fetchAndProcess(
       timeframeLabel: timeframe,
       quarters: quarters,
       currentPrice: currentPrice,
-      subCandles: subCandles, // Gắn vào Object trả về
+      subCandles: subCandles,
     );
   } catch (e) {
     return null;

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import '../../../core/widgets/crypto_icon.dart';
 import 'providers/portfolio_provider.dart';
 import '../../settings/presentation/settings_screen.dart';
 import '../../market/presentation/providers/market_provider.dart';
@@ -286,15 +287,12 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: borderColor, width: 1.2)),
                 child: ListTile(
                   contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-                  leading: Container(
-                    width: 34, height: 34,
-                    decoration: BoxDecoration(color: iconBgColor, shape: BoxShape.circle),
-                    alignment: Alignment.center, clipBehavior: Clip.antiAlias,
-                    child: Image.network(
-                      'https://assets.coincap.io/assets/icons/${coin.ccy.toLowerCase()}@2x.png',
-                      width: 34, height: 34, fit: BoxFit.cover,
-                      errorBuilder: (c, e, s) => Text(coin.ccy.isNotEmpty ? coin.ccy.substring(0, 1).toUpperCase() : '?', style: TextStyle(fontWeight: FontWeight.bold, color: textColor, fontSize: 14)),
-                    ),
+                  leading: CryptoIcon(
+                    symbol: coin.ccy,
+                    size: 34,
+                    backgroundColor: iconBgColor,
+                    textColor: textColor,
+                    textSize: 14,
                   ),
                   title: Text(coin.ccy, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: textColor)),
                   subtitle: Column(
