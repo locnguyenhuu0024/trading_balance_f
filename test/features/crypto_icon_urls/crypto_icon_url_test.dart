@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:trading_balance_f/core/widgets/crypto_icon.dart';
 
 void main() {
   group('crypto icon URLs', () {
@@ -10,40 +11,50 @@ void main() {
       File('lib/features/portfolio/presentation/portfolio_screen.dart'),
     ];
 
-    test('use GitHub raw icon host instead of CoinCap', () {
+    test('screens use the shared CryptoIcon widget', () {
       for (final file in screenFiles) {
         final source = file.readAsStringSync();
 
         expect(
           source,
-          isNot(contains('https://assets.coincap.io/assets/icons/')),
-          reason: '${file.path} should avoid the CoinCap icon host',
+          contains('CryptoIcon('),
+          reason: '${file.path} should use the shared icon widget',
         );
         expect(
           source,
-          contains(
-            'https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/128/color/',
-          ),
-          reason: '${file.path} should use the CORS-friendly icon host',
+          isNot(contains('Image.network(')),
+          reason: '${file.path} should not build icon images directly',
+        );
+        expect(
+          source,
+          isNot(contains('https://assets.coincap.io/assets/icons/')),
+          reason: '${file.path} should avoid the CoinCap icon host',
         );
       }
     });
 
-    test('lowercase coin symbols before building icon URLs', () {
-      final expressions = {
-        'lib/features/market/presentation/market_screen.dart':
-            r'${t.coinSymbol.toLowerCase()}.png',
-        'lib/features/orders/presentation/orders_screen.dart':
-            r'${baseCoin.toLowerCase()}.png',
-        'lib/features/portfolio/presentation/portfolio_screen.dart':
-            r'${coin.ccy.toLowerCase()}.png',
-      };
+    test('lowercases symbols and keeps GitHub raw as first source', () {
+      final urls = CryptoIconUrls.forSymbol(' BTC ');
 
-      for (final entry in expressions.entries) {
-        final source = File(entry.key).readAsStringSync();
+      expect(urls.first, CryptoIconUrls.githubRawUrl('btc'));
+    });
 
-        expect(source, contains(entry.value));
-      }
+    test('adds broader fallback sources for commonly missing icons', () {
+      final urls = CryptoIconUrls.forSymbol('SUI');
+
+      expect(urls, contains(CryptoIconUrls.githubRawUrl('sui')));
+      expect(
+        urls,
+        contains(
+          'https://coin-images.coingecko.com/coins/images/26375/large/sui-ocean-square.png',
+        ),
+      );
+    });
+
+    test('falls back to text when there is no symbol', () {
+      expect(CryptoIconUrls.forSymbol(''), isEmpty);
+      expect(CryptoIconFallback.letter(''), '?');
+      expect(CryptoIconFallback.letter('eth'), 'E');
     });
   });
 }

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../../core/network/dio_client.dart';
+import '../../../core/widgets/crypto_icon.dart';
 import '../../portfolio/presentation/portfolio_screen.dart'; // Lấy trạng thái Dark Mode
 import '../../market/presentation/providers/market_provider.dart';
 import '../../../core/network/okx_websocket_service.dart';
@@ -164,22 +165,12 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
                     child: Row(
                       children: [
                         // Cột 1: Logo và Tên Coin
-                        Container(
-                          width: 36,
-                          height: 36,
-                          decoration: BoxDecoration(color: iconBgColor, shape: BoxShape.circle),
-                          alignment: Alignment.center,
-                          clipBehavior: Clip.antiAlias,
-                          child: Image.network(
-                            'https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/128/color/${t.coinSymbol.toLowerCase()}.png',
-                            width: 36,
-                            height: 36,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => Text(
-                              t.coinSymbol.isNotEmpty ? t.coinSymbol[0] : '?',
-                              style: TextStyle(fontWeight: FontWeight.bold, color: textColor, fontSize: 14),
-                            ),
-                          ),
+                        CryptoIcon(
+                          symbol: t.coinSymbol,
+                          size: 36,
+                          backgroundColor: iconBgColor,
+                          textColor: textColor,
+                          textSize: 14,
                         ),
                         const SizedBox(width: 12),
                         Expanded(
