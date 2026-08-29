@@ -7,12 +7,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 /// Provider cung cấp instance của SecureStorageHelper
 final secureStorageProvider = Provider<SecureStorageHelper>((ref) {
   const storage = FlutterSecureStorage(
-    aOptions: AndroidOptions(
-      encryptedSharedPreferences: true,
-    ),
-    iOptions: IOSOptions(
-      accessibility: KeychainAccessibility.first_unlock,
-    ),
+    aOptions: AndroidOptions(encryptedSharedPreferences: true),
+    iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock),
   );
   return SecureStorageHelper(storage);
 });
@@ -55,7 +51,7 @@ class SecureStorageHelper {
   /// Lấy cấu hình Sinh trắc học
   Future<bool> getBiometricAuth() async {
     final val = await _storage.read(key: _bioAuth);
-    return val == null || val == 'true';
+    return val == 'true';
   }
 
   // THÊM MỚI: Lấy cấu hình Chế độ nền

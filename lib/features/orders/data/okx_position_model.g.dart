@@ -18,6 +18,7 @@ _$OkxPositionImpl _$$OkxPositionImplFromJson(Map<String, dynamic> json) =>
       upl: json['upl'] as String? ?? '',
       uplRatio: json['uplRatio'] as String? ?? '',
       mgnMode: json['mgnMode'] as String? ?? '',
+      notionalUsd: json['notionalUsd'] as String? ?? '',
     );
 
 Map<String, dynamic> _$$OkxPositionImplToJson(_$OkxPositionImpl instance) =>
@@ -32,4 +33,5 @@ Map<String, dynamic> _$$OkxPositionImplToJson(_$OkxPositionImpl instance) =>
       'upl': instance.upl,
       'uplRatio': instance.uplRatio,
       'mgnMode': instance.mgnMode,
+      'notionalUsd': instance.notionalUsd,
     };

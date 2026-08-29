@@ -22,15 +22,20 @@ class OkxOrderResponse with _$OkxOrderResponse {
 @freezed
 class OkxOrder with _$OkxOrder {
   const factory OkxOrder({
-    @Default('') String instId,   // Cặp giao dịch (VD: BTC-USDT)
+    @Default('') String instId, // Cặp giao dịch (VD: BTC-USDT)
     @Default('') String instType, // Loại (SPOT, MARGIN, SWAP, FUTURES)
-    @Default('') String side,     // Chiều giao dịch (buy, sell)
-    @Default('') String px,       // Giá đặt lệnh
-    @Default('') String sz,       // Kích thước/Số lượng lệnh
-    @Default('') String state,    // Trạng thái (live, filled, canceled)
-    @Default('') String lever,    // Đòn bẩy (Dành cho margin/futures)
-    @Default('') String cTime,    // Thời gian tạo lệnh (Unix Timestamp ms)
-    @Default('') String pnl,      // Lãi/Lỗ của lệnh (Nếu có)
+    @Default('') String side, // Chiều giao dịch (buy, sell)
+    @Default('') String px, // Giá đặt lệnh
+    @Default('') String sz, // Kích thước/Số lượng lệnh
+    @Default('') String notionalUsd, // Giá trị danh nghĩa ước tính theo USD
+    @Default('') String fillNotionalUsd, // Giá trị đã khớp theo USD
+    @Default('') String avgPx, // Giá khớp trung bình
+    @Default('') String accFillSz, // Khối lượng đã khớp luỹ kế
+    @Default('') String tradeQuoteCcy, // Đồng tiền quote dùng để giao dịch
+    @Default('') String state, // Trạng thái (live, filled, canceled)
+    @Default('') String lever, // Đòn bẩy (Dành cho margin/futures)
+    @Default('') String cTime, // Thời gian tạo lệnh (Unix Timestamp ms)
+    @Default('') String pnl, // Lãi/Lỗ của lệnh (Nếu có)
   }) = _OkxOrder;
 
   factory OkxOrder.fromJson(Map<String, dynamic> json) =>

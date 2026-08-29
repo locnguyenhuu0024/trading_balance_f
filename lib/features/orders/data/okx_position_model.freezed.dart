@@ -37,7 +37,9 @@ mixin _$OkxPosition {
   String get upl =>
       throw _privateConstructorUsedError; // Lãi/lỗ chưa thực hiện (Unrealized PnL - USD)
   String get uplRatio => throw _privateConstructorUsedError; // Tỷ lệ Lãi/lỗ
-  String get mgnMode => throw _privateConstructorUsedError;
+  String get mgnMode =>
+      throw _privateConstructorUsedError; // Chế độ Margin (cross hoặc isolated)
+  String get notionalUsd => throw _privateConstructorUsedError;
 
   /// Serializes this OkxPosition to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
@@ -67,6 +69,7 @@ abstract class $OkxPositionCopyWith<$Res> {
     String upl,
     String uplRatio,
     String mgnMode,
+    String notionalUsd,
   });
 }
 
@@ -95,6 +98,7 @@ class _$OkxPositionCopyWithImpl<$Res, $Val extends OkxPosition>
     Object? upl = null,
     Object? uplRatio = null,
     Object? mgnMode = null,
+    Object? notionalUsd = null,
   }) {
     return _then(
       _value.copyWith(
@@ -138,6 +142,10 @@ class _$OkxPositionCopyWithImpl<$Res, $Val extends OkxPosition>
                 ? _value.mgnMode
                 : mgnMode // ignore: cast_nullable_to_non_nullable
                       as String,
+            notionalUsd: null == notionalUsd
+                ? _value.notionalUsd
+                : notionalUsd // ignore: cast_nullable_to_non_nullable
+                      as String,
           )
           as $Val,
     );
@@ -164,6 +172,7 @@ abstract class _$$OkxPositionImplCopyWith<$Res>
     String upl,
     String uplRatio,
     String mgnMode,
+    String notionalUsd,
   });
 }
 
@@ -191,6 +200,7 @@ class __$$OkxPositionImplCopyWithImpl<$Res>
     Object? upl = null,
     Object? uplRatio = null,
     Object? mgnMode = null,
+    Object? notionalUsd = null,
   }) {
     return _then(
       _$OkxPositionImpl(
@@ -234,6 +244,10 @@ class __$$OkxPositionImplCopyWithImpl<$Res>
             ? _value.mgnMode
             : mgnMode // ignore: cast_nullable_to_non_nullable
                   as String,
+        notionalUsd: null == notionalUsd
+            ? _value.notionalUsd
+            : notionalUsd // ignore: cast_nullable_to_non_nullable
+                  as String,
       ),
     );
   }
@@ -253,6 +267,7 @@ class _$OkxPositionImpl implements _OkxPosition {
     this.upl = '',
     this.uplRatio = '',
     this.mgnMode = '',
+    this.notionalUsd = '',
   });
 
   factory _$OkxPositionImpl.fromJson(Map<String, dynamic> json) =>
@@ -297,10 +312,14 @@ class _$OkxPositionImpl implements _OkxPosition {
   @override
   @JsonKey()
   final String mgnMode;
+  // Chế độ Margin (cross hoặc isolated)
+  @override
+  @JsonKey()
+  final String notionalUsd;
 
   @override
   String toString() {
-    return 'OkxPosition(instId: $instId, posSide: $posSide, pos: $pos, avgPx: $avgPx, markPx: $markPx, lever: $lever, liqPx: $liqPx, upl: $upl, uplRatio: $uplRatio, mgnMode: $mgnMode)';
+    return 'OkxPosition(instId: $instId, posSide: $posSide, pos: $pos, avgPx: $avgPx, markPx: $markPx, lever: $lever, liqPx: $liqPx, upl: $upl, uplRatio: $uplRatio, mgnMode: $mgnMode, notionalUsd: $notionalUsd)';
   }
 
   @override
@@ -318,7 +337,9 @@ class _$OkxPositionImpl implements _OkxPosition {
             (identical(other.upl, upl) || other.upl == upl) &&
             (identical(other.uplRatio, uplRatio) ||
                 other.uplRatio == uplRatio) &&
-            (identical(other.mgnMode, mgnMode) || other.mgnMode == mgnMode));
+            (identical(other.mgnMode, mgnMode) || other.mgnMode == mgnMode) &&
+            (identical(other.notionalUsd, notionalUsd) ||
+                other.notionalUsd == notionalUsd));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
@@ -335,6 +356,7 @@ class _$OkxPositionImpl implements _OkxPosition {
     upl,
     uplRatio,
     mgnMode,
+    notionalUsd,
   );
 
   /// Create a copy of OkxPosition
@@ -363,6 +385,7 @@ abstract class _OkxPosition implements OkxPosition {
     final String upl,
     final String uplRatio,
     final String mgnMode,
+    final String notionalUsd,
   }) = _$OkxPositionImpl;
 
   factory _OkxPosition.fromJson(Map<String, dynamic> json) =
@@ -387,7 +410,9 @@ abstract class _OkxPosition implements OkxPosition {
   @override
   String get uplRatio; // Tỷ lệ Lãi/lỗ
   @override
-  String get mgnMode;
+  String get mgnMode; // Chế độ Margin (cross hoặc isolated)
+  @override
+  String get notionalUsd;
 
   /// Create a copy of OkxPosition
   /// with the given fields replaced by the non-null parameter values.

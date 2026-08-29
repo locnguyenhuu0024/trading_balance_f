@@ -233,6 +233,15 @@ mixin _$OkxOrder {
   String get px => throw _privateConstructorUsedError; // Giá đặt lệnh
   String get sz =>
       throw _privateConstructorUsedError; // Kích thước/Số lượng lệnh
+  String get notionalUsd =>
+      throw _privateConstructorUsedError; // Giá trị danh nghĩa ước tính theo USD
+  String get fillNotionalUsd =>
+      throw _privateConstructorUsedError; // Giá trị đã khớp theo USD
+  String get avgPx => throw _privateConstructorUsedError; // Giá khớp trung bình
+  String get accFillSz =>
+      throw _privateConstructorUsedError; // Khối lượng đã khớp luỹ kế
+  String get tradeQuoteCcy =>
+      throw _privateConstructorUsedError; // Đồng tiền quote dùng để giao dịch
   String get state =>
       throw _privateConstructorUsedError; // Trạng thái (live, filled, canceled)
   String get lever =>
@@ -262,6 +271,11 @@ abstract class $OkxOrderCopyWith<$Res> {
     String side,
     String px,
     String sz,
+    String notionalUsd,
+    String fillNotionalUsd,
+    String avgPx,
+    String accFillSz,
+    String tradeQuoteCcy,
     String state,
     String lever,
     String cTime,
@@ -289,6 +303,11 @@ class _$OkxOrderCopyWithImpl<$Res, $Val extends OkxOrder>
     Object? side = null,
     Object? px = null,
     Object? sz = null,
+    Object? notionalUsd = null,
+    Object? fillNotionalUsd = null,
+    Object? avgPx = null,
+    Object? accFillSz = null,
+    Object? tradeQuoteCcy = null,
     Object? state = null,
     Object? lever = null,
     Object? cTime = null,
@@ -315,6 +334,26 @@ class _$OkxOrderCopyWithImpl<$Res, $Val extends OkxOrder>
             sz: null == sz
                 ? _value.sz
                 : sz // ignore: cast_nullable_to_non_nullable
+                      as String,
+            notionalUsd: null == notionalUsd
+                ? _value.notionalUsd
+                : notionalUsd // ignore: cast_nullable_to_non_nullable
+                      as String,
+            fillNotionalUsd: null == fillNotionalUsd
+                ? _value.fillNotionalUsd
+                : fillNotionalUsd // ignore: cast_nullable_to_non_nullable
+                      as String,
+            avgPx: null == avgPx
+                ? _value.avgPx
+                : avgPx // ignore: cast_nullable_to_non_nullable
+                      as String,
+            accFillSz: null == accFillSz
+                ? _value.accFillSz
+                : accFillSz // ignore: cast_nullable_to_non_nullable
+                      as String,
+            tradeQuoteCcy: null == tradeQuoteCcy
+                ? _value.tradeQuoteCcy
+                : tradeQuoteCcy // ignore: cast_nullable_to_non_nullable
                       as String,
             state: null == state
                 ? _value.state
@@ -353,6 +392,11 @@ abstract class _$$OkxOrderImplCopyWith<$Res>
     String side,
     String px,
     String sz,
+    String notionalUsd,
+    String fillNotionalUsd,
+    String avgPx,
+    String accFillSz,
+    String tradeQuoteCcy,
     String state,
     String lever,
     String cTime,
@@ -379,6 +423,11 @@ class __$$OkxOrderImplCopyWithImpl<$Res>
     Object? side = null,
     Object? px = null,
     Object? sz = null,
+    Object? notionalUsd = null,
+    Object? fillNotionalUsd = null,
+    Object? avgPx = null,
+    Object? accFillSz = null,
+    Object? tradeQuoteCcy = null,
     Object? state = null,
     Object? lever = null,
     Object? cTime = null,
@@ -405,6 +454,26 @@ class __$$OkxOrderImplCopyWithImpl<$Res>
         sz: null == sz
             ? _value.sz
             : sz // ignore: cast_nullable_to_non_nullable
+                  as String,
+        notionalUsd: null == notionalUsd
+            ? _value.notionalUsd
+            : notionalUsd // ignore: cast_nullable_to_non_nullable
+                  as String,
+        fillNotionalUsd: null == fillNotionalUsd
+            ? _value.fillNotionalUsd
+            : fillNotionalUsd // ignore: cast_nullable_to_non_nullable
+                  as String,
+        avgPx: null == avgPx
+            ? _value.avgPx
+            : avgPx // ignore: cast_nullable_to_non_nullable
+                  as String,
+        accFillSz: null == accFillSz
+            ? _value.accFillSz
+            : accFillSz // ignore: cast_nullable_to_non_nullable
+                  as String,
+        tradeQuoteCcy: null == tradeQuoteCcy
+            ? _value.tradeQuoteCcy
+            : tradeQuoteCcy // ignore: cast_nullable_to_non_nullable
                   as String,
         state: null == state
             ? _value.state
@@ -436,6 +505,11 @@ class _$OkxOrderImpl implements _OkxOrder {
     this.side = '',
     this.px = '',
     this.sz = '',
+    this.notionalUsd = '',
+    this.fillNotionalUsd = '',
+    this.avgPx = '',
+    this.accFillSz = '',
+    this.tradeQuoteCcy = '',
     this.state = '',
     this.lever = '',
     this.cTime = '',
@@ -467,6 +541,26 @@ class _$OkxOrderImpl implements _OkxOrder {
   // Kích thước/Số lượng lệnh
   @override
   @JsonKey()
+  final String notionalUsd;
+  // Giá trị danh nghĩa ước tính theo USD
+  @override
+  @JsonKey()
+  final String fillNotionalUsd;
+  // Giá trị đã khớp theo USD
+  @override
+  @JsonKey()
+  final String avgPx;
+  // Giá khớp trung bình
+  @override
+  @JsonKey()
+  final String accFillSz;
+  // Khối lượng đã khớp luỹ kế
+  @override
+  @JsonKey()
+  final String tradeQuoteCcy;
+  // Đồng tiền quote dùng để giao dịch
+  @override
+  @JsonKey()
   final String state;
   // Trạng thái (live, filled, canceled)
   @override
@@ -483,7 +577,7 @@ class _$OkxOrderImpl implements _OkxOrder {
 
   @override
   String toString() {
-    return 'OkxOrder(instId: $instId, instType: $instType, side: $side, px: $px, sz: $sz, state: $state, lever: $lever, cTime: $cTime, pnl: $pnl)';
+    return 'OkxOrder(instId: $instId, instType: $instType, side: $side, px: $px, sz: $sz, notionalUsd: $notionalUsd, fillNotionalUsd: $fillNotionalUsd, avgPx: $avgPx, accFillSz: $accFillSz, tradeQuoteCcy: $tradeQuoteCcy, state: $state, lever: $lever, cTime: $cTime, pnl: $pnl)';
   }
 
   @override
@@ -497,6 +591,15 @@ class _$OkxOrderImpl implements _OkxOrder {
             (identical(other.side, side) || other.side == side) &&
             (identical(other.px, px) || other.px == px) &&
             (identical(other.sz, sz) || other.sz == sz) &&
+            (identical(other.notionalUsd, notionalUsd) ||
+                other.notionalUsd == notionalUsd) &&
+            (identical(other.fillNotionalUsd, fillNotionalUsd) ||
+                other.fillNotionalUsd == fillNotionalUsd) &&
+            (identical(other.avgPx, avgPx) || other.avgPx == avgPx) &&
+            (identical(other.accFillSz, accFillSz) ||
+                other.accFillSz == accFillSz) &&
+            (identical(other.tradeQuoteCcy, tradeQuoteCcy) ||
+                other.tradeQuoteCcy == tradeQuoteCcy) &&
             (identical(other.state, state) || other.state == state) &&
             (identical(other.lever, lever) || other.lever == lever) &&
             (identical(other.cTime, cTime) || other.cTime == cTime) &&
@@ -512,6 +615,11 @@ class _$OkxOrderImpl implements _OkxOrder {
     side,
     px,
     sz,
+    notionalUsd,
+    fillNotionalUsd,
+    avgPx,
+    accFillSz,
+    tradeQuoteCcy,
     state,
     lever,
     cTime,
@@ -539,6 +647,11 @@ abstract class _OkxOrder implements OkxOrder {
     final String side,
     final String px,
     final String sz,
+    final String notionalUsd,
+    final String fillNotionalUsd,
+    final String avgPx,
+    final String accFillSz,
+    final String tradeQuoteCcy,
     final String state,
     final String lever,
     final String cTime,
@@ -558,6 +671,16 @@ abstract class _OkxOrder implements OkxOrder {
   String get px; // Giá đặt lệnh
   @override
   String get sz; // Kích thước/Số lượng lệnh
+  @override
+  String get notionalUsd; // Giá trị danh nghĩa ước tính theo USD
+  @override
+  String get fillNotionalUsd; // Giá trị đã khớp theo USD
+  @override
+  String get avgPx; // Giá khớp trung bình
+  @override
+  String get accFillSz; // Khối lượng đã khớp luỹ kế
+  @override
+  String get tradeQuoteCcy; // Đồng tiền quote dùng để giao dịch
   @override
   String get state; // Trạng thái (live, filled, canceled)
   @override

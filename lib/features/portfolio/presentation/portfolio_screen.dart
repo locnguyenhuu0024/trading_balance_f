@@ -13,11 +13,7 @@ import '../../settings/presentation/settings_screen.dart';
 import '../../market/presentation/providers/market_provider.dart';
 import '../../../core/network/okx_websocket_service.dart';
 import '../data/okx_balance_model.dart';
-import '../../orders/presentation/orders_screen.dart';
 import '../../market/presentation/market_screen.dart';
-import '../../fractal_tracker/presentation/fractal_screen.dart';
-import '../../pnl_history/presentation/pnl_input_sheet.dart';
-import '../../pnl_history/presentation/pnl_history_screen.dart'; // THÊM IMPORT NÀY
 import 'widgets/portfolio_currency_amount.dart';
 
 final hideBalanceProvider = StateProvider<bool>((ref) => false);
@@ -90,16 +86,6 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.donut_small_outlined, size: 22),
-            tooltip: 'BMAG Matrix',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const FractalScreen()),
-              );
-            },
-          ),
-          IconButton(
             icon: Icon(
               isBalanceHidden ? Icons.visibility_off : Icons.visibility,
               size: 22,
@@ -107,31 +93,6 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
             tooltip: isBalanceHidden ? 'Hiện số dư' : 'Ẩn số dư',
             onPressed: () {
               ref.read(hideBalanceProvider.notifier).state = !isBalanceHidden;
-            },
-          ),
-          IconButton(
-            icon: const Icon(
-              Icons.history_edu,
-              size: 22,
-            ), // NÚT XEM NHẬT KÝ MỚI
-            tooltip: 'Nhật ký PnL',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const PnlHistoryScreen(),
-                ),
-              );
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.receipt_long, size: 22),
-            tooltip: 'Quản lý Lệnh',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const OrdersScreen()),
-              );
             },
           ),
           IconButton(
@@ -180,19 +141,6 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
           },
         ),
       ),
-      // THÊM NÚT NỔI (FAB) ĐỂ MỞ FORM NHẬP LÃI/LỖ FIREBASE
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () {
-          showPnlInputSheet(context, isDark);
-        },
-        backgroundColor: isDark ? Colors.white : Colors.black,
-        foregroundColor: isDark ? Colors.black : Colors.white,
-        icon: const Icon(Icons.add_chart),
-        label: const Text(
-          'Ghi PnL',
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
-      ),
     );
   }
 
@@ -236,144 +184,31 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
         ? (totalUnrealizedPnl / baseEquity) * 100
         : 0.0;
 
-    final pnlColor = totalUnrealizedPnl >= 0 ? Colors.green : Colors.redAccent;
-    final pnlSign = totalUnrealizedPnl >= 0 ? '+' : '';
-
     final textColor = isDark ? Colors.white : Colors.black;
     final cardColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
     final borderColor = isDark ? Colors.grey.shade800 : Colors.grey.shade200;
     final subtitleColor = isDark ? Colors.grey.shade400 : Colors.grey.shade600;
     final iconBgColor = isDark ? Colors.grey.shade800 : Colors.grey.shade100;
-    final topCardBgColor = isDark ? const Color(0xFF1E1E1E) : Colors.black;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // THẺ TỔNG TÀI SẢN
-        Container(
-          margin: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-          width: double.infinity,
-          decoration: BoxDecoration(
-            color: topCardBgColor,
-            borderRadius: BorderRadius.circular(20),
-            boxShadow: [
-              if (!isDark)
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.08),
-                  blurRadius: 8,
-                  offset: const Offset(0, 4),
-                ),
-            ],
-            border: isDark ? Border.all(color: Colors.grey.shade800) : null,
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Text(
-                'Tổng tài sản (${CurrencyDisplayMode.labelFor(currency)})',
-                style: TextStyle(
-                  color: Colors.grey.shade400,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              const SizedBox(height: 8),
-              PortfolioCurrencyAmount(
-                usdtAmount: dynamicTotalEquity,
-                currencyMode: currency,
-                vndRate: exchangeRate,
-                hidden: isHidden,
-                crossAxisAlignment: CrossAxisAlignment.center,
-                textAlign: TextAlign.center,
-                primaryStyle: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 32,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: -0.5,
-                ),
-                secondaryStyle: TextStyle(
-                  color: Colors.grey.shade400,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 6),
-              PortfolioCurrencyAmount(
-                usdtAmount: baseEquity,
-                currencyMode: currency,
-                vndRate: exchangeRate,
-                hidden: isHidden,
-                primaryPrefix: 'Vốn gốc: ',
-                crossAxisAlignment: CrossAxisAlignment.center,
-                textAlign: TextAlign.center,
-                primaryStyle: TextStyle(
-                  color: Colors.grey.shade500,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w500,
-                ),
-                secondaryStyle: TextStyle(
-                  color: Colors.grey.shade500,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
-                ),
-                decoration: BoxDecoration(
-                  color: isDark ? Colors.black45 : Colors.grey.shade900,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.grey.shade800),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      totalUnrealizedPnl >= 0
-                          ? Icons.arrow_upward_rounded
-                          : Icons.arrow_downward_rounded,
-                      color: isHidden ? Colors.grey : pnlColor,
-                      size: 14,
-                    ),
-                    const SizedBox(width: 4),
-                    PortfolioCurrencyAmount(
-                      usdtAmount: totalUnrealizedPnl,
-                      currencyMode: currency,
-                      vndRate: exchangeRate,
-                      hidden: isHidden,
-                      showPositiveSign: true,
-                      primaryStyle: TextStyle(
-                        color: isHidden ? Colors.grey : pnlColor,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 12,
-                      ),
-                      secondaryStyle: TextStyle(
-                        color: isHidden ? Colors.grey : pnlColor,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 10,
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      _obfuscate(
-                        '($pnlSign${pnlRatio.toStringAsFixed(2)}%)',
-                        isHidden,
-                      ),
-                      style: TextStyle(
-                        color: isHidden ? Colors.grey : pnlColor,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 10,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
+        _buildAssetSummary(
+          totalEquity: dynamicTotalEquity,
+          baseEquity: baseEquity,
+          unrealizedPnl: totalUnrealizedPnl,
+          pnlRatio: pnlRatio,
+          isHidden: isHidden,
+          isDark: isDark,
+          currency: currency,
+          exchangeRate: exchangeRate,
+        ),
+
+        Divider(
+          height: 1,
+          indent: 16,
+          endIndent: 16,
+          color: isDark ? Colors.grey.shade800 : Colors.grey.shade200,
         ),
 
         Padding(
@@ -500,6 +335,188 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
                 ),
         ),
       ],
+    );
+  }
+
+  Widget _buildAssetSummary({
+    required double totalEquity,
+    required double baseEquity,
+    required double unrealizedPnl,
+    required double pnlRatio,
+    required bool isHidden,
+    required bool isDark,
+    required String currency,
+    required double exchangeRate,
+  }) {
+    final textColor = isDark ? Colors.white : Colors.black;
+    final labelColor = isDark ? Colors.grey.shade400 : Colors.grey.shade600;
+    final pnlColor = unrealizedPnl >= 0 ? Colors.green : Colors.redAccent;
+    final pnlSign = unrealizedPnl >= 0 ? '+' : '';
+
+    final totalBlock = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Tổng tài sản (${CurrencyDisplayMode.labelFor(currency)})',
+          style: TextStyle(
+            color: labelColor,
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 6),
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: PortfolioCurrencyAmount(
+            usdtAmount: totalEquity,
+            currencyMode: currency,
+            vndRate: exchangeRate,
+            hidden: isHidden,
+            primaryStyle: TextStyle(
+              color: textColor,
+              fontSize: 30,
+              fontWeight: FontWeight.w800,
+              letterSpacing: -0.5,
+            ),
+            secondaryStyle: TextStyle(
+              color: labelColor,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ],
+    );
+
+    final capitalBlock = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Vốn gốc',
+          style: TextStyle(
+            color: labelColor,
+            fontSize: 10,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 4),
+        PortfolioCurrencyAmount(
+          usdtAmount: baseEquity,
+          currencyMode: currency,
+          vndRate: exchangeRate,
+          hidden: isHidden,
+          primaryStyle: TextStyle(
+            color: textColor,
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+          ),
+          secondaryStyle: TextStyle(
+            color: labelColor,
+            fontSize: 10,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    );
+
+    final pnlBlock = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Lãi / lỗ chưa thực hiện',
+          style: TextStyle(
+            color: labelColor,
+            fontSize: 10,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              unrealizedPnl >= 0
+                  ? Icons.arrow_upward_rounded
+                  : Icons.arrow_downward_rounded,
+              color: isHidden ? Colors.grey : pnlColor,
+              size: 14,
+            ),
+            const SizedBox(width: 4),
+            Flexible(
+              child: PortfolioCurrencyAmount(
+                usdtAmount: unrealizedPnl,
+                currencyMode: currency,
+                vndRate: exchangeRate,
+                hidden: isHidden,
+                showPositiveSign: true,
+                primaryStyle: TextStyle(
+                  color: isHidden ? Colors.grey : pnlColor,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                ),
+                secondaryStyle: TextStyle(
+                  color: isHidden ? Colors.grey : pnlColor,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 2),
+        Text(
+          _obfuscate('($pnlSign${pnlRatio.toStringAsFixed(2)}%)', isHidden),
+          style: TextStyle(
+            color: isHidden ? Colors.grey : pnlColor,
+            fontSize: 10,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    );
+
+    return Padding(
+      key: const Key('portfolio-asset-summary'),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          if (constraints.maxWidth >= 640) {
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Expanded(flex: 2, child: totalBlock),
+                Container(
+                  width: 1,
+                  height: 56,
+                  margin: const EdgeInsets.symmetric(horizontal: 20),
+                  color: isDark ? Colors.grey.shade800 : Colors.grey.shade200,
+                ),
+                Expanded(child: capitalBlock),
+                const SizedBox(width: 20),
+                Expanded(child: pnlBlock),
+              ],
+            );
+          }
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              totalBlock,
+              const SizedBox(height: 14),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: capitalBlock),
+                  const SizedBox(width: 16),
+                  Expanded(child: pnlBlock),
+                ],
+              ),
+            ],
+          );
+        },
+      ),
     );
   }
 
