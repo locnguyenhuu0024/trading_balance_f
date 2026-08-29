@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:dio/dio.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
+import '../../../core/currency/currency_display_mode.dart';
 import '../../../core/security/secure_storage_helper.dart';
 import '../../portfolio/presentation/portfolio_screen.dart';
 
@@ -108,7 +109,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
     if (mounted) {
       setState(() => _isLoading = false);
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đã lưu cấu hình API thành công!'), backgroundColor: Colors.green));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Đã lưu cấu hình API thành công!'),
+          backgroundColor: Colors.green,
+        ),
+      );
       Navigator.pop(context);
     }
   }
@@ -129,13 +135,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final hideBalanceDefault = ref.watch(defaultHideBalanceProvider);
     final bioAuth = ref.watch(biometricAuthProvider);
 
-    final isSysDark = MediaQuery.of(context).platformBrightness == Brightness.dark;
-    final isDark = themeMode == ThemeMode.dark || (themeMode == ThemeMode.system && isSysDark);
+    final isSysDark =
+        MediaQuery.of(context).platformBrightness == Brightness.dark;
+    final isDark =
+        themeMode == ThemeMode.dark ||
+        (themeMode == ThemeMode.system && isSysDark);
 
     final bgColor = isDark ? const Color(0xFF121212) : Colors.grey.shade50;
     final textColor = isDark ? Colors.white : Colors.black;
     final cardColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
-    final sectionTitleColor = isDark ? Colors.grey.shade400 : Colors.grey.shade600;
+    final sectionTitleColor = isDark
+        ? Colors.grey.shade400
+        : Colors.grey.shade600;
 
     return Scaffold(
       backgroundColor: bgColor,
@@ -144,7 +155,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         foregroundColor: textColor,
         elevation: 0,
         centerTitle: true,
-        title: const Text('Cài đặt', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+        title: const Text(
+          'Cài đặt',
+          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+        ),
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
@@ -154,31 +168,68 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             // ================= SECTION 1: GIAO DIỆN =================
             Padding(
               padding: const EdgeInsets.only(left: 8, bottom: 8),
-              child: Text('HIỂN THỊ & GIAO DIỆN', style: TextStyle(color: sectionTitleColor, fontSize: 12, fontWeight: FontWeight.bold)),
+              child: Text(
+                'HIỂN THỊ & GIAO DIỆN',
+                style: TextStyle(
+                  color: sectionTitleColor,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             ),
             Card(
               elevation: 0,
               color: cardColor,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(16),
-                side: BorderSide(color: isDark ? Colors.grey.shade800 : Colors.grey.shade200),
+                side: BorderSide(
+                  color: isDark ? Colors.grey.shade800 : Colors.grey.shade200,
+                ),
               ),
               child: Column(
                 children: [
                   ListTile(
-                    leading: Icon(Icons.dark_mode_outlined, color: textColor, size: 22),
-                    title: Text('Chế độ nền', style: TextStyle(color: textColor, fontWeight: FontWeight.w500, fontSize: 14)),
+                    leading: Icon(
+                      Icons.dark_mode_outlined,
+                      color: textColor,
+                      size: 22,
+                    ),
+                    title: Text(
+                      'Chế độ nền',
+                      style: TextStyle(
+                        color: textColor,
+                        fontWeight: FontWeight.w500,
+                        fontSize: 14,
+                      ),
+                    ),
                     trailing: DropdownButtonHideUnderline(
                       child: DropdownButton<ThemeMode>(
                         value: themeMode,
                         dropdownColor: cardColor,
-                        icon: Icon(Icons.unfold_more_rounded, color: sectionTitleColor, size: 20),
-                        style: TextStyle(color: textColor, fontSize: 13, fontWeight: FontWeight.bold),
+                        icon: Icon(
+                          Icons.unfold_more_rounded,
+                          color: sectionTitleColor,
+                          size: 20,
+                        ),
+                        style: TextStyle(
+                          color: textColor,
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                        ),
                         alignment: AlignmentDirectional.centerEnd,
                         items: const [
-                          DropdownMenuItem(value: ThemeMode.light, child: Text('Sáng')),
-                          DropdownMenuItem(value: ThemeMode.dark, child: Text('Tối')),
-                          DropdownMenuItem(value: ThemeMode.system, child: Text('Hệ thống')),
+                          DropdownMenuItem(
+                            value: ThemeMode.light,
+                            child: Text('Sáng'),
+                          ),
+                          DropdownMenuItem(
+                            value: ThemeMode.dark,
+                            child: Text('Tối'),
+                          ),
+                          DropdownMenuItem(
+                            value: ThemeMode.system,
+                            child: Text('Hệ thống'),
+                          ),
                         ],
                         onChanged: (ThemeMode? val) {
                           if (val != null) {
@@ -189,31 +240,74 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       ),
                     ),
                   ),
-                  Divider(height: 1, color: isDark ? Colors.grey.shade800 : Colors.grey.shade100, indent: 52),
+                  Divider(
+                    height: 1,
+                    color: isDark ? Colors.grey.shade800 : Colors.grey.shade100,
+                    indent: 52,
+                  ),
                   ListTile(
-                    leading: Icon(Icons.attach_money_rounded, color: textColor, size: 22),
-                    title: Text('Tiền tệ hiển thị', style: TextStyle(color: textColor, fontWeight: FontWeight.w500, fontSize: 14)),
-                    subtitle: currency == 'VNĐ'
-                        ? exchangeRateAsync.when(
-                      data: (rate) => Text(
-                        '1 USDT ≈ ${NumberFormat("#,##0", "en_US").format(rate)} đ',
-                        style: const TextStyle(color: Colors.green, fontSize: 11, fontWeight: FontWeight.w500),
+                    leading: Icon(
+                      Icons.attach_money_rounded,
+                      color: textColor,
+                      size: 22,
+                    ),
+                    title: Text(
+                      'Tiền tệ hiển thị',
+                      style: TextStyle(
+                        color: textColor,
+                        fontWeight: FontWeight.w500,
+                        fontSize: 14,
                       ),
-                      loading: () => Text('Đang cập nhật tỷ giá...', style: TextStyle(color: sectionTitleColor, fontSize: 11)),
-                      error: (_, __) => const Text('Lỗi tải tỷ giá (Dùng giá chuẩn)', style: TextStyle(color: Colors.redAccent, fontSize: 11)),
-                    )
+                    ),
+                    subtitle: CurrencyDisplayMode.includesVnd(currency)
+                        ? exchangeRateAsync.when(
+                            data: (rate) => Text(
+                              '1 USDT ≈ ${NumberFormat("#,##0", "en_US").format(rate)} đ',
+                              style: const TextStyle(
+                                color: Colors.green,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            loading: () => Text(
+                              'Đang cập nhật tỷ giá...',
+                              style: TextStyle(
+                                color: sectionTitleColor,
+                                fontSize: 11,
+                              ),
+                            ),
+                            error: (_, __) => const Text(
+                              'Lỗi tải tỷ giá (Dùng giá chuẩn)',
+                              style: TextStyle(
+                                color: Colors.redAccent,
+                                fontSize: 11,
+                              ),
+                            ),
+                          )
                         : null,
                     trailing: DropdownButtonHideUnderline(
                       child: DropdownButton<String>(
                         value: currency,
                         dropdownColor: cardColor,
-                        icon: Icon(Icons.unfold_more_rounded, color: sectionTitleColor, size: 20),
-                        style: TextStyle(color: textColor, fontSize: 13, fontWeight: FontWeight.bold),
+                        icon: Icon(
+                          Icons.unfold_more_rounded,
+                          color: sectionTitleColor,
+                          size: 20,
+                        ),
+                        style: TextStyle(
+                          color: textColor,
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                        ),
                         alignment: AlignmentDirectional.centerEnd,
-                        items: const [
-                          DropdownMenuItem(value: 'USD', child: Text('USD')),
-                          DropdownMenuItem(value: 'VNĐ', child: Text('VNĐ')),
-                        ],
+                        items: CurrencyDisplayMode.options
+                            .map(
+                              (option) => DropdownMenuItem<String>(
+                                value: option.value,
+                                child: Text(option.label),
+                              ),
+                            )
+                            .toList(),
                         onChanged: (String? val) {
                           if (val != null) {
                             ref.read(currencyProvider.notifier).state = val;
@@ -232,35 +326,77 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             // ================= SECTION 2: BẢO MẬT & TRẢI NGHIỆM =================
             Padding(
               padding: const EdgeInsets.only(left: 8, bottom: 8),
-              child: Text('BẢO MẬT & TRẢI NGHIỆM', style: TextStyle(color: sectionTitleColor, fontSize: 12, fontWeight: FontWeight.bold)),
+              child: Text(
+                'BẢO MẬT & TRẢI NGHIỆM',
+                style: TextStyle(
+                  color: sectionTitleColor,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             ),
             Card(
               elevation: 0,
               color: cardColor,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(16),
-                side: BorderSide(color: isDark ? Colors.grey.shade800 : Colors.grey.shade200),
+                side: BorderSide(
+                  color: isDark ? Colors.grey.shade800 : Colors.grey.shade200,
+                ),
               ),
               child: Column(
                 children: [
                   SwitchListTile(
                     activeColor: Colors.blueAccent,
-                    secondary: Icon(Icons.visibility_off, color: textColor, size: 22),
-                    title: Text('Ẩn số dư mặc định', style: TextStyle(color: textColor, fontWeight: FontWeight.w500, fontSize: 14)),
-                    subtitle: Text('Che tài sản khi vừa mở ứng dụng', style: TextStyle(color: sectionTitleColor, fontSize: 11)),
+                    secondary: Icon(
+                      Icons.visibility_off,
+                      color: textColor,
+                      size: 22,
+                    ),
+                    title: Text(
+                      'Ẩn số dư mặc định',
+                      style: TextStyle(
+                        color: textColor,
+                        fontWeight: FontWeight.w500,
+                        fontSize: 14,
+                      ),
+                    ),
+                    subtitle: Text(
+                      'Che tài sản khi vừa mở ứng dụng',
+                      style: TextStyle(color: sectionTitleColor, fontSize: 11),
+                    ),
                     value: hideBalanceDefault,
                     onChanged: (val) {
                       ref.read(defaultHideBalanceProvider.notifier).state = val;
-                      ref.read(hideBalanceProvider.notifier).state = val; // Cập nhật luôn màn chính
+                      ref.read(hideBalanceProvider.notifier).state =
+                          val; // Cập nhật luôn màn chính
                       _saveAllPreferences();
                     },
                   ),
-                  Divider(height: 1, color: isDark ? Colors.grey.shade800 : Colors.grey.shade100, indent: 52),
+                  Divider(
+                    height: 1,
+                    color: isDark ? Colors.grey.shade800 : Colors.grey.shade100,
+                    indent: 52,
+                  ),
                   SwitchListTile(
                     activeColor: Colors.blueAccent,
-                    secondary: Icon(Icons.fingerprint, color: textColor, size: 22),
-                    title: Text('Khoá sinh trắc học', style: TextStyle(color: textColor, fontWeight: FontWeight.w500, fontSize: 14)),
-                    subtitle: Text('Yêu cầu vân tay / FaceID khi mở app', style: TextStyle(color: sectionTitleColor, fontSize: 11)),
+                    secondary: Icon(
+                      Icons.fingerprint,
+                      color: textColor,
+                      size: 22,
+                    ),
+                    title: Text(
+                      'Khoá sinh trắc học',
+                      style: TextStyle(
+                        color: textColor,
+                        fontWeight: FontWeight.w500,
+                        fontSize: 14,
+                      ),
+                    ),
+                    subtitle: Text(
+                      'Yêu cầu vân tay / FaceID khi mở app',
+                      style: TextStyle(color: sectionTitleColor, fontSize: 11),
+                    ),
                     value: bioAuth,
                     onChanged: (val) {
                       ref.read(biometricAuthProvider.notifier).state = val;
@@ -276,14 +412,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             // ================= SECTION 3: API KEY =================
             Padding(
               padding: const EdgeInsets.only(left: 8, bottom: 8),
-              child: Text('CẤU HÌNH API (CHỈ ĐỌC)', style: TextStyle(color: sectionTitleColor, fontSize: 12, fontWeight: FontWeight.bold)),
+              child: Text(
+                'CẤU HÌNH API (CHỈ ĐỌC)',
+                style: TextStyle(
+                  color: sectionTitleColor,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             ),
             Card(
               elevation: 0,
               color: cardColor,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(16),
-                side: BorderSide(color: isDark ? Colors.grey.shade800 : Colors.grey.shade200),
+                side: BorderSide(
+                  color: isDark ? Colors.grey.shade800 : Colors.grey.shade200,
+                ),
               ),
               child: Padding(
                 padding: const EdgeInsets.all(16.0),
@@ -294,7 +439,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     children: [
                       Text(
                         'Thông tin API được mã hoá cục bộ trên thiết bị của bạn, không gửi qua bất kỳ máy chủ trung gian nào.',
-                        style: TextStyle(color: isDark ? Colors.grey.shade500 : Colors.grey.shade600, fontSize: 11),
+                        style: TextStyle(
+                          color: isDark
+                              ? Colors.grey.shade500
+                              : Colors.grey.shade600,
+                          fontSize: 11,
+                        ),
                       ),
                       const SizedBox(height: 24),
                       TextFormField(
@@ -302,12 +452,31 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         style: TextStyle(color: textColor, fontSize: 13),
                         decoration: InputDecoration(
                           labelText: 'API Key',
-                          labelStyle: TextStyle(color: isDark ? Colors.grey.shade400 : Colors.grey.shade700, fontSize: 13),
+                          labelStyle: TextStyle(
+                            color: isDark
+                                ? Colors.grey.shade400
+                                : Colors.grey.shade700,
+                            fontSize: 13,
+                          ),
                           border: const OutlineInputBorder(),
-                          enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: isDark ? Colors.grey.shade700 : Colors.grey.shade300)),
-                          prefixIcon: Icon(Icons.key, color: isDark ? Colors.grey.shade400 : Colors.grey.shade600, size: 20),
+                          enabledBorder: OutlineInputBorder(
+                            borderSide: BorderSide(
+                              color: isDark
+                                  ? Colors.grey.shade700
+                                  : Colors.grey.shade300,
+                            ),
+                          ),
+                          prefixIcon: Icon(
+                            Icons.key,
+                            color: isDark
+                                ? Colors.grey.shade400
+                                : Colors.grey.shade600,
+                            size: 20,
+                          ),
                         ),
-                        validator: (value) => value == null || value.isEmpty ? 'Không được để trống' : null,
+                        validator: (value) => value == null || value.isEmpty
+                            ? 'Không được để trống'
+                            : null,
                       ),
                       const SizedBox(height: 16),
                       TextFormField(
@@ -315,13 +484,32 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         style: TextStyle(color: textColor, fontSize: 13),
                         decoration: InputDecoration(
                           labelText: 'Secret Key',
-                          labelStyle: TextStyle(color: isDark ? Colors.grey.shade400 : Colors.grey.shade700, fontSize: 13),
+                          labelStyle: TextStyle(
+                            color: isDark
+                                ? Colors.grey.shade400
+                                : Colors.grey.shade700,
+                            fontSize: 13,
+                          ),
                           border: const OutlineInputBorder(),
-                          enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: isDark ? Colors.grey.shade700 : Colors.grey.shade300)),
-                          prefixIcon: Icon(Icons.security, color: isDark ? Colors.grey.shade400 : Colors.grey.shade600, size: 20),
+                          enabledBorder: OutlineInputBorder(
+                            borderSide: BorderSide(
+                              color: isDark
+                                  ? Colors.grey.shade700
+                                  : Colors.grey.shade300,
+                            ),
+                          ),
+                          prefixIcon: Icon(
+                            Icons.security,
+                            color: isDark
+                                ? Colors.grey.shade400
+                                : Colors.grey.shade600,
+                            size: 20,
+                          ),
                         ),
                         obscureText: true,
-                        validator: (value) => value == null || value.isEmpty ? 'Không được để trống' : null,
+                        validator: (value) => value == null || value.isEmpty
+                            ? 'Không được để trống'
+                            : null,
                       ),
                       const SizedBox(height: 16),
                       TextFormField(
@@ -329,13 +517,32 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         style: TextStyle(color: textColor, fontSize: 13),
                         decoration: InputDecoration(
                           labelText: 'Passphrase',
-                          labelStyle: TextStyle(color: isDark ? Colors.grey.shade400 : Colors.grey.shade700, fontSize: 13),
+                          labelStyle: TextStyle(
+                            color: isDark
+                                ? Colors.grey.shade400
+                                : Colors.grey.shade700,
+                            fontSize: 13,
+                          ),
                           border: const OutlineInputBorder(),
-                          enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: isDark ? Colors.grey.shade700 : Colors.grey.shade300)),
-                          prefixIcon: Icon(Icons.lock, color: isDark ? Colors.grey.shade400 : Colors.grey.shade600, size: 20),
+                          enabledBorder: OutlineInputBorder(
+                            borderSide: BorderSide(
+                              color: isDark
+                                  ? Colors.grey.shade700
+                                  : Colors.grey.shade300,
+                            ),
+                          ),
+                          prefixIcon: Icon(
+                            Icons.lock,
+                            color: isDark
+                                ? Colors.grey.shade400
+                                : Colors.grey.shade600,
+                            size: 20,
+                          ),
                         ),
                         obscureText: true,
-                        validator: (value) => value == null || value.isEmpty ? 'Không được để trống' : null,
+                        validator: (value) => value == null || value.isEmpty
+                            ? 'Không được để trống'
+                            : null,
                       ),
                       const SizedBox(height: 24),
                       ElevatedButton(
@@ -344,11 +551,26 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           padding: const EdgeInsets.symmetric(vertical: 14),
                           backgroundColor: isDark ? Colors.white : Colors.black,
                           foregroundColor: isDark ? Colors.black : Colors.white,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
                         ),
                         child: _isLoading
-                            ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                            : const Text('Lưu cấu hình', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                            ? const SizedBox(
+                                height: 20,
+                                width: 20,
+                                child: CircularProgressIndicator(
+                                  color: Colors.white,
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Text(
+                                'Lưu cấu hình',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
                       ),
                     ],
                   ),
