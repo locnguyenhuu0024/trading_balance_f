@@ -2,22 +2,15 @@
 
 A new Flutter project.
 
-## Getting Started
+## Release Build and Deployment
 
-This project is a starting point for a Flutter application.
+From the project root, run:
 
-A few resources to get you started if this is your first Flutter project:
+```bash
+./release_build.sh
+```
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
-
-
-flutter clean
-flutter build web --release
-cd build/web
-npx vercel --prod
+It resolves dependencies once, builds web and macOS release artifacts in
+parallel, then deploys `build/web` to Vercel production only when both builds
+succeed. The first deployment may prompt for Vercel authentication and project
+linking; no credentials are stored by the script.

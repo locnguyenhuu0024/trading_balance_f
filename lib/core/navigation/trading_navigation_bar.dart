@@ -58,94 +58,138 @@ class TradingNavigationBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final surfaceColor = isDark ? Colors.white : Colors.black;
     final contentColor = isDark ? Colors.black : Colors.white;
-    final indicatorColor = isDark ? Colors.black : Colors.white;
-    final indicatorContentColor = isDark ? Colors.white : Colors.black;
 
     return Semantics(
       container: true,
       label: 'Điều hướng chính',
-      child: Material(
-        color: surfaceColor,
-        child: SafeArea(
-          top: false,
-          child: Container(
-            key: const Key('navigation-bar-surface'),
-            height: 72,
-            color: surfaceColor,
-            child: Row(
-              children: List.generate(items.length, (index) {
-                final item = items[index];
-                final isSelected = index == selectedIndex;
+      child: SafeArea(
+        top: false,
+        child: SizedBox(
+          height: 76,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final islandWidth = constraints.maxWidth;
 
-                return Expanded(
-                  child: Semantics(
-                    selected: isSelected,
-                    button: true,
-                    label: item.label,
-                    child: Tooltip(
-                      message: item.label,
-                      child: InkWell(
-                        key: Key('navigation-destination-$index'),
-                        excludeFromSemantics: true,
-                        onTap: () => onDestinationSelected(index),
-                        child: Center(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              AnimatedSlide(
-                                duration: _animationDuration,
-                                curve: Curves.easeOutCubic,
-                                offset: Offset(0, isSelected ? -0.2 : 0),
-                                child: AnimatedContainer(
-                                  key: Key('navigation-indicator-$index'),
-                                  duration: _animationDuration,
-                                  curve: Curves.easeOutCubic,
-                                  width: 40,
-                                  height: 40,
-                                  alignment: Alignment.center,
-                                  decoration: BoxDecoration(
-                                    color: isSelected
-                                        ? indicatorColor
-                                        : Colors.transparent,
-                                    shape: BoxShape.circle,
-                                  ),
-                                  child: Icon(
-                                    isSelected ? item.selectedIcon : item.icon,
-                                    color: isSelected
-                                        ? indicatorContentColor
-                                        : contentColor.withValues(alpha: 0.7),
-                                    size: 22,
+              return Center(
+                child: SizedBox(
+                  width: islandWidth,
+                  height: 76,
+                  child: Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      Positioned(
+                        top: 16,
+                        right: 0,
+                        bottom: 0,
+                        left: 0,
+                        child: Material(
+                          key: const Key('navigation-bar-surface'),
+                          color: surfaceColor,
+                        ),
+                      ),
+                      Row(
+                        children: List.generate(items.length, (index) {
+                          final item = items[index];
+                          final isSelected = index == selectedIndex;
+
+                          return Expanded(
+                            child: Semantics(
+                              selected: isSelected,
+                              button: true,
+                              label: item.label,
+                              child: Tooltip(
+                                message: item.label,
+                                child: InkWell(
+                                  key: Key('navigation-destination-$index'),
+                                  excludeFromSemantics: true,
+                                  borderRadius: BorderRadius.circular(30),
+                                  onTap: () => onDestinationSelected(index),
+                                  child: Stack(
+                                    clipBehavior: Clip.none,
+                                    children: [
+                                      Positioned(
+                                        top: 0,
+                                        right: 0,
+                                        left: 0,
+                                        child: AnimatedSlide(
+                                          duration: _animationDuration,
+                                          curve: Curves.easeOutCubic,
+                                          offset: Offset(
+                                            0,
+                                            isSelected ? 0 : 0.5,
+                                          ),
+                                          child: Center(
+                                            child: AnimatedContainer(
+                                              key: Key(
+                                                'navigation-indicator-$index',
+                                              ),
+                                              duration: _animationDuration,
+                                              curve: Curves.easeOutCubic,
+                                              width: 46,
+                                              height: 46,
+                                              alignment: Alignment.center,
+                                              decoration: BoxDecoration(
+                                                color: isSelected
+                                                    ? surfaceColor
+                                                    : Colors.transparent,
+                                                shape: BoxShape.circle,
+                                              ),
+                                              child: Icon(
+                                                isSelected
+                                                    ? item.selectedIcon
+                                                    : item.icon,
+                                                color: isSelected
+                                                    ? contentColor
+                                                    : contentColor.withValues(
+                                                        alpha: 0.7,
+                                                      ),
+                                                size: 22,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                      Align(
+                                        alignment: Alignment.bottomCenter,
+                                        child: Padding(
+                                          padding: const EdgeInsets.only(
+                                            bottom: 7,
+                                            left: 2,
+                                            right: 2,
+                                          ),
+                                          child: AnimatedSize(
+                                            duration: _animationDuration,
+                                            curve: Curves.easeOutCubic,
+                                            child: isSelected
+                                                ? Text(
+                                                    item.label,
+                                                    style: TextStyle(
+                                                      color: contentColor,
+                                                      fontSize: 10,
+                                                      fontWeight:
+                                                          FontWeight.w700,
+                                                    ),
+                                                    maxLines: 1,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                  )
+                                                : const SizedBox.shrink(),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
                               ),
-                              AnimatedSize(
-                                duration: _animationDuration,
-                                curve: Curves.easeOutCubic,
-                                child: isSelected
-                                    ? Padding(
-                                        padding: const EdgeInsets.only(top: 1),
-                                        child: Text(
-                                          item.label,
-                                          style: TextStyle(
-                                            color: contentColor,
-                                            fontSize: 10,
-                                            fontWeight: FontWeight.w700,
-                                          ),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      )
-                                    : const SizedBox.shrink(),
-                              ),
-                            ],
-                          ),
-                        ),
+                            ),
+                          );
+                        }),
                       ),
-                    ),
+                    ],
                   ),
-                );
-              }),
-            ),
+                ),
+              );
+            },
           ),
         ),
       ),

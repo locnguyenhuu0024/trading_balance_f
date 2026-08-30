@@ -42,34 +42,60 @@ void main() {
     expect(find.byKey(const Key('navigation-destination-4')), findsOneWidget);
   });
 
-  testWidgets('navigation bar keeps a contrasting continuous surface', (
-    tester,
-  ) async {
-    await tester.pumpWidget(shellApp());
+  testWidgets(
+    'navigation bar fills the width with a floating selected circle',
+    (tester) async {
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(390, 844);
 
-    final lightSurface = tester.widget<Container>(
-      find.byKey(const Key('navigation-bar-surface')),
-    );
-    final lightIndicator = tester.widget<AnimatedContainer>(
-      find.byKey(const Key('navigation-indicator-0')),
-    );
+      await tester.pumpWidget(shellApp());
+      await tester.pumpAndSettle();
 
-    expect(lightSurface.color, Colors.black);
-    expect((lightIndicator.decoration! as BoxDecoration).color, Colors.white);
+      final lightSurface = tester.widget<Material>(
+        find.byKey(const Key('navigation-bar-surface')),
+      );
+      final lightIndicator = tester.widget<AnimatedContainer>(
+        find.byKey(const Key('navigation-indicator-0')),
+      );
+      final lightSurfaceRect = tester.getRect(
+        find.byKey(const Key('navigation-bar-surface')),
+      );
+      final lightIndicatorRect = tester.getRect(
+        find.byKey(const Key('navigation-indicator-0')),
+      );
 
-    await tester.pumpWidget(shellApp(themeMode: ThemeMode.dark));
-    await tester.pumpAndSettle();
+      expect(lightSurface.color, Colors.black);
+      expect(lightSurface.borderRadius, isNull);
+      expect((lightIndicator.decoration! as BoxDecoration).color, Colors.black);
+      expect(lightSurfaceRect.width, 390);
+      expect(lightSurfaceRect.height, 60);
+      expect(lightSurfaceRect.left, 0);
+      expect(lightIndicatorRect.top, lessThan(lightSurfaceRect.top));
+      expect(lightIndicatorRect.bottom, greaterThan(lightSurfaceRect.top));
 
-    final darkSurface = tester.widget<Container>(
-      find.byKey(const Key('navigation-bar-surface')),
-    );
-    final darkIndicator = tester.widget<AnimatedContainer>(
-      find.byKey(const Key('navigation-indicator-0')),
-    );
+      for (var index = 1; index < TradingNavigationBar.items.length; index++) {
+        final indicatorRect = tester.getRect(
+          find.byKey(Key('navigation-indicator-$index')),
+        );
+        expect(indicatorRect.center.dy, lightSurfaceRect.center.dy);
+      }
 
-    expect(darkSurface.color, Colors.white);
-    expect((darkIndicator.decoration! as BoxDecoration).color, Colors.black);
-  });
+      await tester.pumpWidget(shellApp(themeMode: ThemeMode.dark));
+      await tester.pumpAndSettle();
+
+      final darkSurface = tester.widget<Material>(
+        find.byKey(const Key('navigation-bar-surface')),
+      );
+      final darkIndicator = tester.widget<AnimatedContainer>(
+        find.byKey(const Key('navigation-indicator-0')),
+      );
+
+      expect(darkSurface.color, Colors.white);
+      expect((darkIndicator.decoration! as BoxDecoration).color, Colors.white);
+    },
+  );
 
   testWidgets('order select controls update their selected values', (
     tester,
