@@ -65,7 +65,8 @@ class TradingNavigationBar extends StatelessWidget {
       child: SafeArea(
         top: false,
         child: SizedBox(
-          height: 76,
+          key: const Key('navigation-bar-layout'),
+          height: 60,
           child: LayoutBuilder(
             builder: (context, constraints) {
               final islandWidth = constraints.maxWidth;
@@ -73,15 +74,11 @@ class TradingNavigationBar extends StatelessWidget {
               return Center(
                 child: SizedBox(
                   width: islandWidth,
-                  height: 76,
+                  height: 60,
                   child: Stack(
                     clipBehavior: Clip.none,
                     children: [
-                      Positioned(
-                        top: 16,
-                        right: 0,
-                        bottom: 0,
-                        left: 0,
+                      Positioned.fill(
                         child: Material(
                           key: const Key('navigation-bar-surface'),
                           color: surfaceColor,
@@ -108,7 +105,7 @@ class TradingNavigationBar extends StatelessWidget {
                                     clipBehavior: Clip.none,
                                     children: [
                                       Positioned(
-                                        top: 0,
+                                        top: -16,
                                         right: 0,
                                         left: 0,
                                         child: AnimatedSlide(

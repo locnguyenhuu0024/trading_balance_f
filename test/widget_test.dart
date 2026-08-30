@@ -62,6 +62,9 @@ void main() {
       final lightSurfaceRect = tester.getRect(
         find.byKey(const Key('navigation-bar-surface')),
       );
+      final navigationLayoutRect = tester.getRect(
+        find.byKey(const Key('navigation-bar-layout')),
+      );
       final lightIndicatorRect = tester.getRect(
         find.byKey(const Key('navigation-indicator-0')),
       );
@@ -72,6 +75,7 @@ void main() {
       expect(lightSurfaceRect.width, 390);
       expect(lightSurfaceRect.height, 60);
       expect(lightSurfaceRect.left, 0);
+      expect(navigationLayoutRect, lightSurfaceRect);
       expect(lightIndicatorRect.top, lessThan(lightSurfaceRect.top));
       expect(lightIndicatorRect.bottom, greaterThan(lightSurfaceRect.top));
 
