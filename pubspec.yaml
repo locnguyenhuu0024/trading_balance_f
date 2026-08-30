@@ -108,3 +108,7 @@ flutter_launcher_icons:
   ios: true
   image_path: "assets/icon/app_icon.png" # Đường dẫn tới file ảnh bạn vừa chuẩn bị
   min_sdk_android: 21 # Dành cho Android mới
+
+  macos:
+    generate: true
+    image_path: "assets/icon/app_icon.png"
