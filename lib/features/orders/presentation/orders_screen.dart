@@ -13,7 +13,9 @@ import '../../portfolio/presentation/portfolio_screen.dart'; // Thêm import nà
 import '../../portfolio/presentation/widgets/portfolio_currency_amount.dart';
 import '../../settings/presentation/settings_screen.dart'
     show currencyProvider, vndExchangeRateProvider;
+import 'widgets/order_filter_controls.dart';
 import 'widgets/order_notional.dart';
+import 'widgets/responsive_order_grid.dart';
 
 class OrdersScreen extends ConsumerStatefulWidget {
   const OrdersScreen({super.key});
@@ -72,9 +74,6 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     final exchangeRate = ref.watch(vndExchangeRateProvider).value ?? 25400.0;
     final isBalanceHidden = ref.watch(hideBalanceProvider);
 
-    final filters = ['SPOT', 'MARGIN', 'SWAP', 'FUTURES'];
-
-    // Khởi tạo màu nền chung
     final bgColor = isDark ? const Color(0xFF121212) : Colors.white;
     final textColor = isDark ? Colors.white : Colors.black;
 
@@ -92,77 +91,17 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       ),
       body: Column(
         children: [
-          // --- Tab Chuyển đổi ---
           Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 16.0,
-              vertical: 4.0,
-            ),
-            child: SegmentedButton<OrderTab>(
-              segments: const [
-                ButtonSegment(value: OrderTab.positions, label: Text('Vị thế')),
-                ButtonSegment(value: OrderTab.pending, label: Text('Đang chờ')),
-                ButtonSegment(value: OrderTab.history, label: Text('Lịch sử')),
-              ],
-              selected: {currentTab},
-              onSelectionChanged: (Set<OrderTab> newSelection) {
-                ref.read(orderTabProvider.notifier).state = newSelection.first;
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+            child: OrderFilterControls(
+              currentTab: currentTab,
+              currentFilter: currentFilter,
+              isDark: isDark,
+              onTabChanged: (tab) {
+                ref.read(orderTabProvider.notifier).state = tab;
               },
-              style: SegmentedButton.styleFrom(
-                textStyle: const TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold,
-                ),
-                selectedForegroundColor: isDark ? Colors.black : Colors.white,
-                selectedBackgroundColor: isDark ? Colors.white : Colors.black,
-                backgroundColor: isDark
-                    ? const Color(0xFF1E1E1E)
-                    : Colors.white,
-                foregroundColor: isDark ? Colors.white70 : Colors.black87,
-              ),
-            ),
-          ),
-
-          // --- Bộ Lọc Loại Giao Dịch ---
-          SizedBox(
-            height: 40,
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              itemCount: filters.length,
-              itemBuilder: (context, index) {
-                final type = filters[index];
-                final isSelected = currentFilter == type;
-                return Padding(
-                  padding: const EdgeInsets.only(right: 6.0),
-                  child: ChoiceChip(
-                    label: Text(type),
-                    selected: isSelected,
-                    selectedColor: isDark ? Colors.white : Colors.black,
-                    backgroundColor: isDark
-                        ? const Color(0xFF1E1E1E)
-                        : Colors.grey.shade100,
-                    showCheckmark: false,
-                    labelStyle: TextStyle(
-                      fontSize: 10,
-                      color: isSelected
-                          ? (isDark ? Colors.black : Colors.white)
-                          : (isDark ? Colors.white70 : Colors.black87),
-                      fontWeight: isSelected
-                          ? FontWeight.bold
-                          : FontWeight.normal,
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    side: BorderSide.none,
-                    onSelected: (selected) {
-                      if (selected) {
-                        ref.read(orderFilterProvider.notifier).state = type;
-                      }
-                    },
-                  ),
-                );
+              onFilterChanged: (filter) {
+                ref.read(orderFilterProvider.notifier).state = filter;
               },
             ),
           ),
@@ -237,16 +176,19 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
             if (positions.isEmpty) {
               return _buildEmptyState('Không có vị thế nào đang mở.', isDark);
             }
-            return ListView.builder(
-              padding: const EdgeInsets.all(12),
-              itemCount: positions.length,
-              itemBuilder: (context, index) => _buildPositionCard(
-                positions[index],
-                isDark,
-                currency,
-                exchangeRate,
-                isBalanceHidden,
-              ),
+            return ResponsiveOrderGrid(
+              cardExtent: 270,
+              children: positions
+                  .map(
+                    (position) => _buildPositionCard(
+                      position,
+                      isDark,
+                      currency,
+                      exchangeRate,
+                      isBalanceHidden,
+                    ),
+                  )
+                  .toList(),
             );
           },
         ),
@@ -283,17 +225,20 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                 isDark,
               );
             }
-            return ListView.builder(
-              padding: const EdgeInsets.all(12),
-              itemCount: orders.length,
-              itemBuilder: (context, index) => _buildOrderCard(
-                orders[index],
-                currentTab,
-                isDark,
-                currency,
-                exchangeRate,
-                isBalanceHidden,
-              ),
+            return ResponsiveOrderGrid(
+              cardExtent: 190,
+              children: orders
+                  .map(
+                    (order) => _buildOrderCard(
+                      order,
+                      currentTab,
+                      isDark,
+                      currency,
+                      exchangeRate,
+                      isBalanceHidden,
+                    ),
+                  )
+                  .toList(),
             );
           },
         ),
@@ -410,7 +355,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     return Card(
       elevation: 0,
       color: cardColor,
-      margin: const EdgeInsets.only(bottom: 8),
+      margin: EdgeInsets.zero,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(10),
         side: BorderSide(color: borderColor, width: 1),
@@ -499,13 +444,18 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
             ),
 
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  'Lãi / Lỗ chưa thực hiện:',
-                  style: TextStyle(color: subtitleColor, fontSize: 11),
+                Expanded(
+                  child: Text(
+                    'Lãi / Lỗ chưa thực hiện:',
+                    style: TextStyle(color: subtitleColor, fontSize: 11),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
+                const SizedBox(width: 8),
                 Row(
+                  mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.baseline,
                   textBaseline: TextBaseline.alphabetic,
                   children: [
@@ -653,7 +603,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     return Card(
       elevation: 0,
       color: cardColor,
-      margin: const EdgeInsets.only(bottom: 8),
+      margin: EdgeInsets.zero,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(10),
         side: BorderSide(color: borderColor, width: 1),

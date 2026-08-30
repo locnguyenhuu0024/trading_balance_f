@@ -13,7 +13,6 @@ import '../../settings/presentation/settings_screen.dart';
 import '../../market/presentation/providers/market_provider.dart';
 import '../../../core/network/okx_websocket_service.dart';
 import '../data/okx_balance_model.dart';
-import '../../market/presentation/market_screen.dart';
 import 'widgets/portfolio_currency_amount.dart';
 
 final hideBalanceProvider = StateProvider<bool>((ref) => false);
@@ -74,16 +73,6 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
         foregroundColor: textColor,
         elevation: 0,
         centerTitle: true,
-        leading: IconButton(
-          icon: const Icon(Icons.insights, size: 22),
-          tooltip: 'Thị trường',
-          onPressed: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (context) => const MarketScreen()),
-            );
-          },
-        ),
         actions: [
           IconButton(
             icon: Icon(
@@ -93,16 +82,6 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
             tooltip: isBalanceHidden ? 'Hiện số dư' : 'Ẩn số dư',
             onPressed: () {
               ref.read(hideBalanceProvider.notifier).state = !isBalanceHidden;
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.settings_outlined, size: 22),
-            tooltip: 'Cài đặt API',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const SettingsScreen()),
-              );
             },
           ),
         ],

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/navigation/main_navigation_shell.dart';
+import 'package:trading_balance_f/core/navigation/trading_navigation_bar.dart';
 import 'package:trading_balance_f/core/network/okx_websocket_service.dart';
 import 'package:trading_balance_f/features/fractal_tracker/data/fractal_model.dart';
 import 'package:trading_balance_f/features/fractal_tracker/presentation/providers/fractal_provider.dart';
@@ -53,32 +54,27 @@ void main() {
     await tester.pump();
 
     expect(find.text('Trang chủ'), findsOneWidget);
-    expect(find.text('BMAG'), findsOneWidget);
-    expect(find.text('Lệnh'), findsOneWidget);
+    expect(find.text('BMAG'), findsNothing);
+    expect(find.text('Lệnh'), findsNothing);
+    expect(find.text('Thị trường'), findsNothing);
+    expect(find.text('Cài đặt'), findsNothing);
+    expect(TradingNavigationBar.items, hasLength(5));
+    for (var index = 0; index < TradingNavigationBar.items.length; index++) {
+      expect(find.byKey(Key('navigation-destination-$index')), findsOneWidget);
+    }
     expect(find.text('Nhật ký'), findsNothing);
     expect(find.text('Ghi PnL'), findsNothing);
     expect(find.byTooltip('BMAG Matrix'), findsNothing);
     expect(find.byTooltip('Nhật ký PnL'), findsNothing);
     expect(find.byTooltip('Quản lý Lệnh'), findsNothing);
-    expect(
-      tester.widget<NavigationBar>(find.byType(NavigationBar)).selectedIndex,
-      0,
-    );
+    expect(find.byType(NavigationBar), findsNothing);
 
-    await tester.tap(find.text('BMAG'));
+    await tester.tap(find.byKey(const Key('navigation-destination-1')));
     await tester.pump();
-    expect(
-      tester.widget<NavigationBar>(find.byType(NavigationBar)).selectedIndex,
-      1,
-    );
     expect(find.text('BMAG Tracker (BTC)'), findsOneWidget);
 
-    await tester.tap(find.text('Lệnh'));
+    await tester.tap(find.byKey(const Key('navigation-destination-2')));
     await tester.pump();
-    expect(
-      tester.widget<NavigationBar>(find.byType(NavigationBar)).selectedIndex,
-      2,
-    );
     expect(find.text('Quản lý Giao dịch'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());

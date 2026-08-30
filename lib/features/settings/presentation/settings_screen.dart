@@ -115,7 +115,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           backgroundColor: Colors.green,
         ),
       );
-      Navigator.pop(context);
     }
   }
 
