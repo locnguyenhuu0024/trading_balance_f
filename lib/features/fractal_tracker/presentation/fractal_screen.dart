@@ -5,6 +5,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import '../../../core/navigation/navigation_content_frame.dart';
 import 'providers/fractal_provider.dart';
 import '../data/fractal_model.dart';
 
@@ -83,71 +84,73 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
           ),
         ],
       ),
-      body: fractalAsync.when(
-        // Rất quan trọng: Bỏ qua trạng thái Loading khi reload để app không bị chớp mỗi giây
-        skipLoadingOnReload: true,
-        loading: () =>
-            Center(child: CircularProgressIndicator(color: textColor)),
-        error: (err, stack) => Center(
-          child: Text('Lỗi tải dữ liệu', style: TextStyle(color: textColor)),
-        ),
-        data: (data) {
-          if (data.isEmpty)
-            return const Center(child: Text('Không có dữ liệu'));
+      body: NavigationContentFrame(
+        child: fractalAsync.when(
+          // Rất quan trọng: Bỏ qua trạng thái Loading khi reload để app không bị chớp mỗi giây
+          skipLoadingOnReload: true,
+          loading: () =>
+              Center(child: CircularProgressIndicator(color: textColor)),
+          error: (err, stack) => Center(
+            child: Text('Lỗi tải dữ liệu', style: TextStyle(color: textColor)),
+          ),
+          data: (data) {
+            if (data.isEmpty)
+              return const Center(child: Text('Không có dữ liệu'));
 
-          return RefreshIndicator(
-            onRefresh: () async => ref.invalidate(fractalDataProvider),
-            child: ListView(
-              padding: const EdgeInsets.all(16),
-              physics: const AlwaysScrollableScrollPhysics(),
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      'MA TRẬN ĐỒNG PHA (CONFLUENCE)',
-                      style: TextStyle(
-                        color: isDark
-                            ? Colors.grey.shade400
-                            : Colors.grey.shade600,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
+            return RefreshIndicator(
+              onRefresh: () async => ref.invalidate(fractalDataProvider),
+              child: ListView(
+                padding: const EdgeInsets.all(16),
+                physics: const AlwaysScrollableScrollPhysics(),
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'MA TRẬN ĐỒNG PHA (CONFLUENCE)',
+                        style: TextStyle(
+                          color: isDark
+                              ? Colors.grey.shade400
+                              : Colors.grey.shade600,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
-                    ),
-                    // Thêm chấm xanh nhấp nháy biểu thị trạng thái LIVE
-                    Row(
-                      children: [
-                        Container(
-                          width: 8,
-                          height: 8,
-                          decoration: const BoxDecoration(
-                            color: Colors.green,
-                            shape: BoxShape.circle,
+                      // Thêm chấm xanh nhấp nháy biểu thị trạng thái LIVE
+                      Row(
+                        children: [
+                          Container(
+                            width: 8,
+                            height: 8,
+                            decoration: const BoxDecoration(
+                              color: Colors.green,
+                              shape: BoxShape.circle,
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          'LIVE',
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                            color: isDark
-                                ? Colors.grey.shade400
-                                : Colors.grey.shade600,
+                          const SizedBox(width: 4),
+                          Text(
+                            'LIVE',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              color: isDark
+                                  ? Colors.grey.shade400
+                                  : Colors.grey.shade600,
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                ...data.map((fData) => _buildFractalRow(fData, isDark)),
-                const SizedBox(height: 32),
-                _buildLegend(isDark),
-              ],
-            ),
-          );
-        },
+                        ],
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  ...data.map((fData) => _buildFractalRow(fData, isDark)),
+                  const SizedBox(height: 32),
+                  _buildLegend(isDark),
+                ],
+              ),
+            );
+          },
+        ),
       ),
     );
   }

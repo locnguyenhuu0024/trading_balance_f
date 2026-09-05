@@ -4,6 +4,8 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../navigation/navigation_preferences.dart';
+
 /// Provider cung cấp instance của SecureStorageHelper
 final secureStorageProvider = Provider<SecureStorageHelper>((ref) {
   const storage = FlutterSecureStorage(
@@ -28,6 +30,7 @@ class SecureStorageHelper {
   // THÊM MỚI: Keys cho Theme và Tiền tệ
   static const String _themeMode = 'THEME_MODE';
   static const String _currency = 'CURRENCY';
+  static const String _navigationPreferences = 'NAVIGATION_PREFERENCES';
 
   /// Lưu trữ OKX Credentials
   Future<void> saveOkxCredentials({
@@ -62,6 +65,20 @@ class SecureStorageHelper {
   // THÊM MỚI: Lấy cấu hình Tiền tệ
   Future<String> getCurrency() async {
     return await _storage.read(key: _currency) ?? 'USD';
+  }
+
+  /// Returns a safe default for missing, corrupt, or future records.
+  Future<NavigationPreferences> getNavigationPreferences() async {
+    final value = await _storage.read(key: _navigationPreferences);
+    return NavigationPreferences.decode(value);
+  }
+
+  /// Persists navigation independently from the pre-existing app settings.
+  Future<void> saveNavigationPreferences(NavigationPreferences preferences) {
+    return _storage.write(
+      key: _navigationPreferences,
+      value: preferences.encode(),
+    );
   }
 
   /// NÂNG CẤP: Lưu trữ Tùy chọn ứng dụng bao gồm cả Theme và Currency

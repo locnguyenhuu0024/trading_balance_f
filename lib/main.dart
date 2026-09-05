@@ -9,12 +9,14 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'core/security/secure_storage_helper.dart';
 import 'core/navigation/main_navigation_shell.dart';
+import 'core/navigation/navigation_preferences.dart';
+import 'core/navigation/navigation_preferences_provider.dart';
+import 'core/security/secure_storage_helper.dart';
+import 'core/services/background_service.dart';
 import 'features/portfolio/presentation/portfolio_screen.dart'
     show hideBalanceProvider;
 import 'features/settings/presentation/settings_screen.dart';
-import 'core/services/background_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -49,6 +51,7 @@ void main() async {
   bool hideBalanceDefault = false;
   String themeModeStr = 'system';
   String currencyStr = 'USD';
+  var navigationPreferences = NavigationPreferences.defaults;
 
   try {
     bioAuth = await helper.getBiometricAuth();
@@ -57,6 +60,14 @@ void main() async {
     currencyStr = await helper.getCurrency();
   } catch (e) {
     debugPrint('Bỏ qua lỗi đọc Storage: $e');
+  }
+
+  // Keep this read independent from legacy preferences. A failed theme or
+  // credential read must not prevent navigation from rendering its saved mode.
+  try {
+    navigationPreferences = await helper.getNavigationPreferences();
+  } catch (e) {
+    debugPrint('Bỏ qua lỗi đọc tùy chọn điều hướng: $e');
   }
 
   final initialThemeMode = themeModeStr == 'dark'
@@ -72,6 +83,9 @@ void main() async {
         hideBalanceProvider.overrideWith((ref) => hideBalanceDefault),
         themeModeProvider.overrideWith((ref) => initialThemeMode),
         currencyProvider.overrideWith((ref) => currencyStr),
+        navigationPreferencesInitialProvider.overrideWithValue(
+          navigationPreferences,
+        ),
       ],
       // Nếu là Web, luôn vào thẳng Portfolio (bỏ qua sinh trắc học)
       child: TradingBalanceApp(requireBiometrics: kIsWeb ? false : bioAuth),
@@ -272,6 +286,26 @@ class WebStorageHelper extends SecureStorageHelper {
 
   @override
   Future<String> getCurrency() async => _prefs.getString('CURRENCY') ?? 'USD';
+
+  @override
+  Future<NavigationPreferences> getNavigationPreferences() async {
+    return NavigationPreferences.decode(
+      _prefs.getString('NAVIGATION_PREFERENCES'),
+    );
+  }
+
+  @override
+  Future<void> saveNavigationPreferences(
+    NavigationPreferences preferences,
+  ) async {
+    final didSave = await _prefs.setString(
+      'NAVIGATION_PREFERENCES',
+      preferences.encode(),
+    );
+    if (!didSave) {
+      throw StateError('Không thể lưu tùy chọn điều hướng trên Web.');
+    }
+  }
 
   @override
   Future<void> saveAppPreferences({

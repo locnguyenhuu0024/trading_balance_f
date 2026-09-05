@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../../core/network/dio_client.dart';
+import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/widgets/crypto_icon.dart';
 import '../../portfolio/presentation/portfolio_screen.dart'; // Lấy trạng thái Dark Mode
 import '../../market/presentation/providers/market_provider.dart';
@@ -30,28 +31,39 @@ class MarketTicker {
       instId: json['instId'] ?? '',
       last: double.tryParse(json['last'] ?? '0') ?? 0,
       open24h: double.tryParse(json['sodUtc0'] ?? '0') ?? 0,
-      vol24h: double.tryParse(json['volCcy24h'] ?? '0') ?? 0, // Volume quy ra USD
+      vol24h:
+          double.tryParse(json['volCcy24h'] ?? '0') ?? 0, // Volume quy ra USD
     );
   }
 
   // Công thức tính % biến động 24h
-  double get changePercent => open24h > 0 ? ((last - open24h) / open24h) * 100 : 0.0;
+  double get changePercent =>
+      open24h > 0 ? ((last - open24h) / open24h) * 100 : 0.0;
   String get coinSymbol => instId.split('-').first;
 }
 
 // --- Provider lấy dữ liệu từ API Public của OKX ---
-final marketListProvider = FutureProvider.autoDispose<List<MarketTicker>>((ref) async {
+final marketListProvider = FutureProvider.autoDispose<List<MarketTicker>>((
+  ref,
+) async {
   final dio = ref.watch(dioProvider);
 
   // Gọi API Public (Không cần truyền 'requiresAuth: true')
-  final response = await dio.get('/api/v5/market/tickers', queryParameters: {'instType': 'SPOT'});
+  final response = await dio.get(
+    '/api/v5/market/tickers',
+    queryParameters: {'instType': 'SPOT'},
+  );
 
   if (response.data['code'] == '0') {
     final List<dynamic> data = response.data['data'];
     final tickers = data
-        .where((json) => (json['instId'] as String).endsWith('-USDT')) // Chỉ lấy cặp USDT
+        .where(
+          (json) => (json['instId'] as String).endsWith('-USDT'),
+        ) // Chỉ lấy cặp USDT
         .map((json) => MarketTicker.fromJson(json))
-        .where((t) => t.vol24h > 5000000) // Lọc các coin thanh khoản cao (Volume > 5 triệu USD)
+        .where(
+          (t) => t.vol24h > 5000000,
+        ) // Lọc các coin thanh khoản cao (Volume > 5 triệu USD)
         .toList();
 
     // Sắp xếp theo volume giảm dần
@@ -96,120 +108,174 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
         foregroundColor: textColor,
         elevation: 0,
         centerTitle: true,
-        title: const Text('Thị trường (Top 50)', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+        title: const Text(
+          'Thị trường (Top 50)',
+          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+        ),
         actions: [],
       ),
-      body: RefreshIndicator(
-        color: isDark ? Colors.black : Colors.black,
-        backgroundColor: isDark ? Colors.white : Colors.white,
-        onRefresh: () async {
-          _isWsSubscribed = false; // Reset trạng thái để đăng ký lại WS
-          return ref.invalidate(marketListProvider);
-        },
-        child: marketAsync.when(
-          loading: () => Center(child: CircularProgressIndicator(color: textColor)),
-          error: (err, stack) => Center(
-            child: Text('Lỗi tải dữ liệu:\n$err', textAlign: TextAlign.center, style: TextStyle(color: isDark ? Colors.redAccent : Colors.red)),
-          ),
-          data: (tickers) {
-            // Đăng ký WebSocket cho Top 50 coin vừa tải về
-            if (!_isWsSubscribed && tickers.isNotEmpty) {
-              _isWsSubscribed = true;
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                final coins = tickers.map((e) => e.coinSymbol).toList();
-                ref.read(okxWebsocketProvider).subscribeToTickers(coins);
-              });
-            }
+      body: NavigationContentFrame(
+        child: RefreshIndicator(
+          color: isDark ? Colors.black : Colors.black,
+          backgroundColor: isDark ? Colors.white : Colors.white,
+          onRefresh: () async {
+            _isWsSubscribed = false; // Reset trạng thái để đăng ký lại WS
+            return ref.invalidate(marketListProvider);
+          },
+          child: marketAsync.when(
+            loading: () =>
+                Center(child: CircularProgressIndicator(color: textColor)),
+            error: (err, stack) => Center(
+              child: Text(
+                'Lỗi tải dữ liệu:\n$err',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: isDark ? Colors.redAccent : Colors.red),
+              ),
+            ),
+            data: (tickers) {
+              // Đăng ký WebSocket cho Top 50 coin vừa tải về
+              if (!_isWsSubscribed && tickers.isNotEmpty) {
+                _isWsSubscribed = true;
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  final coins = tickers.map((e) => e.coinSymbol).toList();
+                  ref.read(okxWebsocketProvider).subscribeToTickers(coins);
+                });
+              }
 
-            return ListView.builder(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              itemCount: tickers.length,
-              itemBuilder: (context, index) {
-                final t = tickers[index];
+              return ListView.builder(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
+                itemCount: tickers.length,
+                itemBuilder: (context, index) {
+                  final t = tickers[index];
 
-                // --- Cập nhật giá Realtime từ WebSocket ---
-                double currentPrice = t.last;
-                final String? realtimePriceStr = livePrices[t.coinSymbol];
-                if (realtimePriceStr != null) {
-                  currentPrice = double.tryParse(realtimePriceStr) ?? t.last;
-                }
+                  // --- Cập nhật giá Realtime từ WebSocket ---
+                  double currentPrice = t.last;
+                  final String? realtimePriceStr = livePrices[t.coinSymbol];
+                  if (realtimePriceStr != null) {
+                    currentPrice = double.tryParse(realtimePriceStr) ?? t.last;
+                  }
 
-                // Tính toán lại % biến động dựa trên giá Live mới nhất
-                final double currentChangePercent = t.open24h > 0
-                    ? ((currentPrice - t.open24h) / t.open24h) * 100
-                    : 0.0;
+                  // Tính toán lại % biến động dựa trên giá Live mới nhất
+                  final double currentChangePercent = t.open24h > 0
+                      ? ((currentPrice - t.open24h) / t.open24h) * 100
+                      : 0.0;
 
-                final isPositive = currentChangePercent >= 0;
-                final changeColor = isPositive ? Colors.green : Colors.redAccent;
-                final changeSign = isPositive ? '+' : '';
-                final volFormatted = '\$${(t.vol24h / 1000000).toStringAsFixed(2)}M';
+                  final isPositive = currentChangePercent >= 0;
+                  final changeColor = isPositive
+                      ? Colors.green
+                      : Colors.redAccent;
+                  final changeSign = isPositive ? '+' : '';
+                  final volFormatted =
+                      '\$${(t.vol24h / 1000000).toStringAsFixed(2)}M';
 
-                // Thông minh hiển thị giá: Nếu coin rác (< $1) thì hiện nhiều số thập phân
-                String priceFormatted;
-                if (currentPrice < 1) {
-                  priceFormatted = NumberFormat("#,##0.00####", "en_US").format(currentPrice);
-                } else {
-                  priceFormatted = NumberFormat("#,##0.00", "en_US").format(currentPrice);
-                }
+                  // Thông minh hiển thị giá: Nếu coin rác (< $1) thì hiện nhiều số thập phân
+                  String priceFormatted;
+                  if (currentPrice < 1) {
+                    priceFormatted = NumberFormat(
+                      "#,##0.00####",
+                      "en_US",
+                    ).format(currentPrice);
+                  } else {
+                    priceFormatted = NumberFormat(
+                      "#,##0.00",
+                      "en_US",
+                    ).format(currentPrice);
+                  }
 
-                return Card(
-                  elevation: 0,
-                  color: cardColor,
-                  margin: const EdgeInsets.only(bottom: 8),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    side: BorderSide(color: borderColor, width: 1.2),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                    child: Row(
-                      children: [
-                        // Cột 1: Logo và Tên Coin
-                        CryptoIcon(
-                          symbol: t.coinSymbol,
-                          size: 36,
-                          backgroundColor: iconBgColor,
-                          textColor: textColor,
-                          textSize: 14,
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                  return Card(
+                    elevation: 0,
+                    color: cardColor,
+                    margin: const EdgeInsets.only(bottom: 8),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      side: BorderSide(color: borderColor, width: 1.2),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 12,
+                      ),
+                      child: Row(
+                        children: [
+                          // Cột 1: Logo và Tên Coin
+                          CryptoIcon(
+                            symbol: t.coinSymbol,
+                            size: 36,
+                            backgroundColor: iconBgColor,
+                            textColor: textColor,
+                            textSize: 14,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  t.coinSymbol,
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 15,
+                                    color: textColor,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Vol 24h: $volFormatted',
+                                  style: TextStyle(
+                                    color: isDark
+                                        ? Colors.grey.shade400
+                                        : Colors.grey.shade600,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+
+                          // Cột 2: Giá và Khối % Biến động
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
-                              Text(t.coinSymbol, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: textColor)),
-                              const SizedBox(height: 4),
-                              Text('Vol 24h: $volFormatted', style: TextStyle(color: isDark ? Colors.grey.shade400 : Colors.grey.shade600, fontSize: 11)),
+                              Text(
+                                '\$$priceFormatted',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 15,
+                                  color: textColor,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 3,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: changeColor,
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text(
+                                  '$changeSign${currentChangePercent.toStringAsFixed(2)}%',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ),
                             ],
                           ),
-                        ),
-
-                        // Cột 2: Giá và Khối % Biến động
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Text('\$$priceFormatted', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: textColor)),
-                            const SizedBox(height: 6),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                              decoration: BoxDecoration(
-                                color: changeColor,
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: Text(
-                                '$changeSign${currentChangePercent.toStringAsFixed(2)}%',
-                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11),
-                              ),
-                            )
-                          ],
-                        )
-                      ],
+                        ],
+                      ),
                     ),
-                  ),
-                );
-              },
-            );
-          },
+                  );
+                },
+              );
+            },
+          ),
         ),
       ),
     );

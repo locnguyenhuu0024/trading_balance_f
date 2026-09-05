@@ -4,6 +4,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/widgets/crypto_icon.dart';
 import 'providers/order_provider.dart';
 import '../data/okx_order_model.dart';
@@ -89,41 +90,43 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
           style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
         ),
       ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-            child: OrderFilterControls(
-              currentTab: currentTab,
-              currentFilter: currentFilter,
-              isDark: isDark,
-              onTabChanged: (tab) {
-                ref.read(orderTabProvider.notifier).state = tab;
-              },
-              onFilterChanged: (filter) {
-                ref.read(orderFilterProvider.notifier).state = filter;
-              },
+      body: NavigationContentFrame(
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+              child: OrderFilterControls(
+                currentTab: currentTab,
+                currentFilter: currentFilter,
+                isDark: isDark,
+                onTabChanged: (tab) {
+                  ref.read(orderTabProvider.notifier).state = tab;
+                },
+                onFilterChanged: (filter) {
+                  ref.read(orderFilterProvider.notifier).state = filter;
+                },
+              ),
             ),
-          ),
 
-          Divider(
-            height: 16,
-            color: isDark ? Colors.grey.shade800 : Colors.grey.shade200,
-          ),
-
-          // --- Nội dung chính ---
-          Expanded(
-            child: _buildBodyContent(
-              context,
-              currentTab,
-              currentFilter,
-              isDark,
-              currency,
-              exchangeRate,
-              isBalanceHidden,
+            Divider(
+              height: 16,
+              color: isDark ? Colors.grey.shade800 : Colors.grey.shade200,
             ),
-          ),
-        ],
+
+            // --- Nội dung chính ---
+            Expanded(
+              child: _buildBodyContent(
+                context,
+                currentTab,
+                currentFilter,
+                isDark,
+                currency,
+                exchangeRate,
+                isBalanceHidden,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

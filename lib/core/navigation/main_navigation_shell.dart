@@ -6,7 +6,8 @@ import '../../features/market/presentation/market_screen.dart';
 import '../../features/orders/presentation/orders_screen.dart';
 import '../../features/portfolio/presentation/portfolio_screen.dart';
 import '../../features/settings/presentation/settings_screen.dart';
-import 'trading_navigation_bar.dart';
+import 'navigation_preferences_provider.dart';
+import 'navigation_presentation_host.dart';
 
 typedef NavigationDestinationBodyBuilder =
     Widget Function(BuildContext context, int index);
@@ -49,11 +50,14 @@ class _MainNavigationShellState extends ConsumerState<MainNavigationShell> {
   Widget build(BuildContext context) {
     final isDark = ref.watch(isDarkModeProvider);
     final backgroundColor = isDark ? const Color(0xFF121212) : Colors.white;
+    final navigationPreferences = ref.watch(
+      navigationPreferencesProvider.select((state) => state.preferences),
+    );
 
-    return Scaffold(
-      backgroundColor: backgroundColor,
-      body: _buildSelectedScreen(context),
-      bottomNavigationBar: TradingNavigationBar(
+    return Material(
+      color: backgroundColor,
+      child: NavigationPresentationHost(
+        preferences: navigationPreferences,
         selectedIndex: _selectedIndex,
         isDark: isDark,
         onDestinationSelected: (index) {
@@ -61,6 +65,7 @@ class _MainNavigationShellState extends ConsumerState<MainNavigationShell> {
             setState(() => _selectedIndex = index);
           }
         },
+        child: _buildSelectedScreen(context),
       ),
     );
   }

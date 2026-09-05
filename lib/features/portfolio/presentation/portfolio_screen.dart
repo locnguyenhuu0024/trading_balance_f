@@ -7,6 +7,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../../core/currency/currency_display_mode.dart';
+import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/widgets/crypto_icon.dart';
 import 'providers/portfolio_provider.dart';
 import '../../settings/presentation/settings_screen.dart';
@@ -86,38 +87,40 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
           ),
         ],
       ),
-      body: RefreshIndicator(
-        color: isDark ? Colors.black : Colors.white,
-        backgroundColor: isDark ? Colors.white : Colors.black,
-        onRefresh: () async {
-          _isWsSubscribed = false;
-          ref.invalidate(vndExchangeRateProvider);
-          return ref.invalidate(portfolioFutureProvider);
-        },
-        child: portfolioAsyncValue.when(
-          skipLoadingOnReload: true,
-          loading: () =>
-              Center(child: CircularProgressIndicator(color: textColor)),
-          error: (error, stack) =>
-              _buildErrorState(context, error.toString(), isDark),
-          data: (data) {
-            // Đăng ký WebSocket khi load xong danh sách coin
-            if (!_isWsSubscribed && data.details.isNotEmpty) {
-              _isWsSubscribed = true;
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                final coins = data.details.map((e) => e.ccy).toList();
-                ref.read(okxWebsocketProvider).subscribeToTickers(coins);
-              });
-            }
-            return _buildPortfolioData(
-              data,
-              livePrices,
-              isBalanceHidden,
-              isDark,
-              currency,
-              exchangeRate,
-            );
+      body: NavigationContentFrame(
+        child: RefreshIndicator(
+          color: isDark ? Colors.black : Colors.white,
+          backgroundColor: isDark ? Colors.white : Colors.black,
+          onRefresh: () async {
+            _isWsSubscribed = false;
+            ref.invalidate(vndExchangeRateProvider);
+            return ref.invalidate(portfolioFutureProvider);
           },
+          child: portfolioAsyncValue.when(
+            skipLoadingOnReload: true,
+            loading: () =>
+                Center(child: CircularProgressIndicator(color: textColor)),
+            error: (error, stack) =>
+                _buildErrorState(context, error.toString(), isDark),
+            data: (data) {
+              // Đăng ký WebSocket khi load xong danh sách coin
+              if (!_isWsSubscribed && data.details.isNotEmpty) {
+                _isWsSubscribed = true;
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  final coins = data.details.map((e) => e.ccy).toList();
+                  ref.read(okxWebsocketProvider).subscribeToTickers(coins);
+                });
+              }
+              return _buildPortfolioData(
+                data,
+                livePrices,
+                isBalanceHidden,
+                isDark,
+                currency,
+                exchangeRate,
+              );
+            },
+          ),
         ),
       ),
     );
