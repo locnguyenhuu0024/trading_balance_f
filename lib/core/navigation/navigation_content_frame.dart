@@ -25,15 +25,12 @@ class NavigationPresentationScope extends InheritedWidget {
   bool updateShouldNotify(NavigationPresentationScope oldWidget) => false;
 }
 
-/// Reserves only the content space needed by the current navigation overlay.
-/// It never paints a lane or intercepts gestures around the navigation itself.
+/// Reserves the content space needed by the fixed navigation bar.
+///
+/// Floating navigation is a true overlay, so it never changes the destination
+/// body's constraints or adds a layout lane around its edge.
 class NavigationContentFrame extends ConsumerWidget {
   const NavigationContentFrame({super.key, required this.child});
-
-  // The button group itself is 68 high/wide. Include its 12-pixel edge gap so
-  // scroll content never settles beneath a label or a button shadow.
-  static const _floatingHorizontalClearance = 80.0;
-  static const _floatingSideClearance = 88.0;
 
   final Widget child;
 
@@ -50,40 +47,14 @@ class NavigationContentFrame extends ConsumerWidget {
       mediaQuery.viewInsets.bottom,
     );
 
-    final padding = switch (preferences.displayMode) {
-      NavigationDisplayMode.bar => EdgeInsets.only(bottom: 60 + bottomInset),
-      NavigationDisplayMode.floating => _floatingPadding(
-        preferences.floatingEdge,
-        mediaQuery,
-        bottomInset,
-      ),
-    };
+    if (preferences.displayMode == NavigationDisplayMode.floating) {
+      return child;
+    }
 
     return Padding(
       key: const Key('navigation-content-frame'),
-      padding: padding,
+      padding: EdgeInsets.only(bottom: 60 + bottomInset),
       child: child,
     );
-  }
-
-  EdgeInsets _floatingPadding(
-    NavigationEdge edge,
-    MediaQueryData mediaQuery,
-    double bottomInset,
-  ) {
-    return switch (edge) {
-      NavigationEdge.top => const EdgeInsets.only(
-        top: _floatingHorizontalClearance,
-      ),
-      NavigationEdge.bottom => EdgeInsets.only(
-        bottom: _floatingHorizontalClearance + bottomInset,
-      ),
-      NavigationEdge.left => EdgeInsets.only(
-        left: _floatingSideClearance + mediaQuery.viewPadding.left,
-      ),
-      NavigationEdge.right => EdgeInsets.only(
-        right: _floatingSideClearance + mediaQuery.viewPadding.right,
-      ),
-    };
   }
 }
