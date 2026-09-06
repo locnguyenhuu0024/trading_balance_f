@@ -14,12 +14,21 @@ import 'core/navigation/navigation_preferences.dart';
 import 'core/navigation/navigation_preferences_provider.dart';
 import 'core/security/secure_storage_helper.dart';
 import 'core/services/background_service.dart';
+import 'core/timezone/app_time_zone.dart';
 import 'features/portfolio/presentation/portfolio_screen.dart'
     show hideBalanceProvider;
 import 'features/settings/presentation/settings_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  try {
+    AppTimeZone.initialize();
+  } catch (e) {
+    debugPrint(
+      'Falling back to UTC after time-zone initialization failure: $e',
+    );
+  }
 
   // BẢO VỆ 1: Chỉ khởi tạo Background Service nếu KHÔNG PHẢI là Web
   if (!kIsWeb) {
@@ -51,6 +60,7 @@ void main() async {
   bool hideBalanceDefault = false;
   String themeModeStr = 'system';
   String currencyStr = 'USD';
+  String timeZoneId = AppTimeZone.defaultId;
   var navigationPreferences = NavigationPreferences.defaults;
 
   try {
@@ -58,6 +68,7 @@ void main() async {
     hideBalanceDefault = await helper.getHideBalanceDefault();
     themeModeStr = await helper.getThemeMode();
     currencyStr = await helper.getCurrency();
+    timeZoneId = await helper.getTimeZoneId();
   } catch (e) {
     debugPrint('Bỏ qua lỗi đọc Storage: $e');
   }
@@ -73,6 +84,7 @@ void main() async {
   final initialThemeMode = themeModeStr == 'dark'
       ? ThemeMode.dark
       : (themeModeStr == 'light' ? ThemeMode.light : ThemeMode.system);
+  final initialTimeZoneId = AppTimeZone.normalizeId(timeZoneId);
 
   runApp(
     ProviderScope(
@@ -83,6 +95,7 @@ void main() async {
         hideBalanceProvider.overrideWith((ref) => hideBalanceDefault),
         themeModeProvider.overrideWith((ref) => initialThemeMode),
         currencyProvider.overrideWith((ref) => currencyStr),
+        appTimeZoneProvider.overrideWith((ref) => initialTimeZoneId),
         navigationPreferencesInitialProvider.overrideWithValue(
           navigationPreferences,
         ),
@@ -286,6 +299,21 @@ class WebStorageHelper extends SecureStorageHelper {
 
   @override
   Future<String> getCurrency() async => _prefs.getString('CURRENCY') ?? 'USD';
+
+  @override
+  Future<String> getTimeZoneId() async =>
+      AppTimeZone.normalizeId(_prefs.getString('TIME_ZONE_ID'));
+
+  @override
+  Future<void> saveTimeZoneId(String timeZoneId) async {
+    final didSave = await _prefs.setString(
+      'TIME_ZONE_ID',
+      AppTimeZone.normalizeId(timeZoneId),
+    );
+    if (!didSave) {
+      throw StateError('Unable to save the time-zone preference on the web.');
+    }
+  }
 
   @override
   Future<NavigationPreferences> getNavigationPreferences() async {

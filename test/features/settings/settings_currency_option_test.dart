@@ -39,9 +39,7 @@ void main() {
       ),
     );
 
-    final currencyDropdown = find.byWidgetPredicate(
-      (widget) => widget is DropdownButton<String>,
-    );
+    final currencyDropdown = find.byKey(const Key('settings-currency-select'));
     expect(currencyDropdown, findsOneWidget);
 
     await tester.tap(currencyDropdown);
@@ -80,9 +78,7 @@ void main() {
       ),
     );
 
-    final currencyDropdown = find.byWidgetPredicate(
-      (widget) => widget is DropdownButton<String>,
-    );
+    final currencyDropdown = find.byKey(const Key('settings-currency-select'));
     await tester.tap(currencyDropdown);
     await tester.pumpAndSettle();
     await tester.tap(find.text('USDT + VND').last);

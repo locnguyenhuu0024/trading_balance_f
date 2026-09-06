@@ -11,6 +11,8 @@ import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/navigation/navigation_preferences.dart';
 import '../../../core/navigation/navigation_preferences_provider.dart';
 import '../../../core/security/secure_storage_helper.dart';
+import '../../../core/timezone/app_time_zone.dart';
+import '../../fractal_tracker/presentation/providers/fractal_provider.dart';
 import '../../portfolio/presentation/portfolio_screen.dart';
 
 // --- Các Provider quản lý cấu hình toàn cục ---
@@ -42,12 +44,16 @@ class SettingsScreen extends ConsumerStatefulWidget {
 }
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
+  static const _timeZoneDescription =
+      'Áp dụng cho toàn bộ mốc thời gian trong ứng dụng.';
+
   final _formKey = GlobalKey<FormState>();
   final _apiKeyController = TextEditingController();
   final _secretKeyController = TextEditingController();
   final _passphraseController = TextEditingController();
 
   bool _isLoading = false;
+  bool _isSavingTimeZone = false;
 
   @override
   void initState() {
@@ -66,6 +72,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final bioAuth = await storage.getBiometricAuth();
     final themeModeStr = await storage.getThemeMode();
     final currency = await storage.getCurrency();
+    final timeZoneId = await storage.getTimeZoneId();
 
     // Kiểm tra xem Background Service có đang chạy không
     final isServiceRunning = await FlutterBackgroundService().isRunning();
@@ -84,6 +91,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ? ThemeMode.dark
           : (themeModeStr == 'light' ? ThemeMode.light : ThemeMode.system);
       ref.read(currencyProvider.notifier).state = currency;
+      ref.read(appTimeZoneProvider.notifier).state = AppTimeZone.normalizeId(
+        timeZoneId,
+      );
       ref.read(backgroundServiceProvider.notifier).state = isServiceRunning;
     }
   }
@@ -121,6 +131,52 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
+  Future<void> _saveTimeZone(String timeZoneId) async {
+    if (_isSavingTimeZone) return;
+
+    final normalizedTimeZoneId = AppTimeZone.normalizeId(timeZoneId);
+    final previousTimeZoneId = ref.read(appTimeZoneProvider);
+    if (normalizedTimeZoneId == previousTimeZoneId) return;
+
+    ref.read(appTimeZoneProvider.notifier).state = normalizedTimeZoneId;
+    setState(() => _isSavingTimeZone = true);
+
+    try {
+      await ref
+          .read(secureStorageProvider)
+          .saveTimeZoneId(normalizedTimeZoneId);
+      ref.invalidate(fractalDataProvider);
+    } catch (_) {
+      if (mounted) {
+        ref.read(appTimeZoneProvider.notifier).state = previousTimeZoneId;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Không lưu được múi giờ. Vui lòng thử lại.'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSavingTimeZone = false);
+    }
+  }
+
+  void _showTimeZoneInfo() {
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Múi giờ'),
+        content: const Text(_timeZoneDescription),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Đóng'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _apiKeyController.dispose();
@@ -136,6 +192,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final exchangeRateAsync = ref.watch(vndExchangeRateProvider);
     final hideBalanceDefault = ref.watch(defaultHideBalanceProvider);
     final bioAuth = ref.watch(biometricAuthProvider);
+    final timeZoneId = ref.watch(appTimeZoneProvider);
     final navigationState = ref.watch(navigationPreferencesProvider);
     final navigationPreferences = navigationState.preferences;
 
@@ -254,6 +311,80 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ),
                     ListTile(
                       leading: Icon(
+                        Icons.schedule_outlined,
+                        color: textColor,
+                        size: 22,
+                      ),
+                      title: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'Múi giờ',
+                            style: TextStyle(
+                              color: textColor,
+                              fontWeight: FontWeight.w500,
+                              fontSize: 14,
+                            ),
+                          ),
+                          IconButton(
+                            key: const Key('settings-timezone-info-button'),
+                            tooltip: 'Thông tin múi giờ',
+                            visualDensity: VisualDensity.compact,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(
+                              minWidth: 28,
+                              minHeight: 28,
+                            ),
+                            icon: Icon(
+                              Icons.help_outline_rounded,
+                              color: sectionTitleColor,
+                              size: 18,
+                            ),
+                            onPressed: _showTimeZoneInfo,
+                          ),
+                        ],
+                      ),
+                      trailing: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          key: const Key('settings-timezone-select'),
+                          value: AppTimeZone.normalizeId(timeZoneId),
+                          dropdownColor: cardColor,
+                          icon: Icon(
+                            Icons.unfold_more_rounded,
+                            color: sectionTitleColor,
+                            size: 20,
+                          ),
+                          style: TextStyle(
+                            color: textColor,
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          alignment: AlignmentDirectional.centerEnd,
+                          items: AppTimeZone.options
+                              .map(
+                                (option) => DropdownMenuItem<String>(
+                                  value: option.id,
+                                  child: Text('${option.label} (${option.id})'),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: _isSavingTimeZone
+                              ? null
+                              : (String? value) {
+                                  if (value != null) _saveTimeZone(value);
+                                },
+                        ),
+                      ),
+                    ),
+                    Divider(
+                      height: 1,
+                      color: isDark
+                          ? Colors.grey.shade800
+                          : Colors.grey.shade100,
+                      indent: 52,
+                    ),
+                    ListTile(
+                      leading: Icon(
                         Icons.attach_money_rounded,
                         color: textColor,
                         size: 22,
@@ -294,6 +425,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           : null,
                       trailing: DropdownButtonHideUnderline(
                         child: DropdownButton<String>(
+                          key: const Key('settings-currency-select'),
                           value: currency,
                           dropdownColor: cardColor,
                           icon: Icon(

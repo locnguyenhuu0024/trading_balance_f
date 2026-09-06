@@ -2,16 +2,20 @@
 // File Path: lib/features/fractal_tracker/presentation/providers/fractal_provider.dart
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../../core/timezone/app_time_zone.dart';
 import '../../data/fractal_model.dart';
 
 final selectedMonthProvider = StateProvider<DateTime>((ref) {
-  final now = DateTime.now();
+  final timeZoneId = ref.watch(appTimeZoneProvider);
+  final now = AppTimeZone.now(timeZoneId);
   return DateTime(now.year, now.month);
 });
 
 final selectedYearProvider = StateProvider<int>((ref) {
-  return DateTime.now().year;
+  final timeZoneId = ref.watch(appTimeZoneProvider);
+  return AppTimeZone.now(timeZoneId).year;
 });
 
 // THÊM MỚI: Provider quản lý Coin đang chọn, mặc định là BTC
@@ -27,8 +31,12 @@ String fractalBarForTimeframe(String timeframe) {
   };
 }
 
-String fractalSubCandleLabel(String timeframe, int timestampMs) {
-  final dt = DateTime.fromMillisecondsSinceEpoch(timestampMs, isUtc: true);
+String fractalSubCandleLabel(
+  String timeframe,
+  int timestampMs, {
+  String timeZoneId = AppTimeZone.defaultId,
+}) {
+  final dt = AppTimeZone.fromEpochMilliseconds(timeZoneId, timestampMs);
   return switch (timeframe) {
     'M1' => dt.day.toString(),
     'Y1' => dt.month.toString(),
@@ -51,6 +59,64 @@ int fractalQuarterIndex({
   return index.clamp(0, 3);
 }
 
+@immutable
+class FractalPeriodBounds {
+  const FractalPeriodBounds({
+    required this.startMs,
+    required this.endMs,
+    required this.isCurrentPeriod,
+  });
+
+  final int startMs;
+  final int endMs;
+  final bool isCurrentPeriod;
+}
+
+FractalPeriodBounds fractalPeriodBounds({
+  required String timeframe,
+  required String timeZoneId,
+  DateTime? targetDate,
+  DateTime? instant,
+}) {
+  final localNow = AppTimeZone.now(timeZoneId, instant: instant);
+  late AppTimeZoneRange range;
+  var isCurrentPeriod = false;
+
+  switch (timeframe) {
+    case 'D1':
+      range = AppTimeZone.dayRange(timeZoneId, date: localNow);
+      isCurrentPeriod = true;
+      break;
+    case 'W1':
+      range = AppTimeZone.currentWeekRange(timeZoneId, instant: instant);
+      isCurrentPeriod = true;
+      break;
+    case 'M1':
+      final date = targetDate ?? localNow;
+      range = AppTimeZone.monthRange(
+        timeZoneId,
+        year: date.year,
+        month: date.month,
+      );
+      isCurrentPeriod =
+          date.year == localNow.year && date.month == localNow.month;
+      break;
+    case 'Y1':
+      final date = targetDate ?? localNow;
+      range = AppTimeZone.yearRange(timeZoneId, year: date.year);
+      isCurrentPeriod = date.year == localNow.year;
+      break;
+    default:
+      throw ArgumentError.value(timeframe, 'timeframe');
+  }
+
+  return FractalPeriodBounds(
+    startMs: range.startMillisecondsSinceEpoch,
+    endMs: range.endMillisecondsSinceEpoch,
+    isCurrentPeriod: isCurrentPeriod,
+  );
+}
+
 int _yearMonthlyCandleMidpointMs(int candleTimestampMs) {
   final candleStart = DateTime.fromMillisecondsSinceEpoch(
     candleTimestampMs,
@@ -70,6 +136,7 @@ final fractalDataProvider = FutureProvider.autoDispose<List<FractalData>>((
   final targetMonth = ref.watch(selectedMonthProvider);
   final targetYear = ref.watch(selectedYearProvider);
   final targetCoin = ref.watch(selectedCoinProvider); // THÊM MỚI
+  final timeZoneId = ref.watch(appTimeZoneProvider);
 
   final results = await Future.wait([
     _fetchAndProcess(
@@ -79,6 +146,7 @@ final fractalDataProvider = FutureProvider.autoDispose<List<FractalData>>((
       24,
       null,
       targetCoin,
+      timeZoneId,
     ),
     _fetchAndProcess(
       dio,
@@ -87,6 +155,7 @@ final fractalDataProvider = FutureProvider.autoDispose<List<FractalData>>((
       42,
       null,
       targetCoin,
+      timeZoneId,
     ),
     _fetchAndProcess(
       dio,
@@ -95,6 +164,7 @@ final fractalDataProvider = FutureProvider.autoDispose<List<FractalData>>((
       31,
       targetMonth,
       targetCoin,
+      timeZoneId,
     ),
     _fetchAndProcess(
       dio,
@@ -103,6 +173,7 @@ final fractalDataProvider = FutureProvider.autoDispose<List<FractalData>>((
       12,
       DateTime(targetYear),
       targetCoin,
+      timeZoneId,
     ),
   ]);
 
@@ -116,51 +187,25 @@ Future<FractalData?> _fetchAndProcess(
   int limit,
   DateTime? targetDate,
   String coin,
+  String timeZoneId,
 ) async {
   try {
-    final now = DateTime.now().toUtc();
-    DateTime startTime;
-    DateTime endTime;
-
-    // Kiểm tra xem khung thời gian đang xem có phải là thời điểm hiện tại không
-    bool isCurrentPeriod = false;
-
-    switch (timeframe) {
-      case 'D1':
-        startTime = DateTime.utc(now.year, now.month, now.day);
-        endTime = startTime.add(const Duration(days: 1));
-        isCurrentPeriod = true;
-        break;
-      case 'W1':
-        final mondayOffset = now.weekday - 1;
-        startTime = DateTime.utc(
-          now.year,
-          now.month,
-          now.day,
-        ).subtract(Duration(days: mondayOffset));
-        endTime = startTime.add(const Duration(days: 7));
-        isCurrentPeriod = true;
-        break;
-      case 'M1':
-        final date = targetDate ?? now;
-        startTime = DateTime.utc(date.year, date.month, 1);
-        endTime = DateTime.utc(date.year, date.month + 1, 1);
-        limit = endTime.difference(startTime).inDays;
-        isCurrentPeriod = (date.year == now.year && date.month == now.month);
-        break;
-      case 'Y1':
-        final date = targetDate ?? now;
-        startTime = DateTime.utc(date.year, 1, 1);
-        endTime = DateTime.utc(date.year + 1, 1, 1);
-        limit = 12;
-        isCurrentPeriod = (date.year == now.year);
-        break;
-      default:
-        return null;
+    final period = fractalPeriodBounds(
+      timeframe: timeframe,
+      timeZoneId: timeZoneId,
+      targetDate: targetDate,
+    );
+    final startMs = period.startMs;
+    final endMs = period.endMs;
+    final isCurrentPeriod = period.isCurrentPeriod;
+    if (timeframe == 'M1') {
+      final month = targetDate ?? AppTimeZone.now(timeZoneId);
+      final monthStart = DateTime.utc(month.year, month.month);
+      final monthEnd = DateTime.utc(month.year, month.month + 1);
+      limit = monthEnd.difference(monthStart).inDays;
+    } else if (timeframe == 'Y1') {
+      limit = 12;
     }
-
-    final startMs = startTime.millisecondsSinceEpoch;
-    final endMs = endTime.millisecondsSinceEpoch;
     final quarterDuration = (endMs - startMs) / 4;
 
     List rawCandles = [];
@@ -204,10 +249,10 @@ Future<FractalData?> _fetchAndProcess(
     ];
 
     for (int i = 0; i < 4; i++) {
-      quarters[i].startTime = DateTime.fromMillisecondsSinceEpoch(
+      quarters[i].startTime = AppTimeZone.fromEpochMilliseconds(
+        timeZoneId,
         (startMs + i * quarterDuration).toInt(),
-        isUtc: true,
-      ).toLocal();
+      );
     }
 
     double currentPrice = double.parse(rawCandles.first[4]);
@@ -272,7 +317,11 @@ Future<FractalData?> _fetchAndProcess(
         int ts = int.parse(c[0]);
         if (ts < startMs || ts >= endMs) continue;
 
-        final label = fractalSubCandleLabel(timeframe, ts);
+        final label = fractalSubCandleLabel(
+          timeframe,
+          ts,
+          timeZoneId: timeZoneId,
+        );
 
         subCandles.add(
           SubCandle(

@@ -5,6 +5,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/navigation/navigation_content_frame.dart';
+import '../../../core/timezone/app_time_zone.dart';
 import '../../../core/widgets/crypto_icon.dart';
 import 'providers/order_provider.dart';
 import '../data/okx_order_model.dart';
@@ -17,6 +18,13 @@ import '../../settings/presentation/settings_screen.dart'
 import 'widgets/order_filter_controls.dart';
 import 'widgets/order_notional.dart';
 import 'widgets/responsive_order_grid.dart';
+
+String formatOrderTimestamp(String rawTimestamp, String timeZoneId) {
+  final timestampMs = int.tryParse(rawTimestamp);
+  if (timestampMs == null) return '--';
+
+  return AppTimeZone.formatEpochMilliseconds(timeZoneId, timestampMs);
+}
 
 class OrdersScreen extends ConsumerStatefulWidget {
   const OrdersScreen({super.key});
@@ -72,6 +80,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       isDarkModeProvider,
     ); // Lắng nghe trạng thái Dark Mode
     final currency = ref.watch(currencyProvider);
+    final timeZoneId = ref.watch(appTimeZoneProvider);
     final exchangeRate = ref.watch(vndExchangeRateProvider).value ?? 25400.0;
     final isBalanceHidden = ref.watch(hideBalanceProvider);
 
@@ -123,6 +132,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                 currency,
                 exchangeRate,
                 isBalanceHidden,
+                timeZoneId,
               ),
             ),
           ],
@@ -139,6 +149,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     String currency,
     double exchangeRate,
     bool isBalanceHidden,
+    String timeZoneId,
   ) {
     if (currentTab == OrderTab.positions) {
       if (filter == 'SPOT') {
@@ -239,6 +250,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                       currency,
                       exchangeRate,
                       isBalanceHidden,
+                      timeZoneId,
                     ),
                   )
                   .toList(),
@@ -579,17 +591,13 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     String currency,
     double exchangeRate,
     bool isBalanceHidden,
+    String timeZoneId,
   ) {
     final isBuy = order.side.toLowerCase() == 'buy';
     final sideColor = isBuy ? Colors.green : Colors.redAccent;
     final sideText = isBuy ? 'MUA' : 'BÁN';
 
-    final int? timestampMs = int.tryParse(order.cTime);
-    String timeString = '--';
-    if (timestampMs != null) {
-      final date = DateTime.fromMillisecondsSinceEpoch(timestampMs);
-      timeString = DateFormat('dd/MM/yyyy HH:mm').format(date);
-    }
+    final timeString = formatOrderTimestamp(order.cTime, timeZoneId);
 
     final String baseCoin = order.instId.split('-').isNotEmpty
         ? order.instId.split('-').first

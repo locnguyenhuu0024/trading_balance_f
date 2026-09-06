@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../../core/navigation/navigation_content_frame.dart';
+import '../../../core/timezone/app_time_zone.dart';
 import 'providers/fractal_provider.dart';
 import '../data/fractal_model.dart';
 
@@ -42,6 +43,7 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
     final selectedCoin = ref.watch(
       selectedCoinProvider,
     ); // THÊM MỚI: Lấy coin đang chọn
+    final timeZoneId = ref.watch(appTimeZoneProvider);
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     final bgColor = isDark ? const Color(0xFF121212) : Colors.grey.shade50;
@@ -143,7 +145,9 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
                     ],
                   ),
                   const SizedBox(height: 16),
-                  ...data.map((fData) => _buildFractalRow(fData, isDark)),
+                  ...data.map(
+                    (fData) => _buildFractalRow(fData, isDark, timeZoneId),
+                  ),
                   const SizedBox(height: 32),
                   _buildLegend(isDark),
                 ],
@@ -155,7 +159,7 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
     );
   }
 
-  Widget _buildFractalRow(dynamic data, bool isDark) {
+  Widget _buildFractalRow(dynamic data, bool isDark, String timeZoneId) {
     final cardColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
     final textColor = isDark ? Colors.white : Colors.black;
 
@@ -170,7 +174,9 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
       final endTime = data.quarters[3].startTime!.add(quarterDuration);
 
       final totalMs = endTime.difference(startTime).inMilliseconds;
-      final elapsedMs = DateTime.now().difference(startTime).inMilliseconds;
+      final elapsedMs = AppTimeZone.now(
+        timeZoneId,
+      ).difference(startTime).inMilliseconds;
 
       if (totalMs > 0) {
         progress = (elapsedMs / totalMs).clamp(0.0, 1.0);
