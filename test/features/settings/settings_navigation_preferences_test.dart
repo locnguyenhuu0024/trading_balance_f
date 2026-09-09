@@ -10,11 +10,15 @@ import 'package:trading_balance_f/core/security/secure_storage_helper.dart';
 import 'package:trading_balance_f/features/settings/presentation/settings_screen.dart';
 
 class _SettingsStorage extends SecureStorageHelper {
-  _SettingsStorage({this.failNavigationSave = false})
-    : super(const FlutterSecureStorage());
+  _SettingsStorage({
+    this.failNavigationSave = false,
+    this.failTextScaleSave = false,
+  }) : super(const FlutterSecureStorage());
 
   final bool failNavigationSave;
+  final bool failTextScaleSave;
   NavigationPreferences? savedNavigationPreferences;
+  double? savedAppTextScale;
 
   // Keeping the initial legacy read pending isolates this test from platform
   // background-service calls while leaving the seeded navigation state intact.
@@ -27,6 +31,15 @@ class _SettingsStorage extends SecureStorageHelper {
   ) async {
     if (failNavigationSave) throw StateError('write failed');
     savedNavigationPreferences = preferences;
+  }
+
+  @override
+  Future<double> getAppTextScale() async => 1.0;
+
+  @override
+  Future<void> saveAppTextScale(double scale) async {
+    if (failTextScaleSave) throw StateError('write failed');
+    savedAppTextScale = scale;
   }
 }
 
@@ -101,6 +114,74 @@ void main() {
     );
     expect(
       find.text('Không lưu được tùy chọn điều hướng. Vui lòng thử lại.'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('exposes navigation appearance and text size selectors', (
+    tester,
+  ) async {
+    final storage = _SettingsStorage();
+    await tester.pumpWidget(settingsApp(storage));
+
+    expect(
+      find.byKey(const Key('settings-navigation-size-select')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('settings-navigation-opacity-select')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('settings-app-text-scale-select')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const Key('settings-navigation-size-select')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Lớn').last);
+    await tester.pumpAndSettle();
+
+    expect(storage.savedNavigationPreferences?.buttonScale, 1.1);
+
+    await tester.tap(
+      find.byKey(const Key('settings-navigation-opacity-select')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Rõ (75%)').last);
+    await tester.pumpAndSettle();
+
+    expect(storage.savedNavigationPreferences?.buttonOpacity, 0.75);
+
+    await tester.tap(find.byKey(const Key('settings-app-text-scale-select')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Rất lớn').last);
+    await tester.pumpAndSettle();
+
+    expect(storage.savedAppTextScale, 1.3);
+  });
+
+  testWidgets('rolls back app text size when persistence fails', (
+    tester,
+  ) async {
+    final storage = _SettingsStorage(failTextScaleSave: true);
+    await tester.pumpWidget(settingsApp(storage));
+
+    await tester.tap(find.byKey(const Key('settings-app-text-scale-select')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Lớn').last);
+    await tester.pumpAndSettle();
+
+    expect(
+      tester
+          .widget<DropdownButton<double>>(
+            find.byKey(const Key('settings-app-text-scale-select')),
+          )
+          .value,
+      1.0,
+    );
+    expect(
+      find.text('Không lưu được cỡ chữ ứng dụng. Vui lòng thử lại.'),
       findsOneWidget,
     );
   });

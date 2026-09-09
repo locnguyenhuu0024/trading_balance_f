@@ -62,4 +62,27 @@ void main() {
       expect(await storage.getNavigationPreferences(), expected);
     },
   );
+
+  test('web storage round-trips the application text scale', () async {
+    SharedPreferences.setMockInitialValues({});
+
+    final preferences = await SharedPreferences.getInstance();
+    final storage = WebStorageHelper(preferences);
+
+    await storage.saveAppTextScale(1.15);
+
+    expect(await storage.getAppTextScale(), 1.15);
+  });
+
+  test(
+    'web storage normalizes an unsupported application text scale',
+    () async {
+      SharedPreferences.setMockInitialValues({'APP_TEXT_SCALE': '2.0'});
+
+      final preferences = await SharedPreferences.getInstance();
+      final storage = WebStorageHelper(preferences);
+
+      expect(await storage.getAppTextScale(), 1.0);
+    },
+  );
 }

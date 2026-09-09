@@ -14,6 +14,8 @@ class FloatingNavigationButtons extends StatelessWidget {
     required this.selectedIndex,
     required this.isDark,
     required this.onDestinationSelected,
+    this.buttonScale = 1,
+    this.buttonOpacity = 0.5,
   });
 
   static const _targetSize = 52.0;
@@ -24,6 +26,8 @@ class FloatingNavigationButtons extends StatelessWidget {
   final int selectedIndex;
   final bool isDark;
   final ValueChanged<int> onDestinationSelected;
+  final double buttonScale;
+  final double buttonOpacity;
 
   @override
   Widget build(BuildContext context) {
@@ -39,18 +43,29 @@ class FloatingNavigationButtons extends StatelessWidget {
     final duration = mediaQuery.disableAnimations
         ? Duration.zero
         : const Duration(milliseconds: 220);
+    final buttonScale = _normalizeScale(this.buttonScale);
+    final buttonOpacity = _normalizeOpacity(this.buttonOpacity);
+    final targetSize = math.max(48.0, _targetSize * buttonScale).toDouble();
+    final labelHeight = _labelHeight * buttonScale;
+    final verticalSlotWidth = math
+        .max(76.0, targetSize + 24 * buttonScale)
+        .toDouble();
 
     Widget buttonBuilder(int index, bool horizontal) {
       return _FloatingDestinationButton(
         index: index,
         item: navigationItems[index],
         isSelected: index == selectedIndex,
-        horizontal: horizontal,
         labelPlacement: horizontal && edge == NavigationEdge.bottom
             ? _LabelPlacement.before
             : _LabelPlacement.after,
         surfaceColor: surfaceColor,
         contentColor: contentColor,
+        buttonScale: buttonScale,
+        buttonOpacity: buttonOpacity,
+        targetSize: targetSize,
+        labelHeight: labelHeight,
+        slotWidth: horizontal ? targetSize : verticalSlotWidth,
         duration: duration,
         onTap: () => onDestinationSelected(index),
       );
@@ -63,6 +78,8 @@ class FloatingNavigationButtons extends StatelessWidget {
         left: mediaQuery.viewPadding.left + _edgeGap,
         right: mediaQuery.viewPadding.right + _edgeGap,
         child: _HorizontalNavigationGroup(
+          targetSize: targetSize,
+          labelHeight: labelHeight,
           buttonBuilder: (index) => buttonBuilder(index, true),
         ),
       ),
@@ -72,6 +89,8 @@ class FloatingNavigationButtons extends StatelessWidget {
         left: mediaQuery.viewPadding.left + _edgeGap,
         right: mediaQuery.viewPadding.right + _edgeGap,
         child: _HorizontalNavigationGroup(
+          targetSize: targetSize,
+          labelHeight: labelHeight,
           buttonBuilder: (index) => buttonBuilder(index, true),
         ),
       ),
@@ -81,6 +100,9 @@ class FloatingNavigationButtons extends StatelessWidget {
         bottom: bottomOffset,
         left: mediaQuery.viewPadding.left + _edgeGap,
         child: _VerticalNavigationGroup(
+          targetSize: targetSize,
+          labelHeight: labelHeight,
+          slotWidth: verticalSlotWidth,
           buttonBuilder: (index) => buttonBuilder(index, false),
         ),
       ),
@@ -90,31 +112,47 @@ class FloatingNavigationButtons extends StatelessWidget {
         bottom: bottomOffset,
         right: mediaQuery.viewPadding.right + _edgeGap,
         child: _VerticalNavigationGroup(
+          targetSize: targetSize,
+          labelHeight: labelHeight,
+          slotWidth: verticalSlotWidth,
           buttonBuilder: (index) => buttonBuilder(index, false),
         ),
       ),
     };
   }
+
+  static double _normalizeScale(double value) {
+    if (!value.isFinite) return 1;
+    return value.clamp(0.9, 1.1).toDouble();
+  }
+
+  static double _normalizeOpacity(double value) {
+    if (!value.isFinite) return 0.5;
+    return value.clamp(0.35, 1.0).toDouble();
+  }
 }
 
 class _HorizontalNavigationGroup extends StatelessWidget {
-  const _HorizontalNavigationGroup({required this.buttonBuilder});
+  const _HorizontalNavigationGroup({
+    required this.targetSize,
+    required this.labelHeight,
+    required this.buttonBuilder,
+  });
 
+  final double targetSize;
+  final double labelHeight;
   final Widget Function(int index) buttonBuilder;
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height:
-          FloatingNavigationButtons._targetSize +
-          FloatingNavigationButtons._labelHeight,
+      height: targetSize + labelHeight,
       child: LayoutBuilder(
         builder: (context, constraints) {
           final availableWidth = constraints.maxWidth;
           const minimumGap = 4.0;
-          const maxGap = 8.0;
-          final buttonWidth =
-              FloatingNavigationButtons._targetSize * navigationItems.length;
+          final maxGap = 8.0 * targetSize / 52.0;
+          final buttonWidth = targetSize * navigationItems.length;
           final gap = math.min(
             maxGap,
             math.max(
@@ -165,22 +203,28 @@ class _HorizontalButtons extends StatelessWidget {
 }
 
 class _VerticalNavigationGroup extends StatelessWidget {
-  const _VerticalNavigationGroup({required this.buttonBuilder});
+  const _VerticalNavigationGroup({
+    required this.targetSize,
+    required this.labelHeight,
+    required this.slotWidth,
+    required this.buttonBuilder,
+  });
 
+  final double targetSize;
+  final double labelHeight;
+  final double slotWidth;
   final Widget Function(int index) buttonBuilder;
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 76,
+      width: slotWidth,
       child: LayoutBuilder(
         builder: (context, constraints) {
           final availableHeight = constraints.maxHeight;
           const minimumGap = 4.0;
-          const maxGap = 8.0;
-          const itemHeight =
-              FloatingNavigationButtons._targetSize +
-              FloatingNavigationButtons._labelHeight;
+          final maxGap = 8.0 * targetSize / 52.0;
+          final itemHeight = targetSize + labelHeight;
           final buttonHeight = itemHeight * navigationItems.length;
           final gap = math.min(
             maxGap,
@@ -237,10 +281,14 @@ class _FloatingDestinationButton extends StatelessWidget {
     required this.index,
     required this.item,
     required this.isSelected,
-    required this.horizontal,
     required this.labelPlacement,
     required this.surfaceColor,
     required this.contentColor,
+    required this.buttonScale,
+    required this.buttonOpacity,
+    required this.targetSize,
+    required this.labelHeight,
+    required this.slotWidth,
     required this.duration,
     required this.onTap,
   });
@@ -248,18 +296,21 @@ class _FloatingDestinationButton extends StatelessWidget {
   final int index;
   final NavigationItemData item;
   final bool isSelected;
-  final bool horizontal;
   final _LabelPlacement labelPlacement;
   final Color surfaceColor;
   final Color contentColor;
+  final double buttonScale;
+  final double buttonOpacity;
+  final double targetSize;
+  final double labelHeight;
+  final double slotWidth;
   final Duration duration;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final slotWidth = horizontal ? FloatingNavigationButtons._targetSize : 76.0;
     final label = SizedBox(
-      height: FloatingNavigationButtons._labelHeight,
+      height: labelHeight,
       width: slotWidth,
       child: AnimatedSwitcher(
         duration: duration,
@@ -268,11 +319,13 @@ class _FloatingDestinationButton extends StatelessWidget {
                 child: Center(
                   child: DecoratedBox(
                     decoration: BoxDecoration(
-                      color: surfaceColor,
+                      color: surfaceColor.withValues(alpha: buttonOpacity),
                       borderRadius: BorderRadius.circular(4),
                     ),
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 4 * buttonScale,
+                      ),
                       child: FittedBox(
                         fit: BoxFit.scaleDown,
                         child: Text(
@@ -281,7 +334,7 @@ class _FloatingDestinationButton extends StatelessWidget {
                           maxLines: 1,
                           style: TextStyle(
                             color: contentColor,
-                            fontSize: 10,
+                            fontSize: 10 * buttonScale,
                             fontWeight: FontWeight.w700,
                           ),
                         ),
@@ -302,9 +355,7 @@ class _FloatingDestinationButton extends StatelessWidget {
         message: item.label,
         child: SizedBox(
           width: slotWidth,
-          height:
-              FloatingNavigationButtons._targetSize +
-              FloatingNavigationButtons._labelHeight,
+          height: targetSize + labelHeight,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -316,31 +367,29 @@ class _FloatingDestinationButton extends StatelessWidget {
                   excludeFromSemantics: true,
                   containedInkWell: true,
                   highlightShape: BoxShape.circle,
-                  radius: FloatingNavigationButtons._targetSize / 2,
+                  radius: targetSize / 2,
                   onTap: onTap,
                   child: SizedBox(
-                    width: FloatingNavigationButtons._targetSize,
-                    height: FloatingNavigationButtons._targetSize,
+                    width: targetSize,
+                    height: targetSize,
                     child: Center(
                       child: AnimatedContainer(
                         key: Key('floating-navigation-indicator-$index'),
                         duration: duration,
                         curve: Curves.easeOutCubic,
-                        width: isSelected
-                            ? FloatingNavigationButtons._targetSize
-                            : 44,
-                        height: isSelected
-                            ? FloatingNavigationButtons._targetSize
-                            : 44,
+                        width: isSelected ? targetSize : 44 * buttonScale,
+                        height: isSelected ? targetSize : 44 * buttonScale,
                         alignment: Alignment.center,
                         decoration: BoxDecoration(
-                          color: surfaceColor,
+                          color: surfaceColor.withValues(alpha: buttonOpacity),
                           shape: BoxShape.circle,
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.22),
-                              blurRadius: 8,
-                              offset: const Offset(0, 3),
+                              color: Colors.black.withValues(
+                                alpha: 0.22 * buttonOpacity,
+                              ),
+                              blurRadius: 8 * buttonScale,
+                              offset: Offset(0, 3 * buttonScale),
                             ),
                           ],
                         ),
@@ -349,7 +398,7 @@ class _FloatingDestinationButton extends StatelessWidget {
                           color: isSelected
                               ? contentColor
                               : contentColor.withValues(alpha: 0.72),
-                          size: 22,
+                          size: 22 * buttonScale,
                         ),
                       ),
                     ),

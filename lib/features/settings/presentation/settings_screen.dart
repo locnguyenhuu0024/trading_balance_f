@@ -12,6 +12,7 @@ import '../../../core/navigation/navigation_preferences.dart';
 import '../../../core/navigation/navigation_preferences_provider.dart';
 import '../../../core/security/secure_storage_helper.dart';
 import '../../../core/timezone/app_time_zone.dart';
+import '../../../core/typography/app_text_scale.dart';
 import '../../fractal_tracker/presentation/providers/fractal_provider.dart';
 import '../../portfolio/presentation/portfolio_screen.dart';
 
@@ -54,6 +55,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   bool _isLoading = false;
   bool _isSavingTimeZone = false;
+  bool _isSavingAppTextScale = false;
+  bool _hasUserChangedAppTextScale = false;
 
   @override
   void initState() {
@@ -73,6 +76,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final themeModeStr = await storage.getThemeMode();
     final currency = await storage.getCurrency();
     final timeZoneId = await storage.getTimeZoneId();
+    var appTextScale = AppTextScale.defaultScale;
+    try {
+      appTextScale = await storage.getAppTextScale();
+    } catch (_) {
+      // Keep the current/root scale when the optional setting cannot be read.
+    }
 
     // Kiểm tra xem Background Service có đang chạy không
     final isServiceRunning = await FlutterBackgroundService().isRunning();
@@ -94,6 +103,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ref.read(appTimeZoneProvider.notifier).state = AppTimeZone.normalizeId(
         timeZoneId,
       );
+      if (!_hasUserChangedAppTextScale) {
+        ref.read(appTextScaleProvider.notifier).state = appTextScale;
+      }
       ref.read(backgroundServiceProvider.notifier).state = isServiceRunning;
     }
   }
@@ -161,6 +173,34 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
+  Future<void> _saveAppTextScale(double scale) async {
+    if (_isSavingAppTextScale) return;
+
+    final normalizedScale = AppTextScale.normalize(scale);
+    final previousScale = ref.read(appTextScaleProvider);
+    if (normalizedScale == previousScale) return;
+
+    _hasUserChangedAppTextScale = true;
+    ref.read(appTextScaleProvider.notifier).state = normalizedScale;
+    setState(() => _isSavingAppTextScale = true);
+
+    try {
+      await ref.read(secureStorageProvider).saveAppTextScale(normalizedScale);
+    } catch (_) {
+      if (mounted) {
+        ref.read(appTextScaleProvider.notifier).state = previousScale;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Không lưu được cỡ chữ ứng dụng. Vui lòng thử lại.'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSavingAppTextScale = false);
+    }
+  }
+
   void _showTimeZoneInfo() {
     showDialog<void>(
       context: context,
@@ -193,6 +233,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final hideBalanceDefault = ref.watch(defaultHideBalanceProvider);
     final bioAuth = ref.watch(biometricAuthProvider);
     final timeZoneId = ref.watch(appTimeZoneProvider);
+    final appTextScale = ref.watch(appTextScaleProvider);
     final navigationState = ref.watch(navigationPreferencesProvider);
     final navigationPreferences = navigationState.preferences;
 
@@ -598,6 +639,182 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         ),
                       ),
                     ],
+                    Divider(
+                      height: 1,
+                      color: isDark
+                          ? Colors.grey.shade800
+                          : Colors.grey.shade100,
+                      indent: 52,
+                    ),
+                    ListTile(
+                      leading: Icon(
+                        Icons.open_in_full_rounded,
+                        color: textColor,
+                        size: 22,
+                      ),
+                      title: Text(
+                        'Kích thước nút',
+                        style: TextStyle(
+                          color: textColor,
+                          fontWeight: FontWeight.w500,
+                          fontSize: 14,
+                        ),
+                      ),
+                      trailing: DropdownButtonHideUnderline(
+                        child: DropdownButton<double>(
+                          key: const Key('settings-navigation-size-select'),
+                          value: navigationPreferences.buttonScale,
+                          isDense: true,
+                          dropdownColor: cardColor,
+                          icon: Icon(
+                            Icons.unfold_more_rounded,
+                            color: sectionTitleColor,
+                            size: 20,
+                          ),
+                          style: TextStyle(
+                            color: textColor,
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          alignment: AlignmentDirectional.centerEnd,
+                          items: NavigationPreferences.buttonScaleOptions
+                              .map(
+                                (option) => DropdownMenuItem<double>(
+                                  value: option.value,
+                                  child: Text(option.label),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: navigationState.isSaving
+                              ? null
+                              : (double? value) {
+                                  if (value != null) {
+                                    ref
+                                        .read(
+                                          navigationPreferencesProvider
+                                              .notifier,
+                                        )
+                                        .setButtonScale(value);
+                                  }
+                                },
+                        ),
+                      ),
+                    ),
+                    Divider(
+                      height: 1,
+                      color: isDark
+                          ? Colors.grey.shade800
+                          : Colors.grey.shade100,
+                      indent: 52,
+                    ),
+                    ListTile(
+                      leading: Icon(
+                        Icons.opacity_rounded,
+                        color: textColor,
+                        size: 22,
+                      ),
+                      title: Text(
+                        'Độ trong suốt nút',
+                        style: TextStyle(
+                          color: textColor,
+                          fontWeight: FontWeight.w500,
+                          fontSize: 14,
+                        ),
+                      ),
+                      trailing: DropdownButtonHideUnderline(
+                        child: DropdownButton<double>(
+                          key: const Key('settings-navigation-opacity-select'),
+                          value: navigationPreferences.buttonOpacity,
+                          isDense: true,
+                          dropdownColor: cardColor,
+                          icon: Icon(
+                            Icons.unfold_more_rounded,
+                            color: sectionTitleColor,
+                            size: 20,
+                          ),
+                          style: TextStyle(
+                            color: textColor,
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          alignment: AlignmentDirectional.centerEnd,
+                          items: NavigationPreferences.buttonOpacityOptions
+                              .map(
+                                (option) => DropdownMenuItem<double>(
+                                  value: option.value,
+                                  child: Text(option.label),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: navigationState.isSaving
+                              ? null
+                              : (double? value) {
+                                  if (value != null) {
+                                    ref
+                                        .read(
+                                          navigationPreferencesProvider
+                                              .notifier,
+                                        )
+                                        .setButtonOpacity(value);
+                                  }
+                                },
+                        ),
+                      ),
+                    ),
+                    Divider(
+                      height: 1,
+                      color: isDark
+                          ? Colors.grey.shade800
+                          : Colors.grey.shade100,
+                      indent: 52,
+                    ),
+                    ListTile(
+                      leading: Icon(
+                        Icons.text_fields_rounded,
+                        color: textColor,
+                        size: 22,
+                      ),
+                      title: Text(
+                        'Cỡ chữ ứng dụng',
+                        style: TextStyle(
+                          color: textColor,
+                          fontWeight: FontWeight.w500,
+                          fontSize: 14,
+                        ),
+                      ),
+                      trailing: DropdownButtonHideUnderline(
+                        child: DropdownButton<double>(
+                          key: const Key('settings-app-text-scale-select'),
+                          value: appTextScale,
+                          isDense: true,
+                          dropdownColor: cardColor,
+                          icon: Icon(
+                            Icons.unfold_more_rounded,
+                            color: sectionTitleColor,
+                            size: 20,
+                          ),
+                          style: TextStyle(
+                            color: textColor,
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          alignment: AlignmentDirectional.centerEnd,
+                          items: AppTextScale.options
+                              .map(
+                                (option) => DropdownMenuItem<double>(
+                                  value: option.value,
+                                  child: Text(option.label),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: _isSavingAppTextScale
+                              ? null
+                              : (double? value) {
+                                  if (value != null) _saveAppTextScale(value);
+                                },
+                        ),
+                      ),
+                    ),
                     if (navigationState.errorMessage != null)
                       Padding(
                         key: const Key('settings-navigation-save-error'),

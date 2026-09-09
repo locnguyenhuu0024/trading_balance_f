@@ -10,6 +10,8 @@ void main() {
     bool disableAnimations = false,
     EdgeInsets viewInsets = EdgeInsets.zero,
     TextScaler? textScaler,
+    double buttonScale = 1,
+    double buttonOpacity = 0.5,
   }) {
     return MaterialApp(
       builder: (context, child) => MediaQuery(
@@ -31,6 +33,8 @@ void main() {
                 edge: edge,
                 selectedIndex: 0,
                 isDark: false,
+                buttonScale: buttonScale,
+                buttonOpacity: buttonOpacity,
                 onDestinationSelected: onDestinationSelected,
               ),
             ],
@@ -156,6 +160,35 @@ void main() {
       find.byKey(const Key('floating-navigation-indicator-0')),
     );
     expect(indicator.duration, Duration.zero);
+  });
+
+  testWidgets('applies configured button size and opacity', (tester) async {
+    await tester.pumpWidget(
+      appFor(
+        edge: NavigationEdge.bottom,
+        buttonScale: 1.1,
+        buttonOpacity: 0.75,
+        onDestinationSelected: (_) {},
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final indicator = tester.widget<AnimatedContainer>(
+      find.byKey(const Key('floating-navigation-indicator-0')),
+    );
+    final indicatorRect = tester.getRect(
+      find.byKey(const Key('floating-navigation-indicator-0')),
+    );
+    final destinationRect = tester.getRect(
+      find.byKey(const Key('floating-navigation-destination-0')),
+    );
+
+    expect(
+      (indicator.decoration! as BoxDecoration).color!.a,
+      closeTo(0.75, 0.001),
+    );
+    expect(indicatorRect.width, closeTo(57.2, 0.1));
+    expect(destinationRect.width, closeTo(57.2, 0.1));
   });
 
   testWidgets('keeps a bottom group above the keyboard inset', (tester) async {

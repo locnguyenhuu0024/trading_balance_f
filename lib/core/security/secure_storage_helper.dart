@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../navigation/navigation_preferences.dart';
 import '../timezone/app_time_zone.dart';
+import '../typography/app_text_scale.dart';
 
 /// Provider cung cấp instance của SecureStorageHelper
 final secureStorageProvider = Provider<SecureStorageHelper>((ref) {
@@ -33,6 +34,7 @@ class SecureStorageHelper {
   static const String _currency = 'CURRENCY';
   static const String _navigationPreferences = 'NAVIGATION_PREFERENCES';
   static const String _timeZoneId = 'TIME_ZONE_ID';
+  static const String _appTextScale = 'APP_TEXT_SCALE';
 
   /// Lưu trữ OKX Credentials
   Future<void> saveOkxCredentials({
@@ -79,6 +81,19 @@ class SecureStorageHelper {
     return _storage.write(
       key: _timeZoneId,
       value: AppTimeZone.normalizeId(timeZoneId),
+    );
+  }
+
+  /// Returns a safe application text scale for missing or invalid data.
+  Future<double> getAppTextScale() async {
+    return AppTextScale.normalize(await _storage.read(key: _appTextScale));
+  }
+
+  /// Persists the normalized application text scale.
+  Future<void> saveAppTextScale(double scale) {
+    return _storage.write(
+      key: _appTextScale,
+      value: AppTextScale.normalize(scale).toString(),
     );
   }
 

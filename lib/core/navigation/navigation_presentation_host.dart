@@ -49,6 +49,8 @@ class NavigationPresentationHost extends StatelessWidget {
               child: TradingNavigationBar(
                 selectedIndex: selectedIndex,
                 isDark: isDark,
+                buttonScale: preferences.buttonScale,
+                buttonOpacity: preferences.buttonOpacity,
                 bottomInset: bottomInset,
                 onDestinationSelected: onDestinationSelected,
               ),
@@ -58,6 +60,8 @@ class NavigationPresentationHost extends StatelessWidget {
               edge: preferences.floatingEdge,
               selectedIndex: selectedIndex,
               isDark: isDark,
+              buttonScale: preferences.buttonScale,
+              buttonOpacity: preferences.buttonOpacity,
               onDestinationSelected: onDestinationSelected,
             ),
         ],

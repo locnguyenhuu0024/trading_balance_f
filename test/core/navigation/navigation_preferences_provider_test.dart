@@ -68,6 +68,31 @@ void main() {
     expect(container.read(navigationPreferencesProvider).isSaving, isFalse);
   });
 
+  test('previews and persists button appearance changes', () async {
+    final storage = _NavigationStorage();
+    final container = createContainer(storage);
+    final controller = container.read(navigationPreferencesProvider.notifier);
+
+    final future = controller.setButtonOpacity(0.75);
+
+    expect(
+      container.read(navigationPreferencesProvider).preferences.buttonOpacity,
+      0.75,
+    );
+    expect(container.read(navigationPreferencesProvider).isSaving, isTrue);
+
+    await future;
+
+    expect(storage.writeCount, 1);
+    expect(storage.savedPreferences?.buttonScale, 1.0);
+    expect(storage.savedPreferences?.buttonOpacity, 0.75);
+    expect(container.read(navigationPreferencesProvider).isSaving, isFalse);
+
+    await controller.setButtonScale(1.1);
+    expect(storage.writeCount, 2);
+    expect(storage.savedPreferences?.buttonScale, 1.1);
+  });
+
   test('rolls the visible choice back after a failed save', () async {
     final storage = _NavigationStorage(failWrites: true);
     final container = createContainer(storage);

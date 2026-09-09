@@ -11,6 +11,8 @@ class TradingNavigationBar extends StatefulWidget {
     required this.selectedIndex,
     required this.isDark,
     required this.onDestinationSelected,
+    this.buttonScale = 1,
+    this.buttonOpacity = 0.5,
     this.bottomInset = 0,
   });
 
@@ -24,6 +26,8 @@ class TradingNavigationBar extends StatefulWidget {
   final int selectedIndex;
   final bool isDark;
   final ValueChanged<int> onDestinationSelected;
+  final double buttonScale;
+  final double buttonOpacity;
   final double bottomInset;
 
   @override
@@ -92,6 +96,8 @@ class _TradingNavigationBarState extends State<TradingNavigationBar>
               const barTop = TradingNavigationBar.crestHeight;
               final cellWidth =
                   constraints.maxWidth / TradingNavigationBar.items.length;
+              final buttonScale = _normalizeScale(widget.buttonScale);
+              final buttonOpacity = _normalizeOpacity(widget.buttonOpacity);
 
               return Stack(
                 clipBehavior: Clip.none,
@@ -111,6 +117,7 @@ class _TradingNavigationBarState extends State<TradingNavigationBar>
                               previousIndex: _previousIndex,
                               destinationCount:
                                   TradingNavigationBar.items.length,
+                              buttonScale: buttonScale,
                               progress: Curves.easeOutCubic.transform(
                                 disableAnimations
                                     ? 1
@@ -127,10 +134,19 @@ class _TradingNavigationBarState extends State<TradingNavigationBar>
                     left: 0,
                     right: 0,
                     height: TradingNavigationBar.barHeight,
-                    child: Material(
-                      key: const Key('navigation-bar-surface'),
-                      color: surfaceColor,
-                      child: const SizedBox(key: Key('navigation-bar-layout')),
+                    child: ClipPath(
+                      clipper: _NavigationBarSurfaceClipper(
+                        selectedIndex: widget.selectedIndex,
+                        destinationCount: TradingNavigationBar.items.length,
+                        buttonScale: buttonScale,
+                      ),
+                      child: Material(
+                        key: const Key('navigation-bar-surface'),
+                        color: surfaceColor,
+                        child: const SizedBox(
+                          key: Key('navigation-bar-layout'),
+                        ),
+                      ),
                     ),
                   ),
                   for (
@@ -146,6 +162,8 @@ class _TradingNavigationBarState extends State<TradingNavigationBar>
                       cellWidth: cellWidth,
                       surfaceColor: surfaceColor,
                       contentColor: contentColor,
+                      buttonScale: buttonScale,
+                      buttonOpacity: buttonOpacity,
                       duration: duration,
                       onTap: () => widget.onDestinationSelected(index),
                     ),
@@ -156,6 +174,16 @@ class _TradingNavigationBarState extends State<TradingNavigationBar>
         ),
       ),
     );
+  }
+
+  static double _normalizeScale(double value) {
+    if (!value.isFinite) return 1;
+    return value.clamp(0.9, 1.1).toDouble();
+  }
+
+  static double _normalizeOpacity(double value) {
+    if (!value.isFinite) return 0.5;
+    return value.clamp(0.35, 1.0).toDouble();
   }
 }
 
@@ -168,6 +196,8 @@ class _DestinationControl extends StatelessWidget {
     required this.cellWidth,
     required this.surfaceColor,
     required this.contentColor,
+    required this.buttonScale,
+    required this.buttonOpacity,
     required this.duration,
     required this.onTap,
   });
@@ -182,12 +212,19 @@ class _DestinationControl extends StatelessWidget {
   final double cellWidth;
   final Color surfaceColor;
   final Color contentColor;
+  final double buttonScale;
+  final double buttonOpacity;
   final Duration duration;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final centeredLeft = cellLeft + (cellWidth - _targetSize) / 2;
+    final targetSize = math.max(48.0, _targetSize * buttonScale).toDouble();
+    final indicatorSize = _indicatorSize * buttonScale;
+    final centeredLeft = cellLeft + (cellWidth - targetSize) / 2;
+    final unselectedTop =
+        TradingNavigationBar.crestHeight +
+        (TradingNavigationBar.barHeight - targetSize) / 2;
 
     return Stack(
       clipBehavior: Clip.none,
@@ -196,9 +233,9 @@ class _DestinationControl extends StatelessWidget {
           duration: duration,
           curve: Curves.easeOutCubic,
           left: centeredLeft,
-          top: isSelected ? 0 : 20,
-          width: _targetSize,
-          height: _targetSize,
+          top: isSelected ? 0 : unselectedTop,
+          width: targetSize,
+          height: targetSize,
           child: Semantics(
             selected: isSelected,
             button: true,
@@ -212,11 +249,11 @@ class _DestinationControl extends StatelessWidget {
                   excludeFromSemantics: true,
                   containedInkWell: true,
                   highlightShape: BoxShape.circle,
-                  radius: _targetSize / 2,
+                  radius: targetSize / 2,
                   onTap: onTap,
                   child: SizedBox(
-                    width: _targetSize,
-                    height: _targetSize,
+                    width: targetSize,
+                    height: targetSize,
                     child: AnimatedAlign(
                       duration: duration,
                       curve: Curves.easeOutCubic,
@@ -227,11 +264,13 @@ class _DestinationControl extends StatelessWidget {
                         key: Key('navigation-indicator-$index'),
                         duration: duration,
                         curve: Curves.easeOutCubic,
-                        width: _indicatorSize,
-                        height: _indicatorSize,
+                        width: indicatorSize,
+                        height: indicatorSize,
                         alignment: Alignment.center,
                         decoration: BoxDecoration(
-                          color: isSelected ? surfaceColor : Colors.transparent,
+                          color: isSelected
+                              ? surfaceColor.withValues(alpha: buttonOpacity)
+                              : Colors.transparent,
                           shape: BoxShape.circle,
                         ),
                         child: Icon(
@@ -239,7 +278,7 @@ class _DestinationControl extends StatelessWidget {
                           color: isSelected
                               ? contentColor
                               : contentColor.withValues(alpha: 0.7),
-                          size: 22,
+                          size: 22 * buttonScale,
                         ),
                       ),
                     ),
@@ -250,7 +289,7 @@ class _DestinationControl extends StatelessWidget {
           ),
         ),
         Positioned(
-          top: 48,
+          top: TradingNavigationBar.crestHeight + 32,
           left: cellLeft,
           width: cellWidth,
           height: 22,
@@ -267,7 +306,7 @@ class _DestinationControl extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             color: contentColor,
-                            fontSize: 10,
+                            fontSize: 10 * buttonScale,
                             fontWeight: FontWeight.w700,
                           ),
                         ),
@@ -282,6 +321,42 @@ class _DestinationControl extends StatelessWidget {
   }
 }
 
+class _NavigationBarSurfaceClipper extends CustomClipper<Path> {
+  const _NavigationBarSurfaceClipper({
+    required this.selectedIndex,
+    required this.destinationCount,
+    required this.buttonScale,
+  });
+
+  final int selectedIndex;
+  final int destinationCount;
+  final double buttonScale;
+
+  @override
+  Path getClip(Size size) {
+    final surface = Path()..addRect(Offset.zero & size);
+    if (selectedIndex < 0 || selectedIndex >= destinationCount) {
+      return surface;
+    }
+
+    final radius = 23.0 * buttonScale;
+    final center = Offset(
+      size.width * (selectedIndex + 0.5) / destinationCount,
+      radius - TradingNavigationBar.crestHeight,
+    );
+    final hole = Path()
+      ..addOval(Rect.fromCircle(center: center, radius: radius));
+    return Path.combine(PathOperation.difference, surface, hole);
+  }
+
+  @override
+  bool shouldReclip(covariant _NavigationBarSurfaceClipper oldClipper) {
+    return selectedIndex != oldClipper.selectedIndex ||
+        destinationCount != oldClipper.destinationCount ||
+        buttonScale != oldClipper.buttonScale;
+  }
+}
+
 class _NavigationSurfacePainter extends CustomPainter {
   const _NavigationSurfacePainter({
     required this.color,
@@ -290,6 +365,7 @@ class _NavigationSurfacePainter extends CustomPainter {
     required this.selectedIndex,
     required this.previousIndex,
     required this.destinationCount,
+    required this.buttonScale,
     required this.progress,
   });
 
@@ -299,6 +375,7 @@ class _NavigationSurfacePainter extends CustomPainter {
   final int selectedIndex;
   final int previousIndex;
   final int destinationCount;
+  final double buttonScale;
   final double progress;
 
   @override
@@ -308,30 +385,49 @@ class _NavigationSurfacePainter extends CustomPainter {
       ..isAntiAlias = true
       ..style = PaintingStyle.fill;
 
-    // The rectangle and contour caps deliberately use the same paint so there
-    // is no outline or differently coloured seam between them.
-    canvas.drawRect(Rect.fromLTWH(0, barTop, size.width, barHeight), paint);
+    var surfacePath = Path()
+      ..addRect(Rect.fromLTWH(0, barTop, size.width, barHeight));
 
     if (previousIndex == selectedIndex || progress >= 1) {
-      _drawContour(canvas, size, selectedIndex, 1, paint);
-      return;
+      surfacePath = Path.combine(
+        PathOperation.union,
+        surfacePath,
+        _contourPath(size, selectedIndex, 1),
+      );
+    } else {
+      surfacePath = Path.combine(
+        PathOperation.union,
+        surfacePath,
+        _contourPath(size, previousIndex, 1 - progress),
+      );
+      surfacePath = Path.combine(
+        PathOperation.union,
+        surfacePath,
+        _contourPath(size, selectedIndex, progress),
+      );
     }
 
-    _drawContour(canvas, size, previousIndex, 1 - progress, paint);
-    _drawContour(canvas, size, selectedIndex, progress, paint);
+    final selectedCircle = _circlePath(size, selectedIndex);
+    canvas.drawPath(
+      Path.combine(PathOperation.difference, surfacePath, selectedCircle),
+      paint,
+    );
   }
 
-  void _drawContour(
-    Canvas canvas,
-    Size size,
-    int index,
-    double value,
-    Paint paint,
-  ) {
-    if (value <= 0 || index < 0 || index >= destinationCount) return;
+  Path _circlePath(Size size, int index) {
+    final radius = 23.0 * buttonScale;
+    final center = Offset(
+      size.width * (index + 0.5) / destinationCount,
+      barTop + radius - TradingNavigationBar.crestHeight,
+    );
+    return Path()..addOval(Rect.fromCircle(center: center, radius: radius));
+  }
 
-    const radius = 23.0;
-    const desiredShoulderReach = 12.0;
+  Path _contourPath(Size size, int index, double value) {
+    if (value <= 0 || index < 0 || index >= destinationCount) return Path();
+
+    final radius = 23.0 * buttonScale;
+    final desiredShoulderReach = 12.0 * buttonScale;
     const maxShoulderAngle = 0.7;
     final crestRise = TradingNavigationBar.crestHeight * value;
     final centerX = size.width * (index + 0.5) / destinationCount;
@@ -360,9 +456,9 @@ class _NavigationSurfacePainter extends CustomPainter {
     final sweepAngle = rightAngle - leftAngle;
     final leftTangent = Offset(-math.sin(leftAngle), math.cos(leftAngle));
     final rightTangent = Offset(-math.sin(rightAngle), math.cos(rightAngle));
-    final tangentLength = 10 * value;
+    final tangentLength = 10 * buttonScale * value;
 
-    final path = Path()
+    return Path()
       ..moveTo(leftStart.dx, leftStart.dy)
       ..cubicTo(
         leftStart.dx + shoulderReach * 0.5,
@@ -387,8 +483,6 @@ class _NavigationSurfacePainter extends CustomPainter {
         rightEnd.dy,
       )
       ..close();
-
-    canvas.drawPath(path, paint);
   }
 
   @override
@@ -399,6 +493,7 @@ class _NavigationSurfacePainter extends CustomPainter {
         selectedIndex != oldDelegate.selectedIndex ||
         previousIndex != oldDelegate.previousIndex ||
         destinationCount != oldDelegate.destinationCount ||
+        buttonScale != oldDelegate.buttonScale ||
         progress != oldDelegate.progress;
   }
 }

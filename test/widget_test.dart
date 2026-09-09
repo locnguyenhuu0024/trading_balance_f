@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/navigation/main_navigation_shell.dart';
+import 'package:trading_balance_f/core/navigation/navigation_preferences.dart';
+import 'package:trading_balance_f/core/navigation/navigation_preferences_provider.dart';
 import 'package:trading_balance_f/core/navigation/trading_navigation_bar.dart';
 import 'package:trading_balance_f/features/orders/presentation/providers/order_provider.dart';
 import 'package:trading_balance_f/features/orders/presentation/widgets/order_filter_controls.dart';
@@ -9,10 +11,19 @@ import 'package:trading_balance_f/features/orders/presentation/widgets/responsiv
 import 'package:trading_balance_f/features/settings/presentation/settings_screen.dart';
 
 void main() {
-  Widget shellApp({ThemeMode themeMode = ThemeMode.light}) {
+  Widget shellApp({
+    ThemeMode themeMode = ThemeMode.light,
+    NavigationPreferences navigationPreferences =
+        NavigationPreferences.defaults,
+  }) {
     return ProviderScope(
       key: ValueKey(themeMode),
-      overrides: [themeModeProvider.overrideWith((ref) => themeMode)],
+      overrides: [
+        themeModeProvider.overrideWith((ref) => themeMode),
+        navigationPreferencesInitialProvider.overrideWithValue(
+          navigationPreferences,
+        ),
+      ],
       child: MaterialApp(
         home: MainNavigationShell(
           destinationBuilder: (context, index) => Center(
@@ -71,7 +82,10 @@ void main() {
 
       expect(lightSurface.color, Colors.black);
       expect(lightSurface.borderRadius, isNull);
-      expect((lightIndicator.decoration! as BoxDecoration).color, Colors.black);
+      expect(
+        (lightIndicator.decoration! as BoxDecoration).color,
+        Colors.black.withValues(alpha: 0.5),
+      );
       expect(lightSurfaceRect.width, 390);
       expect(lightSurfaceRect.height, 60);
       expect(lightSurfaceRect.left, 0);
@@ -97,9 +111,45 @@ void main() {
       );
 
       expect(darkSurface.color, Colors.white);
-      expect((darkIndicator.decoration! as BoxDecoration).color, Colors.white);
+      expect(
+        (darkIndicator.decoration! as BoxDecoration).color,
+        Colors.white.withValues(alpha: 0.5),
+      );
     },
   );
+
+  testWidgets('scales fixed navigation controls and applies custom opacity', (
+    tester,
+  ) async {
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+
+    await tester.pumpWidget(
+      shellApp(
+        navigationPreferences: const NavigationPreferences(
+          displayMode: NavigationDisplayMode.bar,
+          floatingEdge: NavigationEdge.bottom,
+          buttonScale: 1.1,
+          buttonOpacity: 0.75,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final indicator = tester.widget<AnimatedContainer>(
+      find.byKey(const Key('navigation-indicator-0')),
+    );
+    final indicatorRect = tester.getRect(
+      find.byKey(const Key('navigation-indicator-0')),
+    );
+    expect(
+      (indicator.decoration! as BoxDecoration).color!.a,
+      closeTo(0.75, 0.001),
+    );
+    expect(indicatorRect.width, closeTo(50.6, 0.1));
+  });
 
   testWidgets('order select controls update their selected values', (
     tester,

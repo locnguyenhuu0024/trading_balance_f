@@ -75,6 +75,24 @@ class NavigationPreferencesController
     return update(state.preferences.copyWith(floatingEdge: edge));
   }
 
+  Future<void> setButtonScale(double buttonScale) {
+    return update(
+      state.preferences.copyWith(
+        buttonScale: NavigationPreferences.normalizeButtonScale(buttonScale),
+      ),
+    );
+  }
+
+  Future<void> setButtonOpacity(double buttonOpacity) {
+    return update(
+      state.preferences.copyWith(
+        buttonOpacity: NavigationPreferences.normalizeButtonOpacity(
+          buttonOpacity,
+        ),
+      ),
+    );
+  }
+
   Future<void> update(NavigationPreferences nextPreferences) async {
     if (state.isSaving || nextPreferences == state.preferences) return;
 

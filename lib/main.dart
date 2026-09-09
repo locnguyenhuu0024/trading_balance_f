@@ -15,6 +15,7 @@ import 'core/navigation/navigation_preferences_provider.dart';
 import 'core/security/secure_storage_helper.dart';
 import 'core/services/background_service.dart';
 import 'core/timezone/app_time_zone.dart';
+import 'core/typography/app_text_scale.dart';
 import 'features/portfolio/presentation/portfolio_screen.dart'
     show hideBalanceProvider;
 import 'features/settings/presentation/settings_screen.dart';
@@ -61,6 +62,7 @@ void main() async {
   String themeModeStr = 'system';
   String currencyStr = 'USD';
   String timeZoneId = AppTimeZone.defaultId;
+  var appTextScale = AppTextScale.defaultScale;
   var navigationPreferences = NavigationPreferences.defaults;
 
   try {
@@ -71,6 +73,12 @@ void main() async {
     timeZoneId = await helper.getTimeZoneId();
   } catch (e) {
     debugPrint('Bỏ qua lỗi đọc Storage: $e');
+  }
+
+  try {
+    appTextScale = await helper.getAppTextScale();
+  } catch (e) {
+    debugPrint('Bỏ qua lỗi đọc cỡ chữ ứng dụng: $e');
   }
 
   // Keep this read independent from legacy preferences. A failed theme or
@@ -96,6 +104,7 @@ void main() async {
         themeModeProvider.overrideWith((ref) => initialThemeMode),
         currencyProvider.overrideWith((ref) => currencyStr),
         appTimeZoneProvider.overrideWith((ref) => initialTimeZoneId),
+        appTextScaleProvider.overrideWith((ref) => appTextScale),
         navigationPreferencesInitialProvider.overrideWithValue(
           navigationPreferences,
         ),
@@ -106,16 +115,38 @@ void main() async {
   );
 }
 
-class TradingBalanceApp extends StatelessWidget {
+class TradingBalanceApp extends ConsumerWidget {
   final bool requireBiometrics;
+  final Widget? home;
 
-  const TradingBalanceApp({super.key, required this.requireBiometrics});
+  const TradingBalanceApp({
+    super.key,
+    required this.requireBiometrics,
+    this.home,
+  });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final appTextScale = ref.watch(appTextScaleProvider);
+
     return MaterialApp(
       title: 'Crypto Portfolio',
       debugShowCheckedModeBanner: false,
+      builder: (context, child) {
+        final mediaQuery = MediaQuery.maybeOf(context);
+        final appChild = child ?? const SizedBox.shrink();
+        if (mediaQuery == null) return appChild;
+
+        return MediaQuery(
+          data: mediaQuery.copyWith(
+            textScaler: AppTextScale.combine(
+              mediaQuery.textScaler,
+              appTextScale,
+            ),
+          ),
+          child: appChild,
+        );
+      },
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
           seedColor: Colors.blueAccent,
@@ -124,9 +155,11 @@ class TradingBalanceApp extends StatelessWidget {
         useMaterial3: true,
         appBarTheme: const AppBarTheme(centerTitle: true, elevation: 0),
       ),
-      home: requireBiometrics
-          ? const BiometricAuthScreen()
-          : const MainNavigationShell(),
+      home:
+          home ??
+          (requireBiometrics
+              ? const BiometricAuthScreen()
+              : const MainNavigationShell()),
     );
   }
 }
@@ -305,6 +338,10 @@ class WebStorageHelper extends SecureStorageHelper {
       AppTimeZone.normalizeId(_prefs.getString('TIME_ZONE_ID'));
 
   @override
+  Future<double> getAppTextScale() async =>
+      AppTextScale.normalize(_prefs.getString('APP_TEXT_SCALE'));
+
+  @override
   Future<void> saveTimeZoneId(String timeZoneId) async {
     final didSave = await _prefs.setString(
       'TIME_ZONE_ID',
@@ -312,6 +349,17 @@ class WebStorageHelper extends SecureStorageHelper {
     );
     if (!didSave) {
       throw StateError('Unable to save the time-zone preference on the web.');
+    }
+  }
+
+  @override
+  Future<void> saveAppTextScale(double scale) async {
+    final didSave = await _prefs.setString(
+      'APP_TEXT_SCALE',
+      AppTextScale.normalize(scale).toString(),
+    );
+    if (!didSave) {
+      throw StateError('Không thể lưu cỡ chữ ứng dụng trên Web.');
     }
   }
 
