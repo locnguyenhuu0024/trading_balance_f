@@ -1,6 +1,6 @@
 # Adaptive prices and position card height
 
-Status: Awaiting explicit execution authorization.
+Status: COMPLETE on 2026-09-09. Tasks A/B and final integration audit PASS; see checklist for evidence and existing analyzer info lints.
 Specification: [2026-09-09-adaptive-prices-position-height-design.md](../specs/2026-09-09-adaptive-prices-position-height-design.md)
 Checklist: ../../../tasks/task_17_adaptive-prices-position-height.md
 

@@ -11,11 +11,11 @@ class ResponsiveOrderGrid extends StatelessWidget {
   const ResponsiveOrderGrid({
     super.key,
     required this.children,
-    required this.cardExtent,
+    this.cardExtent,
   });
 
   final List<Widget> children;
-  final double cardExtent;
+  final double? cardExtent;
 
   @override
   Widget build(BuildContext context) {
@@ -30,6 +30,32 @@ class ResponsiveOrderGrid extends StatelessWidget {
             itemCount: children.length,
             itemBuilder: (context, index) => children[index],
             separatorBuilder: (context, index) => const SizedBox(height: 8),
+          );
+        }
+
+        if (cardExtent == null) {
+          final rowCount = (children.length + columnCount - 1) ~/ columnCount;
+          return ListView.separated(
+            padding: padding,
+            itemCount: rowCount,
+            itemBuilder: (context, rowIndex) {
+              final firstChildIndex = rowIndex * columnCount;
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: List.generate(columnCount * 2 - 1, (index) {
+                  if (index.isOdd) return const SizedBox(width: 12);
+
+                  final columnIndex = index ~/ 2;
+                  final childIndex = firstChildIndex + columnIndex;
+                  return Expanded(
+                    child: childIndex < children.length
+                        ? children[childIndex]
+                        : const SizedBox.shrink(),
+                  );
+                }),
+              );
+            },
+            separatorBuilder: (context, index) => const SizedBox(height: 12),
           );
         }
 

@@ -5,6 +5,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import '../../../core/formatting/adaptive_number_format.dart';
 import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/timezone/app_time_zone.dart';
 import 'providers/fractal_provider.dart';
@@ -201,8 +202,6 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
     if (minLow != null && data.currentPrice < minLow)
       minLow = data.currentPrice;
 
-    final currencyFormat = NumberFormat("#,##0.00", "en_US");
-
     Widget headerWidget;
     if (data.timeframeLabel == 'M1') {
       final month = ref.watch(selectedMonthProvider);
@@ -295,7 +294,7 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
             children: [
               headerWidget,
               Text(
-                '\$${currencyFormat.format(data.currentPrice)}',
+                '\$${formatAdaptiveNumber(data.currentPrice.toString())}',
                 style: TextStyle(
                   color: isDark ? Colors.white : Colors.black,
                   fontSize: 15,
@@ -310,7 +309,7 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                'Mở: ${openPrice != null ? currencyFormat.format(openPrice) : '--'}',
+                'Mở: ${openPrice != null ? formatAdaptiveNumber(openPrice.toString()) : '--'}',
                 style: TextStyle(
                   color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
                   fontSize: 11,
@@ -318,7 +317,7 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
                 ),
               ),
               Text(
-                '🔥 ${maxHigh != null ? currencyFormat.format(maxHigh) : '--'}',
+                '🔥 ${maxHigh != null ? formatAdaptiveNumber(maxHigh.toString()) : '--'}',
                 style: TextStyle(
                   color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
                   fontSize: 11,
@@ -326,7 +325,7 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
                 ),
               ),
               Text(
-                '💧 ${minLow != null ? currencyFormat.format(minLow) : '--'}',
+                '💧 ${minLow != null ? formatAdaptiveNumber(minLow.toString()) : '--'}',
                 style: TextStyle(
                   color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
                   fontSize: 11,

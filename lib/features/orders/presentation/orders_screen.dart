@@ -4,6 +4,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/formatting/adaptive_number_format.dart';
 import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/timezone/app_time_zone.dart';
 import '../../../core/widgets/crypto_icon.dart';
@@ -54,22 +55,6 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
   void dispose() {
     _refreshTimer?.cancel();
     super.dispose();
-  }
-
-  String _formatNumber(String value) {
-    if (value.isEmpty) return '--';
-    final numValue = double.tryParse(value);
-    if (numValue == null) return value;
-
-    if (numValue == 0) {
-      return "0.00";
-    } else if (numValue >= 1000) {
-      return NumberFormat("#,##0.00", "en_US").format(numValue);
-    } else if (numValue >= 1) {
-      return NumberFormat("#,##0.00##", "en_US").format(numValue);
-    } else {
-      return NumberFormat("0.00######", "en_US").format(numValue);
-    }
   }
 
   @override
@@ -191,7 +176,6 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
               return _buildEmptyState('Không có vị thế nào đang mở.', isDark);
             }
             return ResponsiveOrderGrid(
-              cardExtent: 270,
               children: positions
                   .map(
                     (position) => _buildPositionCard(
@@ -378,6 +362,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
@@ -523,7 +508,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        _formatNumber(position.avgPx),
+                        formatAdaptiveNumber(position.avgPx),
                         style: TextStyle(
                           fontWeight: FontWeight.w600,
                           fontSize: 11,
@@ -543,7 +528,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        _formatNumber(position.markPx),
+                        formatAdaptiveNumber(position.markPx),
                         style: TextStyle(
                           fontWeight: FontWeight.w600,
                           fontSize: 11,
@@ -565,7 +550,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                       Text(
                         position.liqPx.isEmpty
                             ? '--'
-                            : _formatNumber(position.liqPx),
+                            : formatAdaptiveNumber(position.liqPx),
                         style: TextStyle(
                           fontWeight: FontWeight.w600,
                           fontSize: 11,
@@ -723,7 +708,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     Text(
-                      'Giá: ${_formatNumber(order.px)}',
+                      'Giá: ${formatAdaptiveNumber(order.px)}',
                       style: TextStyle(
                         fontWeight: FontWeight.w500,
                         fontSize: 11,
@@ -732,7 +717,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'KL: ${_formatNumber(order.sz)}',
+                      'KL: ${formatAdaptiveNumber(order.sz)}',
                       style: TextStyle(
                         fontWeight: FontWeight.w500,
                         fontSize: 11,
