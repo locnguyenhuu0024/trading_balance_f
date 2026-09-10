@@ -1,6 +1,6 @@
 # AGENTS.md
 
-> Token-efficient planner-executor-auditor operating contract.
+> Token-efficient planner-executor-auditor operating contract for personal projects with RTK + Headroom context optimization.
 
 ## 1. Priority and language
 
@@ -28,19 +28,20 @@ Use strict planner-executor-auditor separation for non-trivial implementation wo
 
 If the runtime does not expose the effective child model, do not claim a specific model was used. If it explicitly reports an executor model different from the configured target, report `BLOCKED` rather than silently accepting the mismatch.
 
-## 3. Company repository safety
+## 3. Personal-project tool policy
 
-Do not use external plugins, MCP servers, third-party services, external AI services, remote paste/upload services, or repository integrations unless the user explicitly authorizes the specific service or repository/company policy explicitly approves it.
+This personal variant explicitly authorizes **RTK** and **Headroom MCP** as context-optimization tools when they are available. Before the first shell-heavy or large-tool-output operation in a context, read `docs/agents/framework/profiles/CONTEXT_OPTIMIZATION.md` once and follow it.
 
-Do not transmit source code, diffs, logs, configuration, credentials, secrets, business/customer data, internal documentation, or repository-derived content to an external service without authorization.
+RTK and Headroom optimize context; they do not override correctness, planning, approval, Git, verification, privacy, or evidence rules. The coordinator and every subagent inherit the same RTK/Headroom policy. If either tool is unavailable, continue with the narrowest safe raw/local alternative rather than blocking solely because the optimizer is missing.
 
-Local shell commands, repository-provided tooling, and explicitly approved company infrastructure may be used within their existing permissions. If approval is uncertain, STOP and ask the user. Subagents inherit this rule.
+Other external plugins, MCP servers, remote services, or uploads remain unauthorized unless the user explicitly permits them. Never send credentials, secrets, cryptographic material, or sensitive personal data to an external optimization service.
 
 ## 4. Progressive loading and token discipline
 
 Correctness and fidelity come first; after that, minimize context and repeated reasoning.
 
 - Do not read every framework/template file by default.
+- In this personal variant, load `docs/agents/framework/profiles/CONTEXT_OPTIMIZATION.md` only before the first shell-heavy or large-tool-output operation in the current context; do not re-read it unless context was lost or the file changed.
 - For planning, read `docs/agents/framework/PLANNING_RULES.md` once for the current planning cycle, then load only the template required by the selected planning tier/artifact.
 - After execution authorization, read `docs/agents/framework/EXECUTION_AUDIT_RULES.md` before the first delegated implementation/audit cycle. Re-read it only if context was lost or the file changed.
 - Inspect the narrowest repository surface that can answer the question: targeted files/symbols/tests before broad scans.
@@ -103,7 +104,7 @@ Every implementation/remediation task must define and execute:
 1. a meaningful **RED** negative/boundary/failure scenario;
 2. the primary **GREEN** intended-success scenario.
 
-RED must be executed and observed before GREEN. Expected results must be derived independently from the implementation output. If implementation or test-support code changes after a RED/GREEN attempt, restart verification from RED.
+RED must be executed and observed before GREEN. Expected results must be derived independently from the implementation output. After a formal checkpoint, later changes invalidate only evidence they can materially affect. Re-run only invalidated evidence; restart the complete RED→GREEN pair only when both scenarios or their shared verification basis may have changed. Exact invalidation rules are in `EXECUTION_AUDIT_RULES.md`.
 
 A generic passing suite is insufficient unless it proves the required RED and GREEN flows and their order. If no automated harness exists, use the strongest reproducible alternative available locally (focused command, harness, simulation, dry run, validator, compile-time check, or documented manual reproduction).
 

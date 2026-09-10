@@ -216,6 +216,28 @@ When a workflow is projected to exceed the tier target, optimize in this order b
 
 Never save tokens by skipping clarification of material ambiguity, RED/GREEN verification, required tests, independent audit, or final integration checks.
 
+### Verification budget and escalation ceiling
+
+Plan the **smallest verification scope that can prove the approved contract**, then define explicit escalation triggers instead of defaulting to the full suite. Use this scope ladder:
+
+```text
+V1 — focused RED/GREEN scenario (single test/case or narrowest reproducible check)
+V2 — complete relevant test file or tightly related test group
+V3 — affected/related/changed test set
+V4 — full repository/package suite
+```
+
+Default planning targets:
+- **Tier S:** V1 is mandatory; V2 is the normal ceiling. Do not plan V3/V4 unless a concrete shared-surface or regression risk requires it.
+- **Tier M:** V1 per task, then V2/V3 only where affected-surface risk warrants it. V4 is not a per-task default; use it at final integration only when broad regression risk justifies it or when no authoritative CI covers it.
+- **Tier L:** V1 per task plus planned V2/V3 integration coverage. V4 may run once at final integration when appropriate; if trusted CI is the authoritative full-regression gate, record CI ownership instead of duplicating the same full suite locally.
+
+Every plan/task should state the intended verification ceiling and the conditions that justify escalation. Do not run a broader level merely because it exists. Full-suite execution is evidence, not a ritual.
+
+Plan verification as two phases: a cheap **diagnostic inner loop** during implementation, followed by one formal RED -> GREEN checkpoint when the executor declares the implementation ready. Later edits invalidate only the verification scenarios whose dependency path, test/support surface, expected result, or shared/global basis may have changed; plan selective re-runs instead of unconditional full RED/GREEN restarts.
+
+When a test runner supports low-noise output, prefer a reporter/mode that preserves failures and final summaries while suppressing repetitive passing-test logs. Do not suppress diagnostics needed to evaluate a failure.
+
 ## 12. Definition of Ready
 
 Before dispatch, confirm applicable items:
@@ -230,7 +252,7 @@ Before dispatch, confirm applicable items:
 - required tests are defined;
 - at least one meaningful RED and the primary GREEN have independently derived expected results;
 - RED is ordered before GREEN;
-- verification method and completion evidence are defined;
+- diagnostic method, formal RED/GREEN checkpoint, verification ceiling, escalation triggers, evidence-invalidation rules, and completion evidence are defined;
 - no significant decision is intentionally left to the executor.
 
 If missing information cannot be resolved from authoritative repository evidence, STOP and ask the user.

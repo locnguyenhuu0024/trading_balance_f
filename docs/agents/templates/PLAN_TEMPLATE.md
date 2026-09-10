@@ -75,7 +75,15 @@ Repeat P* sections only as needed.
 |---|---|---|---|
 | TEST-001 | <REQ/AC/RED/GREEN> | unit/integration/... | `<...>` |
 
-Mandatory order: RED before GREEN. If implementation/test-support changes after verification starts, restart from RED.
+Inner-loop diagnostics: <narrowest test/check used while editing; non-authoritative evidence>.
+Formal checkpoint: after implementation is believed ready, execute RED then GREEN once in that order.
+Later changes: invalidate and re-run only scenarios whose dependency path/test-support/expected/shared basis may have changed; restart full RED -> GREEN only when both scenarios or their shared basis are affected.
+
+Verification ladder: V1 focused RED/GREEN -> V2 relevant file/group -> V3 affected/related set -> V4 full suite.
+Task verification ceiling: <V1 | V2 | V3>
+Final integration ceiling: <V2 | V3 | V4>
+Escalate when: <specific risk/evidence condition>
+Full-suite ownership: <NOT_REQUIRED | CODEX_ONCE | CI_AUTHORITATIVE> — <reason>
 
 Regression coverage: <specific preserved behavior>
 Other checks: <type/lint/build/runtime or N/A>

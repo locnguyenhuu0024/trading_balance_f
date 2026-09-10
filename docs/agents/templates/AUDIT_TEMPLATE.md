@@ -9,6 +9,10 @@ Verdict: PENDING | PASS | REWORK | BLOCKED
 - `git status`: <summary>
 - relevant diff/files: <...>
 - tests/checks: <...>
+- verification level reached: <V1 | V2 | V3 | V4>
+- executor evidence reused: YES | NO
+- evidence invalidation review: <no later changes | changed surfaces -> affected RED/GREEN/TEST IDs>
+- rerun reason: N/A | <invalidated/incomplete/suspect/high-risk evidence>
 
 ## Contract Mapping
 
@@ -28,7 +32,8 @@ Test quality: PASS | FAIL
 RED executed and observed before GREEN: PASS | FAIL
 RED expected result independently derived: PASS | FAIL
 GREEN expected result independently derived: PASS | FAIL
-Fresh RED->GREEN cycle after later code/test-support change: PASS | FAIL | N/A
+Selective invalidation handled correctly: PASS | FAIL | N/A
+Full RED->GREEN rerun only when both/shared basis affected: PASS | FAIL | N/A
 
 ## Findings
 

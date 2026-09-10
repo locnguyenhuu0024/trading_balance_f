@@ -21,6 +21,8 @@ Implements: <REQ/AC IDs if used, otherwise concise contract>
 Tests: <TEST or exact test to add/update>
 RED: <scenario + method + independently derived expected result>
 GREEN: <scenario + method + independently derived expected result>
+Inner loop: narrow diagnostics only; formal RED -> GREEN once when implementation is ready. Later edits re-run only invalidated evidence.
+Verification ceiling: V2 by default (focused RED/GREEN -> relevant test file/group). No full suite unless a concrete shared-surface/regression trigger is documented.
 Stop if: <condition requiring clarification/scope expansion>
 
 ## Task

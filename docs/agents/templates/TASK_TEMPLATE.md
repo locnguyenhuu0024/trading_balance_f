@@ -68,7 +68,11 @@ Expected: <independently derived result>
 Actual: <fill during execution>
 Status: PENDING | PASS | FAIL | BLOCKED
 
-GREEN may run only after RED is executed and observed. If implementation or test-support code changes after either attempt, restart from RED.
+During implementation, use only the narrowest diagnostic check needed; diagnostics are not formal evidence. When implementation is ready, run one formal RED -> GREEN checkpoint in order. Later changes invalidate only affected evidence; re-run the full pair only if both scenarios or their shared basis may be affected.
+
+Verification ceiling: <V1 | V2 | V3; never V4 per-task unless explicitly justified>
+Escalate only if: <specific missing evidence/risk condition>
+Do not run a broader verification level when the current evidence already proves the task contract. Prefer concise test output and record only command + relevant result.
 
 ## 8. Stop Conditions
 
@@ -86,8 +90,10 @@ Report blocker + evidence + affected IDs + coordinator decision required.
 - [ ] inspect referenced symbols
 - [ ] implement assigned P-step(s)
 - [ ] add/update required tests
-- [ ] execute/observe RED
-- [ ] execute/observe GREEN
+- [ ] use narrow diagnostics during implementation as needed
+- [ ] execute/observe formal RED
+- [ ] execute/observe formal GREEN
+- [ ] stop at the planned verification ceiling unless escalation trigger is met
 - [ ] return compact executor report
 
 ## 10. Coordinator Audit
@@ -98,6 +104,8 @@ Test quality: PENDING
 RED evidence: PENDING
 GREEN evidence: PENDING
 RED-before-GREEN: PENDING
+Evidence reused vs rerun: PENDING
+Rerun reason: N/A | <why executor evidence was insufficient>
 Architecture/contract conformance: PENDING
 Verdict: PENDING
 
