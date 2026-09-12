@@ -1,19 +1,33 @@
 # Context Optimization Profile — RTK + Headroom
 
-> Personal-project profile. Load only when shell output or large non-shell tool/data output is likely to consume meaningful context. Applies equally to coordinator and subagents.
+> Personal-project profile. RTK and Headroom are preferred/default context-routing layers when available. Load before the first repository inspection/verification flow that may produce shell output or large non-shell tool/data output. Applies equally to coordinator and all subagents.
 
-## 1. Responsibility split
 
-Use exactly one primary optimization layer for a given output stream:
+## 0. Protected configuration boundary overrides optimization
 
-- **RTK** for shell-command output.
-- **Headroom MCP** for large non-shell tool output or large data not already effectively filtered by RTK.
+The repository protected-configuration/environment boundary in `AGENTS.md` has higher priority than RTK/Headroom optimization. Optimization tools are **not** an alternate route to protected content.
+
+- RTK must not `read`, `grep`, `find`-content, diff-content, parse, or otherwise expose protected configuration/environment files. Broad repository searches must use explicit non-protected source/test/doc allowlists or exclusions before execution.
+- Headroom must not compress, summarize, ingest, cache, or retrieve protected configuration/environment contents, connection strings, credentials, secrets, tokens, certificates, or environment dumps.
+- Do not send protected configuration or secret-bearing output to Headroom or any other optimizer. If a command unexpectedly emits protected content, stop the affected path; do not compress/retrieve/propagate it.
+- Protected path/name/existence and name-only Git status metadata may be used only as permitted by `AGENTS.md`.
+- Repository-native build/test/runtime tools may consume protected config as opaque input, but RTK/Headroom may only process their output when that output does not expose protected values. If diagnosis would require the hidden config value, ask the user for the minimum non-sensitive fact instead.
+- Security beats token savings: when an optimized command cannot guarantee protected-path exclusion, use a narrower safe command or ask the user rather than running it.
+
+## 1. Optimization precedence and responsibility split
+
+For eligible output, optimize **before** allowing large/noisy data into the reasoning context. Use exactly one primary optimization layer for a given output stream:
+
+- **RTK first** for supported shell-command output unless the output is trivially small or an exact/raw exception applies.
+- **Headroom MCP first** for large non-shell tool output or large data not already effectively filtered by RTK.
+
+Raw shell/direct large-output ingestion is a fallback, not a co-equal default. An eligible optimizer may be bypassed only for a concrete correctness, compatibility, exact-evidence, interactivity, security, or availability reason.
 
 Do not stack Headroom on RTK-filtered output merely to improve compression statistics. Correctness and exact evidence take precedence over compression.
 
 ## 2. RTK — token-optimized shell commands
 
-Use RTK primarily when a supported shell command is expected to produce large or repetitive output, including repository inspection, file search/listing, Git inspection, tests, builds, lint/type checks, package-manager output, logs, structured data, infrastructure commands, and GitHub CLI output. RTK is an optimization layer, not a correctness guarantee.
+Default to RTK for supported shell commands when output is not already known to be trivially small, especially repository inspection, file search/listing, Git inspection, tests, builds, lint/type checks, package-manager output, logs, structured data, infrastructure commands, and GitHub CLI output. Prefer an RTK form before an equivalent raw command. RTK is an optimization layer, not a correctness guarantee.
 
 ### Executable discovery
 
@@ -75,7 +89,7 @@ If an RTK-filtered command reports failure without enough evidence, rerun the **
 
 ## 3. Headroom MCP — large non-shell context
 
-Headroom is optional context management for content that did not originate as RTK-filtered shell output. Consider `headroom_compress` for:
+Headroom is the preferred/default context-management path for **large non-shell content** that did not originate as effectively RTK-filtered shell output. Use `headroom_compress` before injecting such content directly into the reasoning context when it is likely to save meaningful context, including:
 - large JSON responses;
 - long logs returned by non-shell tools;
 - large database/query results;
@@ -111,11 +125,13 @@ Use `headroom_stats` only after substantial work where compression was actually 
 
 ## 4. Coordinator and subagent contract
 
-The same policy applies to every agent:
-- coordinator should prefer RTK for noisy shell inspection and verification;
-- executor should use RTK only when its bounded command output is large enough to benefit;
-- executor must rerun the narrowest raw command if filtered evidence is insufficient;
-- coordinator must retrieve exact Headroom content before an audit decision that depends on compressed-away details;
+The same priority applies to every agent:
+- coordinator/planner/auditor must route eligible shell work through RTK first;
+- reasoning subagents must use RTK first for eligible repository/search/review shell commands and Headroom first for eligible large non-shell results;
+- implementation/remediation executors must use RTK first for eligible noisy shell verification/inspection while keeping exact-evidence fallbacks available;
+- every agent must rerun the narrowest raw command when RTK-filtered evidence is insufficient;
+- every agent must retrieve exact Headroom content before a decision that depends on compressed-away details;
+- subagent prompts should preserve this RTK-first/Headroom-first priority when the child runtime may not automatically inherit repository-local instructions;
 - neither optimizer may be used to hide failures, weaken verification, bypass scope, or justify claims not supported by observed evidence.
 
 Do not attach large optimizer outputs to subagents when a bounded task contract plus concise evidence is sufficient.
@@ -126,7 +142,7 @@ Verification escalation, diagnostic checkpoints, environment short-circuiting, a
 
 For tests/builds expected to be noisy:
 1. run the narrowest verification level;
-2. use RTK on the first pass when it preserves the evidence needed;
+2. use RTK on the first pass by default when it preserves the evidence needed;
 3. if failure detail is insufficient, rerun only the failing/narrowest raw command;
 4. record concise command + result in executor/audit reports;
 5. never claim PASS from a compressed summary unless the required scenario/result is actually established.
@@ -134,11 +150,11 @@ For tests/builds expected to be noisy:
 ## 6. Optimization anti-patterns
 
 Do not:
-- prefix every shell command with RTK mechanically;
-- compress every non-shell result;
+- force RTK onto unsupported, interactive, exact-byte, security-sensitive, or already-trivial commands merely to satisfy a metric;
+- compress small non-shell results that are already concise;
 - run both RTK and Headroom on the same already-filtered output;
 - broaden commands to generate more data before compressing it;
 - repeat optimizer statistics during active work;
 - trade exact evidence for token savings when correctness depends on the exact data.
 
-Goal: minimize **context entering the reasoning model**, not maximize optimizer usage.
+The priority is **optimizer-first when eligible, raw/direct only when justified**. Goal: minimize **context entering the reasoning model** while preserving exact evidence, not maximize optimizer call counts.

@@ -15,6 +15,8 @@ Success conditions:
 
 ## 2. Current State
 
+> Protected-config security: do not use protected repository configuration/environment file contents as evidence. Sources below must be non-protected code/schema/tests/docs or explicit non-sensitive facts supplied by the user.
+
 ### Observed Facts
 
 | ID | Source | Symbol/Location | Observation |
@@ -96,7 +98,8 @@ State transitions/side effects:
 
 Public API: <contract or N/A>
 Internal interface: <symbol/input/output/errors/side effects>
-Database/schema/config: <contract or N/A>
+Database/schema: <contract or N/A>
+External configuration/environment requirement: <N/A | user-provided requirement only; never inspect repository config contents>
 Authorization: <contract or N/A>
 
 ## 10. Invariants
@@ -143,7 +146,24 @@ Backward/API/data/schema/runtime compatibility: <... or N/A with reason>
 
 Authentication/authorization/sensitive data/privilege boundaries: <... or N/A with reason>
 
-## 17. Rollout / Rollback
+## 17. Protected Configuration / Environment Actions
+
+Protected repository configuration/environment files are unreadable and non-writable by agents.
+
+Required external actions: <none | list>
+
+For each required action:
+- Target file/path: `<user-confirmed or safely known path>`
+- Location/section/key: `<exact insertion point>`
+- Content: `<exact non-secret snippet; use <SET_BY_USER> for sensitive values>`
+- Environment/scope: <...>
+- Reason: <REQ/AC dependency>
+- Validation/restart: <minimum step>
+- Verification blocked until applied: YES | NO
+
+If any target/location/semantic detail is unknown, set the spec `BLOCKED_ON_CLARIFICATION` and ask the user; do not inspect configuration to resolve it.
+
+## 18. Rollout / Rollback
 
 Rollout sequence: <...>
 Rollback trigger: <...>
@@ -151,18 +171,18 @@ Rollback procedure/data implications: <...>
 
 For low-risk Tier M work with no deployment/migration concern, state one concise `N/A — <reason>` line.
 
-## 18. Acceptance Criteria
+## 19. Acceptance Criteria
 
 ### AC-001
 Given <precondition>, when <action>, then <observable independently verifiable outcome>.
 
-## 19. Requirement Traceability
+## 20. Requirement Traceability
 
 | Requirement | Acceptance Criteria | Design/Contract | RED/GREEN |
 |---|---|---|---|
 | REQ-001 | AC-001 | §<section> | RED-001 / GREEN-001 |
 
-## 20. Completion Gate
+## 21. Completion Gate
 
 - [ ] no unresolved material question
 - [ ] no silent assumption
@@ -171,8 +191,10 @@ Given <precondition>, when <action>, then <observable independently verifiable o
 - [ ] RED/GREEN expected outcomes independently derived
 - [ ] acceptance criteria complete
 - [ ] traceability complete for affected requirements
+- [ ] protected configuration/environment contents were not read
+- [ ] required external configuration/environment actions are fully specified or N/A
 
-## 21. Change Log
+## 22. Change Log
 
 Add only after a material user-visible revision.
 

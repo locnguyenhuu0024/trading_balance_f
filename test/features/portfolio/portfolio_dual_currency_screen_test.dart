@@ -25,60 +25,66 @@ class _FakeOkxWebsocketService extends OkxWebsocketService {
 }
 
 void main() {
-  testWidgets(
-    'shows dual amounts across Portfolio and hides both currency lines',
-    (tester) async {
-      tester.view.physicalSize = const Size(800, 1200);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
+  testWidgets('reveals dual amounts only from explicit Portfolio details', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
 
-      const account = OkxAccountData(
-        details: [OkxCoinDetail(ccy: 'BTC', eq: '1', eqUsd: '100', upl: '0.1')],
-      );
+    const account = OkxAccountData(
+      details: [OkxCoinDetail(ccy: 'BTC', eq: '1', eqUsd: '100', upl: '0.1')],
+    );
 
-      await tester.pumpWidget(
-        ProviderScope(
-          overrides: [
-            portfolioFutureProvider.overrideWith((ref) async => account),
-            livePriceProvider.overrideWith((ref) => LivePriceNotifier()),
-            okxWebsocketProvider.overrideWithValue(_FakeOkxWebsocketService()),
-            currencyProvider.overrideWith((ref) => CurrencyDisplayMode.usdtVnd),
-            vndExchangeRateProvider.overrideWith((ref) async => 25400),
-            themeModeProvider.overrideWith((ref) => ThemeMode.light),
-            hideBalanceProvider.overrideWith((ref) => false),
-          ],
-          child: const MaterialApp(home: PortfolioScreen()),
-        ),
-      );
-      await tester.pump();
-      await tester.pump();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          portfolioFutureProvider.overrideWith((ref) async => account),
+          livePriceProvider.overrideWith((ref) => LivePriceNotifier()),
+          okxWebsocketProvider.overrideWithValue(_FakeOkxWebsocketService()),
+          currencyProvider.overrideWith((ref) => CurrencyDisplayMode.usdtVnd),
+          vndExchangeRateProvider.overrideWith((ref) async => 25400),
+          themeModeProvider.overrideWith((ref) => ThemeMode.light),
+          hideBalanceProvider.overrideWith((ref) => false),
+        ],
+        child: const MaterialApp(home: PortfolioScreen()),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
 
-      expect(find.text('Tổng tài sản (USDT + VND)'), findsOneWidget);
-      expect(find.text('100.00 USDT'), findsNWidgets(2));
-      expect(find.text('≈ 2.540.000 đ'), findsNWidgets(2));
-      expect(find.text('Vốn gốc'), findsOneWidget);
-      expect(find.text('90.00 USDT'), findsOneWidget);
-      expect(find.text('≈ 2.286.000 đ'), findsOneWidget);
-      expect(find.text('+10.00 USDT'), findsOneWidget);
-      expect(find.text('≈ +254.000 đ'), findsOneWidget);
-      expect(find.byType(PortfolioCurrencyAmount), findsNWidgets(4));
-      expect(find.byKey(const Key('portfolio-asset-summary')), findsOneWidget);
+    expect(find.text('100.00 USDT'), findsNothing);
+    expect(find.textContaining('Unrealized PnL'), findsNothing);
+    await tester.tap(find.byKey(const Key('portfolio-details')));
+    await tester.pumpAndSettle();
 
-      await tester.tap(find.byIcon(Icons.visibility));
-      await tester.pump();
+    expect(find.text('Total assets (USDT + VND)'), findsOneWidget);
+    expect(find.text('100.00 USDT'), findsNWidgets(2));
+    expect(find.text('≈ 2.540.000 đ'), findsNWidgets(2));
+    expect(find.text('Principal / base capital'), findsOneWidget);
+    expect(find.byKey(const Key('portfolio-reveal-pnl')), findsOneWidget);
+    expect(find.textContaining('Unrealized PnL'), findsNothing);
+    await tester.tap(find.byKey(const Key('portfolio-reveal-pnl')));
+    await tester.pump();
+    expect(find.text('Unrealized PnL'), findsOneWidget);
+    expect(find.text('+10.00 USDT'), findsOneWidget);
+    expect(find.text('≈ +254.000 đ'), findsOneWidget);
+    expect(find.byType(PortfolioCurrencyAmount), findsNWidgets(4));
 
-      final amountWidgets = tester.widgetList<PortfolioCurrencyAmount>(
-        find.byType(PortfolioCurrencyAmount),
-      );
-      expect(amountWidgets, hasLength(4));
-      expect(amountWidgets.every((widget) => widget.hidden), isTrue);
+    await tester.tap(find.byIcon(Icons.visibility).first);
+    await tester.pump();
 
-      await tester.pumpWidget(const SizedBox.shrink());
-    },
-  );
+    final amountWidgets = tester.widgetList<PortfolioCurrencyAmount>(
+      find.byType(PortfolioCurrencyAmount),
+    );
+    expect(amountWidgets, hasLength(4));
+    expect(amountWidgets.every((widget) => widget.hidden), isTrue);
 
-  testWidgets('keeps the asset summary frameless on compact widths', (
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('keeps explicit details readable on compact widths', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(390, 900);
@@ -107,12 +113,10 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    final summary = find.byKey(const Key('portfolio-asset-summary'));
+    await tester.tap(find.byKey(const Key('portfolio-details')));
+    await tester.pumpAndSettle();
+    final summary = find.byKey(const Key('portfolio-details-summary'));
     expect(summary, findsOneWidget);
-    expect(
-      find.ancestor(of: summary, matching: find.byType(Card)),
-      findsNothing,
-    );
     expect(tester.takeException(), isNull);
 
     await tester.pumpWidget(const SizedBox.shrink());

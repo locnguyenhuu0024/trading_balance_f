@@ -51,14 +51,102 @@ Artifacts:
 
 When uncertain between M and L because consequences are unclear, inspect first; if risk remains materially ambiguous, ask the user.
 
+### Coordinator routing gate
+
+Choose the main coordinator route separately from the planning tier. Planning tier measures change/risk scope; coordinator routing measures the **dominant cognitive workload**.
+
+Evaluate two axes:
+- **reasoning complexity:** `STANDARD` or `HARD`;
+- **orchestration complexity:** `LOW` or `HIGH` based on dependency graph size, independently ready work, number of waves/subagents, and integration/audit coordination.
+
+Default routing when the runtime supports explicit main-model selection:
+
+| Reasoning | Orchestration | Main coordinator |
+| --- | --- | --- |
+| `STANDARD` | `LOW` | `gpt-5.6-sol` / `medium` |
+| `HARD` | `LOW` | `gpt-5.6-sol` / `high` |
+| `STANDARD` | `HIGH` | `gpt-6-astra` / `low` |
+| `HARD` | `HIGH` | `gpt-6-astra` / `low`, with hard bounded reasoning delegated to `gpt-5.6-sol` / `high` reasoning subagents |
+
+Do not map planning tier directly to coordinator model. A Tier-L decision can still be one hard reasoning problem suited to Sol High; a Tier-M change can become orchestration-heavy when it has many independent tasks and integration waves. If the current runtime fixes the main model, treat this table as best-effort routing guidance, not a reason to block planning.
+
+### Specification/planning decomposition and parallel reasoning
+
+The coordinator owns every canonical specification/plan and all final requirement/architecture interpretations, but it should offload independently bounded analysis/drafting units when doing so improves performance/price or reduces coordinator context.
+
+After material ambiguities are resolved, candidate reasoning units include:
+- repository facts/current behavior/evidence extraction -> usually `R0`/`R1`;
+- requirement-to-acceptance-criterion mapping, edge cases, normal failure modes, bounded interface/database analysis -> usually `R2`;
+- architecture/concurrency/distributed-system/performance/high-impact trade-offs -> usually `R3`;
+- independent critique/adversarial review -> choose the lowest sufficient route from `R1`–`R3`, escalating only with evidence.
+
+Independent units may run in parallel. Each subagent returns a bounded proposal/evidence package keyed to the relevant stable IDs; it does not finalize product semantics, approve architecture, or directly own the canonical artifact. The coordinator reconciles contradictions, resolves source-of-truth precedence, deduplicates prose, and writes/finalizes the canonical specification/plan.
+
+#### Planning-subagent result transport
+
+Planning/reasoning subagents return their bounded proposal/evidence package as the terminal output of their own assigned turn. They do not need to post a visible message into the main/coordinator chat thread, and they must not call session/thread resume merely to report completion. The coordinator performs fan-in using the runtime's native wait/collect/subagent-result mechanism and then writes the canonical planning artifact.
+
+All runtime IDs are typed opaque identifiers. Never use a subagent/recipient-agent ID, agent name, turn/item/call ID, or other handle as a session/thread ID. Only the coordinator may send/resume a subagent for follow-up, and only with the exact ID type required by that runtime primitive. An `invalid session id` during fan-in is a transport misuse: stop that malformed route and recover through the correct subagent collection primitive rather than retrying or coercing the ID.
+
+Treat parallel reasoning as a latency/context optimization, not an automatic cost saving. Fan out only when the expected benefit exceeds duplicated context + handoff + fan-in/reconciliation overhead.
+
+### Planning telemetry
+
+During planning/brainstorm/spec/plan work, the coordinator records only high-level telemetry required for later evaluation:
+- `workflow_started` with planning tier and selected coordinator route;
+- one `clarification_round` event per material user decision/brainstorm round, with counts of open/resolved decisions but without copying the full conversation;
+- `spec_ready` / `plan_ready` with requirement/AC/task counts and revision number;
+- reasoning-subagent dispatch/completion with `R0`-`R5`, work type, configured/effective route when exposed, outcome, duration/usage when exposed, and coordinator adoption (`USED|PARTIAL|DISCARDED`);
+- `route_escalated` only when a route actually changes.
+
+Do not optimize the workflow to make telemetry look good. Telemetry observes the normal planning contract; it does not replace clarification, source-of-truth precedence, approval, or traceability.
+
+### Implementation-executor routing gate
+
+Before finalizing each task, classify its **implementation entropy** separately from planning tier and reasoning complexity:
+
+| Executor class | Use when | Target |
+| --- | --- | --- |
+| `E0 — mechanical` | implementation is repetitive/obvious and requires almost no coding judgment | `gpt-5.6-luna` / `high` |
+| `E1 — normal bounded` | normal clearly specified implementation with explicit invariants/AC and moderate coding judgment | `gpt-5.6-luna` / `xhigh` **default** |
+| `E2 — complex bounded` | coding is intrinsically intricate (complex SQL/transactions/state machines/algorithms/migrations/many invariants) while product and architecture decisions are already resolved | `gpt-5.6-luna` / `max` |
+
+Planning rules:
+- Record the selected executor class in each task artifact. Do not derive executor class mechanically from Tier S/M/L.
+- Lower executor cost by reducing **decision entropy**: resolve requirements, architecture, edge cases, write surfaces, invariants, and RED/GREEN expectations before dispatch.
+- Prefer `E0`/`E1` when the task has been made mechanical enough; do not use `E2` as a blanket safety default.
+- If the task still requires product/architecture invention, it is not ready for any executor class; return to clarification/planning.
+- Terra is not part of the default implementation ladder. Use it only when explicit workload/runtime evidence justifies an exception.
+
+### Protected configuration/environment planning boundary
+
+Repository configuration/environment contents are **not an inspectable planning source** in this protected-config variant. The planner may use only protected path/name/existence metadata plus configuration facts explicitly supplied by the user. Never read, search within, diff, summarize, or infer values from protected configuration files. If a required planning fact depends on protected configuration, ask the user immediately for the minimum non-sensitive fact; never request a whole config file or a secret.
+
+When a change requires configuration/environment setup, model it as a **user-owned external configuration action**, not an executor write. The plan/spec/task must identify, from user-provided facts or safe path metadata:
+- target file/path, or that a new protected file must be created by the user;
+- insertion location/section/key;
+- exact non-secret content to add/change, using `<SET_BY_USER>` or another explicit placeholder for sensitive values;
+- environment/scope;
+- reason/dependency;
+- validation/restart step;
+- whether verification can complete before the user applies the action.
+
+If the target path/location or required semantics are unknown, do not guess: ask the user before finalizing the affected plan/task. Protected configuration actions are never placed in an executor Allowed Write Surface.
+
+
+### External Windows-auth SQL verification planning
+
+When planned SQL integration verification depends on Windows Integrated Authentication and the repository/environment has an established `WINDOWS_INTEGRATED_AUTH_CONTEXT` constraint, plan that check as **user-executed external verification** rather than a repeated Codex-local retry. The plan/task must state the exact secret-free command to run, expected evidence to return (exit code/status plus concise non-secret output), the RED/GREEN/TEST IDs it proves, and whether completion is blocked until that evidence is supplied. Do not add a SQL username/password or inspect protected connection configuration merely to bypass the Codex SSPI limitation.
+
 ## 3. Clarification gate
 
 Before finalizing a specification or plan:
-1. inspect authoritative repository code/config/schema/tests/docs that can answer the question;
-2. separate facts from hypotheses;
-3. identify all remaining material ambiguities;
-4. batch related questions where practical;
-5. ask the user for every unresolved material decision.
+1. inspect authoritative non-protected repository code/schema/tests/docs that can answer the question; never inspect protected configuration/environment contents;
+2. if a needed fact depends on protected configuration/environment data, ask the user immediately for the minimum non-sensitive fact;
+3. separate facts from hypotheses;
+4. identify all remaining material ambiguities;
+5. batch related non-configuration questions where practical; configuration-dependent questions are asked immediately when they block safe planning;
+6. ask the user for every unresolved material decision.
 
 Do not infer business semantics from naming alone. Do not choose defaults merely because they are common. Do not treat current implementation as desired behavior when the user requested a behavior change.
 
@@ -166,6 +254,8 @@ Do not read all templates “for completeness”.
 
 A task is ready for a lower-capability executor when:
 - outcome is singular and observable;
+- protected configuration/environment files are explicitly outside executor write/read scope;
+- any required configuration/environment action is documented as user-owned external work with target/location/content placeholders;
 - relevant design decisions are already resolved;
 - allowed/forbidden write surfaces are explicit;
 - implementation sequence is concrete enough to avoid architectural invention;
@@ -173,6 +263,29 @@ A task is ready for a lower-capability executor when:
 - stop conditions are clear.
 
 Prefer **one independently auditable unit** over one task per file. Keep tightly coupled changes together when they implement one requirement and share one verification path. Split when objectives can fail independently, write surfaces are unrelated/conflicting, or one task would require substantial design judgment.
+
+For every multi-task plan, build a dependency DAG and identify execution waves. A task may share a wave with another task only when:
+- neither depends on the other's unfinished output;
+- their allowed write surfaces are disjoint;
+- they cannot invalidate one another's assumptions or planned evidence;
+- shared mutable runtime/build/test state will not collide.
+
+Do not split one coherent contract solely to manufacture parallelism. Conversely, when two independently auditable tasks are both ready and parallel-safe, do not serialize them merely by default if a parallel wave materially reduces the critical path.
+
+### Buildable task boundaries and compile coupling
+
+Every code-producing implementation/remediation task must leave its **affected canonical build unit buildable** before that task may reach `PASS`. A dependency chain is allowed; a broken-build chain is not.
+
+Planning rules:
+- identify the smallest canonical project/module/solution/workspace build unit that compiles the task's changed executable sources together with the compile-time consumers needed to prove the task boundary is coherent;
+- record the exact secret-free build command in the plan/task when it is known from user instruction, allowed documentation/repository policy, prior safe evidence, or safe path metadata; never inspect protected build/configuration contents merely to discover it;
+- if the task changes only non-executable docs/data and cannot affect compilation/buildability, the task buildability gate may be `N/A` with a concise reason; otherwise a code-producing task requires the gate;
+- if two or more proposed tasks must coexist before the affected build unit can compile, they are **compile-coupled** and must not be independently marked `PASS` in a broken intermediate state; either merge them into one independently auditable task or stage the change through backward-compatible intermediate states where every task boundary remains buildable;
+- changing an interface/type/signature in one task and deferring required implementations/consumers/import disambiguation to a later task is invalid when the earlier boundary would not build;
+- `fixed by a later task` is never valid evidence for a current task's `PASS`;
+- a focused test harness compiling/running does not prove the affected application build unit compiles unless that harness command actually builds that canonical unit.
+
+The per-task buildability gate complements rather than replaces the mandatory final repository build gate: task-level builds provide early attribution; final audit still proves whole-repository integration.
 
 ## 11. Token Budget / Handoff Budget
 
@@ -194,6 +307,17 @@ Before finalizing task decomposition, perform a **handoff-cost review**:
 
 Prefer the fewest executor handoffs that still leave every task independently auditable. One task may span DTO, repository, service, API, UI, and tests when those edits implement one bounded contract and are best verified as one coherent RED/GREEN path.
 
+### Parallelism budget
+
+Use **smallest useful concurrency**. Parallelism primarily reduces wall-clock latency; additional agents can increase total model cost through duplicated context, startup/handoff, and merge/audit overhead.
+
+Soft concurrency guidance across reasoning + implementation subagents:
+- **Tier S:** normally `1-2` concurrent subagents; normally at most **1 writer**.
+- **Tier M:** normally `2-4` concurrent subagents; normally at most **2 concurrent writers**.
+- **Tier L:** normally `3-6` concurrent subagents; normally at most **3 concurrent writers** unless the runtime already provides stronger isolation and the plan proves the write/runtime surfaces are independent.
+
+These are not quotas or targets to fill. Use fewer agents when the work is small or coordination overhead dominates. Reasoning/read-only fan-out may be broader than writer fan-out because it has lower merge risk. Only the coordinator should expand concurrency by default; nested subagents should not recursively fan out unless the coordinator explicitly delegates that authority for a bounded reason.
+
 ### Soft processed-token targets
 
 Use these only as planning heuristics when token estimates are available:
@@ -208,11 +332,12 @@ These ranges are not quota guarantees and do not include reliably unknowable hid
 
 When a workflow is projected to exceed the tier target, optimize in this order before removing required evidence:
 1. remove duplicated requirement prose from later artifacts and reference stable IDs instead;
-2. narrow repository reads to relevant files/symbols/tests;
+2. narrow repository reads to relevant non-protected files/symbols/tests and never use protected configuration contents as a token-saving shortcut;
 3. avoid re-reading unchanged framework/template files in the same context;
-4. merge safe adjacent executor tasks to reduce handoffs;
-5. avoid repeating full spec/plan text in executor prompts; include only the bounded contract and required excerpts;
-6. keep audit evidence focused on changed surfaces and referenced acceptance criteria.
+4. merge safe adjacent executor tasks when handoff/merge overhead exceeds any parallel critical-path benefit;
+5. parallelize only genuinely independent ready work whose latency benefit exceeds duplicated-context/fan-in cost;
+6. avoid repeating full spec/plan text in executor prompts; include only the bounded contract and required excerpts;
+7. keep audit evidence focused on changed surfaces and referenced acceptance criteria.
 
 Never save tokens by skipping clarification of material ambiguity, RED/GREEN verification, required tests, independent audit, or final integration checks.
 
@@ -253,16 +378,20 @@ Before dispatch, confirm applicable items:
 - at least one meaningful RED and the primary GREEN have independently derived expected results;
 - RED is ordered before GREEN;
 - diagnostic method, formal RED/GREEN checkpoint, verification ceiling, escalation triggers, evidence-invalidation rules, and completion evidence are defined;
-- no significant decision is intentionally left to the executor.
+- no significant decision is intentionally left to the executor;
+- protected configuration/environment contents are not required to be read by the executor;
+- any required external configuration/environment action is documented with target path/location, exact non-secret content or placeholder, scope, reason, and validation step.
 
-If missing information cannot be resolved from authoritative repository evidence, STOP and ask the user.
+If missing information cannot be resolved from authoritative non-protected repository evidence, STOP and ask the user. If the missing information concerns protected configuration/environment state, ask the user immediately and do not attempt repository inspection of that content.
 
 ## 13. Plan validation
 
-If inspection reveals that an approved plan/spec assumption is false, incomplete, incompatible with repository reality, or unsafe:
+If permitted non-protected inspection reveals that an approved plan/spec assumption is false, incomplete, incompatible with repository reality, or unsafe:
 1. stop the affected branch;
 2. do not redesign silently;
 3. create/update `docs/agents/validation/...` using `PLAN_VALIDATION_TEMPLATE.md`;
 4. identify affected `REQ/AC/P/T` IDs;
 5. require `REPLAN`, `USER_CLARIFICATION`, or `NO_CHANGE` explicitly;
 6. revise affected artifacts and obtain fresh approval when the contract materially changes.
+
+If validation would require reading protected configuration/environment contents, do not inspect them. Ask the user for the minimum non-sensitive fact needed and record that user-provided fact/decision as the validation evidence source.
