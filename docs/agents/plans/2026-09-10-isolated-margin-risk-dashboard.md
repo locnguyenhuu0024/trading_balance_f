@@ -1,6 +1,6 @@
 # Implementation Plan: Isolated Margin Risk Dashboard
 
-Status: EXECUTING
+Status: COMPLETE
 Date: 2026-09-10
 Tier: L
 Specification: `docs/agents/specs/2026-09-10-isolated-margin-risk-dashboard-design.md`
@@ -178,23 +178,23 @@ No deployment/commit/push. Integrate serially after approval. Validate all ACs b
 
 | Task | Outcome | Depends | Status |
 |---|---|---|---|
-| [T18](../../../tasks/task_18_risk-position-engine.md) | Position adapter, metrics, policy, recovery and stress | plan approval | PENDING |
-| [T19](../../../tasks/task_19_risk-market-engine.md) | Market factors and explainable aggregation | T18 PASS | PENDING |
-| [T20](../../../tasks/task_20_risk-plans-history-events.md) | Durable plans/history/summary/event reducer | T19 PASS | PENDING |
+| [T18](../../../tasks/task_18_risk-position-engine.md) | Position adapter, metrics, policy, recovery and stress | plan approval | PASS |
+| [T19](../../../tasks/task_19_risk-market-engine.md) | Market factors and explainable aggregation | T18 PASS | PASS |
+| [T20](../../../tasks/task_20_risk-plans-history-events.md) | Durable plans/history/summary/event reducer | T19 PASS | PASS |
 | [T21](../../../tasks/task_21_risk-dashboard-home.md) | Full responsive Home and working drill-downs/editors | T20 PASS | PASS |
-| [T22](../../../tasks/task_22_risk-monitor-notifications.md) | Single-owner runtime and risk notifications/integration | T21 PASS | PENDING |
+| [T22](../../../tasks/task_22_risk-monitor-notifications.md) | Single-owner runtime and risk notifications/integration | T21 PASS | PASS |
 
 Five independently auditable units fit Tier L target. Adapter+formulas+stress stay together because they share accounting evidence. Market remains separate because market classification can fail independently. Persistence/events share temporal evidence and stay together. UI needs interaction/visual evidence. Runtime needs lifecycle/platform ownership evidence; merging it with UI would obscure those failures. Shared surfaces are serial, never concurrent writes. Coordinator owns task numbering and audit metadata.
 
 ## 13. Completion Gate
 
-- [ ] Explicit execution approval after presentation.
-- [ ] Every task PASS after independent repository audit.
-- [ ] Every AC traced to observed RED-before-GREEN evidence.
-- [ ] Relevant checks and final integration run observed.
-- [ ] Visual artifact inspection and platform limits reported.
-- [ ] Final diff explained against baseline, no user changes discarded.
-- [ ] No commit/push/deployment implied by completion.
+- [x] Explicit execution approval after presentation.
+- [x] Every task PASS after independent repository audit.
+- [x] Every AC traced to observed RED-before-GREEN evidence.
+- [x] Relevant checks and final integration run observed.
+- [x] Visual artifact inspection and platform limits reported.
+- [x] Final diff explained against baseline, no user changes discarded.
+- [x] No commit/push/deployment implied by completion.
 
 ## Execution Authorization
 

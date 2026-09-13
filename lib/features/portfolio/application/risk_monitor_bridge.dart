@@ -4,6 +4,7 @@ import '../domain/risk/action_plan.dart';
 import '../domain/risk/risk_events.dart';
 import '../domain/risk/risk_history.dart';
 import '../domain/risk/risk_models.dart';
+import 'risk_notification_sink.dart';
 
 enum RiskMonitorCommandType {
   start,
@@ -13,6 +14,9 @@ enum RiskMonitorCommandType {
   updatePlan,
   updateSettings,
   clearHistory,
+  invalidateCredentials,
+  uiDeparture,
+  uiResume,
 }
 
 enum RiskMonitorCommandStatus { accepted, duplicate, rejected, failed }
@@ -26,6 +30,7 @@ class RiskMonitorCommand {
     this.episodeKey,
     this.plan,
     this.settings,
+    this.reason,
   });
 
   final String id;
@@ -35,6 +40,7 @@ class RiskMonitorCommand {
   final String? episodeKey;
   final RiskPlan? plan;
   final RiskSettings? settings;
+  final String? reason;
 
   factory RiskMonitorCommand.start({
     required String id,
@@ -104,6 +110,75 @@ class RiskMonitorCommand {
     type: RiskMonitorCommandType.clearHistory,
     issuedAt: (issuedAt ?? DateTime.now().toUtc()).toUtc(),
   );
+
+  factory RiskMonitorCommand.invalidateCredentials({
+    required String id,
+    String? reason,
+    DateTime? issuedAt,
+  }) => RiskMonitorCommand(
+    id: id,
+    type: RiskMonitorCommandType.invalidateCredentials,
+    issuedAt: (issuedAt ?? DateTime.now().toUtc()).toUtc(),
+    reason: reason,
+  );
+
+  factory RiskMonitorCommand.uiDeparture({
+    required String id,
+    DateTime? issuedAt,
+  }) => RiskMonitorCommand(
+    id: id,
+    type: RiskMonitorCommandType.uiDeparture,
+    issuedAt: (issuedAt ?? DateTime.now().toUtc()).toUtc(),
+  );
+
+  factory RiskMonitorCommand.uiResume({
+    required String id,
+    DateTime? issuedAt,
+  }) => RiskMonitorCommand(
+    id: id,
+    type: RiskMonitorCommandType.uiResume,
+    issuedAt: (issuedAt ?? DateTime.now().toUtc()).toUtc(),
+  );
+
+  Map<String, dynamic> toWire() => <String, dynamic>{
+    'id': id,
+    'type': type.name,
+    'issuedAt': issuedAt.toUtc().toIso8601String(),
+    'accountHash': accountHash,
+    'episodeKey': episodeKey,
+    'plan': plan?.toJson(),
+    'settings': settings?.toJson(),
+    'reason': reason,
+  };
+
+  factory RiskMonitorCommand.fromWire(Map<String, dynamic> wire) {
+    final id = wire['id']?.toString() ?? '';
+    final typeText = wire['type']?.toString();
+    final type = RiskMonitorCommandType.values.firstWhere(
+      (value) => value.name == typeText,
+      orElse: () => throw const FormatException('Unknown risk command type'),
+    );
+    final issuedAt = DateTime.tryParse(wire['issuedAt']?.toString() ?? '');
+    if (id.trim().isEmpty || issuedAt == null) {
+      throw const FormatException('Risk command identity is invalid');
+    }
+    final planJson = wire['plan'];
+    final settingsJson = wire['settings'];
+    return RiskMonitorCommand(
+      id: id,
+      type: type,
+      issuedAt: issuedAt.toUtc(),
+      accountHash: wire['accountHash']?.toString(),
+      episodeKey: wire['episodeKey']?.toString(),
+      plan: planJson is Map
+          ? RiskPlan.fromJson(Map<String, dynamic>.from(planJson))
+          : null,
+      settings: settingsJson is Map
+          ? RiskSettings.fromJson(Map<String, dynamic>.from(settingsJson))
+          : null,
+      reason: wire['reason']?.toString(),
+    );
+  }
 }
 
 class RiskMonitorViewState {
@@ -129,6 +204,7 @@ class RiskMonitorViewState {
     ),
     this.unsaved = false,
     this.lastError,
+    this.notificationCapability = RiskNotificationCapabilityStatus.unavailable,
   }) : plan = _freezePlan(plan),
        settings = _freezeSettings(settings),
        market = _freezeMarket(market),
@@ -159,6 +235,7 @@ class RiskMonitorViewState {
   final RiskQuality quality;
   final bool unsaved;
   final String? lastError;
+  final RiskNotificationCapabilityStatus notificationCapability;
 
   RiskMonitorViewState copyWith({
     bool? isRunning,
@@ -180,6 +257,7 @@ class RiskMonitorViewState {
     RiskQuality? quality,
     bool? unsaved,
     String? lastError,
+    RiskNotificationCapabilityStatus? notificationCapability,
     bool clearEvaluation = false,
     bool clearPlanEvaluation = false,
     bool clearPlan = false,
@@ -220,6 +298,8 @@ class RiskMonitorViewState {
       quality: quality ?? this.quality,
       unsaved: unsaved ?? this.unsaved,
       lastError: clearError ? null : lastError ?? this.lastError,
+      notificationCapability:
+          notificationCapability ?? this.notificationCapability,
     );
   }
 }
@@ -277,6 +357,931 @@ RiskMarketInput? _freezeMarket(RiskMarketInput? value) {
   );
 }
 
+String? _wireDate(DateTime? value) => value?.toUtc().toIso8601String();
+
+DateTime? _wireDateValue(Object? value) {
+  final text = value?.toString();
+  return text == null ? null : DateTime.tryParse(text)?.toUtc();
+}
+
+DateTime _wireRequiredDate(Object? value) =>
+    _wireDateValue(value) ??
+    DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+
+Map<String, dynamic>? _wireMap(Object? value) {
+  if (value is! Map) return null;
+  return Map<String, dynamic>.from(value);
+}
+
+double? _wireDouble(Object? value) => value is num
+    ? value.toDouble()
+    : value == null
+    ? null
+    : double.tryParse(value.toString());
+
+RiskSeverity? _wireSeverity(Object? value) {
+  final text = value?.toString();
+  if (text == null) return null;
+  return RiskSeverity.values.firstWhere(
+    (item) => item.name == text,
+    orElse: () => throw FormatException('Unknown risk severity: $text'),
+  );
+}
+
+RiskQuality _wireQuality(Object? value) {
+  final map = _wireMap(value);
+  if (map == null) {
+    return const RiskQuality.unavailable(reason: 'Quality was not encoded');
+  }
+  final statusText = map['status']?.toString();
+  final status = RiskQualityStatus.values.firstWhere(
+    (item) => item.name == statusText,
+    orElse: () => RiskQualityStatus.unavailable,
+  );
+  return RiskQuality(
+    status: status,
+    source: map['source']?.toString(),
+    reason: map['reason']?.toString(),
+    observedAt: _wireDateValue(map['observedAt']),
+    sourceAt: _wireDateValue(map['sourceAt']),
+  );
+}
+
+Map<String, dynamic> _qualityWire(RiskQuality value) => <String, dynamic>{
+  'status': value.status.name,
+  'source': value.source,
+  'reason': value.reason,
+  'observedAt': _wireDate(value.observedAt),
+  'sourceAt': _wireDate(value.sourceAt),
+};
+
+Map<String, dynamic> _reasonWire(RiskReason value) => <String, dynamic>{
+  'factorId': value.factorId,
+  'message': value.message,
+  'severity': value.severity?.name,
+  'observedValue': value.observedValue,
+  'threshold': value.threshold,
+  'unit': value.unit,
+  'window': value.window,
+  'observedAt': _wireDate(value.observedAt),
+  'source': value.source,
+  'evidence': value.evidence,
+};
+
+RiskReason _reasonFromWire(Object? value) {
+  final map = _wireMap(value) ?? const <String, dynamic>{};
+  return RiskReason(
+    factorId: map['factorId']?.toString() ?? '',
+    message: map['message']?.toString() ?? '',
+    severity: _wireSeverity(map['severity']),
+    observedValue: _wireDouble(map['observedValue']),
+    threshold: map['threshold']?.toString(),
+    unit: map['unit']?.toString(),
+    window: map['window']?.toString(),
+    observedAt: _wireDateValue(map['observedAt']),
+    source: map['source']?.toString(),
+    evidence: map['evidence']?.toString(),
+  );
+}
+
+List<RiskReason> _reasonsFromWire(Object? value) => value is List
+    ? value.map(_reasonFromWire).toList(growable: false)
+    : const <RiskReason>[];
+
+Map<String, dynamic> _metricWire(RiskMetricValue value) => <String, dynamic>{
+  'value': value.value,
+  'unit': value.unit,
+  'quality': _qualityWire(value.quality),
+  'source': value.source,
+  'observedAt': _wireDate(value.observedAt),
+  'sourceAt': _wireDate(value.sourceAt),
+};
+
+RiskMetricValue _metricFromWire(Object? value, {String fallbackUnit = ''}) {
+  final map = _wireMap(value) ?? const <String, dynamic>{};
+  return RiskMetricValue(
+    value: _wireDouble(map['value']),
+    unit: map['unit']?.toString() ?? fallbackUnit,
+    quality: _wireQuality(map['quality']),
+    source: map['source']?.toString(),
+    observedAt: _wireDateValue(map['observedAt']),
+    sourceAt: _wireDateValue(map['sourceAt']),
+  );
+}
+
+Map<String, dynamic> _assessmentWire(RiskAssessment value) => <String, dynamic>{
+  'state': value.state?.name,
+  'quality': _qualityWire(value.quality),
+  'reasons': value.reasons.map(_reasonWire).toList(growable: false),
+  'missingReasons': value.missingReasons,
+  'label': value.label,
+};
+
+RiskAssessment _assessmentFromWire(Object? value) {
+  final map = _wireMap(value) ?? const <String, dynamic>{};
+  return RiskAssessment(
+    state: _wireSeverity(map['state']),
+    quality: _wireQuality(map['quality']),
+    reasons: _reasonsFromWire(map['reasons']),
+    missingReasons: map['missingReasons'] is List
+        ? List<String>.from(
+            (map['missingReasons'] as List).map((item) => item.toString()),
+          )
+        : const <String>[],
+    label: map['label']?.toString(),
+  );
+}
+
+Map<String, dynamic> _coverageWire(RiskCostCoverage value) => <String, dynamic>{
+  'complete': value.complete,
+  'reason': value.reason,
+  'ledgerComplete': value.ledgerComplete,
+  'sizeUnchanged': value.sizeUnchanged,
+  'positionOpenedAt': _wireDate(value.positionOpenedAt),
+  'coverageFrom': _wireDate(value.coverageFrom),
+  'coverageTo': _wireDate(value.coverageTo),
+  'nonOverlapAt': _wireDate(value.nonOverlapAt),
+};
+
+RiskCostCoverage _coverageFromWire(Object? value) {
+  final map = _wireMap(value) ?? const <String, dynamic>{};
+  return RiskCostCoverage(
+    complete: map['complete'] == true,
+    reason: map['reason']?.toString(),
+    ledgerComplete: map['ledgerComplete'] == true,
+    sizeUnchanged: map['sizeUnchanged'] == true,
+    positionOpenedAt: _wireDateValue(map['positionOpenedAt']),
+    coverageFrom: _wireDateValue(map['coverageFrom']),
+    coverageTo: _wireDateValue(map['coverageTo']),
+    nonOverlapAt: _wireDateValue(map['nonOverlapAt']),
+  );
+}
+
+Map<String, dynamic> _actualInterestWire(RiskActualInterestToday value) =>
+    <String, dynamic>{
+      'amount': value.amount,
+      'knownSubtotal': value.knownSubtotal,
+      'windowStart': _wireDate(value.windowStart),
+      'windowEnd': _wireDate(value.windowEnd),
+      'quality': _qualityWire(value.quality),
+      'coverageComplete': value.coverageComplete,
+      'observedAt': _wireDate(value.observedAt),
+      'sourceAt': _wireDate(value.sourceAt),
+      'source': value.source,
+    };
+
+RiskActualInterestToday _actualInterestFromWire(Object? value) {
+  final map = _wireMap(value) ?? const <String, dynamic>{};
+  return RiskActualInterestToday(
+    amount: _wireDouble(map['amount']),
+    knownSubtotal: _wireDouble(map['knownSubtotal']) ?? 0,
+    windowStart: _wireRequiredDate(map['windowStart']),
+    windowEnd: _wireRequiredDate(map['windowEnd']),
+    quality: _wireQuality(map['quality']),
+    coverageComplete: map['coverageComplete'] == true,
+    observedAt: _wireDateValue(map['observedAt']),
+    sourceAt: _wireDateValue(map['sourceAt']),
+    source: map['source']?.toString(),
+  );
+}
+
+Map<String, dynamic> _costsWire(RiskCostAttribution value) => <String, dynamic>{
+  'settledInterest': value.settledInterest,
+  'unbilledInterest': value.unbilledInterest,
+  'additionalActualCosts': value.additionalActualCosts,
+  'actualInterestToday': value.actualInterestToday == null
+      ? null
+      : _actualInterestWire(value.actualInterestToday!),
+  'coverage': _coverageWire(value.coverage),
+  'observedAt': _wireDate(value.observedAt),
+  'source': value.source,
+};
+
+RiskCostAttribution _costsFromWire(Object? value) {
+  final map = _wireMap(value) ?? const <String, dynamic>{};
+  return RiskCostAttribution(
+    settledInterest: _wireDouble(map['settledInterest']),
+    unbilledInterest: _wireDouble(map['unbilledInterest']),
+    additionalActualCosts: _wireDouble(map['additionalActualCosts']),
+    actualInterestToday: map['actualInterestToday'] == null
+        ? null
+        : _actualInterestFromWire(map['actualInterestToday']),
+    coverage: _coverageFromWire(map['coverage']),
+    observedAt: _wireDateValue(map['observedAt']),
+    source: map['source']?.toString(),
+  );
+}
+
+Map<String, dynamic> _positionWire(RiskPosition value) => <String, dynamic>{
+  'instrumentId': value.instrumentId,
+  'instrumentType': value.instrumentType,
+  'mode': value.mode.name,
+  'collateralCurrency': value.collateralCurrency.name,
+  'positionSide': value.positionSide,
+  'accountNamespace': value.accountNamespace,
+  'positionId': value.positionId,
+  'createdAt': _wireDate(value.createdAt),
+  'updatedAt': _wireDate(value.updatedAt),
+  'observedAt': _wireDate(value.observedAt),
+  'baseCurrency': value.baseCurrency,
+  'quoteCurrency': value.quoteCurrency,
+  'positionCurrency': value.positionCurrency,
+  'accountCurrency': value.accountCurrency,
+  'liabilityCurrency': value.liabilityCurrency,
+  'rawQuantity': value.rawQuantity,
+  'quantity': value.quantity,
+  'margin': value.margin,
+  'markPrice': value.markPrice,
+  'entryPrice': value.entryPrice,
+  'liquidationPrice': value.liquidationPrice,
+  'unrealizedPnl': value.unrealizedPnl,
+  'reportedLeverage': value.reportedLeverage,
+  'marginRatio': value.marginRatio,
+  'maintenanceRequirement': value.maintenanceRequirement,
+  'reportedLiability': value.reportedLiability,
+  'reportedInterest': value.reportedInterest,
+  'baseBalance': value.baseBalance,
+  'quoteBalance': value.quoteBalance,
+  'baseBorrowed': value.baseBorrowed,
+  'quoteBorrowed': value.quoteBorrowed,
+  'baseInterest': value.baseInterest,
+  'quoteInterest': value.quoteInterest,
+  'hourlyBorrowRate': value.hourlyBorrowRate,
+  'entryFeeRate': value.entryFeeRate,
+  'exitFeeRate': value.exitFeeRate,
+  'costAttribution': _costsWire(value.costAttribution),
+  'quality': _qualityWire(value.quality),
+  'eligibility': value.eligibility.name,
+  'source': value.source,
+};
+
+RiskPosition _positionFromWire(Object? value) {
+  final map = _wireMap(value) ?? const <String, dynamic>{};
+  T enumValue<T>(Iterable<T> values, String? name, T fallback) =>
+      values.firstWhere(
+        (item) => item.toString().split('.').last == name,
+        orElse: () => fallback,
+      );
+  return RiskPosition(
+    instrumentId: map['instrumentId']?.toString() ?? '',
+    instrumentType: map['instrumentType']?.toString() ?? 'MARGIN',
+    mode: enumValue(
+      RiskAccountMode.values,
+      map['mode']?.toString(),
+      RiskAccountMode.unsupported,
+    ),
+    collateralCurrency: enumValue(
+      RiskCollateralCurrency.values,
+      map['collateralCurrency']?.toString(),
+      RiskCollateralCurrency.unsupported,
+    ),
+    positionSide: map['positionSide']?.toString() ?? 'net',
+    accountNamespace: map['accountNamespace']?.toString(),
+    positionId: map['positionId']?.toString(),
+    createdAt: _wireDateValue(map['createdAt']),
+    updatedAt: _wireDateValue(map['updatedAt']),
+    observedAt: _wireDateValue(map['observedAt']),
+    baseCurrency: map['baseCurrency']?.toString(),
+    quoteCurrency: map['quoteCurrency']?.toString() ?? 'USDT',
+    positionCurrency: map['positionCurrency']?.toString(),
+    accountCurrency: map['accountCurrency']?.toString(),
+    liabilityCurrency: map['liabilityCurrency']?.toString(),
+    rawQuantity: _wireDouble(map['rawQuantity']),
+    quantity: _wireDouble(map['quantity']),
+    margin: _wireDouble(map['margin']),
+    markPrice: _wireDouble(map['markPrice']),
+    entryPrice: _wireDouble(map['entryPrice']),
+    liquidationPrice: _wireDouble(map['liquidationPrice']),
+    unrealizedPnl: _wireDouble(map['unrealizedPnl']),
+    reportedLeverage: _wireDouble(map['reportedLeverage']),
+    marginRatio: _wireDouble(map['marginRatio']),
+    maintenanceRequirement: _wireDouble(map['maintenanceRequirement']),
+    reportedLiability: _wireDouble(map['reportedLiability']),
+    reportedInterest: _wireDouble(map['reportedInterest']),
+    baseBalance: _wireDouble(map['baseBalance']),
+    quoteBalance: _wireDouble(map['quoteBalance']),
+    baseBorrowed: _wireDouble(map['baseBorrowed']),
+    quoteBorrowed: _wireDouble(map['quoteBorrowed']),
+    baseInterest: _wireDouble(map['baseInterest']),
+    quoteInterest: _wireDouble(map['quoteInterest']),
+    hourlyBorrowRate: _wireDouble(map['hourlyBorrowRate']),
+    entryFeeRate: _wireDouble(map['entryFeeRate']),
+    exitFeeRate: _wireDouble(map['exitFeeRate']),
+    costAttribution: _costsFromWire(map['costAttribution']),
+    quality: _wireQuality(map['quality']),
+    eligibility: enumValue(
+      RiskEligibility.values,
+      map['eligibility']?.toString(),
+      RiskEligibility.invalid,
+    ),
+    source: map['source']?.toString(),
+  );
+}
+
+Map<String, dynamic> _evaluationWire(RiskEvaluation value) => <String, dynamic>{
+  'position': _positionWire(value.position),
+  'metrics': <String, dynamic>{
+    'quantity': _metricWire(value.metrics.quantity),
+    'markPrice': _metricWire(value.metrics.markPrice),
+    'entryPrice': _metricWire(value.metrics.entryPrice),
+    'liquidationPrice': _metricWire(value.metrics.liquidationPrice),
+    'margin': _metricWire(value.metrics.margin),
+    'equity': _metricWire(value.metrics.equity),
+    'debt': _metricWire(value.metrics.debt),
+    'principalDebt': _metricWire(value.metrics.principalDebt),
+    'tradeNotional': _metricWire(value.metrics.tradeNotional),
+    'grossAssetExposure': _metricWire(value.metrics.grossAssetExposure),
+    'effectiveLeverage': _metricWire(value.metrics.effectiveLeverage),
+    'buffer': _metricWire(value.metrics.buffer),
+    'marginRatio': _metricWire(value.metrics.marginRatio),
+    'maintenanceRequirement': _metricWire(value.metrics.maintenanceRequirement),
+    'tradeSensitivityPerPoint': _metricWire(
+      value.metrics.tradeSensitivityPerPoint,
+    ),
+    'tradeSensitivityPerPercent': _metricWire(
+      value.metrics.tradeSensitivityPerPercent,
+    ),
+    'equitySensitivityPerPoint': _metricWire(
+      value.metrics.equitySensitivityPerPoint,
+    ),
+    'equitySensitivityPerPercent': _metricWire(
+      value.metrics.equitySensitivityPerPercent,
+    ),
+    'distanceToEntry': _metricWire(value.metrics.distanceToEntry),
+    'distanceToTrueExit': _metricWire(value.metrics.distanceToTrueExit),
+    'actualInterestToday': _metricWire(value.metrics.actualInterestToday),
+    'knownInterestToday': _metricWire(value.metrics.knownInterestToday),
+    'trueExitPrice': _metricWire(value.metrics.trueExitPrice),
+    'projectedTrueExitPrice': _metricWire(value.metrics.projectedTrueExitPrice),
+    'knownCostExitPrice': _metricWire(value.metrics.knownCostExitPrice),
+    'holdingCostPerDay': _metricWire(value.metrics.holdingCostPerDay),
+    'holdingCost7d': _metricWire(value.metrics.holdingCost7d),
+    'holdingCost30d': _metricWire(value.metrics.holdingCost30d),
+    'recoveryDistance': _metricWire(value.metrics.recoveryDistance),
+    'holdingBurden': _metricWire(value.metrics.holdingBurden),
+    'tradePnl': _metricWire(value.metrics.tradePnl),
+  },
+  'positionAssessment': _assessmentWire(value.positionAssessment),
+  'marketAssessment': _assessmentWire(value.marketAssessment),
+  'recoveryAssessment': _assessmentWire(value.recoveryAssessment),
+  'overallState': value.overallState?.name,
+  'quality': _qualityWire(value.quality),
+  'reasons': value.reasons.map(_reasonWire).toList(growable: false),
+  'stressScenarios': value.stressScenarios
+      .map(_stressWire)
+      .toList(growable: false),
+  'priceMap': value.priceMap.map(_priceMapWire).toList(growable: false),
+  'evaluatedAt': _wireDate(value.evaluatedAt),
+  'policyVersion': value.policyVersion,
+  'missingReasons': value.missingReasons,
+  'exchangePnlBasis': value.exchangePnlBasis,
+};
+
+Map<String, dynamic> _stressWire(RiskStressScenario value) => <String, dynamic>{
+  'label': value.label,
+  'price': value.price,
+  'percentageChange': value.percentageChange,
+  'tradePnl': value.tradePnl,
+  'equity': value.equity,
+  'effectiveLeverage': value.effectiveLeverage,
+  'buffer': value.buffer,
+  'marginRatio': value.marginRatio,
+  'currentMarginRatio': value.currentMarginRatio,
+  'marketFrozen': value.marketFrozen,
+  'marketContextLabel': value.marketContextLabel,
+  'positionState': value.positionState?.name,
+  'overallState': value.overallState?.name,
+  'partial': value.partial,
+  'hypothetical': value.hypothetical,
+  'reasons': value.reasons.map(_reasonWire).toList(growable: false),
+};
+
+RiskStressScenario _stressFromWire(Object? value) {
+  final map = _wireMap(value) ?? const <String, dynamic>{};
+  return RiskStressScenario(
+    label: map['label']?.toString() ?? '',
+    price: _wireDouble(map['price']) ?? 0,
+    percentageChange: _wireDouble(map['percentageChange']),
+    tradePnl: _wireDouble(map['tradePnl']),
+    equity: _wireDouble(map['equity']),
+    effectiveLeverage: _wireDouble(map['effectiveLeverage']),
+    buffer: _wireDouble(map['buffer']),
+    marginRatio: _wireDouble(map['marginRatio']),
+    currentMarginRatio: _wireDouble(map['currentMarginRatio']),
+    marketFrozen: map['marketFrozen'] != false,
+    marketContextLabel:
+        map['marketContextLabel']?.toString() ?? 'Frozen market context',
+    positionState: _wireSeverity(map['positionState']),
+    overallState: _wireSeverity(map['overallState']),
+    partial: map['partial'] == true,
+    hypothetical: map['hypothetical'] != false,
+    reasons: _reasonsFromWire(map['reasons']),
+  );
+}
+
+Map<String, dynamic> _priceMapWire(RiskPriceMapLevel value) =>
+    <String, dynamic>{'price': value.price, 'labels': value.labels};
+
+RiskPriceMapLevel _priceMapFromWire(Object? value) {
+  final map = _wireMap(value) ?? const <String, dynamic>{};
+  return RiskPriceMapLevel(
+    price: _wireDouble(map['price']) ?? 0,
+    labels: map['labels'] is List
+        ? List<String>.from(
+            (map['labels'] as List).map((item) => item.toString()),
+          )
+        : const <String>[],
+  );
+}
+
+RiskMetrics _metricsFromWire(Object? value) {
+  final map = _wireMap(value) ?? const <String, dynamic>{};
+  return RiskMetrics(
+    quantity: _metricFromWire(map['quantity'], fallbackUnit: 'units'),
+    markPrice: _metricFromWire(map['markPrice'], fallbackUnit: 'USDT'),
+    entryPrice: _metricFromWire(map['entryPrice'], fallbackUnit: 'USDT'),
+    liquidationPrice: _metricFromWire(
+      map['liquidationPrice'],
+      fallbackUnit: 'USDT',
+    ),
+    margin: _metricFromWire(map['margin'], fallbackUnit: 'USDT'),
+    equity: _metricFromWire(map['equity'], fallbackUnit: 'USDT'),
+    debt: _metricFromWire(map['debt'], fallbackUnit: 'USDT'),
+    principalDebt: _metricFromWire(map['principalDebt'], fallbackUnit: 'USDT'),
+    tradeNotional: _metricFromWire(map['tradeNotional'], fallbackUnit: 'USDT'),
+    grossAssetExposure: _metricFromWire(
+      map['grossAssetExposure'],
+      fallbackUnit: 'USDT',
+    ),
+    effectiveLeverage: _metricFromWire(
+      map['effectiveLeverage'],
+      fallbackUnit: 'x',
+    ),
+    buffer: _metricFromWire(map['buffer'], fallbackUnit: 'fraction'),
+    marginRatio: _metricFromWire(map['marginRatio'], fallbackUnit: 'ratio'),
+    maintenanceRequirement: _metricFromWire(
+      map['maintenanceRequirement'],
+      fallbackUnit: 'ratio',
+    ),
+    tradeSensitivityPerPoint: _metricFromWire(
+      map['tradeSensitivityPerPoint'],
+      fallbackUnit: 'USDT',
+    ),
+    tradeSensitivityPerPercent: _metricFromWire(
+      map['tradeSensitivityPerPercent'],
+      fallbackUnit: 'USDT',
+    ),
+    equitySensitivityPerPoint: _metricFromWire(
+      map['equitySensitivityPerPoint'],
+      fallbackUnit: 'USDT',
+    ),
+    equitySensitivityPerPercent: _metricFromWire(
+      map['equitySensitivityPerPercent'],
+      fallbackUnit: 'USDT',
+    ),
+    distanceToEntry: _metricFromWire(
+      map['distanceToEntry'],
+      fallbackUnit: 'fraction',
+    ),
+    distanceToTrueExit: _metricFromWire(
+      map['distanceToTrueExit'],
+      fallbackUnit: 'fraction',
+    ),
+    actualInterestToday: _metricFromWire(
+      map['actualInterestToday'],
+      fallbackUnit: 'USDT/today',
+    ),
+    knownInterestToday: _metricFromWire(
+      map['knownInterestToday'],
+      fallbackUnit: 'USDT/today',
+    ),
+    trueExitPrice: _metricFromWire(map['trueExitPrice'], fallbackUnit: 'USDT'),
+    projectedTrueExitPrice: _metricFromWire(
+      map['projectedTrueExitPrice'],
+      fallbackUnit: 'USDT',
+    ),
+    knownCostExitPrice: _metricFromWire(
+      map['knownCostExitPrice'],
+      fallbackUnit: 'USDT',
+    ),
+    holdingCostPerDay: _metricFromWire(
+      map['holdingCostPerDay'],
+      fallbackUnit: 'USDT/day',
+    ),
+    holdingCost7d: _metricFromWire(map['holdingCost7d'], fallbackUnit: 'USDT'),
+    holdingCost30d: _metricFromWire(
+      map['holdingCost30d'],
+      fallbackUnit: 'USDT',
+    ),
+    recoveryDistance: _metricFromWire(
+      map['recoveryDistance'],
+      fallbackUnit: 'fraction',
+    ),
+    holdingBurden: _metricFromWire(
+      map['holdingBurden'],
+      fallbackUnit: 'fraction',
+    ),
+    tradePnl: _metricFromWire(map['tradePnl'], fallbackUnit: 'USDT'),
+  );
+}
+
+RiskEvaluation _evaluationFromWire(Object? value) {
+  final map = _wireMap(value) ?? const <String, dynamic>{};
+  return RiskEvaluation(
+    position: _positionFromWire(map['position']),
+    metrics: _metricsFromWire(map['metrics']),
+    positionAssessment: _assessmentFromWire(map['positionAssessment']),
+    marketAssessment: _assessmentFromWire(map['marketAssessment']),
+    recoveryAssessment: _assessmentFromWire(map['recoveryAssessment']),
+    overallState: _wireSeverity(map['overallState']),
+    quality: _wireQuality(map['quality']),
+    reasons: _reasonsFromWire(map['reasons']),
+    stressScenarios: map['stressScenarios'] is List
+        ? (map['stressScenarios'] as List)
+              .map(_stressFromWire)
+              .toList(growable: false)
+        : const <RiskStressScenario>[],
+    priceMap: map['priceMap'] is List
+        ? (map['priceMap'] as List)
+              .map(_priceMapFromWire)
+              .toList(growable: false)
+        : const <RiskPriceMapLevel>[],
+    evaluatedAt: _wireRequiredDate(map['evaluatedAt']),
+    policyVersion: map['policyVersion']?.toString() ?? 'risk.v1',
+    missingReasons: map['missingReasons'] is List
+        ? List<String>.from(
+            (map['missingReasons'] as List).map((item) => item.toString()),
+          )
+        : const <String>[],
+    exchangePnlBasis: map['exchangePnlBasis']?.toString(),
+  );
+}
+
+Map<String, dynamic> _marketWire(RiskMarketInput value) => <String, dynamic>{
+  'state': value.state?.name,
+  'complete': value.complete,
+  'dailyVolatility': value.dailyVolatility,
+  'reasons': value.reasons.map(_reasonWire).toList(growable: false),
+  'missingReasons': value.missingReasons,
+  'support': value.support,
+  'resistance': value.resistance,
+  'source': value.source,
+  'observedAt': _wireDate(value.observedAt),
+  'sourceAt': _wireDate(value.sourceAt),
+  'marketContextLabel': value.marketContextLabel,
+  'assetInstrument': value.assetInstrument,
+  'btcInstrument': value.btcInstrument,
+  'derivativesInstrument': value.derivativesInstrument,
+  'volatilityLabel': value.volatilityLabel,
+  'assetStructureLabel': value.assetStructureLabel,
+  'btcStructureLabel': value.btcStructureLabel,
+  'volumePressureLabel': value.volumePressureLabel,
+  'fundingLabel': value.fundingLabel,
+  'openInterestLabel': value.openInterestLabel,
+  'normalizedFunding8h': value.normalizedFunding8h,
+  'fundingIntervalHours': value.fundingIntervalHours,
+  'openInterestChange': value.openInterestChange,
+  'marketPriceChange': value.marketPriceChange,
+  'fundingQuality': value.fundingQuality == null
+      ? null
+      : _qualityWire(value.fundingQuality!),
+  'openInterestQuality': value.openInterestQuality == null
+      ? null
+      : _qualityWire(value.openInterestQuality!),
+  'marketPoints': value.marketPoints,
+  'assetPoints': value.assetPoints,
+  'fundingPoints': value.fundingPoints,
+  'openInterestPoints': value.openInterestPoints,
+};
+
+RiskMarketInput _marketFromWire(Object? value) {
+  final map = _wireMap(value) ?? const <String, dynamic>{};
+  return RiskMarketInput(
+    state: _wireSeverity(map['state']),
+    complete: map['complete'] == true,
+    dailyVolatility: _wireDouble(map['dailyVolatility']),
+    reasons: _reasonsFromWire(map['reasons']),
+    missingReasons: map['missingReasons'] is List
+        ? List<String>.from(
+            (map['missingReasons'] as List).map((item) => item.toString()),
+          )
+        : const <String>[],
+    support: _wireDouble(map['support']),
+    resistance: _wireDouble(map['resistance']),
+    source: map['source']?.toString(),
+    observedAt: _wireDateValue(map['observedAt']),
+    sourceAt: _wireDateValue(map['sourceAt']),
+    marketContextLabel:
+        map['marketContextLabel']?.toString() ?? 'OKX perpetual context',
+    assetInstrument: map['assetInstrument']?.toString(),
+    btcInstrument: map['btcInstrument']?.toString(),
+    derivativesInstrument: map['derivativesInstrument']?.toString(),
+    volatilityLabel: map['volatilityLabel']?.toString(),
+    assetStructureLabel: map['assetStructureLabel']?.toString(),
+    btcStructureLabel: map['btcStructureLabel']?.toString(),
+    volumePressureLabel: map['volumePressureLabel']?.toString(),
+    fundingLabel: map['fundingLabel']?.toString(),
+    openInterestLabel: map['openInterestLabel']?.toString(),
+    normalizedFunding8h: _wireDouble(map['normalizedFunding8h']),
+    fundingIntervalHours: _wireDouble(map['fundingIntervalHours']),
+    openInterestChange: _wireDouble(map['openInterestChange']),
+    marketPriceChange: _wireDouble(map['marketPriceChange']),
+    fundingQuality: map['fundingQuality'] == null
+        ? null
+        : _wireQuality(map['fundingQuality']),
+    openInterestQuality: map['openInterestQuality'] == null
+        ? null
+        : _wireQuality(map['openInterestQuality']),
+    marketPoints: (map['marketPoints'] as num?)?.toInt() ?? 0,
+    assetPoints: (map['assetPoints'] as num?)?.toInt() ?? 0,
+    fundingPoints: (map['fundingPoints'] as num?)?.toInt() ?? 0,
+    openInterestPoints: (map['openInterestPoints'] as num?)?.toInt() ?? 0,
+  );
+}
+
+Map<String, dynamic> _planEvaluationWire(RiskPlanEvaluation value) =>
+    <String, dynamic>{
+      'rules': value.rules
+          .map(
+            (item) => <String, dynamic>{
+              'rule': item.rule.toJson(),
+              'state': riskRuleStateName(item.state),
+              'value': item.value,
+              'referenceValue': item.referenceValue,
+              'reason': item.reason,
+            },
+          )
+          .toList(growable: false),
+      'zones': value.zones
+          .map(
+            (item) => <String, dynamic>{
+              'zone': item.zone.toJson(),
+              'state': riskRuleStateName(item.state),
+              'markPrice': item.markPrice,
+              'reason': item.reason,
+            },
+          )
+          .toList(growable: false),
+      'evaluatedAt': _wireDate(value.evaluatedAt),
+    };
+
+RiskRuleState _ruleStateFromWire(Object? value) =>
+    RiskRuleState.values.firstWhere(
+      (item) => riskRuleStateName(item) == value?.toString(),
+      orElse: () => RiskRuleState.unknown,
+    );
+
+RiskPlanEvaluation _planEvaluationFromWire(Object? value) {
+  final map = _wireMap(value) ?? const <String, dynamic>{};
+  final rules = map['rules'] is List
+      ? (map['rules'] as List)
+            .map((item) {
+              final row = _wireMap(item) ?? const <String, dynamic>{};
+              return RiskRuleEvaluation(
+                rule: RiskRule.fromJson(
+                  _wireMap(row['rule']) ?? const <String, dynamic>{},
+                ),
+                state: _ruleStateFromWire(row['state']),
+                value: _wireDouble(row['value']),
+                referenceValue: _wireDouble(row['referenceValue']),
+                reason: row['reason']?.toString(),
+              );
+            })
+            .toList(growable: false)
+      : const <RiskRuleEvaluation>[];
+  final zones = map['zones'] is List
+      ? (map['zones'] as List)
+            .map((item) {
+              final row = _wireMap(item) ?? const <String, dynamic>{};
+              return RiskZoneEvaluation(
+                zone: RiskZone.fromJson(
+                  _wireMap(row['zone']) ?? const <String, dynamic>{},
+                ),
+                state: _ruleStateFromWire(row['state']),
+                markPrice: _wireDouble(row['markPrice']),
+                reason: row['reason']?.toString(),
+              );
+            })
+            .toList(growable: false)
+      : const <RiskZoneEvaluation>[];
+  return RiskPlanEvaluation(
+    rules: rules,
+    zones: zones,
+    evaluatedAt: _wireDateValue(map['evaluatedAt']),
+  );
+}
+
+Map<String, dynamic> _trendWire(RiskTrendResult value) => <String, dynamic>{
+  'label': value.label.name,
+  'baseline': value.baseline?.toJson(),
+  'current': value.current?.toJson(),
+  'bufferDeltaPoints': value.bufferDeltaPoints,
+  'leverageDelta': value.leverageDelta,
+  'reason': value.reason,
+};
+
+RiskTrendResult _trendFromWire(Object? value) {
+  final map = _wireMap(value) ?? const <String, dynamic>{};
+  return RiskTrendResult(
+    label: RiskTrendLabel.values.firstWhere(
+      (item) => item.name == map['label']?.toString(),
+      orElse: () => RiskTrendLabel.unavailable,
+    ),
+    baseline: map['baseline'] == null
+        ? null
+        : RiskHistorySample.fromJson(_wireMap(map['baseline'])!),
+    current: map['current'] == null
+        ? null
+        : RiskHistorySample.fromJson(_wireMap(map['current'])!),
+    bufferDeltaPoints: _wireDouble(map['bufferDeltaPoints']),
+    leverageDelta: _wireDouble(map['leverageDelta']),
+    reason: map['reason']?.toString(),
+  );
+}
+
+Map<String, dynamic> _velocityWire(RiskVelocityResult value) =>
+    <String, dynamic>{
+      'label': value.label.name,
+      'baseline': value.baseline?.toJson(),
+      'current': value.current?.toJson(),
+      'pointsPerHour': value.pointsPerHour,
+      'elapsedHours': value.elapsedHours,
+      'reason': value.reason,
+    };
+
+RiskVelocityResult _velocityFromWire(Object? value) {
+  final map = _wireMap(value) ?? const <String, dynamic>{};
+  return RiskVelocityResult(
+    label: RiskTrendLabel.values.firstWhere(
+      (item) => item.name == map['label']?.toString(),
+      orElse: () => RiskTrendLabel.unavailable,
+    ),
+    baseline: map['baseline'] == null
+        ? null
+        : RiskHistorySample.fromJson(_wireMap(map['baseline'])!),
+    current: map['current'] == null
+        ? null
+        : RiskHistorySample.fromJson(_wireMap(map['current'])!),
+    pointsPerHour: _wireDouble(map['pointsPerHour']),
+    elapsedHours: _wireDouble(map['elapsedHours']),
+    reason: map['reason']?.toString(),
+  );
+}
+
+Map<String, dynamic> _comparisonWire(RiskSessionComparison value) =>
+    <String, dynamic>{
+      'baseline': value.baseline.toJson(),
+      'current': value.current.toJson(),
+      'bufferDeltaPoints': value.bufferDeltaPoints,
+      'leverageDelta': value.leverageDelta,
+      'debtDelta': value.debtDelta,
+      'trueExitChanged': value.trueExitChanged,
+      'structureChanged': value.structureChanged,
+      'fundingChanged': value.fundingChanged,
+      'openInterestChanged': value.openInterestChanged,
+      'overallChanged': value.overallChanged,
+      'positionChanged': value.positionChanged,
+    };
+
+RiskSessionComparison _comparisonFromWire(Object? value) {
+  final map = _wireMap(value) ?? const <String, dynamic>{};
+  return RiskSessionComparison(
+    baseline: RiskHistorySample.fromJson(_wireMap(map['baseline'])!),
+    current: RiskHistorySample.fromJson(_wireMap(map['current'])!),
+    bufferDeltaPoints: _wireDouble(map['bufferDeltaPoints']),
+    leverageDelta: _wireDouble(map['leverageDelta']),
+    debtDelta: _wireDouble(map['debtDelta']),
+    trueExitChanged: map['trueExitChanged'] == true,
+    structureChanged: map['structureChanged'] == true,
+    fundingChanged: map['fundingChanged'] == true,
+    openInterestChanged: map['openInterestChanged'] == true,
+    overallChanged: map['overallChanged'] == true,
+    positionChanged: map['positionChanged'] == true,
+  );
+}
+
+Map<String, dynamic> _stateWire(
+  RiskMonitorViewState value,
+) => <String, dynamic>{
+  'protocol': RiskMonitorWire.state,
+  'isRunning': value.isRunning,
+  'backgroundAvailable': value.backgroundAvailable,
+  'ownerLabel': value.ownerLabel,
+  'accountHash': value.accountHash,
+  'episodeKey': value.episodeKey,
+  'evaluation': value.evaluation == null
+      ? null
+      : _evaluationWire(value.evaluation!),
+  'planEvaluation': value.planEvaluation == null
+      ? null
+      : _planEvaluationWire(value.planEvaluation!),
+  'plan': value.plan?.toJson(),
+  'settings': value.settings?.toJson(),
+  'market': value.market == null ? null : _marketWire(value.market!),
+  'samples': value.samples
+      ?.map((sample) => sample.toJson())
+      .toList(growable: false),
+  'summaries': value.summaries
+      ?.map((summary) => summary.toJson())
+      .toList(growable: false),
+  'previousCheck': value.previousCheck == null
+      ? null
+      : _comparisonWire(value.previousCheck!),
+  'trend': value.trend == null ? null : _trendWire(value.trend!),
+  'velocity': value.velocity == null ? null : _velocityWire(value.velocity!),
+  'events': value.events.map((event) => event.toJson()).toList(growable: false),
+  'eventIds': value.events.map((event) => event.id).toList(growable: false),
+  'quality': _qualityWire(value.quality),
+  'unsaved': value.unsaved,
+  'lastError': value.lastError,
+  'notificationCapability': value.notificationCapability.name,
+};
+
+RiskMonitorViewState _stateFromWire(Map<String, dynamic> value) {
+  final rawEvents = value['events'];
+  final events = <RiskEvent>[];
+  if (rawEvents is List) {
+    for (final item in rawEvents) {
+      final map = _wireMap(item);
+      if (map == null) continue;
+      try {
+        events.add(RiskEvent.fromJson(map));
+      } catch (_) {
+        // Older peers may include only event ids; the fallback below retains
+        // the dedupe identity without inventing private event details.
+      }
+    }
+  }
+  final eventIds = value['eventIds'];
+  final knownIds = events.map((event) => event.id).toSet();
+  if (eventIds is List) {
+    for (final rawId in eventIds) {
+      final id = rawId.toString();
+      if (!knownIds.add(id)) continue;
+      events.add(
+        RiskEvent(
+          id: id,
+          episodeKey: value['episodeKey']?.toString() ?? '',
+          kind: RiskEventKind.stateChange,
+          message: 'Risk update',
+          createdAt: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+          observedAt: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+        ),
+      );
+    }
+  }
+  final capability = RiskNotificationCapabilityStatus.values.firstWhere(
+    (item) => item.name == value['notificationCapability']?.toString(),
+    orElse: () => RiskNotificationCapabilityStatus.unavailable,
+  );
+  List<RiskHistorySample>? samples;
+  if (value['samples'] is List) {
+    samples = (value['samples'] as List)
+        .map((item) => RiskHistorySample.fromJson(_wireMap(item)!))
+        .toList(growable: false);
+  }
+  List<RiskDailySummary>? summaries;
+  if (value['summaries'] is List) {
+    summaries = (value['summaries'] as List)
+        .map((item) => RiskDailySummary.fromJson(_wireMap(item)!))
+        .toList(growable: false);
+  }
+  return RiskMonitorViewState(
+    isRunning: value['isRunning'] == true,
+    backgroundAvailable: value['backgroundAvailable'] == true,
+    ownerLabel: value['ownerLabel']?.toString() ?? 'android-service',
+    accountHash: value['accountHash']?.toString(),
+    episodeKey: value['episodeKey']?.toString(),
+    evaluation: value['evaluation'] == null
+        ? null
+        : _evaluationFromWire(value['evaluation']),
+    planEvaluation: value['planEvaluation'] == null
+        ? null
+        : _planEvaluationFromWire(value['planEvaluation']),
+    plan: value['plan'] == null
+        ? null
+        : RiskPlan.fromJson(_wireMap(value['plan'])!),
+    settings: value['settings'] == null
+        ? null
+        : RiskSettings.fromJson(_wireMap(value['settings'])!),
+    market: value['market'] == null ? null : _marketFromWire(value['market']),
+    samples: samples,
+    summaries: summaries,
+    previousCheck: value['previousCheck'] == null
+        ? null
+        : _comparisonFromWire(value['previousCheck']),
+    trend: value['trend'] == null ? null : _trendFromWire(value['trend']),
+    velocity: value['velocity'] == null
+        ? null
+        : _velocityFromWire(value['velocity']),
+    events: events,
+    quality: _wireQuality(value['quality']),
+    unsaved: value['unsaved'] == true,
+    lastError: value['lastError']?.toString(),
+    notificationCapability: capability,
+  );
+}
+
 class RiskMonitorCommandResult {
   const RiskMonitorCommandResult({
     required this.commandId,
@@ -294,6 +1299,84 @@ class RiskMonitorCommandResult {
 
   bool get accepted => status == RiskMonitorCommandStatus.accepted;
   bool get duplicate => replayed;
+
+  Map<String, dynamic> toWire() => <String, dynamic>{
+    'commandId': commandId,
+    'status': status.name,
+    'message': message,
+    'replayed': replayed,
+    'state': RiskMonitorWire.encodeState(state),
+  };
+}
+
+/// JSON-compatible command/state/ack protocol used by the Android service.
+/// The protocol deliberately transports only typed state metadata; account
+/// payloads, credentials and risk values never cross the platform channel.
+abstract final class RiskMonitorWire {
+  static const String handshake = 'risk.monitor.handshake.v1';
+  static const String handshakeRequest = 'risk.monitor.handshake.request.v1';
+  static const String heartbeat = 'risk.monitor.heartbeat.v1';
+  static const String command = 'risk.monitor.command.v1';
+  static const String acknowledgement = 'risk.monitor.ack.v1';
+  static const String state = 'risk.monitor.state.v1';
+
+  static Map<String, dynamic> encodeCommand(RiskMonitorCommand value) =>
+      <String, dynamic>{'protocol': command, 'command': value.toWire()};
+
+  static RiskMonitorCommand decodeCommand(Map<String, dynamic> value) {
+    _requireProtocol(value, command);
+    final payload = value['command'];
+    if (payload is! Map) {
+      throw const FormatException('Risk command payload is missing');
+    }
+    return RiskMonitorCommand.fromWire(Map<String, dynamic>.from(payload));
+  }
+
+  static Map<String, dynamic> encodeAck(RiskMonitorCommandResult value) =>
+      <String, dynamic>{'protocol': acknowledgement, 'ack': value.toWire()};
+
+  static RiskMonitorCommandResult decodeAck(Map<String, dynamic> value) {
+    _requireProtocol(value, acknowledgement);
+    final payload = value['ack'];
+    if (payload is! Map) {
+      throw const FormatException('Risk acknowledgement payload is missing');
+    }
+    final ack = Map<String, dynamic>.from(payload);
+    final commandId = ack['commandId']?.toString().trim() ?? '';
+    if (commandId.isEmpty) {
+      throw const FormatException('Risk acknowledgement command id is missing');
+    }
+    final statusText = ack['status']?.toString();
+    final status = RiskMonitorCommandStatus.values.firstWhere(
+      (item) => item.name == statusText,
+      orElse: () => throw const FormatException('Unknown risk ack status'),
+    );
+    final state = ack['state'];
+    return RiskMonitorCommandResult(
+      commandId: commandId,
+      status: status,
+      state: state is Map
+          ? decodeState(Map<String, dynamic>.from(state))
+          : RiskMonitorViewState(),
+      message: ack['message']?.toString(),
+      replayed: ack['replayed'] == true,
+    );
+  }
+
+  static Map<String, dynamic> encodeState(RiskMonitorViewState value) =>
+      _stateWire(value);
+
+  static RiskMonitorViewState decodeState(Map<String, dynamic> value) {
+    _requireProtocol(value, state);
+    return _stateFromWire(value);
+  }
+
+  static void _requireProtocol(Map<String, dynamic> value, String expected) {
+    final actual = value['protocol'];
+    if (actual != null && actual.toString() != expected) {
+      throw FormatException('Unexpected risk protocol: ${actual.toString()}');
+    }
+  }
 }
 
 /// Protocol implemented by the foreground owner and by the later Android
@@ -303,6 +1386,17 @@ abstract class RiskMonitorOwner {
   RiskMonitorViewState get currentState;
 
   Future<RiskMonitorCommandResult> dispatch(RiskMonitorCommand command);
+}
+
+abstract interface class RiskMonitorDisposable {
+  Future<void> dispose();
+}
+
+/// The service controller uses this narrow seam to fence a credential
+/// mutation before an earlier queued command can finish. The follow-up
+/// dispatch still owns the restart and acknowledgement.
+abstract interface class RiskMonitorCredentialInvalidator {
+  void fenceCredentialsForCommand(String commandId, {String? reason});
 }
 
 class RiskMonitorBridge {
@@ -453,6 +1547,21 @@ class InMemoryRiskMonitorOwner implements RiskMonitorOwner {
           clearVelocity: true,
         );
         result = _accept(command, message: 'History clear requested');
+      case RiskMonitorCommandType.invalidateCredentials:
+        _state = RiskMonitorViewState(
+          ownerLabel: _state.ownerLabel,
+          backgroundAvailable: _state.backgroundAvailable,
+          quality: const RiskQuality.unavailable(
+            reason: 'Credentials changed; monitoring is restarting',
+          ),
+        );
+        _plan = null;
+        _settings = null;
+        result = _accept(command, message: 'Credentials invalidated');
+      case RiskMonitorCommandType.uiDeparture:
+        result = _accept(command, message: 'UI departure recorded');
+      case RiskMonitorCommandType.uiResume:
+        result = _accept(command, message: 'UI resume acknowledged');
     }
     _results[id] = result;
     return result;

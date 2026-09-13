@@ -32,12 +32,16 @@ class RiskRepositoryException implements Exception {
   const RiskRepositoryException(
     this.message, {
     this.statusCode,
+    this.retryAfter,
+    this.credentialFailure = false,
     this.endpoint,
     this.cause,
   });
 
   final String message;
   final int? statusCode;
+  final Duration? retryAfter;
+  final bool credentialFailure;
   final String? endpoint;
   final Object? cause;
 
@@ -48,18 +52,70 @@ class RiskRepositoryException implements Exception {
   }
 }
 
+/// Failure metadata for the most recent position-selection attempt. The
+/// selection result keeps its stable domain shape; the monitor reads this
+/// typed side channel to apply auth/backoff policy without exposing payloads.
+class RiskRepositorySelectionFailure {
+  const RiskRepositorySelectionFailure({
+    this.statusCode,
+    this.retryAfter,
+    this.credentialFailure = false,
+    this.endpoint,
+  });
+
+  final int? statusCode;
+  final Duration? retryAfter;
+  final bool credentialFailure;
+  final String? endpoint;
+}
+
 class RiskRepository {
   RiskRepository(
     this._dio, {
     this.environment = 'production',
     RiskRepositoryClock? clock,
     this.maxLedgerPages = 100,
+    this.stableCacheTtl = const Duration(hours: 1),
+    this.ledgerCacheTtl = const Duration(minutes: 5),
   }) : clock = clock ?? DateTime.now;
 
   final Dio _dio;
   final String environment;
   final RiskRepositoryClock clock;
   final int maxLedgerPages;
+  final Duration stableCacheTtl;
+  final Duration ledgerCacheTtl;
+
+  _TimedRiskValue<OkxRiskAccountConfigDto>? _configCache;
+  int _cacheGeneration = 0;
+  RiskRepositorySelectionFailure? _lastSelectionFailure;
+  final Map<String, _TimedRiskValue<OkxRiskInstrumentDto?>> _instrumentCache =
+      <String, _TimedRiskValue<OkxRiskInstrumentDto?>>{};
+  final Map<String, _TimedRiskValue<OkxRiskFeeRateDto?>> _feeCache =
+      <String, _TimedRiskValue<OkxRiskFeeRateDto?>>{};
+  final Map<String, _TimedRiskValue<OkxRiskInterestRateDto?>> _rateCache =
+      <String, _TimedRiskValue<OkxRiskInterestRateDto?>>{};
+  final Map<String, _TimedRiskValue<RiskInterestLedgerResult>> _ledgerCache =
+      <String, _TimedRiskValue<RiskInterestLedgerResult>>{};
+  final Map<String, Future<RiskInterestLedgerResult>> _ledgerRequests =
+      <String, Future<RiskInterestLedgerResult>>{};
+
+  /// Credential mutation invalidation is called by the monitor before a new
+  /// account namespace is sampled. No credentials are retained in these
+  /// caches; the identity-bound values still must not cross accounts.
+  void clearCaches() {
+    _cacheGeneration++;
+    _configCache = null;
+    _instrumentCache.clear();
+    _feeCache.clear();
+    _rateCache.clear();
+    _ledgerCache.clear();
+    _ledgerRequests.clear();
+    _lastSelectionFailure = null;
+  }
+
+  RiskRepositorySelectionFailure? get lastSelectionFailure =>
+      _lastSelectionFailure;
 
   static const String positionsEndpoint = '/api/v5/account/positions';
   static const String instrumentsEndpoint = '/api/v5/account/instruments';
@@ -70,6 +126,11 @@ class RiskRepository {
       '/api/v5/account/interest-accrued';
 
   Future<OkxRiskAccountConfigDto> getAccountConfig() async {
+    final generation = _cacheGeneration;
+    final cached = _configCache;
+    if (cached != null && !_expired(cached.fetchedAt, stableCacheTtl)) {
+      return cached.value;
+    }
     final response = await _get(configEndpoint);
     final data = _dataList(response, configEndpoint);
     if (data.isEmpty) {
@@ -78,7 +139,14 @@ class RiskRepository {
         endpoint: configEndpoint,
       );
     }
-    return OkxRiskAccountConfigDto.fromJson(data.first, fetchedAt: clock());
+    final value = OkxRiskAccountConfigDto.fromJson(
+      data.first,
+      fetchedAt: clock(),
+    );
+    if (generation == _cacheGeneration) {
+      _configCache = _TimedRiskValue(value, clock());
+    }
+    return value;
   }
 
   Future<List<OkxRiskPositionDto>> getPositions({String? instId}) async {
@@ -100,6 +168,11 @@ class RiskRepository {
   Future<OkxRiskInstrumentDto?> getMarginInstrument({
     required String instId,
   }) async {
+    final generation = _cacheGeneration;
+    final cached = _instrumentCache[instId];
+    if (cached != null && !_expired(cached.fetchedAt, stableCacheTtl)) {
+      return cached.value;
+    }
     final response = await _get(
       instrumentsEndpoint,
       queryParameters: <String, dynamic>{
@@ -115,13 +188,24 @@ class RiskRepository {
       );
       if (instrument.instId == instId &&
           instrument.instType?.toUpperCase() == 'MARGIN') {
+        if (generation == _cacheGeneration) {
+          _instrumentCache[instId] = _TimedRiskValue(instrument, clock());
+        }
         return instrument;
       }
+    }
+    if (generation == _cacheGeneration) {
+      _instrumentCache[instId] = _TimedRiskValue(null, clock());
     }
     return null;
   }
 
   Future<OkxRiskFeeRateDto?> getTradeFee({required String instId}) async {
+    final generation = _cacheGeneration;
+    final cached = _feeCache[instId];
+    if (cached != null && !_expired(cached.fetchedAt, stableCacheTtl)) {
+      return cached.value;
+    }
     final response = await _get(
       feeEndpoint,
       queryParameters: <String, dynamic>{
@@ -133,13 +217,25 @@ class RiskRepository {
     for (final item in data) {
       final fee = OkxRiskFeeRateDto.fromJson(item, fetchedAt: clock());
       if (fee.instId == instId && fee.instType?.toUpperCase() == 'MARGIN') {
+        if (generation == _cacheGeneration) {
+          _feeCache[instId] = _TimedRiskValue(fee, clock());
+        }
         return fee;
       }
+    }
+    if (generation == _cacheGeneration) {
+      _feeCache[instId] = _TimedRiskValue(null, clock());
     }
     return null;
   }
 
   Future<OkxRiskInterestRateDto?> getInterestRate({required String ccy}) async {
+    final generation = _cacheGeneration;
+    final key = ccy.trim().toUpperCase();
+    final cached = _rateCache[key];
+    if (cached != null && !_expired(cached.fetchedAt, stableCacheTtl)) {
+      return cached.value;
+    }
     final response = await _get(
       interestRateEndpoint,
       queryParameters: <String, dynamic>{'ccy': ccy},
@@ -147,7 +243,15 @@ class RiskRepository {
     final data = _dataList(response, interestRateEndpoint);
     for (final item in data) {
       final rate = OkxRiskInterestRateDto.fromJson(item, fetchedAt: clock());
-      if (rate.ccy?.toUpperCase() == ccy.toUpperCase()) return rate;
+      if (rate.ccy?.toUpperCase() == key) {
+        if (generation == _cacheGeneration) {
+          _rateCache[key] = _TimedRiskValue(rate, clock());
+        }
+        return rate;
+      }
+    }
+    if (generation == _cacheGeneration) {
+      _rateCache[key] = _TimedRiskValue(null, clock());
     }
     return null;
   }
@@ -156,6 +260,86 @@ class RiskRepository {
   /// position.  If the API's page cap is reached, the result is explicitly
   /// incomplete so callers cannot claim a precise True Exit price.
   Future<RiskInterestLedgerResult> getInterestLedger({
+    required String instId,
+    String? ccy,
+    DateTime? episodeStart,
+    DateTime? episodeEnd,
+    int pageSize = 100,
+  }) async {
+    final generation = _cacheGeneration;
+    final key = _ledgerKey(
+      instId: instId,
+      ccy: ccy,
+      episodeStart: episodeStart,
+      pageSize: pageSize,
+    );
+    final cached = _ledgerCache[key];
+    if (cached != null && !_expired(cached.fetchedAt, ledgerCacheTtl)) {
+      return _ledgerForWindow(cached.value, episodeStart, episodeEnd);
+    }
+    final pending = _ledgerRequests[key];
+    final request = pending ?? _fetchInterestLedger(
+      instId: instId,
+      ccy: ccy,
+      episodeStart: episodeStart,
+      episodeEnd: episodeEnd,
+      pageSize: pageSize,
+    );
+    if (pending == null) _ledgerRequests[key] = request;
+    try {
+      final result = await request;
+      if (generation == _cacheGeneration) {
+        _ledgerCache[key] = _TimedRiskValue(result, clock());
+      }
+      return _ledgerForWindow(result, episodeStart, episodeEnd);
+    } finally {
+      if (identical(_ledgerRequests[key], request)) {
+        _ledgerRequests.remove(key);
+      }
+    }
+  }
+
+  RiskInterestLedgerResult _ledgerForWindow(
+    RiskInterestLedgerResult value,
+    DateTime? episodeStart,
+    DateTime? episodeEnd,
+  ) {
+    final entries = value.entries.where((entry) {
+      final occurredAt = entry.occurredAt;
+      if (occurredAt == null) return false;
+      if (episodeStart != null && occurredAt.isBefore(episodeStart)) {
+        return false;
+      }
+      if (episodeEnd != null && occurredAt.isAfter(episodeEnd)) return false;
+      return true;
+    }).toList(growable: false);
+    DateTime? coverageFrom;
+    DateTime? coverageTo;
+    for (final entry in entries) {
+      final occurredAt = entry.occurredAt;
+      if (occurredAt == null) continue;
+      if (coverageFrom == null || occurredAt.isBefore(coverageFrom)) {
+        coverageFrom = occurredAt;
+      }
+      if (coverageTo == null || occurredAt.isAfter(coverageTo)) {
+        coverageTo = occurredAt;
+      }
+    }
+    return RiskInterestLedgerResult(
+      entries: entries,
+      complete: value.complete,
+      pages: value.pages,
+      ambiguousEntries: value.ambiguousEntries,
+      coverageFrom: coverageFrom,
+      coverageTo: coverageTo,
+      requestedFrom: episodeStart,
+      requestedTo: episodeEnd,
+      reason: value.reason,
+      observedAt: value.observedAt,
+    );
+  }
+
+  Future<RiskInterestLedgerResult> _fetchInterestLedger({
     required String instId,
     String? ccy,
     DateTime? episodeStart,
@@ -207,13 +391,14 @@ class RiskRepository {
       var pageHasAmbiguousAttribution = false;
       for (final entry in pageEntries) {
         final occurredAt = entry.occurredAt;
-        // A timestamp outside the verified episode is safely excluded before
-        // identity validation. This is how rows from a previous/reopened
-        // episode are kept out without relying on a response posId field.
+        // Rows before the fixed episode start are safely excluded before
+        // identity validation. The moving episode end is deliberately not
+        // applied here: the reusable ledger cache retains later rows for the
+        // next capture, while _enrichPosition applies the current end window.
         final outsideEpisode =
             occurredAt != null &&
-            ((episodeStart != null && occurredAt.isBefore(episodeStart)) ||
-                (episodeEnd != null && occurredAt.isAfter(episodeEnd)));
+            episodeStart != null &&
+            occurredAt.isBefore(episodeStart);
         if (outsideEpisode) continue;
 
         // The official endpoint has no posId. A missing identity is never
@@ -354,12 +539,15 @@ class RiskRepository {
     String? selectedPositionId,
     String? selectedEpisodeKey,
   }) async {
+    final generation = _cacheGeneration;
+    _lastSelectionFailure = null;
     late final OkxRiskAccountConfigDto config;
     late final List<OkxRiskPositionDto> rawPositions;
     try {
       config = await getAccountConfig();
       rawPositions = await getPositions();
     } on RiskRepositoryException catch (error) {
+      _rememberSelectionFailure(error, generation: generation);
       return RiskPositionSelection(
         status: RiskEligibility.invalid,
         quality: RiskQuality.error(
@@ -367,6 +555,20 @@ class RiskRepository {
           reason: error.message,
         ),
         message: error.toString(),
+      );
+    }
+
+    // A credential mutation may have completed while either account request
+    // was in flight. Do not select or enrich the old response, and in
+    // particular do not start the next cacheable enrichment call under the
+    // new generation.
+    if (generation != _cacheGeneration) {
+      return const RiskPositionSelection(
+        status: RiskEligibility.invalid,
+        quality: RiskQuality.unavailable(
+          reason: 'Position selection was invalidated',
+        ),
+        message: 'Position selection was invalidated',
       );
     }
 
@@ -426,7 +628,11 @@ class RiskRepository {
             selectedPositionId.isNotEmpty &&
             selected.positionId != selectedPositionId);
 
-    final enriched = await _enrichPosition(selected, namespace: namespace);
+    final enriched = await _enrichPosition(
+      selected,
+      namespace: namespace,
+      generation: generation,
+    );
     return RiskPositionSelection(
       status: RiskEligibility.eligible,
       quality: enriched.quality,
@@ -442,6 +648,7 @@ class RiskRepository {
   Future<RiskPosition> _enrichPosition(
     RiskPosition position, {
     required String? namespace,
+    required int generation,
   }) async {
     OkxRiskFeeRateDto? fee;
     OkxRiskInstrumentDto? instrument;
@@ -460,28 +667,41 @@ class RiskRepository {
     if (namespace == null) {
       missing.add('Account uid is unresolved; this position is ephemeral');
     }
+    if (generation != _cacheGeneration) return position;
     try {
       instrument = await getMarginInstrument(instId: instId);
       if (instrument == null || instrument.groupId == null) {
         missing.add('Exact instrument fee group is unavailable');
       }
+    } on RiskRepositoryException catch (error) {
+      _rememberSelectionFailure(error, generation: generation);
+      missing.add('Exact instrument fee group is unavailable');
     } catch (_) {
       missing.add('Exact instrument fee group is unavailable');
     }
+    if (generation != _cacheGeneration) return position;
     try {
       fee = await getTradeFee(instId: instId);
       if (fee == null || fee.takerExpenseRateFor(instrument?.groupId) == null) {
         missing.add('Applicable MARGIN fee rate unavailable');
       }
+    } on RiskRepositoryException catch (error) {
+      _rememberSelectionFailure(error, generation: generation);
+      missing.add('Applicable MARGIN fee rate unavailable');
     } catch (_) {
       missing.add('Applicable MARGIN fee rate unavailable');
     }
     if (liabilityCurrency != null && liabilityCurrency.isNotEmpty) {
+      if (generation != _cacheGeneration) return position;
       try {
         rate = await getInterestRate(ccy: liabilityCurrency);
+      } on RiskRepositoryException catch (error) {
+        _rememberSelectionFailure(error, generation: generation);
+        missing.add('Hourly borrowing rate unavailable');
       } catch (_) {
         missing.add('Hourly borrowing rate unavailable');
       }
+      if (generation != _cacheGeneration) return position;
       try {
         ledger = await getInterestLedger(
           instId: instId,
@@ -494,6 +714,9 @@ class RiskRepository {
             ledger.reason ?? 'Settled-interest attribution is incomplete',
           );
         }
+      } on RiskRepositoryException catch (error) {
+        _rememberSelectionFailure(error, generation: generation);
+        missing.add('Settled-interest attribution unavailable');
       } catch (_) {
         missing.add('Settled-interest attribution unavailable');
       }
@@ -921,6 +1144,28 @@ class RiskRepository {
     );
   }
 
+  void _rememberSelectionFailure(
+    RiskRepositoryException error, {
+    required int generation,
+  }) {
+    if (generation != _cacheGeneration) return;
+    final prior = _lastSelectionFailure;
+    final retryAfter = <Duration?>[prior?.retryAfter, error.retryAfter]
+        .whereType<Duration>()
+        .fold<Duration?>(null, (longest, value) {
+          if (longest == null || value > longest) return value;
+          return longest;
+        });
+    final statusCode = error.statusCode ?? prior?.statusCode;
+    _lastSelectionFailure = RiskRepositorySelectionFailure(
+      statusCode: statusCode,
+      retryAfter: retryAfter,
+      credentialFailure:
+          error.credentialFailure || prior?.credentialFailure == true,
+      endpoint: error.endpoint ?? prior?.endpoint,
+    );
+  }
+
   Future<Response<dynamic>> _get(
     String endpoint, {
     Map<String, dynamic>? queryParameters,
@@ -932,9 +1177,15 @@ class RiskRepository {
         options: Options(extra: const <String, Object>{'requiresAuth': true}),
       );
     } on DioException catch (error) {
+      final statusCode = error.response?.statusCode;
+      final credentialFailure =
+          statusCode == 401 ||
+          error.error?.toString().toLowerCase().contains('credential') == true;
       throw RiskRepositoryException(
         _dioErrorMessage(error),
-        statusCode: error.response?.statusCode,
+        statusCode: statusCode,
+        retryAfter: _retryAfter(error.response),
+        credentialFailure: credentialFailure,
         endpoint: endpoint,
         cause: error,
       );
@@ -987,4 +1238,110 @@ class RiskRepository {
     }
     return error.message ?? 'OKX request failed';
   }
+
+  bool _expired(DateTime fetchedAt, Duration ttl) {
+    final age = clock().difference(fetchedAt);
+    return !age.isNegative && age >= ttl;
+  }
+
+  String _ledgerKey({
+    required String instId,
+    required String? ccy,
+    required DateTime? episodeStart,
+    required int pageSize,
+  }) =>
+      '${instId.trim()}|${ccy?.trim().toUpperCase() ?? ''}|'
+      '${episodeStart?.toUtc().toIso8601String() ?? ''}|$pageSize';
+
+  Duration? _retryAfter(Response<dynamic>? response) {
+    final raw = response?.headers.value('retry-after')?.trim();
+    if (raw == null || raw.isEmpty) return null;
+    final seconds = int.tryParse(raw);
+    if (seconds != null && seconds >= 0) {
+      return Duration(seconds: seconds);
+    }
+    final date = _parseHttpDate(raw);
+    if (date == null) return null;
+    final delay = date.toUtc().difference(clock().toUtc());
+    return delay.isNegative ? Duration.zero : delay;
+  }
+
+  DateTime? _parseHttpDate(String raw) {
+    final monthNumbers = <String, int>{
+      'jan': 1,
+      'feb': 2,
+      'mar': 3,
+      'apr': 4,
+      'may': 5,
+      'jun': 6,
+      'jul': 7,
+      'aug': 8,
+      'sep': 9,
+      'oct': 10,
+      'nov': 11,
+      'dec': 12,
+    };
+    final rfc1123 = RegExp(
+      r'^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),\s+(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})\s+(\d{2}):(\d{2}):(\d{2})\s+GMT$',
+      caseSensitive: false,
+    ).firstMatch(raw);
+    final rfc850 = RegExp(
+      r'^(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),\s+(\d{1,2})-([A-Za-z]{3})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})\s+GMT$',
+      caseSensitive: false,
+    ).firstMatch(raw);
+    final asctime = RegExp(
+      r'^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+([A-Za-z]{3})\s+(\d{1,2})\s+(\d{2}):(\d{2}):(\d{2})\s+(\d{4})$',
+      caseSensitive: false,
+    ).firstMatch(raw);
+    try {
+      if (rfc1123 != null) {
+        final month = monthNumbers[rfc1123.group(2)!.toLowerCase()];
+        if (month == null) return null;
+        return DateTime.utc(
+          int.parse(rfc1123.group(3)!),
+          month,
+          int.parse(rfc1123.group(1)!),
+          int.parse(rfc1123.group(4)!),
+          int.parse(rfc1123.group(5)!),
+          int.parse(rfc1123.group(6)!),
+        );
+      }
+      if (rfc850 != null) {
+        final month = monthNumbers[rfc850.group(2)!.toLowerCase()];
+        if (month == null) return null;
+        final shortYear = int.parse(rfc850.group(3)!);
+        final year = shortYear >= 50 ? 1900 + shortYear : 2000 + shortYear;
+        return DateTime.utc(
+          year,
+          month,
+          int.parse(rfc850.group(1)!),
+          int.parse(rfc850.group(4)!),
+          int.parse(rfc850.group(5)!),
+          int.parse(rfc850.group(6)!),
+        );
+      }
+      if (asctime != null) {
+        final month = monthNumbers[asctime.group(1)!.toLowerCase()];
+        if (month == null) return null;
+        return DateTime.utc(
+          int.parse(asctime.group(6)!),
+          month,
+          int.parse(asctime.group(2)!),
+          int.parse(asctime.group(3)!),
+          int.parse(asctime.group(4)!),
+          int.parse(asctime.group(5)!),
+        );
+      }
+    } on FormatException {
+      return null;
+    }
+    return null;
+  }
+}
+
+class _TimedRiskValue<T> {
+  const _TimedRiskValue(this.value, this.fetchedAt);
+
+  final T value;
+  final DateTime fetchedAt;
 }

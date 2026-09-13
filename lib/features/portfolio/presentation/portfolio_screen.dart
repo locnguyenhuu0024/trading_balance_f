@@ -3,6 +3,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/navigation/navigation_content_frame.dart';
+import '../../../core/widgets/crypto_icon.dart';
 import '../../settings/presentation/settings_screen.dart';
 import '../application/risk_monitor_bridge.dart';
 import '../domain/risk/action_plan.dart';
@@ -871,6 +872,9 @@ class _PositionContext extends StatelessWidget {
     final instrument = position.instrumentId.trim().isEmpty
         ? '${position.baseCurrency}-${position.quoteCurrency}'
         : position.instrumentId;
+    final baseSymbol = position.baseCurrency?.trim().isNotEmpty == true
+        ? position.baseCurrency!.trim()
+        : instrument.split('-').first.trim();
     final side = position.positionSide.trim().isEmpty
         ? '-'
         : position.positionSide.toUpperCase();
@@ -886,14 +890,31 @@ class _PositionContext extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         child: Wrap(
           crossAxisAlignment: WrapCrossAlignment.center,
-          spacing: 10,
+          spacing: 6,
           runSpacing: 5,
           children: [
-            Text(
-              riskRedactRiskText(instrument, hideValues),
-              style: theme.textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w800,
-              ),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CryptoIcon(
+                  symbol: baseSymbol,
+                  size: 20,
+                  backgroundColor: theme.colorScheme.surfaceContainerHighest,
+                  textColor: theme.colorScheme.onSurface,
+                  textSize: 10,
+                ),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    riskRedactRiskText(instrument, hideValues),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
             ),
             _ContextChip(
               label: riskRedactRiskText('ISOLATED $side', hideValues),
@@ -922,7 +943,7 @@ class _ContextChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(20),
         color: Theme.of(context).colorScheme.surfaceContainerHighest,
