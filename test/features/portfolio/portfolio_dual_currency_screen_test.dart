@@ -25,7 +25,7 @@ class _FakeOkxWebsocketService extends OkxWebsocketService {
 }
 
 void main() {
-  testWidgets('reveals dual amounts only from explicit Portfolio details', (
+  testWidgets('renders direct Portfolio summary and dual currency amounts', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(800, 1200);
@@ -54,22 +54,15 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    expect(find.text('100.00 USDT'), findsNothing);
-    expect(find.textContaining('Unrealized PnL'), findsNothing);
-    await tester.tap(find.byKey(const Key('portfolio-details')));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Total assets (USDT + VND)'), findsOneWidget);
+    expect(find.text('Tổng tài sản (USDT + VND)'), findsOneWidget);
     expect(find.text('100.00 USDT'), findsNWidgets(2));
     expect(find.text('≈ 2.540.000 đ'), findsNWidgets(2));
-    expect(find.text('Principal / base capital'), findsOneWidget);
-    expect(find.byKey(const Key('portfolio-reveal-pnl')), findsOneWidget);
-    expect(find.textContaining('Unrealized PnL'), findsNothing);
-    await tester.tap(find.byKey(const Key('portfolio-reveal-pnl')));
-    await tester.pump();
-    expect(find.text('Unrealized PnL'), findsOneWidget);
+    expect(find.text('Vốn gốc'), findsOneWidget);
+    expect(find.text('Lãi / lỗ chưa thực hiện'), findsOneWidget);
     expect(find.text('+10.00 USDT'), findsOneWidget);
     expect(find.text('≈ +254.000 đ'), findsOneWidget);
+    expect(find.text('Tài sản chi tiết'), findsOneWidget);
+    expect(find.text('BTC'), findsOneWidget);
     expect(find.byType(PortfolioCurrencyAmount), findsNWidgets(4));
 
     await tester.tap(find.byIcon(Icons.visibility).first);
@@ -113,9 +106,7 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    await tester.tap(find.byKey(const Key('portfolio-details')));
-    await tester.pumpAndSettle();
-    final summary = find.byKey(const Key('portfolio-details-summary'));
+    final summary = find.byKey(const Key('portfolio-asset-summary'));
     expect(summary, findsOneWidget);
     expect(tester.takeException(), isNull);
 

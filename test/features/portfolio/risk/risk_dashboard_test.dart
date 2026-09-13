@@ -13,7 +13,7 @@ import 'package:trading_balance_f/features/portfolio/domain/risk/risk_events.dar
 import 'package:trading_balance_f/features/portfolio/domain/risk/risk_history.dart';
 import 'package:trading_balance_f/features/portfolio/domain/risk/risk_models.dart';
 import 'package:trading_balance_f/features/portfolio/domain/risk/risk_policy.dart';
-import 'package:trading_balance_f/features/portfolio/presentation/portfolio_screen.dart';
+import 'package:trading_balance_f/features/portfolio/presentation/risk_dashboard_screen.dart';
 import 'package:trading_balance_f/features/portfolio/presentation/providers/risk_dashboard_provider.dart';
 import 'package:trading_balance_f/features/portfolio/presentation/widgets/risk/risk_history_view.dart';
 import 'package:trading_balance_f/features/portfolio/presentation/widgets/risk/risk_market_card.dart';
@@ -868,7 +868,7 @@ Widget _home(
       themeMode: themeMode,
       home: const RepaintBoundary(
         key: Key('risk-home-boundary'),
-        child: PortfolioScreen(),
+        child: RiskDashboardScreen(),
       ),
     ),
     themeMode: themeMode,

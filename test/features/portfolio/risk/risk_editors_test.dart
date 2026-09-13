@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/features/portfolio/application/risk_monitor_bridge.dart';
 import 'package:trading_balance_f/features/portfolio/domain/risk/action_plan.dart';
 import 'package:trading_balance_f/features/portfolio/domain/risk/risk_models.dart';
-import 'package:trading_balance_f/features/portfolio/presentation/portfolio_screen.dart';
+import 'package:trading_balance_f/features/portfolio/presentation/risk_dashboard_screen.dart';
 import 'package:trading_balance_f/features/portfolio/presentation/providers/risk_dashboard_provider.dart';
 import 'package:trading_balance_f/features/portfolio/presentation/widgets/risk/risk_plan_editor.dart';
 import 'package:trading_balance_f/features/portfolio/presentation/widgets/risk/risk_price_map.dart';
@@ -451,6 +451,6 @@ Widget _home(InMemoryRiskMonitorOwner owner) {
       riskMonitorOwnerProvider.overrideWithValue(owner),
       riskMonitorBridgeProvider.overrideWithValue(RiskMonitorBridge(owner)),
     ],
-    child: const MaterialApp(home: PortfolioScreen()),
+    child: const MaterialApp(home: RiskDashboardScreen()),
   );
 }

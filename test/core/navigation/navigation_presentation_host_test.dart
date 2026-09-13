@@ -97,7 +97,7 @@ void main() {
 
     expect(find.text('draft API value'), findsOneWidget);
     expect(
-      find.byKey(const Key('floating-navigation-destination-4')),
+      find.byKey(const Key('floating-navigation-destination-5')),
       findsOneWidget,
     );
     expect(find.byKey(const Key('navigation-bar-surface')), findsNothing);

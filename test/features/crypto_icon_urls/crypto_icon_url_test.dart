@@ -9,6 +9,7 @@ void main() {
       File('lib/features/market/presentation/market_screen.dart'),
       File('lib/features/orders/presentation/orders_screen.dart'),
       File('lib/features/portfolio/presentation/portfolio_screen.dart'),
+      File('lib/features/portfolio/presentation/risk_dashboard_screen.dart'),
     ];
 
     test('screens use the shared CryptoIcon widget', () {

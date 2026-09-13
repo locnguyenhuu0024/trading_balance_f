@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'navigation_destination_data.dart';
 import 'navigation_preferences.dart';
 
-/// Five independent navigation buttons anchored to one physical screen edge.
+/// Six independent navigation buttons anchored to one physical screen edge.
 /// Decorative gaps intentionally have no hit-testable widget above the page.
 class FloatingNavigationButtons extends StatelessWidget {
   const FloatingNavigationButtons({

@@ -34,12 +34,12 @@ void main() {
     );
   }
 
-  testWidgets('root navigation exposes five destinations and selected label', (
+  testWidgets('root navigation exposes six destinations and selected label', (
     tester,
   ) async {
     await tester.pumpWidget(shellApp());
 
-    expect(TradingNavigationBar.items, hasLength(5));
+    expect(TradingNavigationBar.items, hasLength(6));
     expect(find.byKey(const Key('destination-body-0')), findsOneWidget);
     expect(find.text('Trang chủ'), findsOneWidget);
     expect(find.text('Thị trường'), findsNothing);
@@ -51,6 +51,12 @@ void main() {
     expect(find.text('Trang chủ'), findsNothing);
     expect(find.text('Thị trường'), findsOneWidget);
     expect(find.byKey(const Key('navigation-destination-4')), findsOneWidget);
+    expect(find.byKey(const Key('navigation-destination-5')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('navigation-destination-5')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('destination-body-5')), findsOneWidget);
+    expect(find.text('Risk'), findsOneWidget);
   });
 
   testWidgets(
