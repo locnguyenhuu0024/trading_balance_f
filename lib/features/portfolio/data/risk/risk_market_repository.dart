@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 
 import '../../domain/risk/market_risk_engine.dart';
 import '../../domain/risk/risk_models.dart';
 import 'okx_risk_dto.dart';
+import 'risk_request_coordinator.dart';
 
 typedef RiskMarketRepositoryClock = DateTime Function();
 
@@ -12,6 +15,7 @@ class RiskMarketRepositoryException implements Exception {
   const RiskMarketRepositoryException(
     this.message, {
     this.statusCode,
+    this.retryAfter,
     this.endpoint,
     this.cause,
     this.payloadError = false,
@@ -19,6 +23,7 @@ class RiskMarketRepositoryException implements Exception {
 
   final String message;
   final int? statusCode;
+  final Duration? retryAfter;
   final String? endpoint;
   final Object? cause;
   final bool payloadError;
@@ -36,18 +41,64 @@ class RiskMarketRepository {
   RiskMarketRepository(
     this._dio, {
     RiskMarketRepositoryClock? clock,
+    RiskRequestCoordinator? requestCoordinator,
     this.venue = 'OKX',
     this.candleLimit = 120,
-  }) : clock = clock ?? DateTime.now;
+    this.marketCacheTtl = const Duration(minutes: 1),
+  }) : clock = clock ?? DateTime.now,
+       requestCoordinator =
+           requestCoordinator ??
+           RiskRequestCoordinator(clock: clock ?? DateTime.now);
 
   final Dio _dio;
   final RiskMarketRepositoryClock clock;
+  final RiskRequestCoordinator requestCoordinator;
   final String venue;
   final int candleLimit;
+  final Duration marketCacheTtl;
+
+  final Map<String, _TimedMarketValue<MarketCandleSeries>> _candleCache =
+      <String, _TimedMarketValue<MarketCandleSeries>>{};
+  final Map<String, Future<MarketCandleSeries>> _candleRequests =
+      <String, Future<MarketCandleSeries>>{};
+  final Map<
+    String,
+    _TimedMarketValue<MarketSourceResult<MarketFundingObservation>>
+  >
+  _fundingCache =
+      <
+        String,
+        _TimedMarketValue<MarketSourceResult<MarketFundingObservation>>
+      >{};
+  final Map<String, Future<MarketSourceResult<MarketFundingObservation>>>
+  _fundingRequests =
+      <String, Future<MarketSourceResult<MarketFundingObservation>>>{};
+  final Map<
+    String,
+    _TimedMarketValue<MarketSourceResult<List<MarketOpenInterestSample>>>
+  >
+  _openInterestCache =
+      <
+        String,
+        _TimedMarketValue<MarketSourceResult<List<MarketOpenInterestSample>>>
+      >{};
+  final Map<String, Future<MarketSourceResult<List<MarketOpenInterestSample>>>>
+  _openInterestRequests =
+      <String, Future<MarketSourceResult<List<MarketOpenInterestSample>>>>{};
 
   static const String candlesEndpoint = '/api/v5/market/candles';
   static const String fundingEndpoint = '/api/v5/public/funding-rate';
   static const String openInterestEndpoint = '/api/v5/public/open-interest';
+
+  void clearCaches() {
+    _candleCache.clear();
+    _candleRequests.clear();
+    _fundingCache.clear();
+    _fundingRequests.clear();
+    _openInterestCache.clear();
+    _openInterestRequests.clear();
+    requestCoordinator.clearLane(RiskRequestLane.public);
+  }
 
   /// Fetches confirmed spot candles for the requested 1H or 4H interval.
   /// Invalid intervals are rejected before any request is made.
@@ -62,20 +113,52 @@ class RiskMarketRepository {
     if (instrument.isEmpty) {
       throw ArgumentError.value('', 'instId', 'must not be empty');
     }
+    final safeLimit = _safeLimit(limit ?? candleLimit, maximum: 300);
+    final key = _candleKey(instrument, normalizedInterval, safeLimit);
+    final cached = _candleCache[key];
+    if (cached != null && !_expired(cached.fetchedAt)) {
+      return cached.value;
+    }
+    if (cached != null) {
+      _startCandleRefresh(
+        key,
+        instrument: instrument,
+        interval: normalizedInterval,
+        limit: safeLimit,
+      );
+      return _staleCandle(cached.value);
+    }
+    final pending = _candleRequests[key];
+    if (pending != null) return pending;
+    final request = _fetchCandles(
+      instrument: instrument,
+      interval: normalizedInterval,
+      limit: safeLimit,
+    );
+    _candleRequests[key] = request;
+    _completeCandleRequest(key, request);
+    return request;
+  }
+
+  Future<MarketCandleSeries> _fetchCandles({
+    required String instrument,
+    required String interval,
+    required int limit,
+  }) async {
     final observedAt = clock().toUtc();
     final response = await _get(
       candlesEndpoint,
       queryParameters: <String, dynamic>{
         'instId': instrument,
-        'bar': normalizedInterval,
-        'limit': _safeLimit(limit ?? candleLimit, maximum: 300),
+        'bar': interval,
+        'limit': limit,
       },
     );
     final rows = _dataItems(response, candlesEndpoint);
     final parsed = <MarketCandle>[];
     var discarded = false;
     for (final row in rows) {
-      final candle = _parseCandle(row, interval: normalizedInterval);
+      final candle = _parseCandle(row, interval: interval);
       if (candle == null) {
         discarded = true;
       } else {
@@ -92,21 +175,21 @@ class RiskMarketRepository {
       }
       unique.add(candle);
     }
-    final gap = _hasGap(unique, normalizedInterval);
+    final gap = _hasGap(unique, interval);
     final complete = unique.isNotEmpty && !duplicate && !gap;
     final reason = complete
         ? null
         : duplicate
-        ? 'Market $normalizedInterval candles contain duplicate timestamps'
+        ? 'Market $interval candles contain duplicate timestamps'
         : gap
-        ? 'Market $normalizedInterval candles contain a timestamp gap'
+        ? 'Market $interval candles contain a timestamp gap'
         : discarded
-        ? 'No valid confirmed $normalizedInterval candles were returned'
-        : 'No confirmed $normalizedInterval candles were returned';
+        ? 'No valid confirmed $interval candles were returned'
+        : 'No confirmed $interval candles were returned';
     final sourceAt = unique.isEmpty ? null : unique.last.timestamp;
     return MarketCandleSeries(
       instrument: instrument,
-      interval: normalizedInterval,
+      interval: interval,
       candles: List.unmodifiable(unique),
       source: MarketSourceInfo(
         venue: venue,
@@ -146,6 +229,25 @@ class RiskMarketRepository {
     if (instrument.isEmpty) {
       throw ArgumentError.value('', 'instId', 'must not be empty');
     }
+    final cached = _fundingCache[instrument];
+    if (cached != null && !_expired(cached.fetchedAt)) {
+      return cached.value;
+    }
+    if (cached != null) {
+      _startFundingRefresh(instrument);
+      return _staleFunding(cached.value);
+    }
+    final pending = _fundingRequests[instrument];
+    if (pending != null) return pending;
+    final request = _fetchFundingResult(instrument);
+    _fundingRequests[instrument] = request;
+    _completeFundingRequest(instrument, request);
+    return request;
+  }
+
+  Future<MarketSourceResult<MarketFundingObservation>> _fetchFundingResult(
+    String instrument,
+  ) async {
     final observedAt = clock().toUtc();
     final List<Map<String, dynamic>> rows;
     try {
@@ -238,6 +340,24 @@ class RiskMarketRepository {
     if (instrument.isEmpty) {
       throw ArgumentError.value('', 'instId', 'must not be empty');
     }
+    final cached = _openInterestCache[instrument];
+    if (cached != null && !_expired(cached.fetchedAt)) {
+      return cached.value;
+    }
+    if (cached != null) {
+      _startOpenInterestRefresh(instrument);
+      return _staleOpenInterest(cached.value);
+    }
+    final pending = _openInterestRequests[instrument];
+    if (pending != null) return pending;
+    final request = _fetchOpenInterestResult(instrument);
+    _openInterestRequests[instrument] = request;
+    _completeOpenInterestRequest(instrument, request);
+    return request;
+  }
+
+  Future<MarketSourceResult<List<MarketOpenInterestSample>>>
+  _fetchOpenInterestResult(String instrument) async {
     final observedAt = clock().toUtc();
     final List<Map<String, dynamic>> rows;
     try {
@@ -355,42 +475,241 @@ class RiskMarketRepository {
     final derivativeInstrument = '$normalizedAsset-USDT-SWAP';
     final observedAt = (now ?? clock()).toUtc();
 
-    final assetOneHourFuture = _safeCandles(assetInstrument, '1H', observedAt);
-    final assetFourHourFuture = _safeCandles(assetInstrument, '4H', observedAt);
-    final btcOneHourFuture = normalizedAsset == 'BTC'
-        ? assetOneHourFuture
-        : _safeCandles(btcInstrument, '1H', observedAt);
-    final btcFourHourFuture = normalizedAsset == 'BTC'
-        ? assetFourHourFuture
-        : _safeCandles(btcInstrument, '4H', observedAt);
-    final fundingFuture = _safeFunding(derivativeInstrument);
-    final oiFuture = _safeOpenInterest(derivativeInstrument);
-    final values = await Future.wait<dynamic>([
-      assetOneHourFuture,
-      assetFourHourFuture,
-      btcOneHourFuture,
-      btcFourHourFuture,
-      fundingFuture,
-      oiFuture,
-    ]);
+    // Invoke each source only after the previous source has completed. The
+    // coordinator still coalesces concurrent callers, while this owner keeps
+    // one asset capture from enqueueing a per-position burst of work.
+    final assetOneHour = await _safeCandles(assetInstrument, '1H', observedAt);
+    final assetFourHour = await _safeCandles(assetInstrument, '4H', observedAt);
+    final btcOneHour = normalizedAsset == 'BTC'
+        ? assetOneHour
+        : await _safeCandles(btcInstrument, '1H', observedAt);
+    final btcFourHour = normalizedAsset == 'BTC'
+        ? assetFourHour
+        : await _safeCandles(btcInstrument, '4H', observedAt);
+    final funding = await _safeFunding(derivativeInstrument);
+    final openInterest = await _safeOpenInterest(derivativeInstrument);
     return MarketRiskSnapshot(
       asset: normalizedAsset,
-      assetOneHour: values[0] as MarketCandleSeries,
-      assetFourHour: values[1] as MarketCandleSeries,
-      btcOneHour: values[2] as MarketCandleSeries,
-      btcFourHour: values[3] as MarketCandleSeries,
-      funding:
-          (values[4] as MarketSourceResult<MarketFundingObservation>).value,
-      openInterest:
-          (values[5] as MarketSourceResult<List<MarketOpenInterestSample>>)
-              .value ??
-          const <MarketOpenInterestSample>[],
-      fundingQuality:
-          (values[4] as MarketSourceResult<MarketFundingObservation>).quality,
-      openInterestQuality:
-          (values[5] as MarketSourceResult<List<MarketOpenInterestSample>>)
-              .quality,
+      assetOneHour: assetOneHour,
+      assetFourHour: assetFourHour,
+      btcOneHour: btcOneHour,
+      btcFourHour: btcFourHour,
+      funding: funding.value,
+      openInterest: openInterest.value ?? const <MarketOpenInterestSample>[],
+      fundingQuality: funding.quality,
+      openInterestQuality: openInterest.quality,
       observedAt: observedAt,
+    );
+  }
+
+  /// Load several assets through one public repository batch. BTC candle keys
+  /// are shared by the cache, so a due batch issues one BTC request per
+  /// timeframe regardless of the number of assets.
+  Future<List<MarketRiskSnapshot>> loadBatch({
+    required Iterable<String> assets,
+    DateTime? now,
+  }) async {
+    final uniqueAssets = <String>[];
+    final seen = <String>{};
+    for (final asset in assets) {
+      final normalized = asset.trim().toUpperCase();
+      if (normalized.isEmpty || !seen.add(normalized)) continue;
+      uniqueAssets.add(normalized);
+    }
+    final snapshots = <MarketRiskSnapshot>[];
+    for (final asset in uniqueAssets) {
+      snapshots.add(await load(asset: asset, now: now));
+    }
+    return List.unmodifiable(snapshots);
+  }
+
+  Future<List<MarketRiskSnapshot>> getMarketSnapshots({
+    required Iterable<String> assets,
+    DateTime? now,
+  }) => loadBatch(assets: assets, now: now);
+
+  String _candleKey(String instrument, String interval, int limit) =>
+      '$instrument|$interval|$limit';
+
+  bool _expired(DateTime fetchedAt) {
+    final age = clock().difference(fetchedAt);
+    return !age.isNegative && age >= marketCacheTtl;
+  }
+
+  void _completeCandleRequest(String key, Future<MarketCandleSeries> request) {
+    request.then<void>(
+      (value) {
+        _candleCache[key] = _TimedMarketValue(value, clock());
+        if (identical(_candleRequests[key], request)) {
+          _candleRequests.remove(key);
+        }
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        if (identical(_candleRequests[key], request)) {
+          _candleRequests.remove(key);
+        }
+      },
+    );
+  }
+
+  void _startCandleRefresh(
+    String key, {
+    required String instrument,
+    required String interval,
+    required int limit,
+  }) {
+    if (_candleRequests.containsKey(key)) return;
+    final request = _fetchCandles(
+      instrument: instrument,
+      interval: interval,
+      limit: limit,
+    );
+    _candleRequests[key] = request;
+    _completeCandleRequest(key, request);
+  }
+
+  MarketCandleSeries _staleCandle(MarketCandleSeries value) {
+    final quality = value.source.quality.withStatus(
+      RiskQualityStatus.stale,
+      nextReason: 'Cached market data is stale; refreshing',
+    );
+    return MarketCandleSeries(
+      instrument: value.instrument,
+      interval: value.interval,
+      candles: value.candles,
+      source: MarketSourceInfo(
+        venue: value.source.venue,
+        instrument: value.source.instrument,
+        endpoint: value.source.endpoint,
+        observedAt: value.source.observedAt,
+        sourceAt: value.source.sourceAt,
+        windowStart: value.source.windowStart,
+        windowEnd: value.source.windowEnd,
+        quality: quality,
+      ),
+      complete: value.complete,
+      missingReason: value.missingReason ?? quality.reason,
+    );
+  }
+
+  void _completeFundingRequest(
+    String key,
+    Future<MarketSourceResult<MarketFundingObservation>> request,
+  ) {
+    request.then<void>(
+      (value) {
+        _fundingCache[key] = _TimedMarketValue(value, clock());
+        if (identical(_fundingRequests[key], request)) {
+          _fundingRequests.remove(key);
+        }
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        if (identical(_fundingRequests[key], request)) {
+          _fundingRequests.remove(key);
+        }
+      },
+    );
+  }
+
+  void _startFundingRefresh(String instrument) {
+    if (_fundingRequests.containsKey(instrument)) return;
+    final request = _fetchFundingResult(instrument);
+    _fundingRequests[instrument] = request;
+    _completeFundingRequest(instrument, request);
+  }
+
+  MarketSourceResult<MarketFundingObservation> _staleFunding(
+    MarketSourceResult<MarketFundingObservation> value,
+  ) {
+    final quality = value.quality.withStatus(
+      RiskQualityStatus.stale,
+      nextReason: 'Cached funding data is stale; refreshing',
+    );
+    final observation = value.value;
+    if (observation == null) {
+      return MarketSourceResult<MarketFundingObservation>(quality: quality);
+    }
+    return MarketSourceResult<MarketFundingObservation>(
+      value: MarketFundingObservation(
+        instrument: observation.instrument,
+        rate: observation.rate,
+        fundingTime: observation.fundingTime,
+        nextFundingTime: observation.nextFundingTime,
+        source: MarketSourceInfo(
+          venue: observation.source.venue,
+          instrument: observation.source.instrument,
+          endpoint: observation.source.endpoint,
+          observedAt: observation.source.observedAt,
+          sourceAt: observation.source.sourceAt,
+          windowStart: observation.source.windowStart,
+          windowEnd: observation.source.windowEnd,
+          quality: quality,
+        ),
+      ),
+      quality: quality,
+    );
+  }
+
+  void _completeOpenInterestRequest(
+    String key,
+    Future<MarketSourceResult<List<MarketOpenInterestSample>>> request,
+  ) {
+    request.then<void>(
+      (value) {
+        _openInterestCache[key] = _TimedMarketValue(value, clock());
+        if (identical(_openInterestRequests[key], request)) {
+          _openInterestRequests.remove(key);
+        }
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        if (identical(_openInterestRequests[key], request)) {
+          _openInterestRequests.remove(key);
+        }
+      },
+    );
+  }
+
+  void _startOpenInterestRefresh(String instrument) {
+    if (_openInterestRequests.containsKey(instrument)) return;
+    final request = _fetchOpenInterestResult(instrument);
+    _openInterestRequests[instrument] = request;
+    _completeOpenInterestRequest(instrument, request);
+  }
+
+  MarketSourceResult<List<MarketOpenInterestSample>> _staleOpenInterest(
+    MarketSourceResult<List<MarketOpenInterestSample>> value,
+  ) {
+    final quality = value.quality.withStatus(
+      RiskQualityStatus.stale,
+      nextReason: 'Cached open-interest data is stale; refreshing',
+    );
+    final samples = value.value;
+    if (samples == null) {
+      return MarketSourceResult<List<MarketOpenInterestSample>>(
+        quality: quality,
+      );
+    }
+    return MarketSourceResult<List<MarketOpenInterestSample>>(
+      value: samples
+          .map(
+            (sample) => MarketOpenInterestSample(
+              instrument: sample.instrument,
+              timestamp: sample.timestamp,
+              oiCcy: sample.oiCcy,
+              source: MarketSourceInfo(
+                venue: sample.source.venue,
+                instrument: sample.source.instrument,
+                endpoint: sample.source.endpoint,
+                observedAt: sample.source.observedAt,
+                sourceAt: sample.source.sourceAt,
+                windowStart: sample.source.windowStart,
+                windowEnd: sample.source.windowEnd,
+                quality: quality,
+              ),
+            ),
+          )
+          .toList(growable: false),
+      quality: quality,
     );
   }
 
@@ -457,15 +776,28 @@ class RiskMarketRepository {
     required Map<String, dynamic> queryParameters,
   }) async {
     try {
-      return await _dio.get<dynamic>(
-        endpoint,
-        queryParameters: queryParameters,
-        options: Options(extra: <String, dynamic>{'requiresAuth': false}),
+      return await requestCoordinator.run<Response<dynamic>>(
+        lane: RiskRequestLane.public,
+        key: _requestKey(endpoint, queryParameters),
+        request: () => _dio.get<dynamic>(
+          endpoint,
+          queryParameters: queryParameters,
+          options: Options(extra: <String, dynamic>{'requiresAuth': false}),
+        ),
+      );
+    } on RiskRequestBackoffException catch (error) {
+      throw RiskMarketRepositoryException(
+        'Public market request failed',
+        statusCode: error.statusCode,
+        retryAfter: error.retryAfter,
+        endpoint: endpoint,
+        cause: error,
       );
     } on DioException catch (error) {
       throw RiskMarketRepositoryException(
         'Public market request failed',
         statusCode: error.response?.statusCode,
+        retryAfter: _retryAfter(error.response),
         endpoint: endpoint,
         cause: error,
       );
@@ -476,6 +808,20 @@ class RiskMarketRepository {
         cause: error,
       );
     }
+  }
+
+  String _requestKey(String endpoint, Map<String, dynamic> queryParameters) {
+    final query = queryParameters.entries.toList()
+      ..sort((left, right) => left.key.compareTo(right.key));
+    return '$endpoint?${query.map((entry) => '${entry.key}=${entry.value}').join('&')}';
+  }
+
+  Duration? _retryAfter(Response<dynamic>? response) {
+    final raw = response?.headers.value('retry-after')?.trim();
+    if (raw == null || raw.isEmpty) return null;
+    final seconds = int.tryParse(raw);
+    if (seconds != null && seconds >= 0) return Duration(seconds: seconds);
+    return null;
   }
 
   RiskQuality _exceptionQuality(
@@ -616,4 +962,11 @@ class RiskMarketRepository {
     if (value > maximum) return maximum;
     return value;
   }
+}
+
+class _TimedMarketValue<T> {
+  const _TimedMarketValue(this.value, this.fetchedAt);
+
+  final T value;
+  final DateTime fetchedAt;
 }

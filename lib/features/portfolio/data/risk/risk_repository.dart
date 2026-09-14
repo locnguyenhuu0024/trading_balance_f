@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/network/okx_interceptor.dart';
 import '../../domain/risk/risk_models.dart';
 import 'okx_risk_dto.dart';
+import 'risk_request_coordinator.dart';
 
 typedef RiskRepositoryClock = DateTime Function();
 
@@ -25,7 +26,10 @@ final riskRepositoryProvider = Provider<RiskRepository>((ref) {
   // Reuse the existing signing interceptor without importing the legacy
   // LogInterceptor, which could expose authenticated request payloads.
   dio.interceptors.add(ref.watch(okxInterceptorProvider));
-  return RiskRepository(dio);
+  return RiskRepository(
+    dio,
+    requestCoordinator: ref.watch(riskRequestCoordinatorProvider),
+  );
 });
 
 class RiskRepositoryException implements Exception {
@@ -69,19 +73,60 @@ class RiskRepositorySelectionFailure {
   final String? endpoint;
 }
 
+/// Normalized, ordered position snapshots produced by one capture batch.
+///
+/// The result intentionally keeps the existing eligibility enum and quality
+/// values so the monitor can adopt the batch contract without changing its
+/// financial or eligibility semantics.
+class RiskPositionBatch {
+  const RiskPositionBatch({
+    required this.status,
+    required this.quality,
+    this.positions = const <RiskPosition>[],
+    this.candidates = const <RiskPosition>[],
+    this.ledgerResults = const <String, RiskInterestLedgerResult>{},
+    this.ledgerPagesFetched = 0,
+    this.ledgerPageBudget = 2,
+    this.message,
+  });
+
+  final RiskEligibility status;
+  final RiskQuality quality;
+  final List<RiskPosition> positions;
+  final List<RiskPosition> candidates;
+  final Map<String, RiskInterestLedgerResult> ledgerResults;
+  final int ledgerPagesFetched;
+  final int ledgerPageBudget;
+  final String? message;
+
+  List<RiskPosition> get eligiblePositions => positions;
+  List<RiskPosition> get snapshots => positions;
+  bool get isEmpty => status == RiskEligibility.empty;
+  bool get isError => quality.status == RiskQualityStatus.error;
+  bool get isUnsupported => status == RiskEligibility.unsupported;
+}
+
+typedef RiskPositionBatchResult = RiskPositionBatch;
+typedef RiskPositionBatchSelection = RiskPositionBatch;
+
 class RiskRepository {
   RiskRepository(
     this._dio, {
     this.environment = 'production',
     RiskRepositoryClock? clock,
+    RiskRequestCoordinator? requestCoordinator,
     this.maxLedgerPages = 100,
     this.stableCacheTtl = const Duration(hours: 1),
     this.ledgerCacheTtl = const Duration(minutes: 5),
-  }) : clock = clock ?? DateTime.now;
+  }) : clock = clock ?? DateTime.now,
+       requestCoordinator =
+           requestCoordinator ??
+           RiskRequestCoordinator(clock: clock ?? DateTime.now);
 
   final Dio _dio;
   final String environment;
   final RiskRepositoryClock clock;
+  final RiskRequestCoordinator requestCoordinator;
   final int maxLedgerPages;
   final Duration stableCacheTtl;
   final Duration ledgerCacheTtl;
@@ -99,6 +144,11 @@ class RiskRepository {
       <String, _TimedRiskValue<RiskInterestLedgerResult>>{};
   final Map<String, Future<RiskInterestLedgerResult>> _ledgerRequests =
       <String, Future<RiskInterestLedgerResult>>{};
+  final Map<String, _LedgerCursorState> _ledgerCursors =
+      <String, _LedgerCursorState>{};
+  final Map<String, Future<void>> _ledgerCursorRequests =
+      <String, Future<void>>{};
+  int _ledgerRoundRobinIndex = 0;
 
   /// Credential mutation invalidation is called by the monitor before a new
   /// account namespace is sampled. No credentials are retained in these
@@ -111,7 +161,11 @@ class RiskRepository {
     _rateCache.clear();
     _ledgerCache.clear();
     _ledgerRequests.clear();
+    _ledgerCursors.clear();
+    _ledgerCursorRequests.clear();
+    _ledgerRoundRobinIndex = 0;
     _lastSelectionFailure = null;
+    requestCoordinator.clearLane(RiskRequestLane.authenticated);
   }
 
   RiskRepositorySelectionFailure? get lastSelectionFailure =>
@@ -278,13 +332,15 @@ class RiskRepository {
       return _ledgerForWindow(cached.value, episodeStart, episodeEnd);
     }
     final pending = _ledgerRequests[key];
-    final request = pending ?? _fetchInterestLedger(
-      instId: instId,
-      ccy: ccy,
-      episodeStart: episodeStart,
-      episodeEnd: episodeEnd,
-      pageSize: pageSize,
-    );
+    final request =
+        pending ??
+        _fetchInterestLedger(
+          instId: instId,
+          ccy: ccy,
+          episodeStart: episodeStart,
+          episodeEnd: episodeEnd,
+          pageSize: pageSize,
+        );
     if (pending == null) _ledgerRequests[key] = request;
     try {
       final result = await request;
@@ -304,15 +360,19 @@ class RiskRepository {
     DateTime? episodeStart,
     DateTime? episodeEnd,
   ) {
-    final entries = value.entries.where((entry) {
-      final occurredAt = entry.occurredAt;
-      if (occurredAt == null) return false;
-      if (episodeStart != null && occurredAt.isBefore(episodeStart)) {
-        return false;
-      }
-      if (episodeEnd != null && occurredAt.isAfter(episodeEnd)) return false;
-      return true;
-    }).toList(growable: false);
+    final entries = value.entries
+        .where((entry) {
+          final occurredAt = entry.occurredAt;
+          if (occurredAt == null) return false;
+          if (episodeStart != null && occurredAt.isBefore(episodeStart)) {
+            return false;
+          }
+          if (episodeEnd != null && occurredAt.isAfter(episodeEnd)) {
+            return false;
+          }
+          return true;
+        })
+        .toList(growable: false);
     DateTime? coverageFrom;
     DateTime? coverageTo;
     for (final entry in entries) {
@@ -466,6 +526,201 @@ class RiskRepository {
       reason: reason,
       observedAt: observedAt,
     );
+  }
+
+  Future<RiskInterestLedgerResult> _getInterestLedgerForBatch({
+    required String instId,
+    required String? ccy,
+    required DateTime? episodeStart,
+    required DateTime? episodeEnd,
+    required _LedgerBatchContext context,
+    int pageSize = 100,
+  }) async {
+    final key = _ledgerKey(
+      instId: instId,
+      ccy: ccy,
+      episodeStart: episodeStart,
+      pageSize: pageSize,
+    );
+    var state = _ledgerCursors[key];
+    if (state == null) {
+      final cached = _ledgerCache[key];
+      // A completed legacy cache is safe to reuse. An incomplete legacy
+      // result has no cursor metadata, so starting from it could replay a
+      // page; leave it out of the resumable state instead.
+      if (cached != null &&
+          !_expired(cached.fetchedAt, ledgerCacheTtl) &&
+          cached.value.complete) {
+        state = _LedgerCursorState.fromResult(cached.value);
+      } else {
+        state = _LedgerCursorState(
+          validEpisodeWindow:
+              episodeStart != null &&
+              episodeEnd != null &&
+              !episodeStart.isAfter(episodeEnd),
+        );
+      }
+      _ledgerCursors[key] = state;
+    }
+
+    final maxPagesForPosition = context.positionCount <= 1 ? 2 : 1;
+    final hardPageLimit = maxLedgerPages < 0 ? 0 : maxLedgerPages;
+    if (!state.complete && state.pages >= hardPageLimit) {
+      state.markHardLimitReached();
+    }
+    var pagesForPosition = 0;
+    while (context.remaining > 0 &&
+        pagesForPosition < maxPagesForPosition &&
+        !state.complete &&
+        !state.hardLimitReached &&
+        state.pages < hardPageLimit) {
+      final pending = _ledgerCursorRequests[key];
+      if (pending != null) {
+        await pending;
+      } else {
+        final fetch = _fetchLedgerCursorPage(
+          state,
+          instId: instId,
+          ccy: ccy,
+          episodeStart: episodeStart,
+          pageSize: pageSize,
+        );
+        _ledgerCursorRequests[key] = fetch;
+        try {
+          await fetch;
+        } finally {
+          if (identical(_ledgerCursorRequests[key], fetch)) {
+            _ledgerCursorRequests.remove(key);
+          }
+        }
+      }
+      context.remaining--;
+      context.pagesFetched++;
+      pagesForPosition++;
+      context.lastPagePositionIndex = context.currentPositionIndex;
+    }
+    if (!state.complete && state.pages >= hardPageLimit) {
+      state.markHardLimitReached();
+    }
+    final value = state.toResult(
+      requestedFrom: episodeStart,
+      requestedTo: episodeEnd,
+      exhaustedBudget: context.remaining == 0 && !state.complete,
+    );
+    context.results[key] = value;
+    if (state.complete) {
+      _ledgerCache[key] = _TimedRiskValue(value, clock());
+    }
+    return _ledgerForWindow(value, episodeStart, episodeEnd);
+  }
+
+  Future<void> _fetchLedgerCursorPage(
+    _LedgerCursorState state, {
+    required String instId,
+    required String? ccy,
+    required DateTime? episodeStart,
+    required int pageSize,
+  }) async {
+    final safePageSize = pageSize.clamp(1, 100).toInt();
+    final targetInstrument = instId.trim();
+    final targetCurrency = ccy?.trim().toUpperCase();
+    final query = <String, dynamic>{
+      'instId': targetInstrument,
+      'mgnMode': 'isolated',
+      'limit': safePageSize,
+    };
+    if (targetCurrency != null && targetCurrency.isNotEmpty) {
+      query['ccy'] = targetCurrency;
+    }
+    final after = state.nextCursor;
+    if (after != null) query['after'] = after;
+    final response = await _get(
+      interestAccruedEndpoint,
+      queryParameters: query,
+    );
+    final rawPage = _dataList(response, interestAccruedEndpoint);
+    final fetchedAt = clock();
+    final pageEntries = rawPage
+        .map(
+          (item) =>
+              OkxRiskInterestAccruedDto.fromJson(item, fetchedAt: fetchedAt),
+        )
+        .toList(growable: false);
+    final page = <OkxRiskInterestAccruedDto>[];
+    var pageHasAmbiguousAttribution = false;
+    DateTime? oldestTimestamp;
+    for (final entry in pageEntries) {
+      final occurredAt = entry.occurredAt;
+      if (occurredAt != null &&
+          (oldestTimestamp == null || occurredAt.isBefore(oldestTimestamp))) {
+        oldestTimestamp = occurredAt;
+      }
+      final outsideEpisode =
+          occurredAt != null &&
+          episodeStart != null &&
+          occurredAt.isBefore(episodeStart);
+      if (outsideEpisode) continue;
+      final instrumentMatches = entry.instId == targetInstrument;
+      final currencyMatches =
+          targetCurrency != null && entry.ccy?.toUpperCase() == targetCurrency;
+      final entryMode = entry.mgnMode;
+      final modeMatches =
+          entryMode == null || entryMode.toLowerCase() == 'isolated';
+      final exact = instrumentMatches && currencyMatches && modeMatches;
+      if (state.validEpisodeWindow &&
+          exact &&
+          entry.matchesMarginCost &&
+          entry.amount != null &&
+          entry.amount! >= 0 &&
+          occurredAt != null) {
+        page.add(entry);
+        if (state.coverageFrom == null ||
+            occurredAt.isBefore(state.coverageFrom!)) {
+          state.coverageFrom = occurredAt;
+        }
+        if (state.coverageTo == null || occurredAt.isAfter(state.coverageTo!)) {
+          state.coverageTo = occurredAt;
+        }
+      } else {
+        pageHasAmbiguousAttribution = true;
+      }
+    }
+    state.pages++;
+    state.observedAt = fetchedAt;
+    state.entries.addAll(page);
+    state.ambiguousEntries =
+        state.ambiguousEntries || pageHasAmbiguousAttribution;
+    if (pageHasAmbiguousAttribution) {
+      state.reason ??=
+          'Interest ledger contains rows without exact position attribution';
+    }
+
+    final crossedEpisodeBoundary =
+        episodeStart != null &&
+        oldestTimestamp != null &&
+        oldestTimestamp.isBefore(episodeStart) &&
+        !pageHasAmbiguousAttribution;
+    if (crossedEpisodeBoundary) {
+      state.boundaryReached = true;
+      state.complete = state.validEpisodeWindow && !state.ambiguousEntries;
+      if (!state.complete) {
+        state.reason ??= 'Interest ledger episode boundary is ambiguous';
+      }
+      return;
+    }
+    if (rawPage.length < safePageSize) {
+      state.complete = state.validEpisodeWindow && !state.ambiguousEntries;
+      if (!state.complete) {
+        state.reason ??= 'Interest ledger coverage is incomplete';
+      }
+      return;
+    }
+    final next = pageEntries.isEmpty ? null : pageEntries.last.ts;
+    if (next == null || next == after) {
+      state.reason = 'Interest pagination cursor did not advance';
+      return;
+    }
+    state.nextCursor = next;
   }
 
   Future<RiskInterestLedgerResult> getInterestAccrued({
@@ -645,10 +900,134 @@ class RiskRepository {
     );
   }
 
+  /// Discover and enrich every eligible position through one capture batch.
+  ///
+  /// Position discovery is intentionally separate from enrichment: the
+  /// account endpoint is called once, while instrument/rate/fee/ledger work
+  /// is routed through the shared authenticated lane. Ledger pages consume a
+  /// global budget (two by default) and are scheduled in deterministic
+  /// round-robin order across positions.
+  Future<RiskPositionBatch> loadPositionsBatch({
+    int ledgerPageBudget = 2,
+  }) async {
+    final generation = _cacheGeneration;
+    _lastSelectionFailure = null;
+    late final OkxRiskAccountConfigDto config;
+    late final List<OkxRiskPositionDto> rawPositions;
+    try {
+      config = await getAccountConfig();
+      rawPositions = await getPositions();
+    } on RiskRepositoryException catch (error) {
+      _rememberSelectionFailure(error, generation: generation);
+      return RiskPositionBatch(
+        status: RiskEligibility.invalid,
+        quality: RiskQuality.error(
+          source: error.endpoint,
+          reason: error.message,
+        ),
+        message: error.toString(),
+      );
+    }
+
+    if (generation != _cacheGeneration) {
+      return const RiskPositionBatch(
+        status: RiskEligibility.invalid,
+        quality: RiskQuality.unavailable(
+          reason: 'Position batch was invalidated',
+        ),
+        message: 'Position batch was invalidated',
+      );
+    }
+    if (rawPositions.isEmpty) {
+      return const RiskPositionBatch(
+        status: RiskEligibility.empty,
+        quality: RiskQuality.empty(
+          reason: 'No MARGIN positions returned by OKX',
+        ),
+        message: 'No eligible isolated MARGIN position',
+      );
+    }
+
+    final namespace = config.hasIdentity
+        ? accountNamespace(environment: environment, uid: config.uid!)
+        : null;
+    final normalized = rawPositions
+        .map((raw) => _toPosition(raw, config, namespace: namespace))
+        .toList(growable: false);
+    final eligible =
+        normalized.where((position) => position.isEligible).toList()
+          ..sort(_positionComparator);
+    if (eligible.isEmpty) {
+      return RiskPositionBatch(
+        status: RiskEligibility.unsupported,
+        quality: RiskQuality.partial(
+          source: config.source,
+          reason:
+              'Positions were returned but none satisfy long isolated MARGIN scope',
+          observedAt: config.fetchedAt,
+        ),
+        candidates: List.unmodifiable(normalized),
+        message: 'No eligible long isolated MARGIN position',
+      );
+    }
+
+    final safeBudget = ledgerPageBudget.clamp(0, 2);
+    final context = _LedgerBatchContext(
+      pageBudget: safeBudget,
+      positionCount: eligible.length,
+    );
+    final start = _ledgerRoundRobinIndex % eligible.length;
+    final ordered = <RiskPosition>[
+      ...eligible.skip(start),
+      ...eligible.take(start),
+    ];
+    final enrichedByIdentity = <String, RiskPosition>{};
+    for (var index = 0; index < ordered.length; index++) {
+      context.currentPositionIndex = (start + index) % eligible.length;
+      final position = ordered[index];
+      final enriched = await _enrichPosition(
+        position,
+        namespace: namespace,
+        generation: generation,
+        ledgerContext: context,
+      );
+      enrichedByIdentity[_positionIdentity(position)] = enriched;
+    }
+    final lastScheduled = context.lastPagePositionIndex;
+    if (lastScheduled != null && eligible.length > 1) {
+      _ledgerRoundRobinIndex = (lastScheduled + 1) % eligible.length;
+    }
+
+    final positions = eligible
+        .map((position) => enrichedByIdentity[_positionIdentity(position)]!)
+        .toList(growable: false);
+    return RiskPositionBatch(
+      status: RiskEligibility.eligible,
+      quality: _batchQuality(positions),
+      positions: List.unmodifiable(positions),
+      candidates: List.unmodifiable(normalized),
+      ledgerResults: Map.unmodifiable(context.results),
+      ledgerPagesFetched: context.pagesFetched,
+      ledgerPageBudget: safeBudget,
+    );
+  }
+
+  Future<RiskPositionBatch> loadPositionBatch({int ledgerPageBudget = 2}) =>
+      loadPositionsBatch(ledgerPageBudget: ledgerPageBudget);
+
+  Future<RiskPositionBatch> captureBatch({int ledgerPageBudget = 2}) =>
+      loadPositionsBatch(ledgerPageBudget: ledgerPageBudget);
+
+  Future<List<RiskPosition>> getEligiblePositions({
+    int ledgerPageBudget = 2,
+  }) async =>
+      (await loadPositionsBatch(ledgerPageBudget: ledgerPageBudget)).positions;
+
   Future<RiskPosition> _enrichPosition(
     RiskPosition position, {
     required String? namespace,
     required int generation,
+    _LedgerBatchContext? ledgerContext,
   }) async {
     OkxRiskFeeRateDto? fee;
     OkxRiskInstrumentDto? instrument;
@@ -703,12 +1082,20 @@ class RiskRepository {
       }
       if (generation != _cacheGeneration) return position;
       try {
-        ledger = await getInterestLedger(
-          instId: instId,
-          ccy: liabilityCurrency,
-          episodeStart: openedAt,
-          episodeEnd: fetchNow,
-        );
+        ledger = ledgerContext == null
+            ? await getInterestLedger(
+                instId: instId,
+                ccy: liabilityCurrency,
+                episodeStart: openedAt,
+                episodeEnd: fetchNow,
+              )
+            : await _getInterestLedgerForBatch(
+                instId: instId,
+                ccy: liabilityCurrency,
+                episodeStart: openedAt,
+                episodeEnd: fetchNow,
+                context: ledgerContext,
+              );
         if (!ledger.complete) {
           missing.add(
             ledger.reason ?? 'Settled-interest attribution is incomplete',
@@ -1144,6 +1531,33 @@ class RiskRepository {
     );
   }
 
+  String _positionIdentity(RiskPosition position) =>
+      '${position.instrumentId}|${position.positionId ?? ''}|'
+      '${position.createdAt?.millisecondsSinceEpoch ?? ''}';
+
+  RiskQuality _batchQuality(List<RiskPosition> positions) {
+    if (positions.every((position) => position.quality.isComplete)) {
+      return RiskQuality.complete(
+        source: 'OKX risk position batch',
+        observedAt: clock(),
+      );
+    }
+    final reasons = positions
+        .map((position) => position.quality.reason)
+        .whereType<String>()
+        .where((reason) => reason.isNotEmpty)
+        .toSet()
+        .take(3)
+        .join('; ');
+    return RiskQuality.partial(
+      source: 'OKX risk position batch',
+      reason: reasons.isEmpty
+          ? 'One or more position sources are partial'
+          : reasons,
+      observedAt: clock(),
+    );
+  }
+
   void _rememberSelectionFailure(
     RiskRepositoryException error, {
     required int generation,
@@ -1171,10 +1585,22 @@ class RiskRepository {
     Map<String, dynamic>? queryParameters,
   }) async {
     try {
-      return await _dio.get<dynamic>(
-        endpoint,
-        queryParameters: queryParameters,
-        options: Options(extra: const <String, Object>{'requiresAuth': true}),
+      return await requestCoordinator.run<Response<dynamic>>(
+        lane: RiskRequestLane.authenticated,
+        key: _requestKey(endpoint, queryParameters),
+        request: () => _dio.get<dynamic>(
+          endpoint,
+          queryParameters: queryParameters,
+          options: Options(extra: const <String, Object>{'requiresAuth': true}),
+        ),
+      );
+    } on RiskRequestBackoffException catch (error) {
+      throw RiskRepositoryException(
+        'OKX request rate limit reached',
+        statusCode: error.statusCode,
+        retryAfter: error.retryAfter,
+        endpoint: endpoint,
+        cause: error,
       );
     } on DioException catch (error) {
       final statusCode = error.response?.statusCode;
@@ -1190,6 +1616,16 @@ class RiskRepository {
         cause: error,
       );
     }
+  }
+
+  String _requestKey(String endpoint, Map<String, dynamic>? queryParameters) {
+    final query = queryParameters == null || queryParameters.isEmpty
+        ? ''
+        : (queryParameters.entries.toList()
+                ..sort((left, right) => left.key.compareTo(right.key)))
+              .map((entry) => '${entry.key}=${entry.value}')
+              .join('&');
+    return '$endpoint?$query';
   }
 
   List<Map<String, dynamic>> _dataList(
@@ -1344,4 +1780,82 @@ class _TimedRiskValue<T> {
 
   final T value;
   final DateTime fetchedAt;
+}
+
+class _LedgerBatchContext {
+  _LedgerBatchContext({required this.pageBudget, required this.positionCount})
+    : remaining = pageBudget;
+
+  final int pageBudget;
+  final int positionCount;
+  int remaining;
+  int pagesFetched = 0;
+  int? currentPositionIndex;
+  int? lastPagePositionIndex;
+  final Map<String, RiskInterestLedgerResult> results =
+      <String, RiskInterestLedgerResult>{};
+}
+
+class _LedgerCursorState {
+  _LedgerCursorState({required this.validEpisodeWindow})
+    : entries = <OkxRiskInterestAccruedDto>[];
+
+  _LedgerCursorState.fromResult(RiskInterestLedgerResult result)
+    : validEpisodeWindow =
+          result.requestedFrom != null &&
+          result.requestedTo != null &&
+          !result.requestedFrom!.isAfter(result.requestedTo!),
+      entries = List<OkxRiskInterestAccruedDto>.from(result.entries),
+      complete = result.complete,
+      pages = result.pages,
+      ambiguousEntries = result.ambiguousEntries,
+      coverageFrom = result.coverageFrom,
+      coverageTo = result.coverageTo,
+      reason = result.reason,
+      observedAt = result.observedAt;
+
+  final bool validEpisodeWindow;
+  final List<OkxRiskInterestAccruedDto> entries;
+  String? nextCursor;
+  bool complete = false;
+  bool boundaryReached = false;
+  bool hardLimitReached = false;
+  int pages = 0;
+  bool ambiguousEntries = false;
+  DateTime? coverageFrom;
+  DateTime? coverageTo;
+  String? reason;
+  DateTime? observedAt;
+
+  void markHardLimitReached() {
+    hardLimitReached = true;
+    reason ??=
+        'Interest ledger pagination reached repository maxLedgerPages limit';
+  }
+
+  RiskInterestLedgerResult toResult({
+    required DateTime? requestedFrom,
+    required DateTime? requestedTo,
+    bool exhaustedBudget = false,
+  }) {
+    return RiskInterestLedgerResult(
+      entries: List.unmodifiable(entries),
+      complete: complete,
+      pages: pages,
+      ambiguousEntries: ambiguousEntries,
+      coverageFrom: coverageFrom,
+      coverageTo: coverageTo,
+      requestedFrom: requestedFrom,
+      requestedTo: requestedTo,
+      reason: complete
+          ? null
+          : reason ??
+                (hardLimitReached
+                    ? 'Interest ledger pagination reached repository maxLedgerPages limit'
+                    : exhaustedBudget
+                    ? 'Interest ledger page budget exhausted for this batch'
+                    : 'Interest ledger coverage is incomplete'),
+      observedAt: observedAt,
+    );
+  }
 }

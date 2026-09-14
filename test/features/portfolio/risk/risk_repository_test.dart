@@ -7,6 +7,7 @@ import 'package:trading_balance_f/features/portfolio/data/risk/okx_risk_dto.dart
 import 'package:trading_balance_f/features/portfolio/data/risk/risk_repository.dart';
 import 'package:trading_balance_f/features/portfolio/domain/risk/risk_engine.dart';
 import 'package:trading_balance_f/features/portfolio/domain/risk/risk_models.dart';
+import 'package:trading_balance_f/features/portfolio/data/risk/risk_request_coordinator.dart';
 
 void main() {
   test(
@@ -505,9 +506,132 @@ void main() {
       expect(errorSelection.quality.status, RiskQualityStatus.error);
     },
   );
+
+  test('RED-001 rate-safe risk request batch', () async {
+    final clock = _BatchClock(DateTime.utc(2026, 9, 10, 12));
+    final adapter = _BatchAdapter(clock, positionCount: 1);
+    final repository = RiskRepository(
+      Dio(BaseOptions(baseUrl: 'https://unit.test'))
+        ..httpClientAdapter = adapter,
+      environment: 'test',
+      clock: clock.now,
+      maxLedgerPages: 2,
+      requestCoordinator: RiskRequestCoordinator(
+        clock: clock.now,
+        minimumSpacing: Duration.zero,
+      ),
+    );
+
+    await repository.loadPositionsBatch();
+    await repository.loadPositionsBatch();
+
+    // Before the resumable hard-limit guard, the second capture requests a
+    // third page even though maxLedgerPages was already exhausted.
+    expect(adapter.ledgerRequests, lessThanOrEqualTo(2));
+  });
+
+  test('GREEN-001 rate-safe risk request batch', () async {
+    final clock = _BatchClock(DateTime.utc(2026, 9, 10, 12));
+    final adapter = _BatchAdapter(clock);
+    final coordinator = RiskRequestCoordinator(
+      clock: clock.now,
+      delay: (duration) async => clock.advance(duration),
+    );
+    final repository = RiskRepository(
+      Dio(BaseOptions(baseUrl: 'https://unit.test'))
+        ..httpClientAdapter = adapter,
+      environment: 'test',
+      clock: clock.now,
+      requestCoordinator: coordinator,
+    );
+
+    final first = await repository.loadPositionsBatch();
+    expect(first.status, RiskEligibility.eligible);
+    expect(first.positions, hasLength(2));
+    expect(first.ledgerPagesFetched, 2);
+    expect(adapter.positionRequests, 1);
+    expect(adapter.ledgerRequests, 2);
+
+    final second = await repository.loadPositionsBatch();
+    expect(second.positions, hasLength(2));
+    expect(adapter.positionRequests, 2);
+    expect(adapter.ledgerRequests, 4);
+    expect(adapter.ledgerAfter.whereType<String>(), hasLength(2));
+    expect(second.positions.map((position) => position.instrumentId), <String>[
+      'AAA-USDT',
+      'BBB-USDT',
+    ]);
+
+    for (final positionCount in <int>[1, 3, 10]) {
+      await _assertFairBatchProgress(positionCount);
+    }
+
+    final hardLimitClock = _BatchClock(DateTime.utc(2026, 9, 10, 12));
+    final hardLimitAdapter = _BatchAdapter(hardLimitClock, positionCount: 1);
+    final hardLimitRepository = RiskRepository(
+      Dio(BaseOptions(baseUrl: 'https://unit.test'))
+        ..httpClientAdapter = hardLimitAdapter,
+      environment: 'test',
+      clock: hardLimitClock.now,
+      maxLedgerPages: 2,
+      requestCoordinator: RiskRequestCoordinator(
+        clock: hardLimitClock.now,
+        minimumSpacing: Duration.zero,
+      ),
+    );
+    final hardLimitFirst = await hardLimitRepository.loadPositionsBatch();
+    final hardLimitSecond = await hardLimitRepository.loadPositionsBatch();
+    final hardLimitThird = await hardLimitRepository.loadPositionsBatch();
+    expect(hardLimitFirst.ledgerPagesFetched, 2);
+    expect(hardLimitSecond.ledgerPagesFetched, 0);
+    expect(hardLimitThird.ledgerPagesFetched, 0);
+    expect(hardLimitAdapter.ledgerRequests, 2);
+    final hardLimitResult = hardLimitSecond.ledgerResults.values.single;
+    expect(hardLimitResult.pages, 2);
+    expect(hardLimitResult.complete, isFalse);
+    expect(hardLimitResult.reason, contains('maxLedgerPages'));
+  });
 }
 
-Map<String, dynamic> _ok(List<Map<String, dynamic>> data) => <String, dynamic>{
+Future<void> _assertFairBatchProgress(int positionCount) async {
+  final clock = _BatchClock(DateTime.utc(2026, 9, 10, 12));
+  final adapter = _BatchAdapter(clock, positionCount: positionCount);
+  final repository = RiskRepository(
+    Dio(BaseOptions(baseUrl: 'https://unit.test'))..httpClientAdapter = adapter,
+    environment: 'test',
+    clock: clock.now,
+    maxLedgerPages: 20,
+    requestCoordinator: RiskRequestCoordinator(
+      clock: clock.now,
+      minimumSpacing: Duration.zero,
+    ),
+  );
+  final captureCount = positionCount == 1
+      ? 3
+      : positionCount == 3
+      ? 4
+      : 6;
+  for (var capture = 0; capture < captureCount; capture++) {
+    final batch = await repository.loadPositionsBatch();
+    expect(batch.positions, hasLength(positionCount));
+    expect(batch.ledgerPagesFetched, 2);
+  }
+
+  expect(adapter.positionRequests, captureCount);
+  expect(adapter.ledgerRequests, captureCount * 2);
+  final counts = adapter.ledgerPageNumbers.values.toList();
+  expect(counts, hasLength(positionCount));
+  final minCount = counts.reduce((left, right) => left < right ? left : right);
+  final maxCount = counts.reduce((left, right) => left > right ? left : right);
+  expect(maxCount - minCount, lessThanOrEqualTo(1));
+  for (final after in adapter.ledgerAfterByInstrument.values) {
+    expect(after.first, isNull);
+    expect(after.skip(1).every((value) => value is String), isTrue);
+    expect(after.skip(1).toSet(), hasLength(after.length - 1));
+  }
+}
+
+Map<String, dynamic> _ok(Object data) => <String, dynamic>{
   'code': '0',
   'msg': '',
   'data': data,
@@ -628,3 +752,126 @@ ResponseBody _responseBody(Object data) {
     },
   );
 }
+
+class _BatchClock {
+  _BatchClock(this.value);
+
+  DateTime value;
+
+  DateTime now() => value;
+
+  void advance(Duration duration) {
+    value = value.add(duration);
+  }
+}
+
+class _BatchAdapter implements HttpClientAdapter {
+  _BatchAdapter(this.clock, {this.positionCount = 2});
+
+  final _BatchClock clock;
+  final int positionCount;
+  var positionRequests = 0;
+  var ledgerRequests = 0;
+  final List<Object?> ledgerAfter = <Object?>[];
+  final Map<String, List<Object?>> ledgerAfterByInstrument =
+      <String, List<Object?>>{};
+  final Map<String, int> ledgerPageNumbers = <String, int>{};
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    final path = options.uri.path;
+    final Object data;
+    if (path == RiskRepository.configEndpoint) {
+      data = <Map<String, dynamic>>[
+        {'uid': 'uid-batch', 'mgnIsoMode': 'auto_transfers_ccy'},
+      ];
+    } else if (path == RiskRepository.positionsEndpoint) {
+      positionRequests++;
+      data = List<Map<String, dynamic>>.generate(positionCount, (index) {
+        final letter = String.fromCharCode('A'.codeUnitAt(0) + index);
+        final base = List<String>.filled(3, letter).join();
+        return _batchPosition(
+          '$base-USDT',
+          base,
+          'position-${base.toLowerCase()}',
+        );
+      });
+    } else if (path == RiskRepository.instrumentsEndpoint) {
+      final instId = options.queryParameters['instId']?.toString() ?? '';
+      data = <Map<String, dynamic>>[
+        {'instId': instId, 'instType': 'MARGIN', 'groupId': '7'},
+      ];
+    } else if (path == RiskRepository.feeEndpoint) {
+      final instId = options.queryParameters['instId']?.toString() ?? '';
+      data = <Map<String, dynamic>>[
+        {
+          'instType': 'MARGIN',
+          'instId': instId,
+          'feeGroup': [
+            {'groupId': '7', 'taker': '-0.001'},
+          ],
+        },
+      ];
+    } else if (path == RiskRepository.interestRateEndpoint) {
+      data = <Map<String, dynamic>>[
+        {'ccy': 'USDT', 'interestRate': '0.00001'},
+      ];
+    } else if (path == RiskRepository.interestAccruedEndpoint) {
+      ledgerRequests++;
+      final instId = options.queryParameters['instId']?.toString() ?? '';
+      final after = options.queryParameters['after'];
+      ledgerAfter.add(after);
+      (ledgerAfterByInstrument[instId] ??= <Object?>[]).add(after);
+      final page = ledgerPageNumbers[instId] ?? 0;
+      ledgerPageNumbers[instId] = page + 1;
+      data = List<Map<String, dynamic>>.generate(100, (index) {
+        final occurredAt = clock.value.subtract(
+          Duration(minutes: page * 100 + index),
+        );
+        return <String, dynamic>{
+          'instId': instId,
+          'ccy': 'USDT',
+          'mgnMode': 'isolated',
+          'interest': '0.25',
+          'type': '2',
+          'ts': _epoch(occurredAt),
+        };
+      });
+    } else {
+      throw StateError('Unexpected endpoint $path');
+    }
+    return _responseBody(_ok(data));
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
+
+Map<String, dynamic> _batchPosition(String instId, String base, String posId) =>
+    <String, dynamic>{
+      'instId': instId,
+      'instType': 'MARGIN',
+      'mgnMode': 'isolated',
+      'posSide': 'net',
+      'pos': '100',
+      'posId': posId,
+      'posCcy': base,
+      'ccy': 'USDT',
+      'liabCcy': 'USDT',
+      'avgPx': '11',
+      'markPx': '10',
+      'liqPx': '6',
+      'margin': '700',
+      'upl': '-200',
+      'lever': '2',
+      'mgnRatio': '4',
+      'mmr': '100',
+      'liab': '-1198',
+      'interest': '2',
+      'cTime': '1788220800000',
+      'uTime': '1788998400000',
+    };

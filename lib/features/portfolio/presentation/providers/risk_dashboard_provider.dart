@@ -11,6 +11,7 @@ import '../../application/risk_notification_sink.dart';
 import '../../data/risk/risk_local_store.dart';
 import '../../data/risk/risk_market_repository.dart';
 import '../../data/risk/risk_repository.dart';
+import '../../data/risk/risk_request_coordinator.dart';
 
 /// The presentation layer depends on the typed monitor protocol.  Production
 /// wiring can override this provider with the foreground owner (and the later
@@ -28,7 +29,10 @@ final riskMonitorOwnerProvider = Provider<RiskMonitorOwner>((ref) {
   );
   final monitor = RiskMonitor.fromRepositories(
     repository: repository,
-    marketRepository: RiskMarketRepository(marketDio),
+    marketRepository: RiskMarketRepository(
+      marketDio,
+      requestCoordinator: ref.watch(riskRequestCoordinatorProvider),
+    ),
     store: RiskLocalStore(storage: DeferredSharedPreferencesRiskStorage()),
     notificationSink: kIsWeb
         ? const InAppRiskNotificationSink()

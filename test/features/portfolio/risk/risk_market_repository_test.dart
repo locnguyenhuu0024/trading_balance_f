@@ -4,10 +4,25 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/features/portfolio/data/risk/risk_market_repository.dart';
+import 'package:trading_balance_f/features/portfolio/data/risk/risk_request_coordinator.dart';
 import 'package:trading_balance_f/features/portfolio/domain/risk/risk_models.dart';
 
 void main() {
   final now = DateTime.utc(2026, 9, 10, 12);
+
+  test('RED-001 rate-safe risk request batch', () async {
+    final adapter = _ConcurrentAdapter(now);
+    final repository = RiskMarketRepository(
+      _publicDio(adapter),
+      clock: () => now,
+    );
+
+    await repository.load(asset: 'SUI', now: now);
+
+    // The pre-change implementation starts all six market requests together.
+    // The rate-safe contract requires one active request at a time.
+    expect(adapter.maxInFlight, 1);
+  });
 
   test(
     'RED-002 filters unconfirmed/gapped candles and validates intervals',
@@ -408,11 +423,83 @@ void main() {
       expect(malformedOi.quality.reason, contains('oiCcy'));
     },
   );
+
+  test('GREEN-001 rate-safe risk request batch', () async {
+    final adapter = _RecordingAdapter((options) {
+      final path = options.uri.path;
+      if (path == RiskMarketRepository.candlesEndpoint) {
+        return _ok(<List<String>>[
+          <String>[
+            _epoch(now),
+            '100',
+            '101',
+            '99',
+            '100',
+            '10',
+            '10',
+            '1000',
+            '1',
+          ],
+        ]);
+      }
+      final instrument = options.queryParameters['instId']?.toString() ?? '';
+      if (path == RiskMarketRepository.fundingEndpoint) {
+        return _ok(<Map<String, String>>[
+          <String, String>{
+            'instId': instrument,
+            'fundingRate': '0.0001',
+            'fundingTime': _epoch(now.subtract(const Duration(hours: 4))),
+            'nextFundingTime': _epoch(now),
+          },
+        ]);
+      }
+      return _ok(<Map<String, String>>[
+        <String, String>{
+          'instId': instrument,
+          'oiCcy': '100',
+          'ts': _epoch(now),
+        },
+      ]);
+    });
+    final repository = RiskMarketRepository(
+      _publicDio(adapter),
+      clock: () => now,
+      requestCoordinator: RiskRequestCoordinator(minimumSpacing: Duration.zero),
+    );
+
+    final first = await repository.loadBatch(
+      assets: <String>['SUI', 'ETH', 'SUI'],
+      now: now,
+    );
+    expect(first, hasLength(2));
+    final firstCount = adapter.requests.length;
+    expect(
+      adapter.requests
+          .where(
+            (request) =>
+                request.uri.path == RiskMarketRepository.candlesEndpoint &&
+                request.uri.queryParameters['instId'] == 'BTC-USDT',
+          )
+          .length,
+      2,
+    );
+
+    final second = await repository.loadBatch(
+      assets: <String>['SUI', 'ETH'],
+      now: now,
+    );
+    expect(second, hasLength(2));
+    expect(adapter.requests.length, firstCount);
+    expect(
+      adapter.requests.every((request) => request.method == 'GET'),
+      isTrue,
+    );
+  });
 }
 
 String _epoch(DateTime value) => value.millisecondsSinceEpoch.toString();
 
-Dio _publicDio(_RecordingAdapter adapter) {
+Dio _publicDio(HttpClientAdapter adapter) {
   final dio = Dio(BaseOptions(baseUrl: 'https://unit.test'));
   dio.interceptors.add(
     InterceptorsWrapper(
@@ -443,6 +530,67 @@ class _RecordingAdapter implements HttpClientAdapter {
     requests.add(options);
     return ResponseBody.fromString(
       jsonEncode(handler(options)),
+      200,
+      headers: <String, List<String>>{
+        'content-type': <String>['application/json'],
+      },
+    );
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
+
+class _ConcurrentAdapter implements HttpClientAdapter {
+  _ConcurrentAdapter(this.now);
+
+  final DateTime now;
+  var inFlight = 0;
+  var maxInFlight = 0;
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    inFlight++;
+    if (inFlight > maxInFlight) maxInFlight = inFlight;
+    await Future<void>.delayed(Duration.zero);
+    inFlight--;
+    final path = options.uri.path;
+    final data = path == RiskMarketRepository.candlesEndpoint
+        ? <List<String>>[
+            <String>[
+              _epoch(now),
+              '100',
+              '101',
+              '99',
+              '100',
+              '10',
+              '10',
+              '1000',
+              '1',
+            ],
+          ]
+        : path == RiskMarketRepository.fundingEndpoint
+        ? <Map<String, String>>[
+            <String, String>{
+              'instId': 'SUI-USDT-SWAP',
+              'fundingRate': '0.0001',
+              'fundingTime': _epoch(now.subtract(const Duration(hours: 4))),
+              'nextFundingTime': _epoch(now),
+            },
+          ]
+        : <Map<String, String>>[
+            <String, String>{
+              'instId': 'SUI-USDT-SWAP',
+              'oiCcy': '100',
+              'ts': _epoch(now),
+            },
+          ];
+    return ResponseBody.fromString(
+      jsonEncode(_ok(data)),
       200,
       headers: <String, List<String>>{
         'content-type': <String>['application/json'],
