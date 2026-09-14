@@ -74,6 +74,60 @@ class FakeRiskSource
   }
 }
 
+/// T25 fixture for exercising the aggregate owner without touching the
+/// repository's authenticated adapters. It exposes one batch per capture and
+/// can fail only the selected episode's market request.
+class BatchFakeRiskSource extends FakeRiskSource
+    implements RiskMonitorBatchDataSource {
+  BatchFakeRiskSource({
+    required super.clock,
+    required this.positions,
+    super.market,
+    this.failedMarketEpisodes = const <String>{},
+    this.batchOverride,
+    this.marketFailure,
+  }) : super(position: () => positions.first);
+
+  List<RiskPosition> positions;
+  final Set<String> failedMarketEpisodes;
+  RiskPositionBatch? batchOverride;
+  RiskRepositoryException? marketFailure;
+  int batchCalls = 0;
+  int batchMarketCalls = 0;
+
+  @override
+  Future<RiskPositionBatch> loadPositionsBatch({
+    int ledgerPageBudget = 2,
+  }) async {
+    batchCalls++;
+    final override = batchOverride;
+    if (override != null) return override;
+    return RiskPositionBatch(
+      status: RiskEligibility.eligible,
+      quality: RiskQuality.complete(
+        source: 'synthetic-position-batch',
+        observedAt: clock.value,
+        sourceAt: clock.value,
+      ),
+      positions: List<RiskPosition>.unmodifiable(positions),
+    );
+  }
+
+  @override
+  Future<MarketRiskSnapshot> loadMarket({
+    required RiskPosition position,
+    DateTime? now,
+  }) async {
+    batchMarketCalls++;
+    final failure = marketFailure;
+    if (failure != null) throw failure;
+    if (failedMarketEpisodes.contains(position.episodeKey)) {
+      throw StateError('synthetic market failure');
+    }
+    return super.loadMarket(position: position, now: now);
+  }
+}
+
 class CadencedFakeRiskSource extends FakeRiskSource
     implements RiskMonitorMarketCadenceSource {
   CadencedFakeRiskSource({
@@ -291,22 +345,25 @@ RiskPosition syntheticRiskPosition({
   double markPrice = 10,
   String account = 'account-a',
   String positionId = 'position-a',
+  String instrumentId = 'SUI-USDT',
+  String baseCurrency = 'SUI',
+  String positionSide = 'long',
   DateTime? createdAt,
 }) {
   return RiskPosition(
-    instrumentId: 'SUI-USDT',
+    instrumentId: instrumentId,
     instrumentType: 'MARGIN',
     mode: RiskAccountMode.newMode,
     collateralCurrency: RiskCollateralCurrency.quote,
-    positionSide: 'long',
+    positionSide: positionSide,
     accountNamespace: account,
     positionId: positionId,
     createdAt: createdAt ?? DateTime.utc(2026, 9, 1),
     updatedAt: observedAt,
     observedAt: observedAt,
-    baseCurrency: 'SUI',
+    baseCurrency: baseCurrency,
     quoteCurrency: 'USDT',
-    positionCurrency: 'SUI',
+    positionCurrency: baseCurrency,
     accountCurrency: 'USDT',
     liabilityCurrency: 'USDT',
     rawQuantity: 10,

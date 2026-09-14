@@ -1,6 +1,6 @@
 # Task 25 — Aggregate multi-position Risk monitor
 
-Status: PENDING
+Status: PASS
 Executor: implementation executor
 Executor Class: E2
 Target Route: Luna Max
@@ -19,7 +19,7 @@ Done when: aggregate state contains all positions, each episode is isolated thro
 ## 2. Preconditions
 
 Predecessors: T24 = PASS.
-Required decisions/assumptions: D-001; none.
+Required decisions/assumptions: D-001, D-004; none.
 Required repository/environment state: use T24 batch contracts and preserve existing records/schema.
 
 ## 3. Allowed Scope
@@ -51,6 +51,7 @@ Follow P02:
 4. Flush/remove closed positions without deleting history; reopened episodes start clean.
 5. Make manual refresh global/coalesced and unable to bypass T24 backoff.
 6. Round-trip all entries through service wire codec and retain a temporary legacy primary projection for current UI buildability.
+7. Keep position direction explicit or preserve an equivalent extension seam for future short isolated-margin support; do not implement or infer short formulas in this task.
 
 Required invariants: INV-001-INV-007, INV-010.
 Required edge behavior: EDGE-001-EDGE-004.
@@ -75,15 +76,15 @@ Blocks verification until user applies: NO.
 Scenario: BTC NORMAL, ETH WATCH, SUI HIGH across lifecycle/failure/wire fixtures.
 Command/method: `flutter test test/features/portfolio/risk/risk_monitor_test.dart test/features/portfolio/risk/risk_runtime_test.dart test/features/portfolio/risk/risk_notification_test.dart --plain-name "RED-002 aggregate multi-position monitor" --reporter compact`
 Expected: current singular state cannot satisfy aggregate/isolation assertions.
-Actual: PENDING
-Status: PENDING
+Actual: The executor did not observe a failing pre-change RED-002 run. Post-change execution passes, but this is not substituted for missing pre-change evidence.
+Status: NOT OBSERVED — process evidence gap recorded; no failure is fabricated.
 
 ### GREEN — GREEN-002
 Scenario: simultaneous monitoring, isolated events, and open/close/reopen.
 Command/method: same files with `--plain-name "GREEN-002 aggregate multi-position monitor"`.
 Expected: AC-004-AC-006 pass with no cross-episode writes or duplicate owner.
-Actual: PENDING
-Status: PENDING
+Actual: Coordinator observed 1/1 matching GREEN-002 test pass after the final remediation; the full Risk test directory passed 107/107.
+Status: PASS
 
 Verification ceiling: V3.
 Escalate only if: schema migration or UI change is required to make the task buildable.
@@ -93,10 +94,10 @@ Escalate only if: schema migration or UI change is required to make the task bui
 Required: YES
 Affected canonical build unit: Flutter application
 Exact secret-free build command: `flutter build web --no-pub`
-Executed after final task-local change: NO
-Result: PENDING
-Exit/status: PENDING
-Compiler/parser/type/reference/link/build errors: PENDING
+Executed after final task-local source change: YES. The later final change affected test assertions only and did not invalidate the source build.
+Result: PASS — `✓ Built build/web`; existing non-blocking WASM compatibility warnings only.
+Exit/status: 0
+Compiler/parser/type/reference/link/build errors: none
 
 ### External Verification
 
@@ -113,21 +114,22 @@ Return `BLOCKED` for schema/config dependency, cross-episode leakage, duplicate 
 
 ## 10. Execution Ledger
 
-- [ ] inspect referenced symbols
-- [ ] implement P02
-- [ ] add/update tests
-- [ ] execute formal RED then GREEN
-- [ ] run task buildability gate
-- [ ] confirm protected configuration boundary
+- [x] inspect referenced symbols
+- [x] implement P02
+- [x] add/update tests
+- [ ] execute formal RED then GREEN — GREEN observed; pre-change RED failure was not observed and is recorded as a process evidence gap
+- [x] run task buildability gate
+- [x] confirm protected configuration boundary
 
 ## 11. Coordinator Audit
 
-Scope: PENDING
-Acceptance criteria: PENDING
-Test quality: PENDING
-RED evidence: PENDING
-GREEN evidence: PENDING
-RED-before-GREEN: PENDING
-Architecture/contract conformance: PENDING
-Task buildability gate: PENDING
-Verdict: PENDING
+Scope: PASS — product/source/test changes stayed within T25 write surfaces; coordinator-only planning, task, decision, and telemetry updates are separately authorized framework evidence.
+Acceptance criteria: PASS — aggregate long isolated-margin monitoring, episode isolation, close/reopen, durable pending retry, global backoff/coalescing, and service wire parity are covered.
+Test quality: PASS — includes 1/3-position aggregate flows, isolated failures, discovery failure, 429 recovery/reset, coalescing, exact pending plan/event/OI retention, close/reopen, notification routing, and deep foreground/service wire parity.
+RED evidence: NOT OBSERVED — no failing pre-change RED-002 execution was captured; post-change RED-named test results are not treated as RED evidence.
+GREEN evidence: PASS — final GREEN-002 1/1; full Risk suite 107/107; final pending-event audit test 1/1; scoped analyzer clean.
+RED-before-GREEN: NOT OBSERVED — transparent process exception; behavioral and regression evidence passed independently.
+Architecture/contract conformance: PASS — one owner/timer/serialized queue, episode-keyed contexts, immutable ordered aggregate state, legacy projection, and explicit long direction seam; no short formulas introduced.
+Task buildability gate: PASS — web build exit 0 after final source change; final test-only assertion change does not affect application buildability.
+Independent audit: Three REWORK reviews identified pending-state retention, aggregate discovery/backoff/coalescing coverage, deep wire parity, recovery backoff reset, analyzer cleanliness, and the final pending-event evidence gap. All findings were remediated and the final narrow change was verified by coordinator source inspection and focused tests.
+Verdict: PASS WITH RECORDED PROCESS EVIDENCE GAP — product contract and required build/tests pass; missing pre-change RED observation is retained explicitly and was not reconstructed or fabricated.

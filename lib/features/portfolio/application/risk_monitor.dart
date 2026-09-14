@@ -30,6 +30,15 @@ abstract class RiskMonitorDataSource {
   });
 }
 
+/// Optional aggregate source introduced by T24. Production sources use this
+/// seam so one capture discovers the account position set once and receives
+/// T24's paced, resumable enrichment for every eligible position. Legacy/test
+/// sources may continue implementing [RiskMonitorDataSource] and are treated
+/// as a one-position compatibility source.
+abstract interface class RiskMonitorBatchDataSource {
+  Future<RiskPositionBatch> loadPositionsBatch({int ledgerPageBudget = 2});
+}
+
 /// Optional repository seam used to keep one-minute market context fetches
 /// separate from the five-minute candle refresh. Legacy/test sources can keep
 /// implementing [RiskMonitorDataSource.loadMarket] and receive the old single
@@ -56,6 +65,7 @@ abstract interface class RiskMonitorSelectionFailureMetadata {
 class RepositoryRiskMonitorDataSource
     implements
         RiskMonitorDataSource,
+        RiskMonitorBatchDataSource,
         RiskMonitorCacheInvalidator,
         RiskMonitorSelectionFailureMetadata,
         RiskMonitorMarketCadenceSource {
@@ -79,6 +89,10 @@ class RepositoryRiskMonitorDataSource
     selectedPositionId: selectedPositionId,
     selectedEpisodeKey: selectedEpisodeKey,
   );
+
+  @override
+  Future<RiskPositionBatch> loadPositionsBatch({int ledgerPageBudget = 2}) =>
+      repository.loadPositionsBatch(ledgerPageBudget: ledgerPageBudget);
 
   @override
   Future<MarketRiskSnapshot> loadMarket({
@@ -158,6 +172,77 @@ class _CredentialFence {
   final bool wasRunning;
   final String? accountHash;
   final String? episodeKey;
+}
+
+/// Mutable working state for one position episode. The owning [RiskMonitor]
+/// keeps exactly one map/timer/serialized queue; this context only partitions
+/// lifecycle and durable state so one episode can never overwrite another.
+class _RiskEpisodeMonitorContext {
+  _RiskEpisodeMonitorContext({
+    required this.accountHash,
+    required this.episodeKey,
+    required this.position,
+  });
+
+  final String accountHash;
+  final String episodeKey;
+  RiskPosition position;
+
+  RiskEpisodeRecord? record;
+  RiskEpisodeRecord? pendingRecord;
+  RiskPlan? plan;
+  RiskMarketInput? market;
+  DateTime? marketFetchedAt;
+  MarketRiskSnapshot? marketSnapshot;
+  DateTime? candleSnapshotFetchedAt;
+  DateTime? lastOiPersistAt;
+  DateTime? lastHistoryPersistAt;
+  List<RiskHistorySample> persistedSamples = const <RiskHistorySample>[];
+  RiskHistorySample? latestAcceptedSample;
+  RiskPlanEvaluation? previousPlanEvaluation;
+  List<MarketOpenInterestSample> pendingOpenInterest =
+      const <MarketOpenInterestSample>[];
+  RiskCheckSession? session;
+  DateTime? uiDepartureAt;
+  RiskHistorySample? uiDepartureBaseline;
+  RiskEvaluation? evaluation;
+  RiskPlanEvaluation? planEvaluation;
+  List<RiskHistorySample> visibleSamples = const <RiskHistorySample>[];
+  List<RiskDailySummary> visibleSummaries = const <RiskDailySummary>[];
+  List<RiskEvent> visibleEvents = const <RiskEvent>[];
+  RiskSessionComparison? previousCheck;
+  RiskTrendResult? trend;
+  RiskVelocityResult? velocity;
+  RiskQuality quality = const RiskQuality.unavailable(
+    reason: 'Position has not observed a snapshot',
+  );
+  bool unsaved = false;
+  String? lastError;
+  final Set<String> deliveredEventIds = <String>{};
+
+  RiskPositionMonitorViewState toViewState(RiskSettings settings) {
+    return RiskPositionMonitorViewState(
+      positionId: position.positionId,
+      episodeKey: episodeKey,
+      positionSide: position.positionSide,
+      position: position,
+      evaluation: evaluation,
+      planEvaluation: planEvaluation,
+      plan: plan,
+      settings: settings,
+      market: market,
+      samples: visibleSamples,
+      summaries: visibleSummaries,
+      previousCheck: previousCheck,
+      trend: trend,
+      velocity: velocity,
+      events: visibleEvents,
+      quality: quality,
+      unsaved: unsaved,
+      lastError: lastError,
+      freshnessAt: position.observedAt ?? quality.observedAt,
+    );
+  }
 }
 
 /// Persistence boundary. [RiskLocalStorePersistence] is the production
@@ -314,28 +399,17 @@ class RiskMonitor
   final Map<String, RiskMonitorCommandResult> _commandResults =
       <String, RiskMonitorCommandResult>{};
   Future<void> _workTail = Future<void>.value();
+  Future<RiskMonitorCommandResult>? _refreshCommandFuture;
 
   RiskMonitorViewState _state = RiskMonitorViewState();
-  RiskEpisodeRecord? _record;
   RiskSettings _settings = const RiskSettings();
-  RiskPlan? _plan;
-  RiskMarketInput? _market;
-  DateTime? _marketFetchedAt;
-  MarketRiskSnapshot? _marketSnapshot;
-  DateTime? _candleSnapshotFetchedAt;
+  final Map<String, _RiskEpisodeMonitorContext> _contexts =
+      <String, _RiskEpisodeMonitorContext>{};
+  RiskPositionBatch? _positionBatch;
+  DateTime? _batchFetchedAt;
   RiskPositionSelection? _positionSelection;
   DateTime? _positionFetchedAt;
-  DateTime? _lastOiPersistAt;
-  DateTime? _lastHistoryPersistAt;
-  List<RiskHistorySample> _persistedSamples = const <RiskHistorySample>[];
-  RiskHistorySample? _latestAcceptedSample;
-  RiskPlanEvaluation? _previousPlanEvaluation;
-  List<MarketOpenInterestSample> _pendingOpenInterest =
-      const <MarketOpenInterestSample>[];
-  RiskCheckSession? _session;
   DateTime? _lastStoppedAt;
-  DateTime? _uiDepartureAt;
-  RiskHistorySample? _uiDepartureBaseline;
   DateTime? _nextRetryAt;
   int _failureCount = 0;
   int _generation = 0;
@@ -353,6 +427,13 @@ class RiskMonitor
   RiskNotificationCapabilityStatus _notificationCapability =
       RiskNotificationCapabilityStatus.unavailable;
   bool _disposed = false;
+  RiskMonitorRequestStatus _requestStatus =
+      RiskMonitorRequestStatus.unavailable;
+  String? _requestEndpointClass;
+  RiskQuality _aggregateQuality = const RiskQuality.unavailable(
+    reason: 'Monitor has not observed a snapshot',
+  );
+  String? _aggregateError;
 
   String? _accountHash;
   String? _episodeKey;
@@ -378,12 +459,24 @@ class RiskMonitor
     String? error,
   }) {
     if (_disposed) return;
+    _aggregateError = error;
     _publish(
-      _state.copyWith(
-        ownerLabel: ownerLabel,
+      RiskMonitorViewState(
+        isRunning: _running,
         backgroundAvailable: backgroundAvailable,
+        ownerLabel: ownerLabel,
+        accountHash: _accountHash,
+        episodeKey: _episodeKey,
+        settings: _settings,
+        quality: _aggregateQuality,
         lastError: error,
-        clearError: error == null,
+        notificationCapability: _notificationCapability,
+        positions: _orderedContexts()
+            .map((context) => context.toViewState(_settings))
+            .toList(growable: false),
+        requestStatus: _requestStatus,
+        retryAt: _nextRetryAt,
+        requestEndpointClass: _requestEndpointClass,
       ),
     );
   }
@@ -402,7 +495,7 @@ class RiskMonitor
       (sink as RiskNotificationCapabilityInvalidator).invalidateCapability();
     }
     _notificationCapability = RiskNotificationCapabilityStatus.unavailable;
-    _publish(_state.copyWith(notificationCapability: _notificationCapability));
+    _publishAggregate();
   }
 
   /// Invalidates all in-flight work immediately. This is called by credential
@@ -417,26 +510,21 @@ class RiskMonitor
     _nextRetryAt = null;
     _failureCount = 0;
     _cancelTimer();
-    _record = null;
-    _session = null;
-    _uiDepartureAt = null;
-    _uiDepartureBaseline = null;
-    _market = null;
-    _marketFetchedAt = null;
-    _marketSnapshot = null;
-    _candleSnapshotFetchedAt = null;
+    _contexts.clear();
+    _positionBatch = null;
+    _batchFetchedAt = null;
     _positionSelection = null;
     _positionFetchedAt = null;
-    _lastOiPersistAt = null;
-    _lastHistoryPersistAt = null;
-    _persistedSamples = const <RiskHistorySample>[];
-    _latestAcceptedSample = null;
-    _previousPlanEvaluation = null;
-    _pendingOpenInterest = const <MarketOpenInterestSample>[];
-    _deliveredEventIds.clear();
     _accountHash = null;
     _episodeKey = null;
-    _plan = null;
+    _selectedPositionId = null;
+    _deliveredEventIds.clear();
+    _requestStatus = RiskMonitorRequestStatus.unavailable;
+    _requestEndpointClass = null;
+    _aggregateQuality = const RiskQuality.unavailable(
+      reason: 'Credentials changed; monitoring is restarting',
+    );
+    _aggregateError = reason;
     _running = false;
     _publish(
       RiskMonitorViewState(
@@ -447,6 +535,8 @@ class RiskMonitor
           reason: 'Credentials changed; monitoring is restarting',
         ),
         lastError: reason,
+        positions: const <RiskPositionMonitorViewState>[],
+        requestStatus: RiskMonitorRequestStatus.unavailable,
       ),
     );
   }
@@ -473,6 +563,24 @@ class RiskMonitor
 
   @override
   Future<RiskMonitorCommandResult> dispatch(RiskMonitorCommand command) {
+    if (command.type == RiskMonitorCommandType.refresh &&
+        !_disposed &&
+        command.id.trim().isNotEmpty) {
+      final existingRefresh = _refreshCommandFuture;
+      if (existingRefresh != null) {
+        return existingRefresh.then((result) {
+          final coalesced = RiskMonitorCommandResult(
+            commandId: command.id,
+            status: result.status,
+            state: result.state,
+            message: result.message,
+            replayed: true,
+          );
+          _commandResults[command.id.trim()] = coalesced;
+          return coalesced;
+        });
+      }
+    }
     if (command.type == RiskMonitorCommandType.invalidateCredentials &&
         !_disposed &&
         command.id.trim().isNotEmpty &&
@@ -484,6 +592,24 @@ class RiskMonitor
       fenceCredentialsForCommand(command.id, reason: command.reason);
     }
     final completer = Completer<RiskMonitorCommandResult>();
+    final resultFuture = completer.future;
+    if (command.type == RiskMonitorCommandType.refresh &&
+        !_disposed &&
+        command.id.trim().isNotEmpty) {
+      _refreshCommandFuture = resultFuture;
+      resultFuture.then<void>(
+        (_) {
+          if (identical(_refreshCommandFuture, resultFuture)) {
+            _refreshCommandFuture = null;
+          }
+        },
+        onError: (Object _, StackTrace __) {
+          if (identical(_refreshCommandFuture, resultFuture)) {
+            _refreshCommandFuture = null;
+          }
+        },
+      );
+    }
     _workTail = _workTail.then<void>((_) async {
       try {
         completer.complete(await _dispatchInternal(command));
@@ -491,7 +617,7 @@ class RiskMonitor
         completer.completeError(error, stackTrace);
       }
     });
-    return completer.future;
+    return resultFuture;
   }
 
   Future<void> _enqueueWork(Future<void> Function() work) {
@@ -590,34 +716,22 @@ class RiskMonitor
       _failureCount = 0;
       _accountHash = requestedAccount;
       _episodeKey = requestedEpisode;
-      _record = null;
-      _plan = requestedEpisode == null
-          ? null
-          : RiskPlan(episodeKey: requestedEpisode);
       _settings = const RiskSettings();
-      _market = null;
-      _marketFetchedAt = null;
-      _marketSnapshot = null;
-      _candleSnapshotFetchedAt = null;
+      _contexts.clear();
+      _positionBatch = null;
+      _batchFetchedAt = null;
       _positionSelection = null;
       _positionFetchedAt = null;
-      _lastOiPersistAt = null;
-      _lastHistoryPersistAt = null;
-      _persistedSamples = const <RiskHistorySample>[];
-      _latestAcceptedSample = null;
-      _previousPlanEvaluation = null;
-      _pendingOpenInterest = const <MarketOpenInterestSample>[];
-      _session = null;
-      _uiDepartureAt = null;
-      _uiDepartureBaseline = null;
       _reconnectPending = false;
       _deliveredEventIds.clear();
+      _requestStatus = RiskMonitorRequestStatus.ready;
+      _requestEndpointClass = null;
+      _aggregateQuality = const RiskQuality.unavailable(
+        reason: 'Monitor has not observed a snapshot',
+      );
+      _aggregateError = null;
       _resetPublishedIdentity();
-      if (_accountHash != null && _episodeKey != null) {
-        await _loadContext(_generation);
-      } else if (_accountHash != null) {
-        await _loadSettings(_generation);
-      }
+      if (_accountHash != null) await _loadSettings(_generation);
     }
     _running = true;
     _restartTimer();
@@ -632,10 +746,12 @@ class RiskMonitor
     _generation++;
     _cancelTimer();
     _running = false;
-    await _flushOpenInterest(_generation);
-    await _persistDepartureBaseline(_generation);
+    final generation = _generation;
+    await _flushAllOpenInterest(generation);
+    await _persistAllDepartureBaselines(generation);
     _lastStoppedAt = _now();
-    _publish(_state.copyWith(isRunning: false));
+    _requestStatus = RiskMonitorRequestStatus.ready;
+    _publishAggregate(isRunning: false);
     return _accepted(command, 'Monitor stopped');
   }
 
@@ -655,6 +771,8 @@ class RiskMonitor
       if (invalidator is RiskMonitorCacheInvalidator) {
         (invalidator as RiskMonitorCacheInvalidator).clearCaches();
       }
+      _positionBatch = null;
+      _batchFetchedAt = null;
       _positionSelection = null;
       _positionFetchedAt = null;
     }
@@ -694,67 +812,81 @@ class RiskMonitor
   ) async {
     if (!_running) return _rejected(command, 'Monitor is not running');
     final generation = _generation;
-    final account = _accountHash;
-    final episode = _episodeKey;
-    final record = _record;
-    final baseline =
-        _latestAcceptedSample ??
-        record?.latches.lastSample ??
-        record?.currentSample ??
-        _session?.departure();
-    _uiDepartureAt = _now();
-    _uiDepartureBaseline = baseline;
-    if (baseline == null ||
-        account == null ||
-        episode == null ||
-        record == null) {
-      return _accepted(command, 'UI departure recorded without a baseline');
+    final departureAt = _now();
+    var allSaved = true;
+    var savedAny = false;
+    for (final context in _contexts.values.toList(growable: false)) {
+      final record = _recordWithPendingOpenInterest(context);
+      final baseline =
+          context.latestAcceptedSample ??
+          record?.latches.lastSample ??
+          record?.currentSample ??
+          context.session?.departure();
+      context.uiDepartureAt = departureAt;
+      context.uiDepartureBaseline = baseline;
+      if (baseline == null || record == null) continue;
+      final next = record.copyWith(lastCheckBaseline: baseline);
+      final saved = await persistence.saveEpisode(
+        accountHash: context.accountHash,
+        record: next,
+      );
+      if (!_isGenerationCurrent(generation)) {
+        return _failed(command, 'UI departure was invalidated');
+      }
+      if (!saved.isSuccess) {
+        allSaved = false;
+        context.unsaved = true;
+        context.lastError = 'UI departure baseline was not saved';
+      } else {
+        savedAny = true;
+        context.record = saved.value ?? next;
+        context.pendingRecord = null;
+        context.pendingOpenInterest = const <MarketOpenInterestSample>[];
+        context.lastOiPersistAt = context.record?.openInterest.isEmpty == true
+            ? context.lastOiPersistAt
+            : context.record?.openInterest.last.timestamp;
+        context.unsaved = false;
+      }
     }
-    final next = record.copyWith(lastCheckBaseline: baseline);
-    final saved = await persistence.saveEpisode(
-      accountHash: account,
-      record: next,
-    );
-    if (!_isGenerationCurrent(generation)) {
-      return _failed(command, 'UI departure was invalidated');
-    }
-    if (!saved.isSuccess) {
-      _publish(_state.copyWith(unsaved: true));
+    _publishAggregate();
+    if (!allSaved) {
       return _failed(command, 'UI departure baseline was not saved');
     }
-    _record = saved.value ?? next;
-    _publish(_state.copyWith(unsaved: false));
-    return _accepted(command, 'UI departure baseline saved');
+    return _accepted(
+      command,
+      savedAny
+          ? 'UI departure baselines saved'
+          : 'UI departure recorded without a baseline',
+    );
   }
 
   Future<RiskMonitorCommandResult> _uiResume(RiskMonitorCommand command) async {
     if (!_running) return _rejected(command, 'Monitor is not running');
     final now = _now();
-    final departureAt = _uiDepartureAt;
-    final baseline = _uiDepartureBaseline;
-    final away = departureAt == null
-        ? Duration.zero
-        : now.difference(departureAt).isNegative
-        ? Duration.zero
-        : now.difference(departureAt);
-    // Service polling continues during the UI departure. Freeze the visit
-    // session while it is away, then seed a new comparison only after the
-    // complete >60-second departure window has elapsed.
-    if (departureAt != null &&
-        baseline != null &&
-        away > const Duration(seconds: 60)) {
-      final episode = _episodeKey;
-      if (episode != null) {
-        _session = RiskCheckSession.start(
-          episodeKey: episode,
+    for (final context in _contexts.values) {
+      final departureAt = context.uiDepartureAt;
+      final baseline = context.uiDepartureBaseline;
+      final away = departureAt == null
+          ? Duration.zero
+          : now.difference(departureAt).isNegative
+          ? Duration.zero
+          : now.difference(departureAt);
+      // Service polling continues during the UI departure. Freeze each visit
+      // session while it is away, then seed a new comparison only after the
+      // complete >60-second departure window has elapsed.
+      if (departureAt != null &&
+          baseline != null &&
+          away > const Duration(seconds: 60)) {
+        context.session = RiskCheckSession.start(
+          episodeKey: context.episodeKey,
           now: now,
           savedBaseline: baseline,
           awayDuration: away,
         );
       }
+      context.uiDepartureAt = null;
+      context.uiDepartureBaseline = null;
     }
-    _uiDepartureAt = null;
-    _uiDepartureBaseline = null;
     // The service owner may have cached a native permission result while the
     // UI was away. Invalidate and re-read it before the resume capture so any
     // event produced by that capture is classified against current permission.
@@ -781,30 +913,52 @@ class RiskMonitor
     if (plan == null || !plan.isValid) {
       return _rejected(command, 'Plan validation failed');
     }
-    if (_episodeKey != null && plan.episodeKey != _episodeKey) {
+    final context = _contextForCommand(command);
+    if (context == null && command.episodeKey != null) {
       return _rejected(command, 'Plan episode does not match monitor');
     }
-    _plan = plan;
-    final account = _accountHash;
-    if (account == null || _episodeKey == null) {
-      _publish(_state.copyWith(plan: plan, unsaved: true));
+    if (context != null && plan.episodeKey != context.episodeKey) {
+      return _rejected(command, 'Plan episode does not match monitor');
+    }
+    if (context == null) {
+      _publishAggregate(unsaved: true);
       return _accepted(command, 'Plan updated locally; account is unresolved');
     }
-    final existing = _record ?? _newRecord(account, plan.episodeKey);
+    context.plan = plan;
+    final existing =
+        _recordWithPendingOpenInterest(context) ??
+        _newRecord(context.accountHash, plan.episodeKey);
     final next = existing.copyWith(plan: plan);
-    final saved = await persistence.saveEpisode(
-      accountHash: account,
-      record: next,
-    );
+    // Keep an immutable retry candidate when persistence is temporarily
+    // unavailable so stop/close handling cannot discard a valid plan edit.
+    context.pendingRecord = next;
+    late final RiskStoreResult<RiskEpisodeRecord> saved;
+    try {
+      saved = await persistence.saveEpisode(
+        accountHash: context.accountHash,
+        record: next,
+      );
+    } catch (_) {
+      context.unsaved = true;
+      context.lastError = 'Plan was not saved';
+      _publishAggregate();
+      return _failed(command, 'Plan was not saved');
+    }
     if (!_isGenerationCurrent(generation)) {
       return _failed(command, 'Plan update was invalidated');
     }
     if (!saved.isSuccess) {
-      _publish(_state.copyWith(plan: plan, unsaved: true));
+      context.unsaved = true;
+      context.lastError = 'Plan was not saved';
+      _publishAggregate();
       return _failed(command, 'Plan was not saved');
     }
-    _record = saved.value ?? next;
-    _publish(_state.copyWith(plan: plan, unsaved: false));
+    context.record = saved.value ?? next;
+    context.pendingRecord = null;
+    context.plan = plan;
+    context.unsaved = false;
+    context.lastError = null;
+    _publishAggregate();
     return _accepted(command, 'Plan updated');
   }
 
@@ -819,7 +973,7 @@ class RiskMonitor
     final account = _accountHash;
     if (account == null) {
       _settings = settings;
-      _publish(_state.copyWith(settings: settings, unsaved: true));
+      _publishAggregate(unsaved: true);
       return _accepted(
         command,
         'Settings updated locally; account is unresolved',
@@ -834,11 +988,11 @@ class RiskMonitor
     }
     if (!saved.isSuccess) {
       _settings = settings;
-      _publish(_state.copyWith(settings: settings, unsaved: true));
+      _publishAggregate(unsaved: true);
       return _failed(command, 'Settings were not saved');
     }
     _settings = settings;
-    _publish(_state.copyWith(settings: settings, unsaved: false));
+    _publishAggregate(unsaved: false);
     return _accepted(command, 'Settings updated');
   }
 
@@ -846,11 +1000,12 @@ class RiskMonitor
     RiskMonitorCommand command,
   ) async {
     final generation = _generation;
-    final account = _accountHash;
-    final episode = _episodeKey;
-    if (account == null || episode == null) {
+    final context = _contextForCommand(command);
+    if (context == null) {
       return _rejected(command, 'Account and episode are required');
     }
+    final account = context.accountHash;
+    final episode = context.episodeKey;
     final result = await persistence.clearEpisodeHistory(
       accountHash: account,
       episodeKey: episode,
@@ -859,9 +1014,9 @@ class RiskMonitor
       return _failed(command, 'History clear was invalidated');
     }
     if (!result.isSuccess) return _failed(command, 'History was not cleared');
-    _record =
+    context.record =
         result.value ??
-        _record?.copyWith(
+        context.record?.copyWith(
           samples: const <RiskHistorySample>[],
           openInterest: const <MarketOpenInterestSample>[],
           events: const <RiskEvent>[],
@@ -869,34 +1024,33 @@ class RiskMonitor
           latches: RiskEventLatch(episodeKey: episode),
           clearLastCheckBaseline: true,
         );
+    context.pendingRecord = null;
     // Clear every derived history cursor together with the durable history.
     // Otherwise a later OI flush or a sparse sample can reintroduce data that
     // the user just cleared.
-    _persistedSamples = const <RiskHistorySample>[];
-    _pendingOpenInterest = const <MarketOpenInterestSample>[];
-    _lastHistoryPersistAt = null;
-    _lastOiPersistAt = null;
-    _previousPlanEvaluation = null;
-    _deliveredEventIds.clear();
-    _session = RiskCheckSession.start(
+    context.persistedSamples = const <RiskHistorySample>[];
+    context.pendingOpenInterest = const <MarketOpenInterestSample>[];
+    context.lastHistoryPersistAt = null;
+    context.lastOiPersistAt = null;
+    context.previousPlanEvaluation = null;
+    context.deliveredEventIds.clear();
+    context.session = RiskCheckSession.start(
       episodeKey: episode,
       now: _now(),
       awayDuration: Duration.zero,
     );
-    _uiDepartureAt = null;
-    _uiDepartureBaseline = null;
-    _latestAcceptedSample = null;
-    _publish(
-      _state.copyWith(
-        events: const <RiskEvent>[],
-        samples: const <RiskHistorySample>[],
-        summaries: const <RiskDailySummary>[],
-        clearPreviousCheck: true,
-        clearTrend: true,
-        clearVelocity: true,
-        unsaved: false,
-      ),
-    );
+    context.uiDepartureAt = null;
+    context.uiDepartureBaseline = null;
+    context.latestAcceptedSample = null;
+    context.visibleEvents = const <RiskEvent>[];
+    context.visibleSamples = const <RiskHistorySample>[];
+    context.visibleSummaries = const <RiskDailySummary>[];
+    context.previousCheck = null;
+    context.trend = null;
+    context.velocity = null;
+    context.unsaved = false;
+    context.lastError = null;
+    _publishAggregate();
     return _accepted(command, 'History cleared');
   }
 
@@ -913,35 +1067,27 @@ class RiskMonitor
 
   Future<void> _capture({required bool force}) async {
     if (!_running || _disposed) return;
-    if (_nextRetryAt != null && _now().isBefore(_nextRetryAt!)) {
+    final now = _now();
+    if (_nextRetryAt != null && now.isBefore(_nextRetryAt!)) {
+      _requestStatus = RiskMonitorRequestStatus.backingOff;
+      _publishAggregate();
       return;
     }
-    if (_authBlocked) return;
+    if (_authBlocked) {
+      _requestStatus = RiskMonitorRequestStatus.authBlocked;
+      _publishAggregate();
+      return;
+    }
     _captureInFlight = true;
+    _requestStatus = RiskMonitorRequestStatus.refreshing;
+    _publishAggregate();
     final initialGeneration = _generation;
     try {
-      final beforePosition = _now();
-      final cachedSelection = _positionSelection;
-      final positionFresh =
-          cachedSelection != null &&
-          _positionFetchedAt != null &&
-          beforePosition.difference(_positionFetchedAt!) < activeCadence;
-      final selection = positionFresh
-          ? cachedSelection
-          : await dataSource.loadPosition(
-              selectedPositionId: _selectedPositionId,
-              selectedEpisodeKey: _episodeKey,
-            );
-      if (!_isCurrent(initialGeneration)) return;
-      if (!positionFresh) {
-        _positionSelection = selection;
-        _positionFetchedAt = _now();
-      }
-      // Selection failure metadata belongs to the fetch that produced the
-      // selection. A cached position must not replay an old enrichment error
-      // on every market-only capture and keep retry backoff alive forever.
+      final batch = await _loadPositionBatch(initialGeneration, force: force);
+      if (!_isCurrent(initialGeneration) || batch == null) return;
       final selectionFailure =
-          !positionFresh && dataSource is RiskMonitorSelectionFailureMetadata
+          _positionBatchFetchedThisCapture &&
+              dataSource is RiskMonitorSelectionFailureMetadata
           ? (dataSource as RiskMonitorSelectionFailureMetadata)
                 .lastSelectionFailure
           : null;
@@ -953,331 +1099,530 @@ class RiskMonitor
           selectionFailureAuth,
           retryAfter: selectionFailure.retryAfter,
         );
+        _requestEndpointClass = selectionFailure.endpoint;
+      } else if (batch.quality.status == RiskQualityStatus.error) {
+        // Batch implementations that cannot expose typed selection metadata
+        // still participate in the shared retry policy through their quality.
+        _registerFailure(false);
       }
-      final selectionFailureMessage = selectionFailure == null
-          ? null
+
+      _aggregateQuality = batch.quality;
+      final positions = batch.positions
+          .where(_isSupportedPosition)
+          .where((position) => position.episodeKey.trim().isNotEmpty)
+          .toList(growable: false);
+      final account = positions
+          .map((position) => _normalize(position.accountNamespace))
+          .whereType<String>()
+          .firstWhere((value) => value.isNotEmpty, orElse: () => '');
+      if (account.isNotEmpty &&
+          _accountHash != null &&
+          _accountHash != account) {
+        _generation++;
+        if (!_running || _disposed) return;
+        _contexts.clear();
+        _settings = const RiskSettings();
+        _positionBatch = batch;
+        _batchFetchedAt = _now();
+        _accountHash = account;
+        _episodeKey = null;
+        await _loadSettings(_generation);
+      } else if (account.isNotEmpty && _accountHash == null) {
+        _accountHash = account;
+        await _loadSettings(_generation);
+      }
+      if (!_isCurrent(_generation)) return;
+
+      final seen = <String>{};
+      for (final position in positions) {
+        final positionAccount = _normalize(position.accountNamespace);
+        if (positionAccount == null ||
+            (_accountHash != null && positionAccount != _accountHash)) {
+          continue;
+        }
+        final episode = position.episodeKey.trim();
+        if (episode.isEmpty) continue;
+        seen.add(episode);
+        _RiskEpisodeMonitorContext? context = _contexts[episode];
+        try {
+          if (context == null) {
+            context = _RiskEpisodeMonitorContext(
+              accountHash: positionAccount,
+              episodeKey: episode,
+              position: position,
+            );
+            _contexts[episode] = context;
+            await _loadEpisodeContext(context, _generation);
+            if (!_isCurrent(_generation)) return;
+          } else {
+            context.position = position;
+          }
+          await _captureEpisode(context, _generation);
+        } catch (_) {
+          if (!_isCurrent(_generation)) return;
+          // Evaluation/storage failures are scoped to this episode. Keep its
+          // last-good values and let the remaining positions continue.
+          context?.quality = const RiskQuality.stale(
+            reason: 'Position risk evaluation failed',
+          );
+          context?.unsaved = true;
+          context?.lastError = 'Position risk evaluation failed';
+        }
+        if (!_isCurrent(_generation)) return;
+      }
+
+      // A failed/unavailable account discovery is not evidence that existing
+      // positions were closed. Reconcile episode closure only after a usable
+      // batch result, while still allowing partial enrichment to close rows
+      // that the authoritative position list no longer contains.
+      final lifecycleRows = batch.positions.isNotEmpty
+          ? batch.positions
+          : batch.candidates;
+      final hasUnresolvedIdentity = lifecycleRows.any(
+        (position) =>
+            _normalize(position.accountNamespace) == null ||
+            position.episodeKey.trim().isEmpty,
+      );
+      final canReconcileLifecycle =
+          batch.status != RiskEligibility.invalid &&
+          batch.quality.status != RiskQualityStatus.error &&
+          batch.quality.status != RiskQualityStatus.unavailable &&
+          !hasUnresolvedIdentity;
+      if (canReconcileLifecycle) {
+        await _closeMissingContexts(seen, _generation);
+      }
+      if (!_isCurrent(_generation)) return;
+      _reconnectPending = false;
+      if (selectionFailure != null) {
+        final message = selectionFailureAuth
+            ? 'Credentials were rejected during risk enrichment'
+            : 'Risk enrichment request failed'
+                  '${selectionFailure.statusCode == null ? '' : ' (HTTP ${selectionFailure.statusCode})'}';
+        for (final episode in seen) {
+          final context = _contexts[episode];
+          if (context == null) continue;
+          if (selectionFailureAuth) {
+            context.lastError = message;
+          } else {
+            context.lastError ??= message;
+          }
+        }
+      }
+      final retryAt = _nextRetryAt;
+      final retryExpired = retryAt == null || !_now().isBefore(retryAt);
+      if (selectionFailure == null &&
+          batch.quality.status != RiskQualityStatus.error &&
+          retryExpired &&
+          !_authBlocked) {
+        _clearFailure();
+      }
+      _aggregateError = selectionFailure == null
+          ? batch.message
           : selectionFailureAuth
           ? 'Credentials were rejected during risk enrichment'
           : 'Risk enrichment request failed'
                 '${selectionFailure.statusCode == null ? '' : ' (HTTP ${selectionFailure.statusCode})'}';
-      final position = selection.position;
-      if (position == null) {
-        final failure = dataSource is RiskMonitorSelectionFailureMetadata
-            ? (dataSource as RiskMonitorSelectionFailureMetadata)
-                  .lastSelectionFailure
-            : null;
-        final credentialFailure =
-            failure?.credentialFailure == true || failure?.statusCode == 401;
-        if (failure == null) {
-          _registerFailure(false);
-        }
-        _publish(
-          _state.copyWith(
-            isRunning: _running,
-            quality: selection.quality,
-            lastError: credentialFailure
-                ? 'Credentials were rejected; monitoring is paused'
-                : selection.message ?? 'Risk position is unavailable',
-          ),
-        );
-        return;
-      }
-      final account = _normalize(position.accountNamespace);
-      final episode = _normalize(position.episodeKey);
-      if (account == null || episode == null) {
-        _publish(
-          _state.copyWith(
-            quality: position.quality,
-            lastError: 'Risk account or episode identity is unavailable',
-          ),
-        );
-        return;
-      }
-      var generation = initialGeneration;
-      if (account != _accountHash || episode != _episodeKey) {
-        _generation++;
-        generation = _generation;
-        _accountHash = account;
-        _episodeKey = episode;
-        _record = null;
-        _plan = RiskPlan(episodeKey: episode);
-        _settings = const RiskSettings();
-        _market = null;
-        _marketFetchedAt = null;
-        _marketSnapshot = null;
-        _candleSnapshotFetchedAt = null;
-        _lastOiPersistAt = null;
-        _lastHistoryPersistAt = null;
-        _persistedSamples = const <RiskHistorySample>[];
-        _latestAcceptedSample = null;
-        _previousPlanEvaluation = null;
-        _pendingOpenInterest = const <MarketOpenInterestSample>[];
-        _session = null;
-        _deliveredEventIds.clear();
-        _resetPublishedIdentity();
-        await _loadContext(generation);
-        if (!_isCurrent(generation)) return;
-      }
-
-      final now = _now();
-      var market = _market;
-      final marketIsFresh =
-          market != null &&
-          _marketFetchedAt != null &&
-          now.difference(_marketFetchedAt!) < marketCadence;
-      if (!marketIsFresh) {
-        try {
-          final includeCandles =
-              _marketSnapshot == null ||
-              _candleSnapshotFetchedAt == null ||
-              now.difference(_candleSnapshotFetchedAt!) >= candleCadence;
-          final snapshot = dataSource is RiskMonitorMarketCadenceSource
-              ? await (dataSource as RiskMonitorMarketCadenceSource)
-                    .loadMarketCadence(
-                      position: position,
-                      now: now,
-                      includeCandles: includeCandles,
-                    )
-              : await dataSource.loadMarket(position: position, now: now);
-          if (!_isCurrent(generation)) return;
-          final effectiveSnapshot = _mergeMarketSnapshot(
-            snapshot,
-            includeCandles: dataSource is RiskMonitorMarketCadenceSource
-                ? includeCandles
-                : true,
-          );
-          _marketSnapshot = effectiveSnapshot;
-          if (dataSource is! RiskMonitorMarketCadenceSource || includeCandles) {
-            _candleSnapshotFetchedAt = now;
-          }
-          market = marketEngine
-              .evaluate(
-                effectiveSnapshot,
-                isBtcPosition: position.baseCurrency?.toUpperCase() == 'BTC',
-                now: now,
-              )
-              .input;
-          _market = market;
-          _marketFetchedAt = now;
-        } catch (_) {
-          _registerFailure(false);
-          // Preserve the last published risk and expose a quality problem;
-          // stale market factors must not create a new event.
-          _publish(
-            _state.copyWith(
-              quality: const RiskQuality.stale(
-                reason: 'Market source is unavailable',
-              ),
-              lastError: 'Market source is unavailable',
-            ),
-          );
-          return;
-        }
-      }
-
-      final evaluation = engine.evaluate(
-        position,
-        policy: _settings.policy,
-        market: market,
-        now: now,
-        customPrices: _settings.customStressPrices,
-      );
-      final plan = _plan ?? RiskPlan(episodeKey: episode);
-      final planEvaluation = actionPlanEvaluator.evaluatePlan(
-        plan,
-        evaluation,
-        at: now,
-      );
-      final sample = RiskHistorySample.fromEvaluation(
-        episodeKey: episode,
-        evaluation: evaluation,
-        market: market,
-      );
-      final currentRecord = _record ?? _newRecord(account, episode, plan: plan);
-      final priorSample = _latestAcceptedSample ?? currentRecord.currentSample;
-      final reduction = eventReducer.reduce(
-        priorSample,
-        sample,
-        currentRecord.latches,
-        _settings.policy,
-        previousPlan: _previousPlanEvaluation,
-        currentPlan: planEvaluation,
-        now: now,
-        reconnected:
-            _reconnectPending &&
-            priorSample != null &&
-            now.difference(priorSample.observedAt) > const Duration(minutes: 5),
-      );
-      _reconnectPending = false;
-      _previousPlanEvaluation = planEvaluation;
-
-      final nextSummary = RiskDailySummaryCapture.capture(
-        sample: sample,
-        timeZone: _timeZone(_settings.timeZone, now),
-        summaryHour: _settings.summaryHour,
-        summaryMinute: _settings.summaryMinute,
-        existing: currentRecord.summaries,
-        majorChange: reduction.events.isEmpty
-            ? null
-            : reduction.events.first.message,
-        activeRuleCount:
-            planEvaluation.activeCount + planEvaluation.activeZoneCount,
-        unknownRuleCount: planEvaluation.unknownCount,
-      );
-      final summaries = <RiskDailySummary>[
-        ...currentRecord.summaries,
-        if (nextSummary != null) nextSummary,
-      ];
-      final lastHistoryAt = _lastHistoryPersistAt;
-      final historyDue =
-          _persistedSamples.isEmpty ||
-          lastHistoryAt == null ||
-          now.difference(lastHistoryAt) >= historySampleCadence;
-      final eventDue = reduction.events.isNotEmpty;
-      final persistedSamples = historyDue || eventDue
-          ? _appendFreshSample(_persistedSamples, sample)
-          : _persistedSamples;
-      final lastOiAt = _lastOiPersistAt;
-      final oiDue =
-          _pendingOpenInterest.isNotEmpty &&
-          (currentRecord.openInterest.isEmpty ||
-              lastOiAt == null ||
-              now.difference(lastOiAt) >= oiPersistCadence);
-      final persistedOpenInterest = oiDue
-          ? _pendingOpenInterest
-          : currentRecord.openInterest;
-      final persistedLatches = reduction.events.isEmpty
-          ? reduction.latches
-          : reduction.latches.copyWith(
-              emittedEventIds: <String>{
-                ...reduction.latches.emittedEventIds,
-                ...reduction.events.map((event) => event.id),
-              }.toList(growable: false),
-            );
-      final nextRecord = currentRecord.copyWith(
-        plan: plan,
-        updatedAt: now,
-        samples: persistedSamples,
-        openInterest: persistedOpenInterest,
-        events: <RiskEvent>[...currentRecord.events, ...reduction.events],
-        summaries: summaries,
-        latches: persistedLatches,
-      );
-      RiskStoreResult<RiskEpisodeRecord>? saved;
-      final needsPersistence =
-          historyDue || eventDue || oiDue || nextSummary != null;
-      if (needsPersistence && account.isNotEmpty && episode.isNotEmpty) {
-        saved = await persistence.saveEpisode(
-          accountHash: account,
-          record: nextRecord,
-        );
-        if (!_isCurrent(generation)) return;
-        if (saved.isSuccess) {
-          _record = saved.value ?? nextRecord;
-          _persistedSamples =
-              saved.value?.samples ??
-              List<RiskHistorySample>.unmodifiable(persistedSamples);
-          if (historyDue || eventDue) _lastHistoryPersistAt = now;
-          if (oiDue) _lastOiPersistAt = now;
-          if (selectionFailure == null) _clearFailure();
-        }
-      } else {
-        // Keep the in-memory record aligned with the durable cadence. The
-        // latest accepted observation is carried separately for event
-        // comparison and the UI receives it through visibleSamples below;
-        // appending it to _record here would make an OI-only flush look like
-        // a persisted history sample after a restart.
-        _record = nextRecord;
-      }
-
-      // Event comparison follows every accepted evaluation, even when the
-      // durable history cadence or OI flush intentionally skips this sample.
-      _latestAcceptedSample = sample;
-
-      final persisted =
-          !needsPersistence || saved?.notificationDeliveryAllowed == true;
-      final visibleRecord = saved?.value ?? nextRecord;
-      final visibleSamples = _appendFreshSample(visibleRecord.samples, sample);
-      if (_uiDepartureAt == null) {
-        _session =
-            (_session ??
-                    RiskCheckSession.start(
-                      episodeKey: episode,
-                      now: now,
-                      savedBaseline: currentRecord.lastCheckBaseline,
-                      awayDuration: _awayDuration(now),
-                    ))
-                .observe(sample);
-      }
-      final trend = RiskHistoryAnalytics.trend(
-        current: sample,
-        history: visibleSamples,
-        now: now,
-      );
-      final velocity = RiskHistoryAnalytics.velocity(
-        current: sample,
-        history: visibleSamples,
-        now: now,
-      );
-      _publish(
-        _state.copyWith(
-          isRunning: true,
-          accountHash: account,
-          episodeKey: episode,
-          evaluation: evaluation,
-          planEvaluation: planEvaluation,
-          plan: plan,
-          settings: _settings,
-          market: market,
-          samples: visibleSamples,
-          summaries: visibleRecord.summaries,
-          previousCheck: _session?.comparison,
-          trend: trend,
-          velocity: velocity,
-          events: visibleRecord.events,
-          quality: evaluation.quality,
-          unsaved: !persisted,
-          lastError: selectionFailureMessage,
-          clearError: persisted && selectionFailureMessage == null,
-        ),
-      );
-      if (persisted && reduction.events.isNotEmpty) {
-        await _deliver(reduction.events, generation);
-      }
+      _requestStatus = _deriveRequestStatus();
+      _publishAggregate();
     } on RiskRepositoryException catch (error) {
       if (!_isCurrent(initialGeneration)) return;
       _registerFailure(
         error.credentialFailure || error.statusCode == 401,
         retryAfter: error.retryAfter,
       );
-      _publish(
-        _state.copyWith(
-          quality: RiskQuality.error(
-            source: error.endpoint,
-            reason: 'Risk source request failed',
-          ),
-          lastError: error.credentialFailure || error.statusCode == 401
-              ? 'Credentials were rejected; monitoring is paused'
-              : 'Risk source is unavailable',
-        ),
+      _requestEndpointClass = error.endpoint;
+      _aggregateQuality = RiskQuality.error(
+        source: error.endpoint,
+        reason: 'Risk source request failed',
       );
+      _aggregateError = error.credentialFailure || error.statusCode == 401
+          ? 'Credentials were rejected; monitoring is paused'
+          : 'Risk source is unavailable';
+      _requestStatus = _deriveRequestStatus();
+      _publishAggregate();
     } catch (_) {
       if (!_isCurrent(initialGeneration)) return;
       _registerFailure(false);
-      _publish(
-        _state.copyWith(
-          quality: const RiskQuality.error(
-            reason: 'Risk monitor capture failed',
-          ),
-          lastError: 'Risk monitor capture failed',
-        ),
+      _aggregateQuality = const RiskQuality.error(
+        reason: 'Risk monitor capture failed',
       );
+      _aggregateError = 'Risk monitor capture failed';
+      _requestStatus = _deriveRequestStatus();
+      _publishAggregate();
     } finally {
       _captureInFlight = false;
+      if (_isGenerationCurrent(initialGeneration) && _running) {
+        _requestStatus = _deriveRequestStatus();
+        _publishAggregate();
+      }
     }
   }
 
-  Future<void> _deliver(List<RiskEvent> events, int generation) async {
+  bool _positionBatchFetchedThisCapture = false;
+
+  Future<RiskPositionBatch?> _loadPositionBatch(
+    int generation, {
+    required bool force,
+  }) async {
+    final before = _now();
+    final cached = _positionBatch;
+    final fresh =
+        cached != null &&
+        _batchFetchedAt != null &&
+        before.difference(_batchFetchedAt!) < activeCadence &&
+        !force;
+    _positionBatchFetchedThisCapture = !fresh;
+    if (fresh) return cached;
+
+    final source = dataSource;
+    final batch = source is RiskMonitorBatchDataSource
+        ? await (source as RiskMonitorBatchDataSource).loadPositionsBatch()
+        : await _loadLegacyPositionBatch(force: force);
+    if (!_isGenerationCurrent(generation)) return null;
+    _positionBatch = batch;
+    _batchFetchedAt = _now();
+    return batch;
+  }
+
+  Future<RiskPositionBatch> _loadLegacyPositionBatch({
+    required bool force,
+  }) async {
+    final before = _now();
+    final cachedSelection = _positionSelection;
+    final fresh =
+        cachedSelection != null &&
+        _positionFetchedAt != null &&
+        before.difference(_positionFetchedAt!) < activeCadence &&
+        !force;
+    final selection = fresh
+        ? cachedSelection
+        : await dataSource.loadPosition(
+            selectedPositionId: _selectedPositionId,
+            selectedEpisodeKey: _episodeKey,
+          );
+    if (!fresh) {
+      _positionSelection = selection;
+      _positionFetchedAt = _now();
+    }
+    final position = selection.position;
+    return RiskPositionBatch(
+      status: selection.status,
+      quality: selection.quality,
+      positions: position == null
+          ? const <RiskPosition>[]
+          : <RiskPosition>[position],
+      candidates: selection.candidates,
+      message: selection.message,
+    );
+  }
+
+  bool _isSupportedPosition(RiskPosition position) =>
+      position.isEligible &&
+      position.quoteCurrency.trim().toUpperCase() == 'USDT';
+
+  Future<void> _captureEpisode(
+    _RiskEpisodeMonitorContext context,
+    int generation,
+  ) async {
+    if (!_isCurrent(generation)) return;
+    if (_authBlocked ||
+        (_nextRetryAt != null && _now().isBefore(_nextRetryAt!))) {
+      context.quality = _authBlocked
+          ? const RiskQuality.stale(
+              reason: 'Credentials were rejected by the risk source',
+            )
+          : const RiskQuality.stale(
+              reason: 'Risk source is backing off after a failed request',
+            );
+      context.lastError = _authBlocked
+          ? 'Credentials were rejected by the risk source'
+          : 'Risk source is backing off after a failed request';
+      return;
+    }
+    final position = context.position;
+    final now = _now();
+    var market = context.market;
+    final marketIsFresh =
+        market != null &&
+        context.marketFetchedAt != null &&
+        now.difference(context.marketFetchedAt!) < marketCadence;
+    if (!marketIsFresh) {
+      try {
+        final includeCandles =
+            context.marketSnapshot == null ||
+            context.candleSnapshotFetchedAt == null ||
+            now.difference(context.candleSnapshotFetchedAt!) >= candleCadence;
+        final snapshot = dataSource is RiskMonitorMarketCadenceSource
+            ? await (dataSource as RiskMonitorMarketCadenceSource)
+                  .loadMarketCadence(
+                    position: position,
+                    now: now,
+                    includeCandles: includeCandles,
+                  )
+            : await dataSource.loadMarket(position: position, now: now);
+        if (!_isCurrent(generation)) return;
+        final effectiveSnapshot = _mergeMarketSnapshot(
+          context,
+          snapshot,
+          includeCandles: dataSource is RiskMonitorMarketCadenceSource
+              ? includeCandles
+              : true,
+        );
+        context.marketSnapshot = effectiveSnapshot;
+        if (dataSource is! RiskMonitorMarketCadenceSource || includeCandles) {
+          context.candleSnapshotFetchedAt = now;
+        }
+        market = marketEngine
+            .evaluate(
+              effectiveSnapshot,
+              isBtcPosition: position.baseCurrency?.toUpperCase() == 'BTC',
+              now: now,
+            )
+            .input;
+        context.market = market;
+        context.marketFetchedAt = now;
+      } on RiskRepositoryException catch (error) {
+        if (error.credentialFailure || error.statusCode == 401) {
+          _registerFailure(true, retryAfter: error.retryAfter);
+          _requestEndpointClass = error.endpoint;
+        } else {
+          _registerFailure(false, retryAfter: error.retryAfter);
+          _requestEndpointClass = error.endpoint;
+        }
+        context.quality = const RiskQuality.stale(
+          reason: 'Market source is unavailable',
+        );
+        context.lastError = 'Market source is unavailable';
+        return;
+      } catch (_) {
+        // Preserve the last published risk and expose a per-position quality
+        // problem; a failing market source cannot stop another episode.
+        context.quality = const RiskQuality.stale(
+          reason: 'Market source is unavailable',
+        );
+        context.lastError = 'Market source is unavailable';
+        return;
+      }
+    }
+
+    final evaluation = engine.evaluate(
+      position,
+      policy: _settings.policy,
+      market: market,
+      now: now,
+      customPrices: _settings.customStressPrices,
+    );
+    final plan = context.plan ?? RiskPlan(episodeKey: context.episodeKey);
+    final planEvaluation = actionPlanEvaluator.evaluatePlan(
+      plan,
+      evaluation,
+      at: now,
+    );
+    final sample = RiskHistorySample.fromEvaluation(
+      episodeKey: context.episodeKey,
+      evaluation: evaluation,
+      market: market,
+    );
+    final hasPendingRecord = context.pendingRecord != null;
+    final currentRecord =
+        context.pendingRecord ??
+        context.record ??
+        _newRecord(context.accountHash, context.episodeKey, plan: plan);
+    final priorSample =
+        context.latestAcceptedSample ?? currentRecord.currentSample;
+    final reduction = eventReducer.reduce(
+      priorSample,
+      sample,
+      currentRecord.latches,
+      _settings.policy,
+      previousPlan: context.previousPlanEvaluation,
+      currentPlan: planEvaluation,
+      now: now,
+      reconnected:
+          _reconnectPending &&
+          priorSample != null &&
+          now.difference(priorSample.observedAt) > const Duration(minutes: 5),
+    );
+    context.previousPlanEvaluation = planEvaluation;
+
+    final nextSummary = RiskDailySummaryCapture.capture(
+      sample: sample,
+      timeZone: _timeZone(_settings.timeZone, now),
+      summaryHour: _settings.summaryHour,
+      summaryMinute: _settings.summaryMinute,
+      existing: currentRecord.summaries,
+      majorChange: reduction.events.isEmpty
+          ? null
+          : reduction.events.first.message,
+      activeRuleCount:
+          planEvaluation.activeCount + planEvaluation.activeZoneCount,
+      unknownRuleCount: planEvaluation.unknownCount,
+    );
+    final summaries = <RiskDailySummary>[
+      ...currentRecord.summaries,
+      if (nextSummary != null) nextSummary,
+    ];
+    final lastHistoryAt = context.lastHistoryPersistAt;
+    final historyDue =
+        context.persistedSamples.isEmpty ||
+        lastHistoryAt == null ||
+        now.difference(lastHistoryAt) >= historySampleCadence;
+    final eventDue = reduction.events.isNotEmpty;
+    final persistedSampleBase = _mergeHistorySamples(
+      context.persistedSamples,
+      currentRecord.samples,
+    );
+    final persistedSamples = historyDue || eventDue
+        ? _appendFreshSample(persistedSampleBase, sample)
+        : persistedSampleBase;
+    final lastOiAt = context.lastOiPersistAt;
+    final oiDue =
+        context.pendingOpenInterest.isNotEmpty &&
+        (currentRecord.openInterest.isEmpty ||
+            lastOiAt == null ||
+            now.difference(lastOiAt) >= oiPersistCadence);
+    final persistedOpenInterest = oiDue
+        ? context.pendingOpenInterest
+        : currentRecord.openInterest;
+    final persistedLatches = reduction.events.isEmpty
+        ? reduction.latches
+        : reduction.latches.copyWith(
+            emittedEventIds: <String>{
+              ...reduction.latches.emittedEventIds,
+              ...reduction.events.map((event) => event.id),
+            }.toList(growable: false),
+          );
+    final nextRecord = currentRecord.copyWith(
+      plan: plan,
+      updatedAt: now,
+      samples: persistedSamples,
+      openInterest: persistedOpenInterest,
+      events: <RiskEvent>[...currentRecord.events, ...reduction.events],
+      summaries: summaries,
+      latches: persistedLatches,
+      clearClosedAt: true,
+    );
+    RiskStoreResult<RiskEpisodeRecord>? saved;
+    final needsPersistence =
+        hasPendingRecord ||
+        historyDue ||
+        eventDue ||
+        oiDue ||
+        nextSummary != null;
+    if (needsPersistence) {
+      context.pendingRecord = nextRecord;
+      saved = await persistence.saveEpisode(
+        accountHash: context.accountHash,
+        record: nextRecord,
+      );
+      if (!_isCurrent(generation)) return;
+      if (saved.isSuccess) {
+        context.record = saved.value ?? nextRecord;
+        context.pendingRecord = null;
+        context.persistedSamples =
+            saved.value?.samples ??
+            List<RiskHistorySample>.unmodifiable(persistedSamples);
+        if (historyDue || eventDue) context.lastHistoryPersistAt = now;
+        if (oiDue) context.lastOiPersistAt = now;
+        context.unsaved = false;
+        context.lastError = null;
+      } else {
+        context.unsaved = true;
+        context.lastError = 'Episode state was not saved';
+      }
+    } else {
+      // Keep the in-memory record aligned with durable cadence. The latest
+      // accepted observation is carried separately for event comparison;
+      // appending it to the record would make an OI-only flush look persisted.
+      context.record = nextRecord;
+      context.pendingRecord = null;
+    }
+
+    context.latestAcceptedSample = sample;
+    final persisted =
+        !needsPersistence || saved?.notificationDeliveryAllowed == true;
+    final visibleRecord = saved?.value ?? nextRecord;
+    final visibleSamples = _appendFreshSample(visibleRecord.samples, sample);
+    context.evaluation = evaluation;
+    context.planEvaluation = planEvaluation;
+    context.plan = plan;
+    context.visibleSamples = visibleSamples;
+    context.visibleSummaries = visibleRecord.summaries;
+    context.visibleEvents = visibleRecord.events;
+    if (context.uiDepartureAt == null) {
+      context.session =
+          (context.session ??
+                  RiskCheckSession.start(
+                    episodeKey: context.episodeKey,
+                    now: now,
+                    savedBaseline: currentRecord.lastCheckBaseline,
+                    awayDuration: _awayDuration(now),
+                  ))
+              .observe(sample);
+    }
+    context.previousCheck = context.session?.comparison;
+    context.trend = RiskHistoryAnalytics.trend(
+      current: sample,
+      history: visibleSamples,
+      now: now,
+    );
+    context.velocity = RiskHistoryAnalytics.velocity(
+      current: sample,
+      history: visibleSamples,
+      now: now,
+    );
+    context.quality = evaluation.quality;
+    if (!context.unsaved && !position.quality.isPartial) {
+      context.lastError = null;
+    }
+    if (position.quality.isPartial && context.lastError == null) {
+      context.lastError = position.quality.reason;
+    }
+    if (persisted && reduction.events.isNotEmpty) {
+      await _deliver(context, reduction.events, generation);
+    }
+  }
+
+  Future<void> _closeMissingContexts(
+    Set<String> activeEpisodeKeys,
+    int generation,
+  ) async {
+    final missing = _contexts.entries
+        .where((entry) => !activeEpisodeKeys.contains(entry.key))
+        .map((entry) => entry.value)
+        .toList(growable: false);
+    for (final context in missing) {
+      if (!_isGenerationCurrent(generation)) return;
+      await _flushOpenInterest(context, generation);
+      await _persistDepartureBaseline(context, generation);
+      if (!_isGenerationCurrent(generation)) return;
+      final record = _recordWithPendingOpenInterest(context);
+      if (record != null && !record.isClosed) {
+        final closed = record.copyWith(closedAt: _now());
+        final saved = await persistence.saveEpisode(
+          accountHash: context.accountHash,
+          record: closed,
+        );
+        if (!_isGenerationCurrent(generation)) return;
+        if (!saved.isSuccess) {
+          // Keep the context available with its retained history when a close
+          // write fails; the next batch can retry without data loss.
+          context.unsaved = true;
+          context.lastError = 'Closed episode was not saved';
+          continue;
+        }
+        context.record = saved.value ?? closed;
+        context.pendingRecord = null;
+      }
+      _contexts.remove(context.episodeKey);
+    }
+  }
+
+  Future<void> _deliver(
+    _RiskEpisodeMonitorContext context,
+    List<RiskEvent> events,
+    int generation,
+  ) async {
     if (!_isCurrent(generation)) return;
     RiskNotificationCapability capability;
     try {
@@ -1288,22 +1633,22 @@ class RiskMonitor
       );
     }
     _notificationCapability = capability.status;
-    _publish(_state.copyWith(notificationCapability: _notificationCapability));
+    _publishAggregate();
     if (!capability.canDeliver) return;
     for (final event in events) {
-      if (!_isCurrent(generation) || !_deliveredEventIds.add(event.id)) {
+      if (!_isCurrent(generation) || !context.deliveredEventIds.add(event.id)) {
         continue;
       }
       final notification = RiskNotification.fromEvent(event);
       if (!notification.isPrivacySafe) {
-        _deliveredEventIds.remove(event.id);
+        context.deliveredEventIds.remove(event.id);
         continue;
       }
       try {
         final result = await notificationSink.deliver(notification);
-        if (!result.delivered) _deliveredEventIds.remove(event.id);
+        if (!result.delivered) context.deliveredEventIds.remove(event.id);
       } catch (_) {
-        _deliveredEventIds.remove(event.id);
+        context.deliveredEventIds.remove(event.id);
       }
     }
   }
@@ -1320,40 +1665,44 @@ class RiskMonitor
     }
     if (!_isCurrent(generation)) return;
     _notificationCapability = capability.status;
-    _publish(_state.copyWith(notificationCapability: _notificationCapability));
+    _publishAggregate();
   }
 
-  Future<void> _loadContext(int generation) async {
-    final account = _accountHash;
-    final episode = _episodeKey;
-    if (account == null) return;
-    await _loadSettings(generation);
-    if (!_isCurrent(generation) || episode == null) return;
+  Future<void> _loadEpisodeContext(
+    _RiskEpisodeMonitorContext context,
+    int generation,
+  ) async {
+    if (!_isCurrent(generation)) return;
     final result = await persistence.loadEpisode(
-      accountHash: account,
-      episodeKey: episode,
+      accountHash: context.accountHash,
+      episodeKey: context.episodeKey,
     );
     if (!_isCurrent(generation)) return;
     if (result.isSuccess && result.value != null) {
-      _record = result.value;
-      _persistedSamples = result.value!.samples;
+      context.record = result.value!.isClosed
+          ? result.value!.copyWith(clearClosedAt: true)
+          : result.value;
+      context.persistedSamples = result.value!.samples;
+      context.visibleSamples = result.value!.samples;
+      context.visibleSummaries = result.value!.summaries;
+      context.visibleEvents = result.value!.events;
       // The sampled history is intentionally sparse (and an OI-only flush can
       // save no new history row). The event reducer's restart baseline is the
       // accepted sample latched with every evaluation, so prefer that durable
       // cursor over the downsampled currentSample field.
-      _latestAcceptedSample =
+      context.latestAcceptedSample =
           result.value!.latches.lastSample ?? result.value!.currentSample;
-      _lastHistoryPersistAt = result.value!.samples.isEmpty
+      context.lastHistoryPersistAt = result.value!.samples.isEmpty
           ? null
           : result.value!.samples.last.observedAt;
-      _lastOiPersistAt = result.value!.openInterest.isEmpty
+      context.lastOiPersistAt = result.value!.openInterest.isEmpty
           ? null
           : result.value!.openInterest.last.timestamp;
-      _plan = result.value!.plan;
+      context.plan = result.value!.plan;
       final loadedAt = _now();
       final savedBaseline = result.value!.lastCheckBaseline;
-      _session = RiskCheckSession.start(
-        episodeKey: episode,
+      context.session = RiskCheckSession.start(
+        episodeKey: context.episodeKey,
         now: loadedAt,
         savedBaseline: savedBaseline,
         awayDuration: savedBaseline == null
@@ -1361,24 +1710,21 @@ class RiskMonitor
             : _awayDurationFromBaseline(loadedAt, savedBaseline),
       );
     } else if (result.isMissing) {
-      _record = _newRecord(account, episode);
-      _persistedSamples = const <RiskHistorySample>[];
-      _latestAcceptedSample = null;
-      _lastHistoryPersistAt = null;
-      _lastOiPersistAt = null;
-      _plan = _record!.plan;
-      _session = RiskCheckSession.start(
-        episodeKey: episode,
+      context.record = _newRecord(context.accountHash, context.episodeKey);
+      context.persistedSamples = const <RiskHistorySample>[];
+      context.latestAcceptedSample = null;
+      context.lastHistoryPersistAt = null;
+      context.lastOiPersistAt = null;
+      context.plan = context.record!.plan;
+      context.session = RiskCheckSession.start(
+        episodeKey: context.episodeKey,
         now: _now(),
         awayDuration: _awayDuration(_now()),
       );
     } else if (result.isReadOnly) {
-      _publish(
-        _state.copyWith(
-          unsaved: true,
-          lastError: 'Local risk data is read-only; reset is required',
-        ),
-      );
+      context.unsaved = true;
+      context.lastError = 'Local risk data is read-only; reset is required';
+      _publishAggregate();
     }
   }
 
@@ -1392,55 +1738,104 @@ class RiskMonitor
     } else if (result.isMissing) {
       _settings = const RiskSettings();
     } else if (result.isReadOnly) {
-      _publish(
-        _state.copyWith(
-          unsaved: true,
-          lastError: 'Risk settings are read-only; reset is required',
-        ),
+      _aggregateError = 'Risk settings are read-only; reset is required';
+      _aggregateQuality = const RiskQuality.error(
+        reason: 'Risk settings are read-only; reset is required',
       );
+      _publishAggregate(unsaved: true);
     }
   }
 
-  Future<void> _persistDepartureBaseline(int generation) async {
-    final account = _accountHash;
-    final episode = _episodeKey;
-    final record = _record;
-    final baseline = _session?.departure();
-    if (account == null ||
-        episode == null ||
-        record == null ||
-        baseline == null) {
-      return;
-    }
+  Future<void> _persistDepartureBaseline(
+    _RiskEpisodeMonitorContext context,
+    int generation,
+  ) async {
+    final record = _recordWithPendingOpenInterest(context);
+    final baseline = context.session?.departure();
+    if (record == null || baseline == null) return;
     if (!_isGenerationCurrent(generation)) return;
     final saved = await persistence.saveEpisode(
-      accountHash: account,
+      accountHash: context.accountHash,
       record: record.copyWith(lastCheckBaseline: baseline),
     );
     if (_isGenerationCurrent(generation) && saved.isSuccess) {
-      _record = saved.value ?? record.copyWith(lastCheckBaseline: baseline);
+      context.record =
+          saved.value ?? record.copyWith(lastCheckBaseline: baseline);
+      context.pendingRecord = null;
+      context.pendingOpenInterest = const <MarketOpenInterestSample>[];
+      context.unsaved = false;
+    } else if (_isGenerationCurrent(generation)) {
+      context.unsaved = true;
+      context.lastError = 'UI departure baseline was not saved';
     }
   }
 
-  Future<void> _flushOpenInterest(int generation) async {
-    final account = _accountHash;
-    final episode = _episodeKey;
-    final record = _record;
-    if (account == null || episode == null || record == null) return;
-    if (_pendingOpenInterest.isEmpty || !_isGenerationCurrent(generation)) {
+  Future<void> _persistAllDepartureBaselines(int generation) async {
+    for (final context in _contexts.values.toList(growable: false)) {
+      await _persistDepartureBaseline(context, generation);
+    }
+  }
+
+  Future<void> _flushOpenInterest(
+    _RiskEpisodeMonitorContext context,
+    int generation,
+  ) async {
+    final record = _recordWithPendingOpenInterest(context);
+    if (record == null ||
+        (context.pendingOpenInterest.isEmpty &&
+            context.pendingRecord == null) ||
+        !_isGenerationCurrent(generation)) {
       return;
     }
-    final next = record.copyWith(openInterest: _pendingOpenInterest);
+    final next = record;
     if (!_isGenerationCurrent(generation)) return;
     final saved = await persistence.saveEpisode(
-      accountHash: account,
+      accountHash: context.accountHash,
       record: next,
     );
     if (!_isGenerationCurrent(generation)) return;
     if (saved.isSuccess) {
-      _record = saved.value ?? next;
-      _lastOiPersistAt = _now();
+      context.record = saved.value ?? next;
+      context.pendingRecord = null;
+      context.pendingOpenInterest = const <MarketOpenInterestSample>[];
+      context.lastOiPersistAt = _now();
+      context.unsaved = false;
+    } else {
+      context.unsaved = true;
+      context.lastError = 'Open-interest history was not saved';
     }
+  }
+
+  Future<void> _flushAllOpenInterest(int generation) async {
+    for (final context in _contexts.values.toList(growable: false)) {
+      await _flushOpenInterest(context, generation);
+    }
+  }
+
+  RiskEpisodeRecord? _recordWithPendingOpenInterest(
+    _RiskEpisodeMonitorContext context,
+  ) {
+    final record = context.pendingRecord ?? context.record;
+    final pending = context.pendingOpenInterest;
+    if (record == null || pending.isEmpty) return record;
+    final merged = <String, MarketOpenInterestSample>{};
+    String key(MarketOpenInterestSample sample) =>
+        '${sample.instrument.toUpperCase()}|'
+        '${sample.timestamp.toUtc().toIso8601String()}';
+    for (final sample in record.openInterest) {
+      merged[key(sample)] = sample;
+    }
+    for (final sample in pending) {
+      merged[key(sample)] = sample;
+    }
+    final ordered = merged.values.toList()
+      ..sort((left, right) => left.timestamp.compareTo(right.timestamp));
+    final bounded = ordered.length <= 1500
+        ? ordered
+        : ordered.sublist(ordered.length - 1500);
+    return record.copyWith(
+      openInterest: List<MarketOpenInterestSample>.unmodifiable(bounded),
+    );
   }
 
   RiskEpisodeRecord _newRecord(
@@ -1467,14 +1862,15 @@ class RiskMonitor
   }
 
   MarketRiskSnapshot _mergeMarketSnapshot(
+    _RiskEpisodeMonitorContext context,
     MarketRiskSnapshot current, {
     required bool includeCandles,
   }) {
-    final previous = _marketSnapshot;
+    final previous = context.marketSnapshot;
     final keepCandles = previous != null && !includeCandles;
     final merged = <String, MarketOpenInterestSample>{};
     for (final item in <MarketOpenInterestSample>[
-      ...?_record?.openInterest,
+      ...?context.record?.openInterest,
       ...?previous?.openInterest,
       ...current.openInterest,
     ]) {
@@ -1487,7 +1883,9 @@ class RiskMonitor
     final bounded = history.length <= 1500
         ? history
         : history.sublist(history.length - 1500);
-    _pendingOpenInterest = List<MarketOpenInterestSample>.unmodifiable(bounded);
+    context.pendingOpenInterest = List<MarketOpenInterestSample>.unmodifiable(
+      bounded,
+    );
     return MarketRiskSnapshot(
       asset: current.asset,
       assetOneHour: keepCandles
@@ -1503,7 +1901,7 @@ class RiskMonitor
           ? previous.btcFourHour
           : _mergeCandleSeries(previous?.btcFourHour, current.btcFourHour),
       funding: current.funding ?? previous?.funding,
-      openInterest: _pendingOpenInterest,
+      openInterest: context.pendingOpenInterest,
       fundingQuality: current.fundingQuality ?? previous?.fundingQuality,
       openInterestQuality:
           current.openInterestQuality ?? previous?.openInterestQuality,
@@ -1609,6 +2007,24 @@ class RiskMonitor
     ]);
   }
 
+  List<RiskHistorySample> _mergeHistorySamples(
+    List<RiskHistorySample> persisted,
+    List<RiskHistorySample> candidate,
+  ) {
+    final merged = <String, RiskHistorySample>{};
+    String key(RiskHistorySample sample) =>
+        '${sample.episodeKey}|${sample.observedAt.toUtc().toIso8601String()}';
+    for (final sample in persisted) {
+      merged[key(sample)] = sample;
+    }
+    for (final sample in candidate) {
+      merged[key(sample)] = sample;
+    }
+    final ordered = merged.values.toList()
+      ..sort((left, right) => left.observedAt.compareTo(right.observedAt));
+    return List<RiskHistorySample>.unmodifiable(ordered);
+  }
+
   bool _isCurrent(int generation) =>
       !_disposed && _running && generation == _generation;
 
@@ -1647,24 +2063,111 @@ class RiskMonitor
     _failureCount = 0;
     _nextRetryAt = null;
     _authBlocked = false;
+    _requestEndpointClass = null;
+  }
+
+  _RiskEpisodeMonitorContext? _contextForCommand(RiskMonitorCommand command) {
+    final requested = _normalize(command.episodeKey);
+    if (requested != null) return _contexts[requested];
+    final primaryEpisode = _normalize(_episodeKey);
+    if (primaryEpisode != null) return _contexts[primaryEpisode];
+    final ordered = _orderedContexts();
+    return ordered.isEmpty ? null : ordered.first;
+  }
+
+  List<_RiskEpisodeMonitorContext> _orderedContexts() {
+    final values = _contexts.values.toList(growable: false)
+      ..sort(_contextComparator);
+    return values;
+  }
+
+  int _contextComparator(
+    _RiskEpisodeMonitorContext left,
+    _RiskEpisodeMonitorContext right,
+  ) {
+    final byInstrument = left.position.instrumentId.compareTo(
+      right.position.instrumentId,
+    );
+    if (byInstrument != 0) return byInstrument;
+    final byPosition = (left.position.positionId ?? '').compareTo(
+      right.position.positionId ?? '',
+    );
+    if (byPosition != 0) return byPosition;
+    return (left.position.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0))
+        .compareTo(
+          right.position.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0),
+        );
+  }
+
+  RiskMonitorRequestStatus _deriveRequestStatus() {
+    if (_authBlocked) return RiskMonitorRequestStatus.authBlocked;
+    final retryAt = _nextRetryAt;
+    if (retryAt != null && _now().isBefore(retryAt)) {
+      return RiskMonitorRequestStatus.backingOff;
+    }
+    if (_captureInFlight) return RiskMonitorRequestStatus.refreshing;
+    if (_contexts.values.any(
+      (context) =>
+          context.lastError != null ||
+          context.quality.status == RiskQualityStatus.error ||
+          context.quality.status == RiskQualityStatus.stale ||
+          context.quality.status == RiskQualityStatus.partial,
+    )) {
+      return RiskMonitorRequestStatus.partial;
+    }
+    if (_contexts.isEmpty &&
+        (_aggregateQuality.status == RiskQualityStatus.error ||
+            _aggregateQuality.status == RiskQualityStatus.unavailable)) {
+      return RiskMonitorRequestStatus.unavailable;
+    }
+    return RiskMonitorRequestStatus.ready;
+  }
+
+  /// Rebuild the immutable root state from the episode map. Singular fields
+  /// deliberately project the selected/first row so the current dashboard can
+  /// stay buildable while later UI work consumes [RiskMonitorViewState.positions].
+  void _publishAggregate({bool? isRunning, bool? unsaved}) {
+    final ordered = _orderedContexts();
+    _requestStatus = _deriveRequestStatus();
+    final primary = _contextForCommand(
+      RiskMonitorCommand.start(id: 'aggregate-primary'),
+    );
+    final selected = primary ?? (ordered.isEmpty ? null : ordered.first);
+    final status = _requestStatus;
+    _publish(
+      RiskMonitorViewState(
+        isRunning: isRunning ?? _running,
+        backgroundAvailable: _state.backgroundAvailable,
+        ownerLabel: _state.ownerLabel,
+        accountHash: _accountHash ?? selected?.accountHash,
+        episodeKey: selected?.episodeKey ?? _episodeKey,
+        evaluation: selected?.evaluation,
+        planEvaluation: selected?.planEvaluation,
+        plan: selected?.plan,
+        settings: _settings,
+        market: selected?.market,
+        samples: selected?.visibleSamples,
+        summaries: selected?.visibleSummaries,
+        previousCheck: selected?.previousCheck,
+        trend: selected?.trend,
+        velocity: selected?.velocity,
+        events: selected?.visibleEvents ?? const <RiskEvent>[],
+        quality: selected?.quality ?? _aggregateQuality,
+        unsaved: unsaved ?? selected?.unsaved ?? false,
+        lastError: selected?.lastError ?? _aggregateError,
+        notificationCapability: _notificationCapability,
+        positions: ordered
+            .map((context) => context.toViewState(_settings))
+            .toList(growable: false),
+        requestStatus: status,
+        retryAt: _nextRetryAt,
+        requestEndpointClass: _requestEndpointClass,
+      ),
+    );
   }
 
   void _resetPublishedIdentity() {
-    _publish(
-      RiskMonitorViewState(
-        isRunning: _running,
-        backgroundAvailable: _state.backgroundAvailable,
-        ownerLabel: _state.ownerLabel,
-        accountHash: _accountHash,
-        episodeKey: _episodeKey,
-        plan: _plan,
-        settings: _settings,
-        notificationCapability: _notificationCapability,
-        quality: const RiskQuality.unavailable(
-          reason: 'Monitor has not observed a snapshot',
-        ),
-      ),
-    );
+    _publishAggregate();
   }
 
   void _restartTimer() {
@@ -1754,8 +2257,8 @@ class RiskMonitor
     final wasRunning = _running;
     _running = false;
     if (wasRunning) {
-      await _flushOpenInterest(generation);
-      await _persistDepartureBaseline(generation);
+      await _flushAllOpenInterest(generation);
+      await _persistAllDepartureBaselines(generation);
     }
     _disposed = true;
     await _states.close();

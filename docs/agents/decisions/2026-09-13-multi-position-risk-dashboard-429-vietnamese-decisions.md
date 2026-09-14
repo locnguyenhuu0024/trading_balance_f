@@ -35,7 +35,7 @@ Possible interpretations:
 - B: after 429 and multi-position behavior pass, translate every user-visible Risk Dashboard surface while preserving technical identifiers and user-authored text.
 
 ### Q-004 — Supported isolated-margin directions and currencies
-Status: OPEN
+Status: RESOLVED
 Question: Does “all open isolated-margin positions” mean only positions supported by the current risk formulas (long isolated MARGIN with USDT quote/debt), or must short and other-quote isolated positions also receive full risk evaluation and alerts?
 Why it matters: short/other-quote positions require new accounting, liquidation, leverage, stress, debt, and alert semantics rather than a monitoring/UI-only extension.
 Repository evidence: `docs/agents/specs/2026-09-10-isolated-margin-risk-dashboard-design.md` §3/§6.1; `RiskPosition.isEligible`; `RiskRepository.loadPosition`
@@ -60,6 +60,11 @@ Source question: Q-003
 Decision: After the 429 and multi-position changes pass, translate all rendered user-visible Risk Dashboard text, including sheets, dialogs, validation, dynamic states/reasons, history, and accessibility. Preserve coin/instrument names, units, protocol/storage identifiers, source names, and user-authored content. OS notification localization is not included without a separate request.
 Impacts: REQ-005, AC-010 through AC-012, P04, T27
 
+### D-004 — Long isolated-margin now, extensible direction model
+Source question: Q-004
+Decision: Monitor every open position supported by the current long isolated MARGIN/USDT risk contract. Short isolated-margin behavior is not implemented now, but aggregate monitor state and episode routing must keep position direction explicit or otherwise remain extensible so a future short contract can be added without replacing the single-owner architecture. Non-USDT quote/debt semantics remain out of scope.
+Impacts: REQ-001, REQ-002, REQ-003, AC-001 through AC-006, P01, P02, T24, T25
+
 ## User-Authorized Assumptions
 
 N/A.
@@ -69,3 +74,4 @@ N/A.
 | Revision | Change | Reason |
 |---|---|---|
 | 1 | Recorded simultaneous monitoring, collapsible presentation, and post-functional Vietnamese localization. | User clarification on 2026-09-13. |
+| 2 | Resolved direction/currency scope as current long isolated MARGIN/USDT, with an extensibility boundary for future short support. | User clarification on 2026-09-14. |

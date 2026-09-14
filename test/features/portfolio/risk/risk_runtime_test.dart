@@ -8,6 +8,9 @@ import 'package:trading_balance_f/features/portfolio/application/risk_monitor.da
 import 'package:trading_balance_f/features/portfolio/application/risk_monitor_bridge.dart';
 import 'package:trading_balance_f/features/portfolio/application/risk_notification_sink.dart';
 import 'package:trading_balance_f/features/portfolio/application/risk_monitor_runtime.dart';
+import 'package:trading_balance_f/features/portfolio/domain/risk/action_plan.dart';
+import 'package:trading_balance_f/features/portfolio/domain/risk/risk_events.dart';
+import 'package:trading_balance_f/features/portfolio/domain/risk/risk_history.dart';
 import 'package:trading_balance_f/features/portfolio/domain/risk/risk_models.dart';
 
 import 'fixtures/risk_monitor_fixtures.dart';
@@ -449,6 +452,1058 @@ void main() {
       await proxy.dispose();
       await controller.dispose();
       expect(monitor.disposeCalls, 1);
+    },
+  );
+
+  test(
+    'GREEN-005 aggregate monitor state survives the service controller/proxy wire',
+    () async {
+      final clock = FakeRiskClock();
+      var mark = 10.0;
+      RiskPosition position(String coin, String id) => syntheticRiskPosition(
+        observedAt: clock.value,
+        instrumentId: '$coin-USDT',
+        baseCurrency: coin,
+        positionId: id,
+        markPrice: mark,
+      );
+      final source = BatchFakeRiskSource(
+        clock: clock,
+        positions: <RiskPosition>[
+          position('BTC', 'position-btc'),
+          position('ETH', 'position-eth'),
+          position('SUI', 'position-sui'),
+        ],
+      );
+      final monitor = RiskMonitor(
+        dataSource: source,
+        persistence: FakeRiskPersistence(),
+        clock: clock.now,
+      );
+      final channel = FakeServiceChannel();
+      final controller = RiskServiceOwnerController(
+        channel: channel,
+        owner: monitor,
+      );
+      final proxy = RiskServiceOwnerProxy(
+        channel: channel,
+        handshakeTimeout: const Duration(milliseconds: 100),
+      );
+
+      expect(await proxy.waitForHandshake(), isTrue);
+      final started = await proxy.dispatch(
+        RiskMonitorCommand.start(id: 'aggregate-wire-start'),
+      );
+      expect(started.accepted, isTrue);
+      expect(monitor.currentState.positions, hasLength(3));
+      expect(proxy.currentState.positions, hasLength(3));
+      expect(
+        proxy.currentState.positions.map((entry) => entry.episodeKey),
+        orderedEquals(
+          monitor.currentState.positions.map((entry) => entry.episodeKey),
+        ),
+      );
+      expect(
+        proxy.currentState.positions.map((entry) => entry.direction),
+        orderedEquals(
+          monitor.currentState.positions.map((entry) => entry.direction),
+        ),
+      );
+      expect(
+        proxy.currentState.requestStatus,
+        monitor.currentState.requestStatus,
+      );
+
+      mark = 8;
+      source.positions = <RiskPosition>[
+        position('BTC', 'position-btc'),
+        position('ETH', 'position-eth'),
+        position('SUI', 'position-sui'),
+      ];
+      clock.advance(const Duration(minutes: 1));
+      final refreshed = await proxy.dispatch(
+        RiskMonitorCommand.refresh(id: 'aggregate-wire-refresh'),
+      );
+      expect(refreshed.accepted, isTrue);
+      final original = monitor.currentState;
+      expect(original.positions, hasLength(3));
+      for (final entry in original.positions) {
+        expect(entry.samples, hasLength(greaterThanOrEqualTo(2)));
+      }
+
+      // Publish a populated aggregate state after the real monitor capture so
+      // the controller/proxy path is tested with every nested field that a
+      // position entry can carry, not only the fields produced by the basic
+      // fixture.
+      final hydrated = <RiskPositionMonitorViewState>[];
+      for (var index = 0; index < original.positions.length; index++) {
+        final expected = original.positions[index];
+        final at = clock.value;
+        final rule = RiskRule(
+          id: 'proxy-rule-$index',
+          episodeKey: expected.episodeKey,
+          metric: RiskPlanMetric.markPrice,
+          comparison: RiskPlanComparison.greaterThan,
+          threshold: 9,
+          title: 'Proxy rule $index',
+          note: 'wire rule',
+          createdAt: at,
+          updatedAt: at,
+        );
+        final zone = RiskZone(
+          id: 'proxy-zone-$index',
+          episodeKey: expected.episodeKey,
+          title: 'Proxy zone $index',
+          lowerPrice: 7,
+          upperPrice: 9,
+          note: 'wire zone',
+          createdAt: at,
+          updatedAt: at,
+        );
+        final plan = RiskPlan(
+          episodeKey: expected.episodeKey,
+          rules: <RiskRule>[rule],
+          zones: <RiskZone>[zone],
+        );
+        final planEvaluation = RiskPlanEvaluation(
+          rules: <RiskRuleEvaluation>[
+            RiskRuleEvaluation(
+              rule: rule,
+              state: RiskRuleState.active,
+              value: expected.evaluation?.metrics.markPrice.value,
+              referenceValue: 9,
+              reason: 'proxy rule evaluation',
+            ),
+          ],
+          zones: <RiskZoneEvaluation>[
+            RiskZoneEvaluation(
+              zone: zone,
+              state: RiskRuleState.active,
+              markPrice: expected.evaluation?.metrics.markPrice.value,
+              reason: 'proxy zone evaluation',
+            ),
+          ],
+          evaluatedAt: at,
+        );
+        final settings = (expected.settings ?? const RiskSettings()).copyWith(
+          customStressChanges: <double>[-0.1, 0.1 + index / 100],
+          customStressPrices: <double>[8.0 + index],
+          summaryHour: 7 + index,
+          summaryMinute: 30,
+        );
+        final sample = expected.samples.last;
+        final summary = RiskDailySummary(
+          episodeKey: expected.episodeKey,
+          dateKey: '2026-09-10',
+          timeZone: 'UTC',
+          capturedAt: at,
+          quality: expected.quality,
+          overallState: sample.overallState,
+          positionState: sample.positionState,
+          marketState: sample.marketState,
+          recoveryState: sample.recoveryState,
+          buffer: sample.buffer,
+          effectiveLeverage: sample.effectiveLeverage,
+          actualInterestToday: sample.actualInterestToday,
+          knownInterestToday: sample.knownInterestToday,
+          actualInterestQuality: sample.actualInterestQuality,
+          interestCoverageComplete: sample.interestCoverageComplete,
+          majorChange: 'proxy summary $index',
+          activeRuleCount: 1,
+          unknownRuleCount: 0,
+        );
+        final comparison = RiskSessionComparison(
+          baseline: expected.samples.first,
+          current: expected.samples.last,
+          bufferDeltaPoints: 1.25 + index,
+          leverageDelta: 0.5 + index,
+          debtDelta: 2.0 + index,
+          trueExitChanged: true,
+          structureChanged: true,
+          fundingChanged: true,
+          openInterestChanged: true,
+          overallChanged: true,
+          positionChanged: true,
+        );
+        final event = RiskEvent(
+          id: 'proxy-event-$index',
+          episodeKey: expected.episodeKey,
+          kind: RiskEventKind.stateChange,
+          message: 'proxy event $index',
+          createdAt: at,
+          observedAt: at,
+          factorId: 'proxy-factor-$index',
+          severity: RiskSeverity.watch,
+          source: 'proxy-test',
+          previousValue: 10,
+          currentValue: 8,
+          policyVersion: 'proxy.v1',
+          quality: expected.quality,
+        );
+        hydrated.add(
+          expected.copyWith(
+            plan: plan,
+            planEvaluation: planEvaluation,
+            settings: settings,
+            summaries: <RiskDailySummary>[summary],
+            previousCheck: comparison,
+            events: <RiskEvent>[...expected.events, event],
+            unsaved: index == 0,
+            lastError: index == 0 ? 'proxy row error' : null,
+            clearError: index != 0,
+            freshnessAt: at,
+          ),
+        );
+      }
+      final populated = original.copyWith(
+        episodeKey: hydrated.first.episodeKey,
+        evaluation: hydrated.first.evaluation,
+        planEvaluation: hydrated.first.planEvaluation,
+        plan: hydrated.first.plan,
+        settings: hydrated.first.settings,
+        market: hydrated.first.market,
+        samples: hydrated.first.samples,
+        summaries: hydrated.first.summaries,
+        previousCheck: hydrated.first.previousCheck,
+        trend: hydrated.first.trend,
+        velocity: hydrated.first.velocity,
+        events: hydrated.first.events,
+        quality: hydrated.first.quality,
+        unsaved: hydrated.first.unsaved,
+        lastError: hydrated.first.lastError,
+        positions: hydrated,
+      );
+      monitor.publishRuntimeState(populated);
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      final expectedState = monitor.currentState;
+      final received = proxy.currentState;
+      expect(received.positions, hasLength(expectedState.positions.length));
+      expect(
+        received.positions.map((entry) => entry.positionId),
+        orderedEquals(expectedState.positions.map((entry) => entry.positionId)),
+      );
+      expect(
+        received.positions.map((entry) => entry.direction),
+        orderedEquals(expectedState.positions.map((entry) => entry.direction)),
+      );
+
+      void expectQuality(RiskQuality actual, RiskQuality expected) {
+        expect(actual.status, expected.status);
+        expect(actual.source, expected.source);
+        expect(actual.reason, expected.reason);
+        expect(actual.observedAt, expected.observedAt);
+        expect(actual.sourceAt, expected.sourceAt);
+      }
+
+      void expectReason(RiskReason actual, RiskReason expected) {
+        expect(actual.factorId, expected.factorId);
+        expect(actual.message, expected.message);
+        expect(actual.severity, expected.severity);
+        expect(actual.observedValue, expected.observedValue);
+        expect(actual.threshold, expected.threshold);
+        expect(actual.unit, expected.unit);
+        expect(actual.window, expected.window);
+        expect(actual.observedAt, expected.observedAt);
+        expect(actual.source, expected.source);
+        expect(actual.evidence, expected.evidence);
+      }
+
+      void expectReasons(List<RiskReason> actual, List<RiskReason> expected) {
+        expect(actual, hasLength(expected.length));
+        for (var index = 0; index < expected.length; index++) {
+          expectReason(actual[index], expected[index]);
+        }
+      }
+
+      void expectAssessment(RiskAssessment actual, RiskAssessment expected) {
+        expect(actual.state, expected.state);
+        expect(actual.label, expected.label);
+        expect(actual.missingReasons, orderedEquals(expected.missingReasons));
+        expectQuality(actual.quality, expected.quality);
+        expectReasons(actual.reasons, expected.reasons);
+      }
+
+      void expectMetric(RiskMetricValue actual, RiskMetricValue expected) {
+        expect(actual.value, expected.value);
+        expect(actual.unit, expected.unit);
+        expect(actual.source, expected.source);
+        expect(actual.observedAt, expected.observedAt);
+        expect(actual.sourceAt, expected.sourceAt);
+        expectQuality(actual.quality, expected.quality);
+      }
+
+      void expectPosition(RiskPosition actual, RiskPosition expected) {
+        expect(actual.instrumentId, expected.instrumentId);
+        expect(actual.instrumentType, expected.instrumentType);
+        expect(actual.mode, expected.mode);
+        expect(actual.collateralCurrency, expected.collateralCurrency);
+        expect(actual.positionSide, expected.positionSide);
+        expect(actual.accountNamespace, expected.accountNamespace);
+        expect(actual.positionId, expected.positionId);
+        expect(actual.createdAt, expected.createdAt);
+        expect(actual.updatedAt, expected.updatedAt);
+        expect(actual.observedAt, expected.observedAt);
+        expect(actual.baseCurrency, expected.baseCurrency);
+        expect(actual.quoteCurrency, expected.quoteCurrency);
+        expect(actual.positionCurrency, expected.positionCurrency);
+        expect(actual.accountCurrency, expected.accountCurrency);
+        expect(actual.liabilityCurrency, expected.liabilityCurrency);
+        expect(actual.rawQuantity, expected.rawQuantity);
+        expect(actual.quantity, expected.quantity);
+        expect(actual.margin, expected.margin);
+        expect(actual.markPrice, expected.markPrice);
+        expect(actual.entryPrice, expected.entryPrice);
+        expect(actual.liquidationPrice, expected.liquidationPrice);
+        expect(actual.unrealizedPnl, expected.unrealizedPnl);
+        expect(actual.reportedLeverage, expected.reportedLeverage);
+        expect(actual.marginRatio, expected.marginRatio);
+        expect(actual.maintenanceRequirement, expected.maintenanceRequirement);
+        expect(actual.reportedLiability, expected.reportedLiability);
+        expect(actual.reportedInterest, expected.reportedInterest);
+        expect(actual.baseBalance, expected.baseBalance);
+        expect(actual.quoteBalance, expected.quoteBalance);
+        expect(actual.baseBorrowed, expected.baseBorrowed);
+        expect(actual.quoteBorrowed, expected.quoteBorrowed);
+        expect(actual.baseInterest, expected.baseInterest);
+        expect(actual.quoteInterest, expected.quoteInterest);
+        expect(actual.hourlyBorrowRate, expected.hourlyBorrowRate);
+        expect(actual.entryFeeRate, expected.entryFeeRate);
+        expect(actual.exitFeeRate, expected.exitFeeRate);
+        expectQuality(actual.quality, expected.quality);
+        expect(actual.eligibility, expected.eligibility);
+        expect(actual.source, expected.source);
+        expect(
+          actual.costAttribution.settledInterest,
+          expected.costAttribution.settledInterest,
+        );
+        expect(
+          actual.costAttribution.unbilledInterest,
+          expected.costAttribution.unbilledInterest,
+        );
+        expect(
+          actual.costAttribution.additionalActualCosts,
+          expected.costAttribution.additionalActualCosts,
+        );
+        expect(
+          actual.costAttribution.observedAt,
+          expected.costAttribution.observedAt,
+        );
+        expect(actual.costAttribution.source, expected.costAttribution.source);
+        expect(
+          actual.costAttribution.coverage.complete,
+          expected.costAttribution.coverage.complete,
+        );
+        expect(
+          actual.costAttribution.coverage.reason,
+          expected.costAttribution.coverage.reason,
+        );
+        expect(
+          actual.costAttribution.coverage.ledgerComplete,
+          expected.costAttribution.coverage.ledgerComplete,
+        );
+        expect(
+          actual.costAttribution.coverage.sizeUnchanged,
+          expected.costAttribution.coverage.sizeUnchanged,
+        );
+        expect(
+          actual.costAttribution.coverage.positionOpenedAt,
+          expected.costAttribution.coverage.positionOpenedAt,
+        );
+        expect(
+          actual.costAttribution.coverage.coverageFrom,
+          expected.costAttribution.coverage.coverageFrom,
+        );
+        expect(
+          actual.costAttribution.coverage.coverageTo,
+          expected.costAttribution.coverage.coverageTo,
+        );
+        expect(
+          actual.costAttribution.coverage.nonOverlapAt,
+          expected.costAttribution.coverage.nonOverlapAt,
+        );
+        final actualInterest = actual.costAttribution.actualInterestToday;
+        final expectedInterest = expected.costAttribution.actualInterestToday;
+        expect(actualInterest == null, expectedInterest == null);
+        if (actualInterest != null && expectedInterest != null) {
+          expect(actualInterest.amount, expectedInterest.amount);
+          expect(actualInterest.knownSubtotal, expectedInterest.knownSubtotal);
+          expect(actualInterest.windowStart, expectedInterest.windowStart);
+          expect(actualInterest.windowEnd, expectedInterest.windowEnd);
+          expect(
+            actualInterest.coverageComplete,
+            expectedInterest.coverageComplete,
+          );
+          expect(actualInterest.observedAt, expectedInterest.observedAt);
+          expect(actualInterest.sourceAt, expectedInterest.sourceAt);
+          expect(actualInterest.source, expectedInterest.source);
+          expectQuality(actualInterest.quality, expectedInterest.quality);
+        }
+      }
+
+      void expectMarket(RiskMarketInput actual, RiskMarketInput expected) {
+        expect(actual.state, expected.state);
+        expect(actual.complete, expected.complete);
+        expect(actual.dailyVolatility, expected.dailyVolatility);
+        expectReasons(actual.reasons, expected.reasons);
+        expect(actual.missingReasons, orderedEquals(expected.missingReasons));
+        expect(actual.support, expected.support);
+        expect(actual.resistance, expected.resistance);
+        expect(actual.source, expected.source);
+        expect(actual.observedAt, expected.observedAt);
+        expect(actual.sourceAt, expected.sourceAt);
+        expect(actual.marketContextLabel, expected.marketContextLabel);
+        expect(actual.assetInstrument, expected.assetInstrument);
+        expect(actual.btcInstrument, expected.btcInstrument);
+        expect(actual.derivativesInstrument, expected.derivativesInstrument);
+        expect(actual.volatilityLabel, expected.volatilityLabel);
+        expect(actual.assetStructureLabel, expected.assetStructureLabel);
+        expect(actual.btcStructureLabel, expected.btcStructureLabel);
+        expect(actual.volumePressureLabel, expected.volumePressureLabel);
+        expect(actual.fundingLabel, expected.fundingLabel);
+        expect(actual.openInterestLabel, expected.openInterestLabel);
+        expect(actual.normalizedFunding8h, expected.normalizedFunding8h);
+        expect(actual.fundingIntervalHours, expected.fundingIntervalHours);
+        expect(actual.openInterestChange, expected.openInterestChange);
+        expect(actual.marketPriceChange, expected.marketPriceChange);
+        expect(actual.marketPoints, expected.marketPoints);
+        expect(actual.assetPoints, expected.assetPoints);
+        expect(actual.fundingPoints, expected.fundingPoints);
+        expect(actual.openInterestPoints, expected.openInterestPoints);
+        final actualFundingQuality = actual.fundingQuality;
+        final expectedFundingQuality = expected.fundingQuality;
+        expect(actualFundingQuality == null, expectedFundingQuality == null);
+        if (actualFundingQuality != null && expectedFundingQuality != null) {
+          expectQuality(actualFundingQuality, expectedFundingQuality);
+        }
+        final actualOiQuality = actual.openInterestQuality;
+        final expectedOiQuality = expected.openInterestQuality;
+        expect(actualOiQuality == null, expectedOiQuality == null);
+        if (actualOiQuality != null && expectedOiQuality != null) {
+          expectQuality(actualOiQuality, expectedOiQuality);
+        }
+      }
+
+      void expectSample(RiskHistorySample actual, RiskHistorySample expected) {
+        expect(actual.episodeKey, expected.episodeKey);
+        expect(actual.observedAt, expected.observedAt);
+        expectQuality(actual.quality, expected.quality);
+        expect(actual.overallState, expected.overallState);
+        expect(actual.positionState, expected.positionState);
+        expect(actual.marketState, expected.marketState);
+        expect(actual.recoveryState, expected.recoveryState);
+        expect(actual.markPrice, expected.markPrice);
+        expect(actual.buffer, expected.buffer);
+        expect(actual.effectiveLeverage, expected.effectiveLeverage);
+        expect(actual.debt, expected.debt);
+        expect(actual.marginRatio, expected.marginRatio);
+        expect(actual.trueExit, expected.trueExit);
+        expect(actual.trueExitVerified, expected.trueExitVerified);
+        expect(actual.entryPrice, expected.entryPrice);
+        expect(actual.entryFeeRate, expected.entryFeeRate);
+        expect(actual.exitFeeRate, expected.exitFeeRate);
+        expect(actual.actualInterestToday, expected.actualInterestToday);
+        expect(actual.knownInterestToday, expected.knownInterestToday);
+        final actualInterestQuality = actual.actualInterestQuality;
+        final expectedInterestQuality = expected.actualInterestQuality;
+        expect(actualInterestQuality == null, expectedInterestQuality == null);
+        if (actualInterestQuality != null && expectedInterestQuality != null) {
+          expectQuality(actualInterestQuality, expectedInterestQuality);
+        }
+        expect(
+          actual.interestCoverageComplete,
+          expected.interestCoverageComplete,
+        );
+        expect(actual.quantity, expected.quantity);
+        expect(actual.margin, expected.margin);
+        expect(actual.assetStructureLabel, expected.assetStructureLabel);
+        expect(actual.fundingLabel, expected.fundingLabel);
+        expect(actual.openInterestChange, expected.openInterestChange);
+        expect(actual.policyVersion, expected.policyVersion);
+        expect(actual.activeFactorIds, orderedEquals(expected.activeFactorIds));
+        expect(actual.source, expected.source);
+      }
+
+      void expectEvent(RiskEvent actual, RiskEvent expected) {
+        expect(actual.id, expected.id);
+        expect(actual.episodeKey, expected.episodeKey);
+        expect(actual.kind, expected.kind);
+        expect(actual.message, expected.message);
+        expect(actual.createdAt, expected.createdAt);
+        expect(actual.observedAt, expected.observedAt);
+        expect(actual.factorId, expected.factorId);
+        expect(actual.severity, expected.severity);
+        expect(actual.source, expected.source);
+        expect(actual.previousValue, expected.previousValue);
+        expect(actual.currentValue, expected.currentValue);
+        expect(actual.policyVersion, expected.policyVersion);
+        final actualQuality = actual.quality;
+        final expectedQuality = expected.quality;
+        expect(actualQuality == null, expectedQuality == null);
+        if (actualQuality != null && expectedQuality != null) {
+          expectQuality(actualQuality, expectedQuality);
+        }
+        expect(actual.contributions, hasLength(expected.contributions.length));
+        for (var index = 0; index < expected.contributions.length; index++) {
+          final actualContribution = actual.contributions[index];
+          final expectedContribution = expected.contributions[index];
+          expect(actualContribution.id, expectedContribution.id);
+          expect(actualContribution.kind, expectedContribution.kind);
+          expect(actualContribution.factorId, expectedContribution.factorId);
+          expect(actualContribution.message, expectedContribution.message);
+          expect(actualContribution.createdAt, expectedContribution.createdAt);
+          expect(
+            actualContribution.observedAt,
+            expectedContribution.observedAt,
+          );
+          expect(actualContribution.severity, expectedContribution.severity);
+          expect(actualContribution.source, expectedContribution.source);
+          expect(
+            actualContribution.previousValue,
+            expectedContribution.previousValue,
+          );
+          expect(
+            actualContribution.currentValue,
+            expectedContribution.currentValue,
+          );
+        }
+      }
+
+      void expectEntryParity(
+        RiskPositionMonitorViewState actual,
+        RiskPositionMonitorViewState expected,
+      ) {
+        expect(actual.positionId, expected.positionId);
+        expect(actual.episodeKey, expected.episodeKey);
+        expect(actual.positionSide, expected.positionSide);
+        expect(actual.direction, expected.direction);
+        expect(actual.position, isNotNull);
+        expectPosition(actual.position!, expected.position!);
+
+        final actualEvaluation = actual.evaluation;
+        final expectedEvaluation = expected.evaluation;
+        expect(actualEvaluation == null, expectedEvaluation == null);
+        if (actualEvaluation != null && expectedEvaluation != null) {
+          expectPosition(
+            actualEvaluation.position,
+            expectedEvaluation.position,
+          );
+          expect(
+            actualEvaluation.overallState,
+            expectedEvaluation.overallState,
+          );
+          expect(
+            actualEvaluation.policyVersion,
+            expectedEvaluation.policyVersion,
+          );
+          expect(
+            actualEvaluation.exchangePnlBasis,
+            expectedEvaluation.exchangePnlBasis,
+          );
+          expect(
+            actualEvaluation.missingReasons,
+            orderedEquals(expectedEvaluation.missingReasons),
+          );
+          expectQuality(actualEvaluation.quality, expectedEvaluation.quality);
+          expectReasons(actualEvaluation.reasons, expectedEvaluation.reasons);
+          expectAssessment(
+            actualEvaluation.positionAssessment,
+            expectedEvaluation.positionAssessment,
+          );
+          expectAssessment(
+            actualEvaluation.marketAssessment,
+            expectedEvaluation.marketAssessment,
+          );
+          expectAssessment(
+            actualEvaluation.recoveryAssessment,
+            expectedEvaluation.recoveryAssessment,
+          );
+          final actualMetrics = actualEvaluation.metrics;
+          final expectedMetrics = expectedEvaluation.metrics;
+          expectMetric(actualMetrics.quantity, expectedMetrics.quantity);
+          expectMetric(actualMetrics.markPrice, expectedMetrics.markPrice);
+          expectMetric(actualMetrics.entryPrice, expectedMetrics.entryPrice);
+          expectMetric(
+            actualMetrics.liquidationPrice,
+            expectedMetrics.liquidationPrice,
+          );
+          expectMetric(actualMetrics.margin, expectedMetrics.margin);
+          expectMetric(actualMetrics.equity, expectedMetrics.equity);
+          expectMetric(actualMetrics.debt, expectedMetrics.debt);
+          expectMetric(
+            actualMetrics.principalDebt,
+            expectedMetrics.principalDebt,
+          );
+          expectMetric(
+            actualMetrics.tradeNotional,
+            expectedMetrics.tradeNotional,
+          );
+          expectMetric(
+            actualMetrics.grossAssetExposure,
+            expectedMetrics.grossAssetExposure,
+          );
+          expectMetric(
+            actualMetrics.effectiveLeverage,
+            expectedMetrics.effectiveLeverage,
+          );
+          expectMetric(actualMetrics.buffer, expectedMetrics.buffer);
+          expectMetric(actualMetrics.marginRatio, expectedMetrics.marginRatio);
+          expectMetric(
+            actualMetrics.maintenanceRequirement,
+            expectedMetrics.maintenanceRequirement,
+          );
+          expectMetric(
+            actualMetrics.tradeSensitivityPerPoint,
+            expectedMetrics.tradeSensitivityPerPoint,
+          );
+          expectMetric(
+            actualMetrics.tradeSensitivityPerPercent,
+            expectedMetrics.tradeSensitivityPerPercent,
+          );
+          expectMetric(
+            actualMetrics.equitySensitivityPerPoint,
+            expectedMetrics.equitySensitivityPerPoint,
+          );
+          expectMetric(
+            actualMetrics.equitySensitivityPerPercent,
+            expectedMetrics.equitySensitivityPerPercent,
+          );
+          expectMetric(
+            actualMetrics.distanceToEntry,
+            expectedMetrics.distanceToEntry,
+          );
+          expectMetric(
+            actualMetrics.distanceToTrueExit,
+            expectedMetrics.distanceToTrueExit,
+          );
+          expectMetric(
+            actualMetrics.actualInterestToday,
+            expectedMetrics.actualInterestToday,
+          );
+          expectMetric(
+            actualMetrics.knownInterestToday,
+            expectedMetrics.knownInterestToday,
+          );
+          expectMetric(
+            actualMetrics.trueExitPrice,
+            expectedMetrics.trueExitPrice,
+          );
+          expectMetric(
+            actualMetrics.projectedTrueExitPrice,
+            expectedMetrics.projectedTrueExitPrice,
+          );
+          expectMetric(
+            actualMetrics.knownCostExitPrice,
+            expectedMetrics.knownCostExitPrice,
+          );
+          expectMetric(
+            actualMetrics.holdingCostPerDay,
+            expectedMetrics.holdingCostPerDay,
+          );
+          expectMetric(
+            actualMetrics.holdingCost7d,
+            expectedMetrics.holdingCost7d,
+          );
+          expectMetric(
+            actualMetrics.holdingCost30d,
+            expectedMetrics.holdingCost30d,
+          );
+          expectMetric(
+            actualMetrics.recoveryDistance,
+            expectedMetrics.recoveryDistance,
+          );
+          expectMetric(
+            actualMetrics.holdingBurden,
+            expectedMetrics.holdingBurden,
+          );
+          expectMetric(actualMetrics.tradePnl, expectedMetrics.tradePnl);
+          expect(
+            actualEvaluation.stressScenarios,
+            hasLength(expectedEvaluation.stressScenarios.length),
+          );
+          for (
+            var index = 0;
+            index < expectedEvaluation.stressScenarios.length;
+            index++
+          ) {
+            final actualStress = actualEvaluation.stressScenarios[index];
+            final expectedStress = expectedEvaluation.stressScenarios[index];
+            expect(actualStress.label, expectedStress.label);
+            expect(actualStress.price, expectedStress.price);
+            expect(
+              actualStress.percentageChange,
+              expectedStress.percentageChange,
+            );
+            expect(actualStress.tradePnl, expectedStress.tradePnl);
+            expect(actualStress.equity, expectedStress.equity);
+            expect(
+              actualStress.effectiveLeverage,
+              expectedStress.effectiveLeverage,
+            );
+            expect(actualStress.buffer, expectedStress.buffer);
+            expect(actualStress.marginRatio, expectedStress.marginRatio);
+            expect(
+              actualStress.currentMarginRatio,
+              expectedStress.currentMarginRatio,
+            );
+            expect(actualStress.marketFrozen, expectedStress.marketFrozen);
+            expect(
+              actualStress.marketContextLabel,
+              expectedStress.marketContextLabel,
+            );
+            expect(actualStress.positionState, expectedStress.positionState);
+            expect(actualStress.overallState, expectedStress.overallState);
+            expect(actualStress.partial, expectedStress.partial);
+            expect(actualStress.hypothetical, expectedStress.hypothetical);
+            expectReasons(actualStress.reasons, expectedStress.reasons);
+          }
+          expect(
+            actualEvaluation.priceMap,
+            hasLength(expectedEvaluation.priceMap.length),
+          );
+          for (
+            var index = 0;
+            index < expectedEvaluation.priceMap.length;
+            index++
+          ) {
+            expect(
+              actualEvaluation.priceMap[index].price,
+              expectedEvaluation.priceMap[index].price,
+            );
+            expect(
+              actualEvaluation.priceMap[index].labels,
+              orderedEquals(expectedEvaluation.priceMap[index].labels),
+            );
+          }
+          expect(actualEvaluation.evaluatedAt, expectedEvaluation.evaluatedAt);
+        }
+
+        final actualPlan = actual.plan;
+        final expectedPlan = expected.plan;
+        expect(actualPlan == null, expectedPlan == null);
+        if (actualPlan != null && expectedPlan != null) {
+          expect(actualPlan.episodeKey, expectedPlan.episodeKey);
+          expect(actualPlan.rules, hasLength(expectedPlan.rules.length));
+          for (var index = 0; index < expectedPlan.rules.length; index++) {
+            final actualRule = actualPlan.rules[index];
+            final expectedRule = expectedPlan.rules[index];
+            expect(actualRule.id, expectedRule.id);
+            expect(actualRule.episodeKey, expectedRule.episodeKey);
+            expect(actualRule.enabled, expectedRule.enabled);
+            expect(actualRule.metric, expectedRule.metric);
+            expect(actualRule.comparison, expectedRule.comparison);
+            expect(actualRule.threshold, expectedRule.threshold);
+            expect(actualRule.upperThreshold, expectedRule.upperThreshold);
+            expect(actualRule.title, expectedRule.title);
+            expect(actualRule.label, expectedRule.label);
+            expect(actualRule.note, expectedRule.note);
+            expect(actualRule.createdAt, expectedRule.createdAt);
+            expect(actualRule.updatedAt, expectedRule.updatedAt);
+          }
+          expect(actualPlan.zones, hasLength(expectedPlan.zones.length));
+          for (var index = 0; index < expectedPlan.zones.length; index++) {
+            final actualZone = actualPlan.zones[index];
+            final expectedZone = expectedPlan.zones[index];
+            expect(actualZone.id, expectedZone.id);
+            expect(actualZone.episodeKey, expectedZone.episodeKey);
+            expect(actualZone.title, expectedZone.title);
+            expect(actualZone.lowerPrice, expectedZone.lowerPrice);
+            expect(actualZone.upperPrice, expectedZone.upperPrice);
+            expect(actualZone.enabled, expectedZone.enabled);
+            expect(actualZone.note, expectedZone.note);
+            expect(actualZone.createdAt, expectedZone.createdAt);
+            expect(actualZone.updatedAt, expectedZone.updatedAt);
+          }
+        }
+        final actualPlanEvaluation = actual.planEvaluation;
+        final expectedPlanEvaluation = expected.planEvaluation;
+        expect(actualPlanEvaluation == null, expectedPlanEvaluation == null);
+        if (actualPlanEvaluation != null && expectedPlanEvaluation != null) {
+          expect(
+            actualPlanEvaluation.evaluatedAt,
+            expectedPlanEvaluation.evaluatedAt,
+          );
+          expect(
+            actualPlanEvaluation.rules,
+            hasLength(expectedPlanEvaluation.rules.length),
+          );
+          for (
+            var index = 0;
+            index < expectedPlanEvaluation.rules.length;
+            index++
+          ) {
+            final actualRule = actualPlanEvaluation.rules[index];
+            final expectedRule = expectedPlanEvaluation.rules[index];
+            expect(actualRule.rule.id, expectedRule.rule.id);
+            expect(actualRule.state, expectedRule.state);
+            expect(actualRule.value, expectedRule.value);
+            expect(actualRule.referenceValue, expectedRule.referenceValue);
+            expect(actualRule.reason, expectedRule.reason);
+          }
+          expect(
+            actualPlanEvaluation.zones,
+            hasLength(expectedPlanEvaluation.zones.length),
+          );
+          for (
+            var index = 0;
+            index < expectedPlanEvaluation.zones.length;
+            index++
+          ) {
+            final actualZone = actualPlanEvaluation.zones[index];
+            final expectedZone = expectedPlanEvaluation.zones[index];
+            expect(actualZone.zone.id, expectedZone.zone.id);
+            expect(actualZone.state, expectedZone.state);
+            expect(actualZone.markPrice, expectedZone.markPrice);
+            expect(actualZone.reason, expectedZone.reason);
+          }
+        }
+
+        final actualSettings = actual.settings;
+        final expectedSettings = expected.settings;
+        expect(actualSettings == null, expectedSettings == null);
+        if (actualSettings != null && expectedSettings != null) {
+          final actualPolicy = actualSettings.policy;
+          final expectedPolicy = expectedSettings.policy;
+          expect(actualPolicy.version, expectedPolicy.version);
+          expect(actualPolicy.bufferCritical, expectedPolicy.bufferCritical);
+          expect(actualPolicy.bufferHigh, expectedPolicy.bufferHigh);
+          expect(actualPolicy.bufferWatch, expectedPolicy.bufferWatch);
+          expect(actualPolicy.leverageWatch, expectedPolicy.leverageWatch);
+          expect(actualPolicy.leverageHigh, expectedPolicy.leverageHigh);
+          expect(
+            actualPolicy.leverageCritical,
+            expectedPolicy.leverageCritical,
+          );
+          expect(
+            actualPolicy.marginRatioCritical,
+            expectedPolicy.marginRatioCritical,
+          );
+          expect(actualPolicy.marginRatioHigh, expectedPolicy.marginRatioHigh);
+          expect(
+            actualPolicy.marginRatioWatch,
+            expectedPolicy.marginRatioWatch,
+          );
+          expect(
+            actualPolicy.bufferVolatilityHigh,
+            expectedPolicy.bufferVolatilityHigh,
+          );
+          expect(
+            actualPolicy.bufferVolatilityWatch,
+            expectedPolicy.bufferVolatilityWatch,
+          );
+          expect(
+            actualPolicy.recoveryDistanceWatch,
+            expectedPolicy.recoveryDistanceWatch,
+          );
+          expect(
+            actualPolicy.recoveryDistanceHigh,
+            expectedPolicy.recoveryDistanceHigh,
+          );
+          expect(
+            actualPolicy.holdingBurdenWatch,
+            expectedPolicy.holdingBurdenWatch,
+          );
+          expect(
+            actualPolicy.holdingBurdenHigh,
+            expectedPolicy.holdingBurdenHigh,
+          );
+          expect(
+            actualPolicy.stressChanges,
+            orderedEquals(expectedPolicy.stressChanges),
+          );
+          expect(
+            actualPolicy.priceDeduplicationTolerance,
+            expectedPolicy.priceDeduplicationTolerance,
+          );
+          expect(
+            actualSettings.customStressChanges,
+            orderedEquals(expectedSettings.customStressChanges),
+          );
+          expect(
+            actualSettings.customStressPrices,
+            orderedEquals(expectedSettings.customStressPrices),
+          );
+          expect(actualSettings.timeZone, expectedSettings.timeZone);
+          expect(actualSettings.summaryHour, expectedSettings.summaryHour);
+          expect(actualSettings.summaryMinute, expectedSettings.summaryMinute);
+          expect(
+            actualSettings.sampleRetentionDays,
+            expectedSettings.sampleRetentionDays,
+          );
+          expect(
+            actualSettings.oiRetentionHours,
+            expectedSettings.oiRetentionHours,
+          );
+          expect(
+            actualSettings.eventRetentionDays,
+            expectedSettings.eventRetentionDays,
+          );
+          expect(
+            actualSettings.summaryRetentionDays,
+            expectedSettings.summaryRetentionDays,
+          );
+          expect(actualSettings.maxSamples, expectedSettings.maxSamples);
+          expect(actualSettings.maxOiSamples, expectedSettings.maxOiSamples);
+          expect(actualSettings.maxEvents, expectedSettings.maxEvents);
+          expect(actualSettings.maxEpisodes, expectedSettings.maxEpisodes);
+        }
+
+        final actualMarket = actual.market;
+        final expectedMarket = expected.market;
+        expect(actualMarket == null, expectedMarket == null);
+        if (actualMarket != null && expectedMarket != null) {
+          expectMarket(actualMarket, expectedMarket);
+        }
+        expect(actual.samples, hasLength(expected.samples.length));
+        for (var index = 0; index < expected.samples.length; index++) {
+          expectSample(actual.samples[index], expected.samples[index]);
+        }
+        expect(actual.summaries, hasLength(expected.summaries.length));
+        for (var index = 0; index < expected.summaries.length; index++) {
+          final actualSummary = actual.summaries[index];
+          final expectedSummary = expected.summaries[index];
+          expect(actualSummary.episodeKey, expectedSummary.episodeKey);
+          expect(actualSummary.dateKey, expectedSummary.dateKey);
+          expect(actualSummary.timeZone, expectedSummary.timeZone);
+          expect(actualSummary.capturedAt, expectedSummary.capturedAt);
+          expectQuality(actualSummary.quality, expectedSummary.quality);
+          expect(actualSummary.overallState, expectedSummary.overallState);
+          expect(actualSummary.positionState, expectedSummary.positionState);
+          expect(actualSummary.marketState, expectedSummary.marketState);
+          expect(actualSummary.recoveryState, expectedSummary.recoveryState);
+          expect(actualSummary.buffer, expectedSummary.buffer);
+          expect(
+            actualSummary.effectiveLeverage,
+            expectedSummary.effectiveLeverage,
+          );
+          expect(
+            actualSummary.actualInterestToday,
+            expectedSummary.actualInterestToday,
+          );
+          expect(
+            actualSummary.knownInterestToday,
+            expectedSummary.knownInterestToday,
+          );
+          final actualInterestQuality = actualSummary.actualInterestQuality;
+          final expectedInterestQuality = expectedSummary.actualInterestQuality;
+          expect(
+            actualInterestQuality == null,
+            expectedInterestQuality == null,
+          );
+          if (actualInterestQuality != null &&
+              expectedInterestQuality != null) {
+            expectQuality(actualInterestQuality, expectedInterestQuality);
+          }
+          expect(
+            actualSummary.interestCoverageComplete,
+            expectedSummary.interestCoverageComplete,
+          );
+          expect(actualSummary.majorChange, expectedSummary.majorChange);
+          expect(
+            actualSummary.activeRuleCount,
+            expectedSummary.activeRuleCount,
+          );
+          expect(
+            actualSummary.unknownRuleCount,
+            expectedSummary.unknownRuleCount,
+          );
+        }
+        final actualComparison = actual.previousCheck;
+        final expectedComparison = expected.previousCheck;
+        expect(actualComparison == null, expectedComparison == null);
+        if (actualComparison != null && expectedComparison != null) {
+          expectSample(actualComparison.baseline, expectedComparison.baseline);
+          expectSample(actualComparison.current, expectedComparison.current);
+          expect(
+            actualComparison.bufferDeltaPoints,
+            expectedComparison.bufferDeltaPoints,
+          );
+          expect(
+            actualComparison.leverageDelta,
+            expectedComparison.leverageDelta,
+          );
+          expect(actualComparison.debtDelta, expectedComparison.debtDelta);
+          expect(
+            actualComparison.trueExitChanged,
+            expectedComparison.trueExitChanged,
+          );
+          expect(
+            actualComparison.structureChanged,
+            expectedComparison.structureChanged,
+          );
+          expect(
+            actualComparison.fundingChanged,
+            expectedComparison.fundingChanged,
+          );
+          expect(
+            actualComparison.openInterestChanged,
+            expectedComparison.openInterestChanged,
+          );
+          expect(
+            actualComparison.overallChanged,
+            expectedComparison.overallChanged,
+          );
+          expect(
+            actualComparison.positionChanged,
+            expectedComparison.positionChanged,
+          );
+        }
+        final actualTrend = actual.trend;
+        final expectedTrend = expected.trend;
+        expect(actualTrend == null, expectedTrend == null);
+        if (actualTrend != null && expectedTrend != null) {
+          expect(actualTrend.label, expectedTrend.label);
+          expect(
+            actualTrend.bufferDeltaPoints,
+            expectedTrend.bufferDeltaPoints,
+          );
+          expect(actualTrend.leverageDelta, expectedTrend.leverageDelta);
+          expect(actualTrend.reason, expectedTrend.reason);
+          if (actualTrend.baseline != null && expectedTrend.baseline != null) {
+            expectSample(actualTrend.baseline!, expectedTrend.baseline!);
+          }
+          if (actualTrend.current != null && expectedTrend.current != null) {
+            expectSample(actualTrend.current!, expectedTrend.current!);
+          }
+        }
+        final actualVelocity = actual.velocity;
+        final expectedVelocity = expected.velocity;
+        expect(actualVelocity == null, expectedVelocity == null);
+        if (actualVelocity != null && expectedVelocity != null) {
+          expect(actualVelocity.label, expectedVelocity.label);
+          expect(actualVelocity.pointsPerHour, expectedVelocity.pointsPerHour);
+          expect(actualVelocity.elapsedHours, expectedVelocity.elapsedHours);
+          expect(actualVelocity.reason, expectedVelocity.reason);
+          if (actualVelocity.baseline != null &&
+              expectedVelocity.baseline != null) {
+            expectSample(actualVelocity.baseline!, expectedVelocity.baseline!);
+          }
+          if (actualVelocity.current != null &&
+              expectedVelocity.current != null) {
+            expectSample(actualVelocity.current!, expectedVelocity.current!);
+          }
+        }
+        expect(actual.events, hasLength(expected.events.length));
+        for (var index = 0; index < expected.events.length; index++) {
+          expectEvent(actual.events[index], expected.events[index]);
+        }
+        expectQuality(actual.quality, expected.quality);
+        expect(actual.unsaved, expected.unsaved);
+        expect(actual.lastError, expected.lastError);
+        expect(actual.freshnessAt, expected.freshnessAt);
+      }
+
+      for (var index = 0; index < expectedState.positions.length; index++) {
+        expectEntryParity(
+          received.positions[index],
+          expectedState.positions[index],
+        );
+      }
+
+      await proxy.dispose();
+      await controller.dispose();
+      await monitor.dispose();
     },
   );
 

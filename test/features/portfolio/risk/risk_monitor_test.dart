@@ -14,6 +14,7 @@ import 'package:trading_balance_f/features/portfolio/domain/risk/market_risk_eng
 import 'package:trading_balance_f/features/portfolio/domain/risk/action_plan.dart';
 import 'package:trading_balance_f/features/portfolio/domain/risk/risk_models.dart';
 import 'package:trading_balance_f/features/portfolio/domain/risk/risk_events.dart';
+import 'package:trading_balance_f/features/portfolio/domain/risk/risk_history.dart';
 
 import 'fixtures/risk_monitor_fixtures.dart';
 
@@ -1103,6 +1104,874 @@ void main() {
       );
       expect(decoded.quality.status, original.quality.status);
       expect(decoded.notificationCapability, original.notificationCapability);
+      await monitor.dispose();
+    },
+  );
+
+  test('RED-002 aggregate multi-position monitor', () async {
+    final clock = FakeRiskClock();
+    final btc = syntheticRiskPosition(
+      observedAt: clock.value,
+      instrumentId: 'BTC-USDT',
+      baseCurrency: 'BTC',
+      positionId: 'position-btc',
+    );
+    final eth = syntheticRiskPosition(
+      observedAt: clock.value,
+      instrumentId: 'ETH-USDT',
+      baseCurrency: 'ETH',
+      positionId: 'position-eth',
+    );
+    final sui = syntheticRiskPosition(
+      observedAt: clock.value,
+      instrumentId: 'SUI-USDT',
+      baseCurrency: 'SUI',
+      positionId: 'position-sui',
+    );
+    final source = BatchFakeRiskSource(
+      clock: clock,
+      positions: <RiskPosition>[btc, eth, sui],
+      failedMarketEpisodes: <String>{eth.episodeKey},
+    );
+    final monitor = RiskMonitor(
+      dataSource: source,
+      persistence: FakeRiskPersistence(),
+      clock: clock.now,
+      foregroundCadence: const Duration(minutes: 1),
+      marketCadence: const Duration(minutes: 1),
+    );
+
+    await monitor.dispatch(RiskMonitorCommand.start(id: 'red-002-start'));
+    final state = monitor.currentState;
+    expect(source.batchCalls, 1);
+    expect(state.positions, hasLength(3));
+    expect(
+      state.positions.map((entry) => entry.positionId),
+      containsAll(<String>['position-btc', 'position-eth', 'position-sui']),
+    );
+    final failed = state.positions.singleWhere(
+      (entry) => entry.positionId == 'position-eth',
+    );
+    expect(failed.lastError, contains('Market source'));
+    expect(
+      state.positions
+          .where((entry) => entry.positionId != 'position-eth')
+          .every((entry) => entry.evaluation != null),
+      isTrue,
+    );
+
+    clock.advance(const Duration(minutes: 1));
+    await monitor.dispatch(RiskMonitorCommand.refresh(id: 'red-002-refresh'));
+    expect(source.batchCalls, 2);
+    expect(monitor.currentState.positions, hasLength(3));
+    expect(
+      monitor.currentState.requestStatus,
+      anyOf(RiskMonitorRequestStatus.partial, RiskMonitorRequestStatus.ready),
+    );
+    await monitor.dispose();
+  });
+
+  test('GREEN-002 aggregate multi-position monitor', () async {
+    final clock = FakeRiskClock();
+    RiskPosition position(String coin, String id, DateTime createdAt) =>
+        syntheticRiskPosition(
+          observedAt: clock.value,
+          instrumentId: '$coin-USDT',
+          baseCurrency: coin,
+          positionId: id,
+          createdAt: createdAt,
+        );
+    final btc = position('BTC', 'position-btc', DateTime.utc(2026, 9, 1));
+    final eth = position('ETH', 'position-eth', DateTime.utc(2026, 9, 2));
+    final sui = position('SUI', 'position-sui', DateTime.utc(2026, 9, 3));
+    final source = BatchFakeRiskSource(
+      clock: clock,
+      positions: <RiskPosition>[btc, eth, sui],
+    );
+    final persistence = FakeRiskPersistence();
+    final sink = FakeRiskNotificationSink();
+    final monitor = RiskMonitor(
+      dataSource: source,
+      persistence: persistence,
+      notificationSink: sink,
+      clock: clock.now,
+      foregroundCadence: const Duration(minutes: 1),
+      marketCadence: const Duration(minutes: 1),
+    );
+
+    await monitor.dispatch(RiskMonitorCommand.start(id: 'green-002-start'));
+    final initial = monitor.currentState;
+    expect(initial.positions, hasLength(3));
+    expect(
+      initial.positions.map((entry) => entry.direction),
+      everyElement('long'),
+    );
+    final decoded = RiskMonitorWire.decodeState(
+      RiskMonitorWire.encodeState(initial),
+    );
+    expect(decoded.positions, hasLength(3));
+    expect(
+      decoded.positions.map((entry) => entry.episodeKey),
+      orderedEquals(initial.positions.map((entry) => entry.episodeKey)),
+    );
+    expect(
+      decoded.positions.map((entry) => entry.positionSide),
+      orderedEquals(initial.positions.map((entry) => entry.positionSide)),
+    );
+
+    final oldSuiEpisode = sui.episodeKey;
+    final suiPlan = RiskPlan(episodeKey: oldSuiEpisode);
+    await monitor.dispatch(
+      RiskMonitorCommand.updatePlan(
+        id: 'green-002-plan-sui',
+        episodeKey: oldSuiEpisode,
+        plan: suiPlan,
+      ),
+    );
+    final changedSui = syntheticRiskPosition(
+      observedAt: clock.value,
+      instrumentId: 'SUI-USDT',
+      baseCurrency: 'SUI',
+      positionId: 'position-sui',
+      createdAt: DateTime.utc(2026, 9, 3),
+      markPrice: 8,
+    );
+    source.positions = <RiskPosition>[btc, eth, changedSui];
+    clock.advance(const Duration(minutes: 1));
+    await monitor.dispatch(RiskMonitorCommand.refresh(id: 'green-002-change'));
+    expect(sink.delivered, hasLength(1));
+    expect(sink.delivered.single.episodeKey, oldSuiEpisode);
+    expect(
+      persistence.saveHistory
+          .where((record) => record.episodeKey == oldSuiEpisode)
+          .expand((record) => record.events)
+          .every((event) => event.episodeKey == oldSuiEpisode),
+      isTrue,
+    );
+
+    source.positions = <RiskPosition>[btc, eth];
+    clock.advance(const Duration(minutes: 1));
+    await monitor.dispatch(RiskMonitorCommand.refresh(id: 'green-002-close'));
+    expect(monitor.currentState.positions, hasLength(2));
+    final closed = persistence.episodes.values.singleWhere(
+      (record) => record.episodeKey == oldSuiEpisode,
+    );
+    expect(closed.closedAt, isNotNull);
+    expect(closed.events, isNotEmpty);
+
+    final reopened = syntheticRiskPosition(
+      observedAt: clock.value,
+      instrumentId: 'SUI-USDT',
+      baseCurrency: 'SUI',
+      positionId: 'position-sui',
+      createdAt: DateTime.utc(2026, 9, 10),
+    );
+    source.positions = <RiskPosition>[btc, eth, reopened];
+    clock.advance(const Duration(minutes: 1));
+    await monitor.dispatch(RiskMonitorCommand.refresh(id: 'green-002-reopen'));
+    final reopenedRow = monitor.currentState.positions.singleWhere(
+      (entry) => entry.positionId == 'position-sui',
+    );
+    expect(reopenedRow.episodeKey, isNot(oldSuiEpisode));
+    expect(reopenedRow.plan?.episodeKey, reopened.episodeKey);
+    expect(reopenedRow.events, isEmpty);
+    expect(reopenedRow.samples, hasLength(1));
+    expect(monitor.currentState.positions, hasLength(3));
+    await monitor.dispose();
+  });
+
+  test(
+    'GREEN-002 retries an unsaved episode plan on the next capture',
+    () async {
+      final clock = FakeRiskClock();
+      final source = FakeRiskSource(
+        clock: clock,
+        position: () => syntheticRiskPosition(observedAt: clock.value),
+      );
+      final persistence = FakeRiskPersistence()..failEpisodeSaves = true;
+      final monitor = RiskMonitor(
+        dataSource: source,
+        persistence: persistence,
+        clock: clock.now,
+      );
+
+      await monitor.dispatch(
+        RiskMonitorCommand.start(id: 'pending-plan-start'),
+      );
+      final episode = monitor.currentState.episodeKey!;
+      final plan = RiskPlan(episodeKey: episode);
+      final update = await monitor.dispatch(
+        RiskMonitorCommand.updatePlan(id: 'pending-plan-update', plan: plan),
+      );
+      expect(update.status, RiskMonitorCommandStatus.failed);
+      expect(monitor.currentState.unsaved, isTrue);
+
+      persistence.failEpisodeSaves = false;
+      clock.advance(const Duration(minutes: 1));
+      await monitor.dispatch(
+        RiskMonitorCommand.refresh(id: 'pending-plan-refresh'),
+      );
+      expect(
+        persistence.episodes['account-a::$episode']?.plan.episodeKey,
+        episode,
+      );
+      expect(monitor.currentState.unsaved, isFalse);
+      await monitor.dispose();
+    },
+  );
+
+  test(
+    'AUD-T25-001 retries failed sample/event/OI state before closing an episode',
+    () async {
+      final clock = FakeRiskClock();
+      final initial = syntheticRiskPosition(observedAt: clock.value);
+      final changed = syntheticRiskPosition(
+        observedAt: clock.value,
+        markPrice: 8,
+      );
+      final other = syntheticRiskPosition(
+        observedAt: clock.value,
+        instrumentId: 'BTC-USDT',
+        baseCurrency: 'BTC',
+        positionId: 'position-btc',
+        createdAt: DateTime.utc(2026, 9, 2),
+      );
+      final source = BatchFakeRiskSource(
+        clock: clock,
+        positions: <RiskPosition>[initial, other],
+      );
+      final persistence = FakeRiskPersistence()..failEpisodeSaves = true;
+      final monitor = RiskMonitor(
+        dataSource: source,
+        persistence: persistence,
+        clock: clock.now,
+        foregroundCadence: const Duration(minutes: 1),
+        marketCadence: const Duration(minutes: 1),
+      );
+
+      await monitor.dispatch(RiskMonitorCommand.start(id: 'audit-001-start'));
+      final episode = initial.episodeKey;
+      expect(other.episodeKey, isNot(episode));
+      expect(persistence.episodes, isEmpty);
+      expect(persistence.saveHistory, isNotEmpty);
+      expect(
+        persistence.saveHistory
+            .lastWhere((record) => record.episodeKey == episode)
+            .samples,
+        isNotEmpty,
+      );
+      final pendingRule = RiskRule(
+        id: 'sentinel-buffer-rule',
+        episodeKey: episode,
+        metric: RiskPlanMetric.markPrice,
+        comparison: RiskPlanComparison.greaterThan,
+        threshold: 9,
+        title: 'Sentinel mark rule',
+        note: 'must survive a failed write',
+        createdAt: clock.value,
+        updatedAt: clock.value,
+      );
+      final pendingZone = RiskZone(
+        id: 'sentinel-zone',
+        episodeKey: episode,
+        title: 'Sentinel zone',
+        lowerPrice: 7,
+        upperPrice: 9,
+        note: 'must survive a failed write',
+        createdAt: clock.value,
+        updatedAt: clock.value,
+      );
+      final pendingPlan = RiskPlan(
+        episodeKey: episode,
+        rules: <RiskRule>[pendingRule],
+        zones: <RiskZone>[pendingZone],
+      );
+      final failedPlan = await monitor.dispatch(
+        RiskMonitorCommand.updatePlan(
+          id: 'audit-001-pending-plan',
+          episodeKey: episode,
+          plan: pendingPlan,
+        ),
+      );
+      expect(failedPlan.status, RiskMonitorCommandStatus.failed);
+
+      source.positions = <RiskPosition>[changed, other];
+      clock.advance(const Duration(minutes: 1));
+      await monitor.dispatch(
+        RiskMonitorCommand.refresh(id: 'audit-001-failed-capture'),
+      );
+
+      // The changed-price capture must generate an event while the episode
+      // write is still failing. The monitor keeps that exact event in its
+      // pending record for a later capture to retry.
+      final failedCapture = monitor.currentState.positions.firstWhere(
+        (entry) => entry.episodeKey == episode,
+      );
+      expect(failedCapture.unsaved, isTrue);
+      final preRetryEventIds = failedCapture.events
+          .map((event) => event.id)
+          .toList(growable: false);
+      expect(preRetryEventIds, isNotEmpty);
+      expect(preRetryEventIds.toSet(), hasLength(preRetryEventIds.length));
+      final failedEventRecord = persistence.saveHistory.lastWhere(
+        (record) => record.episodeKey == episode && record.events.isNotEmpty,
+      );
+      expect(
+        failedEventRecord.events.map((event) => event.id),
+        orderedEquals(preRetryEventIds),
+      );
+
+      persistence.failEpisodeSaves = false;
+      clock.advance(const Duration(minutes: 1));
+      await monitor.dispatch(RiskMonitorCommand.refresh(id: 'audit-001-retry'));
+
+      final retried = persistence.episodes['account-a::$episode'];
+      expect(retried, isNotNull);
+      expect(retried!.samples.length, greaterThanOrEqualTo(2));
+      final expectedOpenInterestTimes = <DateTime>[
+        DateTime.utc(2026, 9, 10, 10),
+        DateTime.utc(2026, 9, 10, 10, 1),
+        DateTime.utc(2026, 9, 10, 10, 2),
+        DateTime.utc(2026, 9, 10, 13, 59),
+        DateTime.utc(2026, 9, 10, 14),
+        DateTime.utc(2026, 9, 10, 14, 1),
+      ];
+      expect(
+        retried.openInterest.map((sample) => sample.timestamp),
+        orderedEquals(expectedOpenInterestTimes),
+      );
+      expect(
+        retried.openInterest.map((sample) => sample.oiCcy),
+        orderedEquals(<double>[100, 100, 100, 101, 101, 101]),
+      );
+      expect(
+        retried.openInterest
+            .map(
+              (sample) =>
+                  '${sample.instrument}|${sample.timestamp.toIso8601String()}',
+            )
+            .toSet(),
+        hasLength(retried.openInterest.length),
+      );
+      expect(retried.events, isNotEmpty);
+      expect(retried.plan.episodeKey, pendingPlan.episodeKey);
+      expect(retried.plan.rules, hasLength(1));
+      expect(retried.plan.rules.single.id, pendingRule.id);
+      expect(retried.plan.rules.single.threshold, pendingRule.threshold);
+      expect(retried.plan.rules.single.note, pendingRule.note);
+      expect(retried.plan.zones, hasLength(1));
+      expect(retried.plan.zones.single.id, pendingZone.id);
+      expect(retried.plan.zones.single.lowerPrice, pendingZone.lowerPrice);
+      expect(retried.plan.zones.single.upperPrice, pendingZone.upperPrice);
+      final retriedEventIds = retried.events
+          .map((event) => event.id)
+          .toList(growable: false);
+      expect(retriedEventIds, orderedEquals(preRetryEventIds));
+      expect(retriedEventIds.toSet(), hasLength(preRetryEventIds.length));
+      expect(
+        retried.events.every((event) => event.episodeKey == episode),
+        isTrue,
+      );
+      for (final record in persistence.saveHistory.where(
+        (record) => record.episodeKey == episode && record.events.isNotEmpty,
+      )) {
+        expect(
+          record.events.map((event) => event.id),
+          orderedEquals(retriedEventIds),
+        );
+      }
+
+      source.positions = <RiskPosition>[other];
+      clock.advance(const Duration(minutes: 1));
+      await monitor.dispatch(RiskMonitorCommand.refresh(id: 'audit-001-close'));
+
+      final closed = persistence.episodes['account-a::$episode'];
+      expect(closed, isNotNull);
+      expect(closed!.closedAt, isNotNull);
+      expect(closed.samples.length, greaterThanOrEqualTo(2));
+      expect(
+        closed.openInterest.map((sample) => sample.timestamp),
+        orderedEquals(expectedOpenInterestTimes),
+      );
+      expect(
+        closed.openInterest.map((sample) => sample.oiCcy),
+        orderedEquals(<double>[100, 100, 100, 101, 101, 101]),
+      );
+      expect(
+        closed.openInterest
+            .map(
+              (sample) =>
+                  '${sample.instrument}|${sample.timestamp.toIso8601String()}',
+            )
+            .toSet(),
+        hasLength(closed.openInterest.length),
+      );
+      expect(
+        closed.plan.rules.map((rule) => rule.id),
+        orderedEquals(<String>[pendingRule.id]),
+      );
+      expect(
+        closed.plan.zones.map((zone) => zone.id),
+        orderedEquals(<String>[pendingZone.id]),
+      );
+      expect(
+        closed.events.map((event) => event.id),
+        orderedEquals(retriedEventIds),
+      );
+      expect(
+        closed.events.every((event) => event.episodeKey == episode),
+        isTrue,
+      );
+      final otherRecord =
+          persistence.episodes['account-a::${other.episodeKey}'];
+      expect(otherRecord, isNotNull);
+      expect(otherRecord!.closedAt, isNull);
+      expect(otherRecord.events, isEmpty);
+      expect(otherRecord.plan.rules, isEmpty);
+      expect(otherRecord.plan.zones, isEmpty);
+      expect(monitor.currentState.positions, hasLength(1));
+      expect(
+        monitor.currentState.positions.single.episodeKey,
+        other.episodeKey,
+      );
+      await monitor.dispose();
+    },
+  );
+
+  test(
+    'AUD-T25-002 discovery failure preserves last-good aggregate rows',
+    () async {
+      final clock = FakeRiskClock();
+      final btc = syntheticRiskPosition(
+        observedAt: clock.value,
+        instrumentId: 'BTC-USDT',
+        baseCurrency: 'BTC',
+        positionId: 'position-btc',
+      );
+      final eth = syntheticRiskPosition(
+        observedAt: clock.value,
+        instrumentId: 'ETH-USDT',
+        baseCurrency: 'ETH',
+        positionId: 'position-eth',
+      );
+      final source = BatchFakeRiskSource(
+        clock: clock,
+        positions: <RiskPosition>[btc, eth],
+      );
+      final monitor = RiskMonitor(
+        dataSource: source,
+        persistence: FakeRiskPersistence(),
+        clock: clock.now,
+        foregroundCadence: const Duration(minutes: 1),
+        marketCadence: const Duration(minutes: 1),
+      );
+
+      await monitor.dispatch(RiskMonitorCommand.start(id: 'audit-002-start'));
+      final lastGood = monitor.currentState.positions;
+      expect(lastGood, hasLength(2));
+      expect(lastGood.every((row) => row.evaluation != null), isTrue);
+      source.batchOverride = const RiskPositionBatch(
+        status: RiskEligibility.invalid,
+        quality: RiskQuality.error(reason: 'synthetic discovery failure'),
+        message: 'synthetic discovery failure',
+      );
+      clock.advance(const Duration(minutes: 1));
+      await monitor.dispatch(
+        RiskMonitorCommand.refresh(id: 'audit-002-failure'),
+      );
+
+      expect(source.batchCalls, 2);
+      expect(
+        monitor.currentState.positions.map((row) => row.positionId),
+        orderedEquals(lastGood.map((row) => row.positionId)),
+      );
+      expect(
+        monitor.currentState.positions.every((row) => row.evaluation != null),
+        isTrue,
+      );
+      expect(
+        monitor.currentState.requestStatus,
+        isNot(RiskMonitorRequestStatus.unavailable),
+      );
+      expect(monitor.currentState.retryAt, isNotNull);
+      await monitor.dispose();
+    },
+  );
+
+  test(
+    'AUD-T25-002 global 429 backoff blocks later requests and exposes retry metadata',
+    () async {
+      final clock = FakeRiskClock();
+      final source = BatchFakeRiskSource(
+        clock: clock,
+        positions: <RiskPosition>[
+          syntheticRiskPosition(
+            observedAt: clock.value,
+            positionId: 'position-btc',
+            instrumentId: 'BTC-USDT',
+            baseCurrency: 'BTC',
+          ),
+          syntheticRiskPosition(
+            observedAt: clock.value,
+            positionId: 'position-eth',
+            instrumentId: 'ETH-USDT',
+            baseCurrency: 'ETH',
+          ),
+        ],
+        marketFailure: const RiskRepositoryException(
+          'synthetic rate limit',
+          statusCode: 429,
+          retryAfter: Duration(minutes: 3),
+          endpoint: 'market',
+        ),
+      );
+      final monitor = RiskMonitor(
+        dataSource: source,
+        persistence: FakeRiskPersistence(),
+        clock: clock.now,
+        foregroundCadence: const Duration(minutes: 1),
+        marketCadence: const Duration(minutes: 1),
+      );
+
+      await monitor.dispatch(
+        RiskMonitorCommand.start(id: 'audit-002-429-start'),
+      );
+      expect(source.batchCalls, 1);
+      expect(source.batchMarketCalls, 1);
+      expect(
+        monitor.currentState.requestStatus,
+        RiskMonitorRequestStatus.backingOff,
+      );
+      expect(
+        monitor.currentState.retryAt,
+        clock.value.add(const Duration(minutes: 3)),
+      );
+      expect(monitor.currentState.requestEndpointClass, 'market');
+
+      final beforeBatch = source.batchCalls;
+      final beforeMarket = source.batchMarketCalls;
+      clock.advance(const Duration(minutes: 1));
+      await monitor.dispatch(
+        RiskMonitorCommand.refresh(id: 'audit-002-429-blocked'),
+      );
+      expect(source.batchCalls, beforeBatch);
+      expect(source.batchMarketCalls, beforeMarket);
+      expect(monitor.currentState.retryAt, isNotNull);
+      expect(monitor.currentState.requestEndpointClass, 'market');
+      await monitor.dispose();
+    },
+  );
+
+  test(
+    'AUD-T25-002 coalesces concurrent manual refresh commands into one capture',
+    () async {
+      final clock = FakeRiskClock();
+      final source = BatchFakeRiskSource(
+        clock: clock,
+        positions: <RiskPosition>[
+          syntheticRiskPosition(observedAt: clock.value),
+        ],
+      );
+      final monitor = RiskMonitor(
+        dataSource: source,
+        persistence: FakeRiskPersistence(),
+        clock: clock.now,
+        foregroundCadence: const Duration(minutes: 1),
+        marketCadence: const Duration(minutes: 1),
+      );
+
+      await monitor.dispatch(
+        RiskMonitorCommand.start(id: 'audit-002-coalesce-start'),
+      );
+      clock.advance(const Duration(minutes: 1));
+      final first = monitor.dispatch(
+        RiskMonitorCommand.refresh(id: 'audit-002-coalesce-one'),
+      );
+      final second = monitor.dispatch(
+        RiskMonitorCommand.refresh(id: 'audit-002-coalesce-two'),
+      );
+      final results = await Future.wait(<Future<RiskMonitorCommandResult>>[
+        first,
+        second,
+      ]);
+
+      expect(source.batchCalls, 2);
+      expect(results.first.accepted, isTrue);
+      expect(results.last.accepted, isTrue);
+      expect(results.last.replayed, isTrue);
+      await monitor.dispose();
+    },
+  );
+
+  test(
+    'AUD-T25-002 expired backoff recovery clears metadata and resets the retry sequence',
+    () async {
+      final clock = FakeRiskClock();
+      final source = BatchFakeRiskSource(
+        clock: clock,
+        positions: <RiskPosition>[
+          syntheticRiskPosition(observedAt: clock.value),
+        ],
+        marketFailure: const RiskRepositoryException(
+          'synthetic first rate limit',
+          statusCode: 429,
+          retryAfter: Duration(minutes: 2),
+          endpoint: 'market',
+        ),
+      );
+      final monitor = RiskMonitor(
+        dataSource: source,
+        persistence: FakeRiskPersistence(),
+        clock: clock.now,
+        foregroundCadence: const Duration(minutes: 1),
+        marketCadence: const Duration(minutes: 1),
+      );
+
+      await monitor.dispatch(
+        RiskMonitorCommand.start(id: 'audit-002-recovery-start'),
+      );
+      expect(
+        monitor.currentState.retryAt,
+        clock.value.add(const Duration(minutes: 2)),
+      );
+      expect(monitor.currentState.requestEndpointClass, 'market');
+
+      clock.advance(const Duration(minutes: 1, seconds: 59));
+      final beforeExpiryBatch = source.batchCalls;
+      await monitor.dispatch(
+        RiskMonitorCommand.refresh(id: 'audit-002-recovery-blocked'),
+      );
+      expect(source.batchCalls, beforeExpiryBatch);
+      expect(monitor.currentState.requestEndpointClass, 'market');
+
+      source.marketFailure = null;
+      clock.advance(const Duration(seconds: 1));
+      await monitor.dispatch(
+        RiskMonitorCommand.refresh(id: 'audit-002-recovery-success'),
+      );
+      expect(
+        monitor.currentState.requestStatus,
+        RiskMonitorRequestStatus.ready,
+      );
+      expect(monitor.currentState.retryAt, isNull);
+      expect(monitor.currentState.requestEndpointClass, isNull);
+
+      source.marketFailure = const RiskRepositoryException(
+        'synthetic second rate limit',
+        statusCode: 429,
+        endpoint: 'market',
+      );
+      clock.advance(const Duration(minutes: 1));
+      await monitor.dispatch(
+        RiskMonitorCommand.refresh(id: 'audit-002-recovery-restart'),
+      );
+      expect(
+        monitor.currentState.retryAt,
+        clock.value.add(const Duration(seconds: 30)),
+      );
+      expect(monitor.currentState.requestEndpointClass, 'market');
+      await monitor.dispose();
+    },
+  );
+
+  test(
+    'AUD-T25-003 aggregate codec preserves every populated per-position field',
+    () async {
+      final clock = FakeRiskClock();
+      final source = BatchFakeRiskSource(
+        clock: clock,
+        positions: <RiskPosition>[
+          syntheticRiskPosition(observedAt: clock.value),
+        ],
+      );
+      final monitor = RiskMonitor(
+        dataSource: source,
+        persistence: FakeRiskPersistence(),
+        clock: clock.now,
+        foregroundCadence: const Duration(minutes: 1),
+        marketCadence: const Duration(minutes: 1),
+      );
+      await monitor.dispatch(RiskMonitorCommand.start(id: 'audit-003-start'));
+      source.positions = <RiskPosition>[
+        syntheticRiskPosition(observedAt: clock.value, markPrice: 8),
+      ];
+      clock.advance(const Duration(minutes: 1));
+      await monitor.dispatch(
+        RiskMonitorCommand.refresh(id: 'audit-003-refresh'),
+      );
+
+      final original = monitor.currentState.positions.single;
+      expect(original.position, isNotNull);
+      expect(original.evaluation, isNotNull);
+      expect(original.planEvaluation, isNotNull);
+      expect(original.plan, isNotNull);
+      expect(original.settings, isNotNull);
+      expect(original.market, isNotNull);
+      expect(original.samples.length, greaterThanOrEqualTo(2));
+      expect(original.trend, isNotNull);
+      expect(original.velocity, isNotNull);
+      expect(original.events, isNotEmpty);
+
+      final comparison = RiskSessionComparison(
+        baseline: original.samples.first,
+        current: original.samples.last,
+        bufferDeltaPoints: 1.25,
+        leverageDelta: 0.5,
+        debtDelta: 2,
+        trueExitChanged: true,
+        structureChanged: true,
+        fundingChanged: true,
+        openInterestChanged: true,
+        overallChanged: true,
+        positionChanged: true,
+      );
+      final sample = original.samples.last;
+      final rule = RiskRule(
+        id: 'codec-buffer-rule',
+        episodeKey: original.episodeKey,
+        metric: RiskPlanMetric.buffer,
+        comparison: RiskPlanComparison.lessThan,
+        threshold: 0.25,
+        title: 'Codec buffer rule',
+        createdAt: clock.value,
+        updatedAt: clock.value,
+      );
+      final configuredPlan = RiskPlan(
+        episodeKey: original.episodeKey,
+        rules: <RiskRule>[rule],
+      );
+      final configuredPlanEvaluation = RiskPlanEvaluation(
+        rules: <RiskRuleEvaluation>[
+          RiskRuleEvaluation(
+            rule: rule,
+            state: RiskRuleState.active,
+            value: 0.1,
+            referenceValue: 0.25,
+            reason: 'synthetic plan evaluation',
+          ),
+        ],
+        evaluatedAt: clock.value,
+      );
+      final configuredSettings = original.settings!.copyWith(
+        customStressChanges: const <double>[-0.1, 0.1],
+        customStressPrices: const <double>[8],
+        summaryHour: 7,
+        summaryMinute: 30,
+      );
+      final summary = RiskDailySummary(
+        episodeKey: original.episodeKey,
+        dateKey: '2026-09-10',
+        timeZone: 'UTC',
+        capturedAt: clock.value,
+        quality: original.quality,
+        overallState: sample.overallState,
+        positionState: sample.positionState,
+        marketState: sample.marketState,
+        recoveryState: sample.recoveryState,
+        buffer: sample.buffer,
+        effectiveLeverage: sample.effectiveLeverage,
+        actualInterestToday: sample.actualInterestToday,
+        knownInterestToday: sample.knownInterestToday,
+        actualInterestQuality: sample.actualInterestQuality,
+        interestCoverageComplete: sample.interestCoverageComplete,
+        majorChange: 'synthetic codec change',
+        activeRuleCount: 2,
+        unknownRuleCount: 1,
+      );
+      final populated = original.copyWith(
+        plan: configuredPlan,
+        planEvaluation: configuredPlanEvaluation,
+        settings: configuredSettings,
+        summaries: <RiskDailySummary>[summary],
+        previousCheck: comparison,
+        unsaved: true,
+        lastError: 'synthetic per-position error',
+        freshnessAt: clock.value,
+      );
+      final state = monitor.currentState.copyWith(
+        episodeKey: populated.episodeKey,
+        settings: configuredSettings,
+        positions: <RiskPositionMonitorViewState>[populated],
+      );
+      final decoded = RiskMonitorWire.decodeState(
+        RiskMonitorWire.encodeState(state),
+      );
+      final roundTrip = decoded.positions.single;
+
+      expect(roundTrip.positionId, populated.positionId);
+      expect(roundTrip.episodeKey, populated.episodeKey);
+      expect(roundTrip.direction, populated.direction);
+      expect(
+        roundTrip.position?.instrumentId,
+        populated.position?.instrumentId,
+      );
+      expect(
+        roundTrip.evaluation?.metrics.markPrice.value,
+        populated.evaluation?.metrics.markPrice.value,
+      );
+      expect(
+        roundTrip.planEvaluation?.rules.length,
+        populated.planEvaluation?.rules.length,
+      );
+      expect(roundTrip.planEvaluation?.rules.single.rule.id, rule.id);
+      expect(
+        roundTrip.planEvaluation?.rules.single.reason,
+        'synthetic plan evaluation',
+      );
+      expect(roundTrip.plan?.episodeKey, populated.plan?.episodeKey);
+      expect(roundTrip.plan?.rules.single.title, rule.title);
+      expect(roundTrip.settings?.summaryHour, populated.settings?.summaryHour);
+      expect(
+        roundTrip.settings?.customStressChanges,
+        configuredSettings.customStressChanges,
+      );
+      expect(
+        roundTrip.market?.assetInstrument,
+        populated.market?.assetInstrument,
+      );
+      expect(
+        roundTrip.market?.openInterestLabel,
+        populated.market?.openInterestLabel,
+      );
+      expect(roundTrip.samples.length, populated.samples.length);
+      expect(
+        roundTrip.samples.map((item) => item.observedAt),
+        orderedEquals(populated.samples.map((item) => item.observedAt)),
+      );
+      expect(roundTrip.summaries.length, 1);
+      expect(roundTrip.summaries.single.dateKey, summary.dateKey);
+      expect(roundTrip.summaries.single.majorChange, summary.majorChange);
+      expect(
+        roundTrip.previousCheck?.baseline.observedAt,
+        populated.previousCheck?.baseline.observedAt,
+      );
+      expect(
+        roundTrip.previousCheck?.current.observedAt,
+        populated.previousCheck?.current.observedAt,
+      );
+      expect(roundTrip.previousCheck?.bufferDeltaPoints, 1.25);
+      expect(roundTrip.previousCheck?.leverageDelta, 0.5);
+      expect(roundTrip.previousCheck?.debtDelta, 2);
+      expect(roundTrip.previousCheck?.openInterestChanged, isTrue);
+      expect(roundTrip.trend?.label, populated.trend?.label);
+      expect(
+        roundTrip.trend?.bufferDeltaPoints,
+        populated.trend?.bufferDeltaPoints,
+      );
+      expect(roundTrip.velocity?.label, populated.velocity?.label);
+      expect(
+        roundTrip.velocity?.pointsPerHour,
+        populated.velocity?.pointsPerHour,
+      );
+      expect(
+        roundTrip.events.map((event) => event.id),
+        orderedEquals(populated.events.map((event) => event.id)),
+      );
+      expect(roundTrip.quality.status, populated.quality.status);
+      expect(roundTrip.quality.reason, populated.quality.reason);
+      expect(roundTrip.unsaved, isTrue);
+      expect(roundTrip.lastError, populated.lastError);
+      expect(roundTrip.freshnessAt, populated.freshnessAt);
       await monitor.dispose();
     },
   );

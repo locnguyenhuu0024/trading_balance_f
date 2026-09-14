@@ -271,6 +271,7 @@ Rollback steps: revert only affected task write surfaces in reverse order; prese
 | D-001 | REQ-001-REQ-003, P01-P02, T24-T25 | user message 2026-09-13 | request to return to selection-only or include spot/unsupported positions |
 | D-002 | REQ-004, P03, T26 | user message 2026-09-13 | request for selector or always-expanded presentation |
 | D-003 | REQ-005, P04, T27 | user message 2026-09-13 | request for another locale/scope/order |
+| D-004 | REQ-001-REQ-003, P01-P02, T24-T25 | user message 2026-09-14 | request for current short or non-USDT financial semantics |
 
 ## 13. Task Decomposition
 

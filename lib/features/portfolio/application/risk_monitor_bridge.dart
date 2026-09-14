@@ -83,11 +83,13 @@ class RiskMonitorCommand {
   factory RiskMonitorCommand.updatePlan({
     required String id,
     required RiskPlan plan,
+    String? episodeKey,
     DateTime? issuedAt,
   }) => RiskMonitorCommand(
     id: id,
     type: RiskMonitorCommandType.updatePlan,
     issuedAt: (issuedAt ?? DateTime.now().toUtc()).toUtc(),
+    episodeKey: episodeKey ?? plan.episodeKey,
     plan: plan,
   );
 
@@ -104,11 +106,13 @@ class RiskMonitorCommand {
 
   factory RiskMonitorCommand.clearHistory({
     required String id,
+    String? episodeKey,
     DateTime? issuedAt,
   }) => RiskMonitorCommand(
     id: id,
     type: RiskMonitorCommandType.clearHistory,
     issuedAt: (issuedAt ?? DateTime.now().toUtc()).toUtc(),
+    episodeKey: episodeKey,
   );
 
   factory RiskMonitorCommand.invalidateCredentials({
@@ -181,6 +185,153 @@ class RiskMonitorCommand {
   }
 }
 
+/// Aggregate request state for the single monitor owner.  This is deliberately
+/// separate from [RiskQuality]: quality describes an observation/position,
+/// while this value describes the account-wide capture request lifecycle.
+enum RiskMonitorRequestStatus {
+  ready,
+  refreshing,
+  backingOff,
+  authBlocked,
+  partial,
+  unavailable,
+}
+
+/// Alias for callers that use the shorter request-status terminology.
+typedef RiskRequestStatus = RiskMonitorRequestStatus;
+
+/// Immutable state for one active position episode.
+///
+/// Every field that used to live on the singular monitor state is kept at the
+/// episode grain here.  [positionSide] remains explicit even though the
+/// current financial contract is long-only, leaving a stable seam for a
+/// future short isolated-margin evaluator without changing ownership or
+/// persistence routing.
+class RiskPositionMonitorViewState {
+  RiskPositionMonitorViewState({
+    this.positionId,
+    this.episodeKey = '',
+    String? positionSide,
+    String? direction,
+    this.position,
+    this.evaluation,
+    this.planEvaluation,
+    RiskPlan? plan,
+    RiskSettings? settings,
+    this.market,
+    List<RiskHistorySample> samples = const <RiskHistorySample>[],
+    List<RiskDailySummary> summaries = const <RiskDailySummary>[],
+    this.previousCheck,
+    this.trend,
+    this.velocity,
+    List<RiskEvent> events = const <RiskEvent>[],
+    this.quality = const RiskQuality.unavailable(
+      reason: 'Position has not observed a snapshot',
+    ),
+    this.unsaved = false,
+    this.lastError,
+    this.freshnessAt,
+  }) : positionSide = direction ?? positionSide ?? 'long',
+       plan = _freezePlan(plan),
+       settings = _freezeSettings(settings),
+       samples = List<RiskHistorySample>.unmodifiable(samples),
+       summaries = List<RiskDailySummary>.unmodifiable(summaries),
+       events = List<RiskEvent>.unmodifiable(events);
+
+  final String? positionId;
+  final String episodeKey;
+  final String positionSide;
+  final RiskPosition? position;
+  final RiskEvaluation? evaluation;
+  final RiskPlanEvaluation? planEvaluation;
+  final RiskPlan? plan;
+  final RiskSettings? settings;
+  final RiskMarketInput? market;
+  final List<RiskHistorySample> samples;
+  final List<RiskDailySummary> summaries;
+  final RiskSessionComparison? previousCheck;
+  final RiskTrendResult? trend;
+  final RiskVelocityResult? velocity;
+  final List<RiskEvent> events;
+  final RiskQuality quality;
+  final bool unsaved;
+  final String? lastError;
+  final DateTime? freshnessAt;
+
+  /// Direction is intentionally exposed as a string for wire compatibility
+  /// with the existing [RiskPosition.positionSide] contract.
+  String get direction => positionSide;
+
+  String get positionDirection => positionSide;
+
+  bool get isLong {
+    final normalized = positionSide.toLowerCase();
+    return normalized != 'short' && normalized != 'sell';
+  }
+
+  /// The latest trustworthy freshness marker for this episode.
+  DateTime? get freshness =>
+      freshnessAt ?? quality.observedAt ?? position?.observedAt;
+
+  RiskPositionMonitorViewState copyWith({
+    String? positionId,
+    String? episodeKey,
+    String? positionSide,
+    RiskPosition? position,
+    RiskEvaluation? evaluation,
+    RiskPlanEvaluation? planEvaluation,
+    RiskPlan? plan,
+    RiskSettings? settings,
+    RiskMarketInput? market,
+    List<RiskHistorySample>? samples,
+    List<RiskDailySummary>? summaries,
+    RiskSessionComparison? previousCheck,
+    RiskTrendResult? trend,
+    RiskVelocityResult? velocity,
+    List<RiskEvent>? events,
+    RiskQuality? quality,
+    bool? unsaved,
+    String? lastError,
+    DateTime? freshnessAt,
+    bool clearEvaluation = false,
+    bool clearPlanEvaluation = false,
+    bool clearPlan = false,
+    bool clearSettings = false,
+    bool clearMarket = false,
+    bool clearPreviousCheck = false,
+    bool clearTrend = false,
+    bool clearVelocity = false,
+    bool clearError = false,
+    bool clearFreshness = false,
+  }) {
+    return RiskPositionMonitorViewState(
+      positionId: positionId ?? this.positionId,
+      episodeKey: episodeKey ?? this.episodeKey,
+      positionSide: positionSide ?? this.positionSide,
+      position: position ?? this.position,
+      evaluation: clearEvaluation ? null : evaluation ?? this.evaluation,
+      planEvaluation: clearPlanEvaluation
+          ? null
+          : planEvaluation ?? this.planEvaluation,
+      plan: clearPlan ? null : plan ?? this.plan,
+      settings: clearSettings ? null : settings ?? this.settings,
+      market: clearMarket ? null : market ?? this.market,
+      samples: samples ?? this.samples,
+      summaries: summaries ?? this.summaries,
+      previousCheck: clearPreviousCheck
+          ? null
+          : previousCheck ?? this.previousCheck,
+      trend: clearTrend ? null : trend ?? this.trend,
+      velocity: clearVelocity ? null : velocity ?? this.velocity,
+      events: events ?? this.events,
+      quality: quality ?? this.quality,
+      unsaved: unsaved ?? this.unsaved,
+      lastError: clearError ? null : lastError ?? this.lastError,
+      freshnessAt: clearFreshness ? null : freshnessAt ?? this.freshnessAt,
+    );
+  }
+}
+
 class RiskMonitorViewState {
   RiskMonitorViewState({
     this.isRunning = false,
@@ -205,6 +356,11 @@ class RiskMonitorViewState {
     this.unsaved = false,
     this.lastError,
     this.notificationCapability = RiskNotificationCapabilityStatus.unavailable,
+    List<RiskPositionMonitorViewState> positions =
+        const <RiskPositionMonitorViewState>[],
+    this.requestStatus = RiskMonitorRequestStatus.unavailable,
+    this.retryAt,
+    this.requestEndpointClass,
   }) : plan = _freezePlan(plan),
        settings = _freezeSettings(settings),
        market = _freezeMarket(market),
@@ -214,7 +370,8 @@ class RiskMonitorViewState {
        summaries = summaries == null
            ? null
            : List<RiskDailySummary>.unmodifiable(summaries),
-       events = List<RiskEvent>.unmodifiable(events);
+       events = List<RiskEvent>.unmodifiable(events),
+       positions = List<RiskPositionMonitorViewState>.unmodifiable(positions);
 
   final bool isRunning;
   final bool backgroundAvailable;
@@ -236,6 +393,29 @@ class RiskMonitorViewState {
   final bool unsaved;
   final String? lastError;
   final RiskNotificationCapabilityStatus notificationCapability;
+  final List<RiskPositionMonitorViewState> positions;
+  final RiskMonitorRequestStatus requestStatus;
+  final DateTime? retryAt;
+  final String? requestEndpointClass;
+
+  /// Naming aliases keep bridge consumers independent from the implementation
+  /// detail that the aggregate is stored as a list on the root state.
+  List<RiskPositionMonitorViewState> get positionStates => positions;
+  List<RiskPositionMonitorViewState> get positionEntries => positions;
+  List<RiskPositionMonitorViewState> get aggregatePositions => positions;
+  RiskMonitorRequestStatus get aggregateRequestStatus => requestStatus;
+  DateTime? get nextRetryAt => retryAt;
+  String? get endpointClass => requestEndpointClass;
+  RiskPositionMonitorViewState? get primaryPosition {
+    if (positions.isEmpty) return null;
+    final selectedEpisode = episodeKey;
+    if (selectedEpisode != null) {
+      for (final position in positions) {
+        if (position.episodeKey == selectedEpisode) return position;
+      }
+    }
+    return positions.first;
+  }
 
   RiskMonitorViewState copyWith({
     bool? isRunning,
@@ -258,6 +438,10 @@ class RiskMonitorViewState {
     bool? unsaved,
     String? lastError,
     RiskNotificationCapabilityStatus? notificationCapability,
+    List<RiskPositionMonitorViewState>? positions,
+    RiskMonitorRequestStatus? requestStatus,
+    DateTime? retryAt,
+    String? requestEndpointClass,
     bool clearEvaluation = false,
     bool clearPlanEvaluation = false,
     bool clearPlan = false,
@@ -269,6 +453,9 @@ class RiskMonitorViewState {
     bool clearTrend = false,
     bool clearVelocity = false,
     bool clearError = false,
+    bool clearPositions = false,
+    bool clearRetryAt = false,
+    bool clearRequestEndpointClass = false,
   }) {
     return RiskMonitorViewState(
       isRunning: isRunning ?? this.isRunning,
@@ -300,6 +487,14 @@ class RiskMonitorViewState {
       lastError: clearError ? null : lastError ?? this.lastError,
       notificationCapability:
           notificationCapability ?? this.notificationCapability,
+      positions: clearPositions
+          ? const <RiskPositionMonitorViewState>[]
+          : positions ?? this.positions,
+      requestStatus: requestStatus ?? this.requestStatus,
+      retryAt: clearRetryAt ? null : retryAt ?? this.retryAt,
+      requestEndpointClass: clearRequestEndpointClass
+          ? null
+          : requestEndpointClass ?? this.requestEndpointClass,
     );
   }
 }
@@ -1160,6 +1355,149 @@ RiskSessionComparison _comparisonFromWire(Object? value) {
   );
 }
 
+Map<String, dynamic> _positionMonitorWire(
+  RiskPositionMonitorViewState value,
+) => <String, dynamic>{
+  'positionId': value.positionId,
+  'episodeKey': value.episodeKey,
+  'positionSide': value.positionSide,
+  'direction': value.direction,
+  'position': value.position == null ? null : _positionWire(value.position!),
+  'evaluation': value.evaluation == null
+      ? null
+      : _evaluationWire(value.evaluation!),
+  'planEvaluation': value.planEvaluation == null
+      ? null
+      : _planEvaluationWire(value.planEvaluation!),
+  'plan': value.plan?.toJson(),
+  'settings': value.settings?.toJson(),
+  'market': value.market == null ? null : _marketWire(value.market!),
+  'samples': value.samples
+      .map((sample) => sample.toJson())
+      .toList(growable: false),
+  'summaries': value.summaries
+      .map((summary) => summary.toJson())
+      .toList(growable: false),
+  'previousCheck': value.previousCheck == null
+      ? null
+      : _comparisonWire(value.previousCheck!),
+  'trend': value.trend == null ? null : _trendWire(value.trend!),
+  'velocity': value.velocity == null ? null : _velocityWire(value.velocity!),
+  'events': value.events.map((event) => event.toJson()).toList(growable: false),
+  'eventIds': value.events.map((event) => event.id).toList(growable: false),
+  'quality': _qualityWire(value.quality),
+  'unsaved': value.unsaved,
+  'lastError': value.lastError,
+  'freshnessAt': _wireDate(value.freshnessAt),
+};
+
+RiskPositionMonitorViewState _positionMonitorFromWire(Object? value) {
+  final map = _wireMap(value) ?? const <String, dynamic>{};
+  final position = map['position'] == null
+      ? null
+      : _positionFromWire(map['position']);
+  final rawEvents = map['events'];
+  final events = <RiskEvent>[];
+  if (rawEvents is List) {
+    for (final item in rawEvents) {
+      final event = _wireMap(item);
+      if (event == null) continue;
+      try {
+        events.add(RiskEvent.fromJson(event));
+      } catch (_) {
+        // Keep decoding the remaining aggregate entries. Event ids below
+        // preserve dedupe identity without transporting private details.
+      }
+    }
+  }
+  final knownIds = events.map((event) => event.id).toSet();
+  final eventIds = map['eventIds'];
+  if (eventIds is List) {
+    for (final rawId in eventIds) {
+      final id = rawId.toString();
+      if (!knownIds.add(id)) continue;
+      events.add(
+        RiskEvent(
+          id: id,
+          episodeKey:
+              map['episodeKey']?.toString() ?? position?.episodeKey ?? '',
+          kind: RiskEventKind.stateChange,
+          message: 'Risk update',
+          createdAt: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+          observedAt: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+        ),
+      );
+    }
+  }
+  List<RiskHistorySample> samples() {
+    final raw = map['samples'];
+    if (raw is! List) return const <RiskHistorySample>[];
+    return raw
+        .whereType<Map>()
+        .map(
+          (item) => RiskHistorySample.fromJson(Map<String, dynamic>.from(item)),
+        )
+        .toList(growable: false);
+  }
+
+  List<RiskDailySummary> summaries() {
+    final raw = map['summaries'];
+    if (raw is! List) return const <RiskDailySummary>[];
+    return raw
+        .whereType<Map>()
+        .map(
+          (item) => RiskDailySummary.fromJson(Map<String, dynamic>.from(item)),
+        )
+        .toList(growable: false);
+  }
+
+  return RiskPositionMonitorViewState(
+    positionId: map['positionId']?.toString() ?? position?.positionId,
+    episodeKey: map['episodeKey']?.toString() ?? position?.episodeKey ?? '',
+    positionSide:
+        map['positionSide']?.toString() ??
+        map['direction']?.toString() ??
+        position?.positionSide ??
+        'long',
+    position: position,
+    evaluation: map['evaluation'] == null
+        ? null
+        : _evaluationFromWire(map['evaluation']),
+    planEvaluation: map['planEvaluation'] == null
+        ? null
+        : _planEvaluationFromWire(map['planEvaluation']),
+    plan: map['plan'] == null
+        ? null
+        : RiskPlan.fromJson(_wireMap(map['plan'])!),
+    settings: map['settings'] == null
+        ? null
+        : RiskSettings.fromJson(_wireMap(map['settings'])!),
+    market: map['market'] == null ? null : _marketFromWire(map['market']),
+    samples: samples(),
+    summaries: summaries(),
+    previousCheck: map['previousCheck'] == null
+        ? null
+        : _comparisonFromWire(map['previousCheck']),
+    trend: map['trend'] == null ? null : _trendFromWire(map['trend']),
+    velocity: map['velocity'] == null
+        ? null
+        : _velocityFromWire(map['velocity']),
+    events: events,
+    quality: _wireQuality(map['quality']),
+    unsaved: map['unsaved'] == true,
+    lastError: map['lastError']?.toString(),
+    freshnessAt: _wireDateValue(map['freshnessAt']),
+  );
+}
+
+RiskMonitorRequestStatus _requestStatusFromWire(Object? value) {
+  final text = value?.toString();
+  return RiskMonitorRequestStatus.values.firstWhere(
+    (item) => item.name == text,
+    orElse: () => RiskMonitorRequestStatus.unavailable,
+  );
+}
+
 Map<String, dynamic> _stateWire(
   RiskMonitorViewState value,
 ) => <String, dynamic>{
@@ -1195,6 +1533,12 @@ Map<String, dynamic> _stateWire(
   'unsaved': value.unsaved,
   'lastError': value.lastError,
   'notificationCapability': value.notificationCapability.name,
+  'positions': value.positions
+      .map(_positionMonitorWire)
+      .toList(growable: false),
+  'requestStatus': value.requestStatus.name,
+  'retryAt': _wireDate(value.retryAt),
+  'requestEndpointClass': value.requestEndpointClass,
 };
 
 RiskMonitorViewState _stateFromWire(Map<String, dynamic> value) {
@@ -1246,6 +1590,60 @@ RiskMonitorViewState _stateFromWire(Map<String, dynamic> value) {
         .map((item) => RiskDailySummary.fromJson(_wireMap(item)!))
         .toList(growable: false);
   }
+  var positions = <RiskPositionMonitorViewState>[];
+  final rawPositions = value['positions'];
+  if (rawPositions is List) {
+    positions = rawPositions
+        .map(_positionMonitorFromWire)
+        .toList(growable: false);
+  }
+  // Older service peers only know the singular projection. Preserve that
+  // state as a one-entry aggregate until both sides have upgraded.
+  if (positions.isEmpty && value['episodeKey']?.toString().isNotEmpty == true) {
+    positions = <RiskPositionMonitorViewState>[
+      RiskPositionMonitorViewState(
+        positionId: (value['evaluation'] is Map)
+            ? _positionFromWire(
+                _wireMap(value['evaluation'])?['position'],
+              ).positionId
+            : null,
+        episodeKey: value['episodeKey']?.toString() ?? '',
+        positionSide: (value['evaluation'] is Map)
+            ? _positionFromWire(
+                _wireMap(value['evaluation'])?['position'],
+              ).positionSide
+            : 'long',
+        evaluation: value['evaluation'] == null
+            ? null
+            : _evaluationFromWire(value['evaluation']),
+        planEvaluation: value['planEvaluation'] == null
+            ? null
+            : _planEvaluationFromWire(value['planEvaluation']),
+        plan: value['plan'] == null
+            ? null
+            : RiskPlan.fromJson(_wireMap(value['plan'])!),
+        settings: value['settings'] == null
+            ? null
+            : RiskSettings.fromJson(_wireMap(value['settings'])!),
+        market: value['market'] == null
+            ? null
+            : _marketFromWire(value['market']),
+        samples: samples ?? const <RiskHistorySample>[],
+        summaries: summaries ?? const <RiskDailySummary>[],
+        previousCheck: value['previousCheck'] == null
+            ? null
+            : _comparisonFromWire(value['previousCheck']),
+        trend: value['trend'] == null ? null : _trendFromWire(value['trend']),
+        velocity: value['velocity'] == null
+            ? null
+            : _velocityFromWire(value['velocity']),
+        events: events,
+        quality: _wireQuality(value['quality']),
+        unsaved: value['unsaved'] == true,
+        lastError: value['lastError']?.toString(),
+      ),
+    ];
+  }
   return RiskMonitorViewState(
     isRunning: value['isRunning'] == true,
     backgroundAvailable: value['backgroundAvailable'] == true,
@@ -1279,6 +1677,10 @@ RiskMonitorViewState _stateFromWire(Map<String, dynamic> value) {
     unsaved: value['unsaved'] == true,
     lastError: value['lastError']?.toString(),
     notificationCapability: capability,
+    positions: positions,
+    requestStatus: _requestStatusFromWire(value['requestStatus']),
+    retryAt: _wireDateValue(value['retryAt']),
+    requestEndpointClass: value['requestEndpointClass']?.toString(),
   );
 }
 

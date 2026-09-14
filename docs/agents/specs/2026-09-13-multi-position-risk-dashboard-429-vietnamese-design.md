@@ -70,8 +70,8 @@ Success conditions:
 
 ## 4. Clarifications and Decisions
 
-Open questions: Q-004
-Resolved decisions: D-001, D-002, D-003
+Open questions: none
+Resolved decisions: D-001, D-002, D-003, D-004
 Authorized assumptions: N/A
 
 ## 5. Requirements
@@ -379,7 +379,7 @@ Given future source changes, when Risk presentation tests run, then an allowlist
 
 ## 21. Completion Gate
 
-- [ ] no unresolved material question — Q-004 open
+- [x] no unresolved material question — Q-004 resolved by D-004
 - [x] no silent assumption
 - [x] requirements/contracts are unambiguous
 - [x] edge/failure semantics defined
