@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../domain/risk/risk_models.dart';
+import '../../risk_vietnamese_formatter.dart';
 import 'risk_overview.dart';
 
 class RiskStressView extends StatefulWidget {
@@ -36,12 +37,14 @@ class _RiskStressViewState extends State<RiskStressView> {
   void _submitPrice() {
     final raw = double.tryParse(_priceController.text.trim());
     if (raw == null || !raw.isFinite || raw <= 0) {
-      setState(() => _error = 'Enter a finite positive price.');
+      setState(() => _error = 'Nhập một giá dương hữu hạn.');
       return;
     }
     final callback = widget.onAddCustomPrice;
     if (callback == null) {
-      setState(() => _error = 'Custom prices are managed by Risk settings.');
+      setState(
+        () => _error = 'Giá tùy chỉnh được quản lý trong Cài đặt rủi ro.',
+      );
       return;
     }
     callback(raw);
@@ -58,24 +61,21 @@ class _RiskStressViewState extends State<RiskStressView> {
       padding: const EdgeInsets.all(16),
       children: [
         Text(
-          'Stress scenarios',
+          riskVi('stressScenarios'),
           style: theme.textTheme.headlineSmall?.copyWith(
             fontWeight: FontWeight.w700,
           ),
         ),
         const SizedBox(height: 5),
         Text(
-          'Frozen debt and market context. Future margin ratio is intentionally shown as -.',
+          riskVi('stressDescription'),
           style: theme.textTheme.bodySmall?.copyWith(
             color: theme.colorScheme.onSurfaceVariant,
           ),
         ),
         const SizedBox(height: 14),
         if (scenarios.isEmpty)
-          const _EmptyPanel(
-            message:
-                'Stress scenarios are unavailable until the position has complete inputs.',
-          )
+          _EmptyPanel(message: riskVi('stressUnavailable'))
         else
           for (final scenario in scenarios) ...[
             _ScenarioCard(
@@ -106,7 +106,7 @@ class _RiskStressViewState extends State<RiskStressView> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Add custom price',
+                    riskVi('addCustomPrice'),
                     style: theme.textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.w700,
                     ),
@@ -121,8 +121,8 @@ class _RiskStressViewState extends State<RiskStressView> {
                           keyboardType: const TextInputType.numberWithOptions(
                             decimal: true,
                           ),
-                          decoration: const InputDecoration(
-                            labelText: 'Price (USDT)',
+                          decoration: InputDecoration(
+                            labelText: riskVi('priceUsdt'),
                             border: OutlineInputBorder(),
                           ),
                           obscureText: widget.hideValues,
@@ -132,7 +132,7 @@ class _RiskStressViewState extends State<RiskStressView> {
                       const SizedBox(width: 8),
                       FilledButton(
                         onPressed: _submitPrice,
-                        child: const Text('Add'),
+                        child: Text(riskVi('add')),
                       ),
                     ],
                   ),
@@ -183,11 +183,11 @@ class _ScenarioCard extends StatelessWidget {
       knownState,
     );
     final change = hideValues
-        ? 'Hidden change'
+        ? riskVi('hiddenChange')
         : scenario.percentageChange == null
-        ? 'Custom level'
+        ? riskVi('customLevel')
         : scenario.percentageChange == 0
-        ? 'Current'
+        ? riskVi('current')
         : '${(scenario.percentageChange! * 100).toStringAsFixed(0)}%';
     return Card(
       elevation: 0,
@@ -212,13 +212,13 @@ class _ScenarioCard extends StatelessWidget {
                   ),
                 ),
                 Text(
-                  knownState?.label ?? '-',
+                  riskViSeverity(knownState),
                   style: TextStyle(color: color, fontWeight: FontWeight.w800),
                 ),
                 if (knownState != null && !qualityIsCurrent)
                   Flexible(
                     child: Text(
-                      'Last known ${knownState.label} · ${riskQualityLabel(effectiveQuality)}',
+                      '${riskVi('lastKnown')} ${riskViSeverity(knownState)} · ${riskQualityLabel(effectiveQuality)}',
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       textAlign: TextAlign.end,
@@ -227,7 +227,7 @@ class _ScenarioCard extends StatelessWidget {
                   ),
                 if (onRemove != null)
                   IconButton(
-                    tooltip: 'Remove custom price',
+                    tooltip: riskVi('removeCustomPrice'),
                     onPressed: onRemove,
                     icon: const Icon(Icons.delete_outline, size: 19),
                   ),
@@ -239,11 +239,11 @@ class _ScenarioCard extends StatelessWidget {
               runSpacing: 8,
               children: [
                 _ScenarioValue(
-                  label: 'Position',
-                  value: scenario.positionState?.label ?? '-',
+                  label: riskVi('position'),
+                  value: riskViSeverity(scenario.positionState),
                 ),
                 _ScenarioValue(
-                  label: 'Equity',
+                  label: riskVi('equity'),
                   value: riskMaskedValue(
                     scenario.equity,
                     hideValues,
@@ -251,7 +251,7 @@ class _ScenarioCard extends StatelessWidget {
                   ),
                 ),
                 _ScenarioValue(
-                  label: 'Leverage',
+                  label: riskVi('leverage'),
                   value: riskMaskedValue(
                     scenario.effectiveLeverage,
                     hideValues,
@@ -259,11 +259,11 @@ class _ScenarioCard extends StatelessWidget {
                   ),
                 ),
                 _ScenarioValue(
-                  label: 'Buffer',
+                  label: riskVi('buffer'),
                   value: riskMaskedPercent(scenario.buffer, hideValues),
                 ),
                 _ScenarioValue(
-                  label: 'Margin ratio',
+                  label: riskVi('marginRatio'),
                   value: riskMaskedPercent(scenario.marginRatio, hideValues),
                 ),
               ],
@@ -272,9 +272,9 @@ class _ScenarioCard extends StatelessWidget {
               const SizedBox(height: 8),
               Text(
                 scenario.partial
-                    ? 'Partial scenario · ${riskRedactRiskText(scenario.marketContextLabel, hideValues)}'
+                    ? '${riskVi('partialScenario')} · ${riskRedactRiskText(riskViGenerated(scenario.marketContextLabel), hideValues)}'
                     : riskRedactRiskText(
-                        scenario.marketContextLabel,
+                        riskViGenerated(scenario.marketContextLabel),
                         hideValues,
                       ),
                 style: theme.textTheme.bodySmall?.copyWith(
@@ -285,7 +285,10 @@ class _ScenarioCard extends StatelessWidget {
             if (scenario.reasons.isNotEmpty) ...[
               const SizedBox(height: 6),
               Text(
-                riskRedactRiskText(scenario.reasons.first.message, hideValues),
+                riskRedactRiskText(
+                  riskViReason(scenario.reasons.first.message),
+                  hideValues,
+                ),
                 style: theme.textTheme.bodySmall,
               ),
             ],

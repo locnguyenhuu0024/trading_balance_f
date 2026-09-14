@@ -5,6 +5,7 @@ import 'package:trading_balance_f/features/portfolio/application/risk_monitor_br
 import 'package:trading_balance_f/features/portfolio/domain/risk/action_plan.dart';
 import 'package:trading_balance_f/features/portfolio/domain/risk/risk_models.dart';
 import 'package:trading_balance_f/features/portfolio/presentation/risk_dashboard_screen.dart';
+import 'package:trading_balance_f/features/portfolio/presentation/risk_vietnamese_formatter.dart';
 import 'package:trading_balance_f/features/portfolio/presentation/providers/risk_dashboard_provider.dart';
 import 'package:trading_balance_f/features/portfolio/presentation/widgets/risk/risk_plan_editor.dart';
 import 'package:trading_balance_f/features/portfolio/presentation/widgets/risk/risk_price_map.dart';
@@ -14,7 +15,7 @@ import 'package:trading_balance_f/features/portfolio/presentation/widgets/risk/r
 import 'fixtures/risk_test_fixtures.dart';
 
 void main() {
-  testWidgets('RED-004 invalid rule stays unevaluated and cannot save', (
+  testWidgets('RED-003 invalid rule stays unevaluated and cannot save', (
     tester,
   ) async {
     final evaluation = riskEvaluation();
@@ -29,19 +30,22 @@ void main() {
     addTearDown(owner.dispose);
     await tester.pumpWidget(_editorApp(owner, evaluation.position.episodeKey));
 
-    await tester.tap(find.text('Create rule'));
+    await tester.tap(find.text(riskVi('createRule')));
     await tester.pumpAndSettle();
-    expect(find.text('Create rule'), findsWidgets);
+    expect(find.text(riskVi('createRule')), findsWidgets);
     final fields = find.byType(TextField);
     await tester.enterText(fields.at(0), 'Bad buffer rule');
     await tester.enterText(fields.at(1), 'not-a-number');
-    await tester.tap(find.text('Save rule'));
+    await tester.tap(find.text(riskVi('saveRule')));
     await tester.pump();
-    expect(find.textContaining('Rule threshold'), findsOneWidget);
+    expect(
+      find.text(riskViGenerated('Rule threshold must be finite')),
+      findsOneWidget,
+    );
     expect(owner.plan, isNull);
   });
 
-  testWidgets('RED-004 overlapping and reversed zones are rejected', (
+  testWidgets('RED-003 overlapping and reversed zones are rejected', (
     tester,
   ) async {
     final evaluation = riskEvaluation();
@@ -83,7 +87,7 @@ void main() {
   });
 
   testWidgets(
-    'GREEN-004 account switch from populated plan to null clears editor state',
+    'GREEN-003 account switch from populated plan to null clears editor state',
     (tester) async {
       final evaluation = riskEvaluation();
       final oldPlan = riskPlan(
@@ -148,13 +152,13 @@ void main() {
       );
       await tester.pump();
       expect(find.text('Account A only'), findsNothing);
-      expect(find.text('No plan defined'), findsOneWidget);
+      expect(find.text(riskVi('noPlan')), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );
 
   testWidgets(
-    'GREEN-004 rule editor persists through typed bridge and settings validates',
+    'GREEN-003 rule editor persists through typed bridge and settings validates',
     (tester) async {
       tester.view.physicalSize = const Size(800, 1400);
       tester.view.devicePixelRatio = 1;
@@ -174,31 +178,31 @@ void main() {
         _editorApp(owner, evaluation.position.episodeKey),
       );
 
-      await tester.tap(find.text('Create rule'));
+      await tester.tap(find.text(riskVi('createRule')));
       await tester.pumpAndSettle();
       final fields = find.byType(TextField);
       await tester.enterText(fields.at(0), 'Buffer review');
       await tester.enterText(fields.at(1), '0.3');
-      await tester.tap(find.text('Save rule'));
+      await tester.tap(find.text(riskVi('saveRule')));
       await tester.pumpAndSettle();
       expect(owner.plan, isNotNull);
       expect(find.text('Buffer review'), findsOneWidget);
 
-      await tester.tap(find.byTooltip('Edit rule'));
+      await tester.tap(find.byTooltip(riskVi('editRule')));
       await tester.pumpAndSettle();
-      expect(find.text('Edit'), findsOneWidget);
-      await tester.tap(find.text('Edit'));
+      expect(find.text(riskVi('edit')), findsOneWidget);
+      await tester.tap(find.text(riskVi('edit')));
       await tester.pumpAndSettle();
-      expect(find.text('Edit rule'), findsOneWidget);
-      await tester.tap(find.text('Cancel'));
+      expect(find.text(riskVi('editRule')), findsOneWidget);
+      await tester.tap(find.text(riskVi('cancel')));
       await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('Edit rule'));
+      await tester.tap(find.byTooltip(riskVi('editRule')));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Delete'));
+      await tester.tap(find.text(riskVi('delete')));
       await tester.pumpAndSettle();
       expect(owner.plan!.rules, isEmpty);
 
-      await tester.tap(find.text('Create zone'));
+      await tester.tap(find.text(riskVi('createZone')));
       await tester.pumpAndSettle();
       final zoneFields = find.byType(TextField);
       expect(zoneFields, findsNWidgets(4));
@@ -207,21 +211,21 @@ void main() {
       await tester.enterText(zoneFields.at(0), 'Recovery zone');
       await tester.enterText(zoneFields.at(1), '9');
       await tester.enterText(zoneFields.at(2), '10');
-      await tester.tap(find.text('Save zone'));
+      await tester.tap(find.text(riskVi('saveZone')));
       await tester.pumpAndSettle();
       expect(owner.plan!.zones, hasLength(1));
       expect(find.text('Recovery zone'), findsOneWidget);
-      await tester.tap(find.byTooltip('Edit zone'));
+      await tester.tap(find.byTooltip(riskVi('editZone')));
       await tester.pumpAndSettle();
-      expect(find.text('Edit'), findsOneWidget);
-      await tester.tap(find.text('Edit'));
+      expect(find.text(riskVi('edit')), findsOneWidget);
+      await tester.tap(find.text(riskVi('edit')));
       await tester.pumpAndSettle();
-      expect(find.text('Edit zone'), findsOneWidget);
-      await tester.tap(find.text('Save zone'));
+      expect(find.text(riskVi('editZone')), findsOneWidget);
+      await tester.tap(find.text(riskVi('saveZone')));
       await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('Edit zone'));
+      await tester.tap(find.byTooltip(riskVi('editZone')));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Delete'));
+      await tester.tap(find.text(riskVi('delete')));
       await tester.pumpAndSettle();
       expect(owner.plan!.zones, isEmpty);
 
@@ -234,19 +238,19 @@ void main() {
       // The sheet is modal; showing it is enough to prove it is connected to
       // the typed updateSettings command. Its save path is covered below.
       await tester.pumpAndSettle();
-      expect(find.text('Risk settings'), findsOneWidget);
+      expect(find.text(riskVi('riskSettings')), findsOneWidget);
       for (final label in <String>[
-        'Time zone label',
-        'Daily summary hour',
-        'Daily summary minute',
-        'Sample retention days',
-        'OI retention hours',
-        'Event retention days',
-        'Summary retention days',
-        'Maximum history samples',
-        'Maximum OI samples',
-        'Maximum events',
-        'Maximum episodes',
+        riskVi('timeZoneLabel'),
+        riskVi('dailySummaryHour'),
+        riskVi('dailySummaryMinute'),
+        riskVi('sampleRetentionDays'),
+        riskVi('oiRetentionHours'),
+        riskVi('eventRetentionDays'),
+        riskVi('summaryRetentionDays'),
+        riskVi('maximumHistorySamples'),
+        riskVi('maximumOiSamples'),
+        riskVi('maximumEvents'),
+        riskVi('maximumEpisodes'),
       ]) {
         await tester.scrollUntilVisible(
           find.text(label),
@@ -257,14 +261,14 @@ void main() {
       }
       expect(const RiskSettings(summaryHour: 24).isValid, isFalse);
       expect(const RiskSettings(sampleRetentionDays: 0).isValid, isFalse);
-      await tester.tap(find.text('Save risk settings'));
+      await tester.tap(find.text(riskVi('saveRiskSettings')));
       await tester.pumpAndSettle();
       expect(owner.settings, isNotNull);
     },
   );
 
   testWidgets(
-    'GREEN-004 scenario editor adds sequential custom prices from latest state and removes a custom row',
+    'GREEN-003 scenario editor adds sequential custom prices from latest state and removes a custom row',
     (tester) async {
       final evaluation = riskEvaluation();
       final owner = InMemoryRiskMonitorOwner(
@@ -286,26 +290,28 @@ void main() {
       );
       await tester.pump();
       await tester.ensureVisible(
-        find.widgetWithText(OutlinedButton, 'Scenarios'),
+        find.widgetWithText(OutlinedButton, riskVi('scenarios')),
       );
-      await tester.tap(find.widgetWithText(OutlinedButton, 'Scenarios'));
+      await tester.tap(
+        find.widgetWithText(OutlinedButton, riskVi('scenarios')),
+      );
       await tester.pumpAndSettle();
       await tester.scrollUntilVisible(
-        find.text('Add custom price'),
+        find.text(riskVi('addCustomPrice')),
         280,
         scrollable: find.byType(Scrollable).last,
       );
       final priceField = find.byType(TextField);
       await tester.enterText(priceField, '11');
-      await tester.tap(find.text('Add'));
+      await tester.tap(find.text(riskVi('add')));
       await tester.pumpAndSettle();
       await tester.scrollUntilVisible(
-        find.text('Add custom price'),
+        find.text(riskVi('addCustomPrice')),
         280,
         scrollable: find.byType(Scrollable).last,
       );
       await tester.enterText(find.byType(TextField), '12');
-      await tester.tap(find.text('Add'));
+      await tester.tap(find.text(riskVi('add')));
       await tester.pumpAndSettle();
       expect(owner.currentState.settings!.customStressPrices, [11, 12]);
       final latestStress = tester.widget<RiskStressView>(
@@ -403,7 +409,7 @@ void main() {
   );
 
   testWidgets(
-    'GREEN-004 custom price map remains sorted and user text is inert',
+    'GREEN-003 custom price map remains sorted and user text is inert',
     (tester) async {
       final evaluation = riskEvaluation();
       await tester.pumpWidget(
@@ -421,7 +427,7 @@ void main() {
       final first = tester.getTopLeft(find.text('6.00 USDT')).dy;
       final second = tester.getTopLeft(find.text('12.00 USDT')).dy;
       expect(first, lessThan(second));
-      expect(find.textContaining('executable'), findsOneWidget);
+      expect(find.textContaining('thực thi'), findsOneWidget);
     },
   );
 }

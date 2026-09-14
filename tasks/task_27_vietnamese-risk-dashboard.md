@@ -1,6 +1,6 @@
 # Task 27 — Vietnamese Risk Dashboard
 
-Status: PENDING
+Status: PASS
 Executor: implementation executor
 Executor Class: E1
 Target Route: Luna XHigh
@@ -67,15 +67,15 @@ Blocks verification until user applies: NO.
 Scenario: English-copy audit after functional work.
 Command/method: `flutter test test/features/portfolio/risk/risk_dashboard_test.dart test/features/portfolio/risk/risk_editors_test.dart test/features/portfolio/risk/risk_vietnamese_copy_test.dart --plain-name "RED-004 Vietnamese Risk Dashboard" --reporter compact`
 Expected: existing application-generated English copy violates the Vietnamese contract.
-Actual: PENDING
-Status: PENDING
+Actual: Executed test-first during remediation before product-source changes; the scenario ran and failed on untranslated generated event/Price Map/error copy, the True Exit formatter defect, and the missing `trueExitPrice` catalog entry.
+Status: PASS
 
 ### GREEN — GREEN-004
 Scenario: complete Vietnamese dashboard/history/editor experience.
 Command/method: same files with `--plain-name "GREEN-004 Vietnamese Risk Dashboard"`.
 Expected: AC-010-AC-012 pass; technical/user content and privacy remain unchanged.
-Actual: PENDING
-Status: PENDING
+Actual: PASS; exact selector passed after remediation, and the full dashboard/editor/localization suite passed 35 tests.
+Status: PASS
 
 Verification ceiling: V3.
 Escalate only if: a string cannot be safely distinguished from user/source content or translation exposes a functional regression.
@@ -85,10 +85,10 @@ Escalate only if: a string cannot be safely distinguished from user/source conte
 Required: YES
 Affected canonical build unit: Flutter application
 Exact secret-free build command: `flutter build web --no-pub`
-Executed after final task-local change: NO
-Result: PENDING
-Exit/status: PENDING
-Compiler/parser/type/reference/link/build errors: PENDING
+Executed after final task-local change: YES
+Result: PASS
+Exit/status: 0
+Compiler/parser/type/reference/link/build errors: none; only non-blocking existing Wasm compatibility warnings.
 
 ### External Verification
 
@@ -105,21 +105,21 @@ Return `BLOCKED` for persistence/wire mutation, ambiguous user/source text, func
 
 ## 10. Execution Ledger
 
-- [ ] inspect referenced symbols
-- [ ] implement P04
-- [ ] add/update tests
-- [ ] execute formal RED then GREEN
-- [ ] run task buildability gate
-- [ ] confirm protected configuration boundary
+- [x] inspect referenced symbols
+- [x] implement P04
+- [x] add/update tests
+- [x] execute formal RED then GREEN
+- [x] run task buildability gate
+- [x] confirm protected configuration boundary
 
 ## 11. Coordinator Audit
 
-Scope: PENDING
-Acceptance criteria: PENDING
-Test quality: PENDING
-RED evidence: PENDING
-GREEN evidence: PENDING
-RED-before-GREEN: PENDING
-Architecture/contract conformance: PENDING
-Task buildability gate: PENDING
-Verdict: PENDING
+Scope: PASS — copy/formatter and focused test surfaces only; no functional, layout, wire/storage, dependency, configuration, or generated-artifact scope creep.
+Acceptance criteria: PASS — AC-010-AC-012 and REQ-005 verified.
+Test quality: PASS — rendered states, current/legacy dynamic messages, privacy preservation, generated-versus-user copy, catalog coverage, and explicit source allowlist are covered.
+RED evidence: PASS — executing failures were observed before the corresponding product-source remediations.
+GREEN evidence: PASS — exact GREEN selector passed; full focused suite passed 35 tests.
+RED-before-GREEN: PASS
+Architecture/contract conformance: PASS — localization remains presentation-only; technical identifiers, units, source names, user-authored text, and T24-T26 behavior are preserved.
+Task buildability gate: PASS — `flutter build web --no-pub`, exit 0 after the final change.
+Verdict: PASS

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../application/risk_monitor_bridge.dart';
 import '../../../domain/risk/action_plan.dart';
+import '../../risk_vietnamese_formatter.dart';
 import '../../providers/risk_dashboard_provider.dart';
 
 class RiskSettingsSheet extends StatefulWidget {
@@ -130,7 +131,7 @@ class _RiskSettingsSheetState extends State<RiskSettingsSheet> {
       for (final key in _controllers.keys) key: _number(key),
     };
     if (parsed.values.any((value) => value == null || !value.isFinite)) {
-      setState(() => _error = 'Every threshold must be a finite number.');
+      setState(() => _error = 'Mọi ngưỡng phải là một số hữu hạn.');
       return;
     }
     final summaryHour = _integer('summaryHour');
@@ -157,7 +158,9 @@ class _RiskSettingsSheetState extends State<RiskSettingsSheet> {
     ];
     if (_timeZone.text.trim().isEmpty ||
         timingValues.any((value) => value == null)) {
-      setState(() => _error = 'Timing and retention values must be integers.');
+      setState(
+        () => _error = 'Giá trị thời điểm và lưu giữ phải là số nguyên.',
+      );
       return;
     }
     final policy = widget.settings.policy.copyWith(
@@ -205,7 +208,9 @@ class _RiskSettingsSheetState extends State<RiskSettingsSheet> {
     if (!result.accepted) {
       setState(() {
         _saving = false;
-        _error = result.message ?? 'Settings could not be saved.';
+        _error = result.message == null
+            ? 'Không thể lưu cài đặt.'
+            : riskViError(result.message);
       });
       return;
     }
@@ -266,7 +271,7 @@ class _RiskSettingsSheetState extends State<RiskSettingsSheet> {
                 children: [
                   Expanded(
                     child: Text(
-                      'Risk settings',
+                      riskVi('riskSettings'),
                       style: theme.textTheme.headlineSmall?.copyWith(
                         fontWeight: FontWeight.w700,
                       ),
@@ -274,56 +279,68 @@ class _RiskSettingsSheetState extends State<RiskSettingsSheet> {
                   ),
                   TextButton(
                     onPressed: _saving ? null : _reset,
-                    child: const Text('Reset defaults'),
+                    child: Text(riskVi('resetDefaults')),
                   ),
                 ],
               ),
               Text(
-                'Boundaries use fractions internally; changing policy creates a configuration event.',
+                riskVi('riskSettingsDescription'),
                 style: theme.textTheme.bodySmall,
               ),
               const SizedBox(height: 10),
               Expanded(
                 child: ListView(
                   children: [
-                    const _SectionTitle(title: 'Buffer boundaries'),
-                    _field('bufferCritical', 'Critical below'),
-                    _field('bufferHigh', 'High below'),
-                    _field('bufferWatch', 'Watch through'),
-                    const _SectionTitle(title: 'Effective leverage'),
-                    _field('leverageWatch', 'Watch at'),
-                    _field('leverageHigh', 'High at'),
-                    _field('leverageCritical', 'Critical at'),
-                    const _SectionTitle(title: 'Margin ratio (fraction)'),
-                    _field('marginCritical', 'Critical at or below'),
-                    _field('marginHigh', 'High at or below'),
-                    _field('marginWatch', 'Watch at or below'),
-                    const _SectionTitle(title: 'History timing and retention'),
+                    _SectionTitle(title: riskVi('bufferBoundaries')),
+                    _field('bufferCritical', 'Nghiêm trọng dưới'),
+                    _field('bufferHigh', 'Cao dưới'),
+                    _field('bufferWatch', 'Theo dõi đến'),
+                    _SectionTitle(title: riskVi('effectiveLeverage')),
+                    _field('leverageWatch', 'Theo dõi tại'),
+                    _field('leverageHigh', 'Cao tại'),
+                    _field('leverageCritical', 'Nghiêm trọng tại'),
+                    _SectionTitle(title: riskVi('marginRatioFraction')),
+                    _field('marginCritical', 'Nghiêm trọng tại hoặc dưới'),
+                    _field('marginHigh', 'Cao tại hoặc dưới'),
+                    _field('marginWatch', 'Theo dõi tại hoặc dưới'),
+                    _SectionTitle(title: riskVi('historyTimingRetention')),
                     TextField(
                       controller: _timeZone,
-                      decoration: const InputDecoration(
-                        labelText: 'Time zone label',
+                      decoration: InputDecoration(
+                        labelText: riskVi('timeZoneLabel'),
                         border: OutlineInputBorder(),
                       ),
                     ),
                     const SizedBox(height: 8),
-                    _integerField('summaryHour', 'Daily summary hour'),
-                    _integerField('summaryMinute', 'Daily summary minute'),
+                    _integerField('summaryHour', riskVi('dailySummaryHour')),
+                    _integerField(
+                      'summaryMinute',
+                      riskVi('dailySummaryMinute'),
+                    ),
                     _integerField(
                       'sampleRetentionDays',
-                      'Sample retention days',
+                      riskVi('sampleRetentionDays'),
                     ),
-                    _integerField('oiRetentionHours', 'OI retention hours'),
-                    _integerField('eventRetentionDays', 'Event retention days'),
+                    _integerField(
+                      'oiRetentionHours',
+                      riskVi('oiRetentionHours'),
+                    ),
+                    _integerField(
+                      'eventRetentionDays',
+                      riskVi('eventRetentionDays'),
+                    ),
                     _integerField(
                       'summaryRetentionDays',
-                      'Summary retention days',
+                      riskVi('summaryRetentionDays'),
                     ),
-                    _integerField('maxSamples', 'Maximum history samples'),
-                    _integerField('maxOiSamples', 'Maximum OI samples'),
-                    _integerField('maxEvents', 'Maximum events'),
-                    _integerField('maxEpisodes', 'Maximum episodes'),
-                    const _SectionTitle(title: 'Custom scenario prices'),
+                    _integerField(
+                      'maxSamples',
+                      riskVi('maximumHistorySamples'),
+                    ),
+                    _integerField('maxOiSamples', riskVi('maximumOiSamples')),
+                    _integerField('maxEvents', riskVi('maximumEvents')),
+                    _integerField('maxEpisodes', riskVi('maximumEpisodes')),
+                    _SectionTitle(title: riskVi('customScenarioPrices')),
                     Wrap(
                       spacing: 6,
                       runSpacing: 6,
@@ -342,13 +359,13 @@ class _RiskSettingsSheetState extends State<RiskSettingsSheet> {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      'Add prices from the Scenarios editor; proportional stress rows remain pinned.',
+                      riskVi('addPricesHint'),
                       style: theme.textTheme.bodySmall,
                     ),
                     if (_error != null) ...[
                       const SizedBox(height: 10),
                       Text(
-                        _error!,
+                        riskViGenerated(_error),
                         style: TextStyle(color: theme.colorScheme.error),
                       ),
                     ],
@@ -367,7 +384,7 @@ class _RiskSettingsSheetState extends State<RiskSettingsSheet> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.save_outlined),
-                  label: const Text('Save risk settings'),
+                  label: Text(riskVi('saveRiskSettings')),
                 ),
               ),
             ],

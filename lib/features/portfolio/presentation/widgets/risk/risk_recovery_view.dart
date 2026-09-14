@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../domain/risk/risk_models.dart';
+import '../../risk_vietnamese_formatter.dart';
 import 'risk_overview.dart';
 
 class RiskRecoveryView extends StatelessWidget {
@@ -24,28 +25,28 @@ class RiskRecoveryView extends StatelessWidget {
     final quality =
         stateQuality ??
         item?.quality ??
-        const RiskQuality.unavailable(reason: 'Recovery unavailable');
+        const RiskQuality.unavailable(reason: 'Phục hồi chưa khả dụng');
     final effectiveQuality = riskComponentQuality(quality, assessment);
     final state = assessment?.state;
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
         Text(
-          'Recovery and costs',
+          riskVi('recoveryCosts'),
           style: theme.textTheme.headlineSmall?.copyWith(
             fontWeight: FontWeight.w700,
           ),
         ),
         const SizedBox(height: 5),
         Text(
-          'Recovery uses verified costs and clearly labels projections. Missing coverage stays -.',
+          'Phục hồi dùng chi phí đã xác minh và ghi rõ các giá trị dự phóng. Khi thiếu dữ liệu bao phủ, giá trị giữ là -.',
           style: theme.textTheme.bodySmall?.copyWith(
             color: theme.colorScheme.onSurfaceVariant,
           ),
         ),
         const SizedBox(height: 14),
         _RecoveryCard(
-          title: 'Recovery risk',
+          title: riskVi('recoveryRisk'),
           state: state,
           stateQuality: effectiveQuality,
           child: Wrap(
@@ -53,17 +54,17 @@ class RiskRecoveryView extends StatelessWidget {
             runSpacing: 12,
             children: [
               _Metric(
-                label: 'Distance to True Exit',
+                label: riskVi('distanceToTrueExit'),
                 value: riskMaskedPercent(item?.distanceToTrueExit, hideValues),
                 hideValues: hideValues,
               ),
               _Metric(
-                label: '30-day holding burden',
+                label: riskVi('holdingBurden30d'),
                 value: riskMaskedPercent(item?.holdingBurden, hideValues),
                 hideValues: hideValues,
               ),
               _Metric(
-                label: 'Holding cost / day',
+                label: riskVi('holdingCostDay'),
                 value: riskMaskedValue(
                   metric?.holdingCostPerDay.value,
                   hideValues,
@@ -72,7 +73,7 @@ class RiskRecoveryView extends StatelessWidget {
                 hideValues: hideValues,
               ),
               _Metric(
-                label: 'Holding cost / 7d',
+                label: riskVi('holdingCost7d'),
                 value: riskMaskedValue(
                   metric?.holdingCost7d.value,
                   hideValues,
@@ -81,7 +82,7 @@ class RiskRecoveryView extends StatelessWidget {
                 hideValues: hideValues,
               ),
               _Metric(
-                label: 'Holding cost / 30d',
+                label: riskVi('holdingCost30d'),
                 value: riskMaskedValue(
                   metric?.holdingCost30d.value,
                   hideValues,
@@ -94,7 +95,7 @@ class RiskRecoveryView extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         _RecoveryCard(
-          title: 'True Exit price',
+          title: riskVi('trueExitPrice'),
           state: null,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -112,13 +113,13 @@ class RiskRecoveryView extends StatelessWidget {
               const SizedBox(height: 6),
               Text(
                 item?.trueExitPrice == null
-                    ? 'Verified lifetime cost coverage is incomplete.'
-                    : 'Verified cost completeness is established for this episode.',
+                    ? 'Mức bao phủ chi phí trọn đời đã xác minh chưa đầy đủ.'
+                    : 'Mức đầy đủ chi phí đã xác minh được thiết lập cho tập này.',
                 style: theme.textTheme.bodyMedium,
               ),
               const SizedBox(height: 8),
               Text(
-                'This is a cost model, not a guaranteed exchange breakeven or executable fill price.',
+                'Đây là mô hình chi phí, không phải điểm hòa vốn được sàn bảo đảm hay giá khớp có thể thực thi.',
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
                 ),
@@ -128,14 +129,14 @@ class RiskRecoveryView extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         _RecoveryCard(
-          title: 'Interest coverage',
+          title: riskVi('interestCoverage'),
           state: null,
           child: Wrap(
             spacing: 12,
             runSpacing: 12,
             children: [
               _Metric(
-                label: 'Actual today',
+                label: riskVi('actualToday'),
                 value: riskMaskedValue(
                   metric?.actualInterestToday.value,
                   hideValues,
@@ -144,7 +145,7 @@ class RiskRecoveryView extends StatelessWidget {
                 hideValues: hideValues,
               ),
               _Metric(
-                label: 'Known subtotal',
+                label: riskVi('knownSubtotal'),
                 value: riskMaskedValue(
                   metric?.knownInterestToday.value,
                   hideValues,
@@ -153,7 +154,7 @@ class RiskRecoveryView extends StatelessWidget {
                 hideValues: hideValues,
               ),
               _Metric(
-                label: 'Projected True Exit',
+                label: riskVi('projectedTrueExit'),
                 value: riskMaskedValue(
                   metric?.projectedTrueExitPrice.value,
                   hideValues,
@@ -162,7 +163,7 @@ class RiskRecoveryView extends StatelessWidget {
                 hideValues: hideValues,
               ),
               _Metric(
-                label: 'Known-cost exit',
+                label: riskVi('knownCostExit'),
                 value: riskMaskedValue(
                   metric?.knownCostExitPrice.value,
                   hideValues,
@@ -176,7 +177,7 @@ class RiskRecoveryView extends StatelessWidget {
         if (item?.recoveryAssessment.missingReasons.isNotEmpty ?? false) ...[
           const SizedBox(height: 12),
           Text(
-            'Missing inputs: ${riskRedactRiskText(item!.recoveryAssessment.missingReasons.join('; '), hideValues)}',
+            'Thiếu dữ liệu đầu vào: ${riskRedactRiskText(item!.recoveryAssessment.missingReasons.map(riskViGenerated).join('; '), hideValues)}',
             style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.onSurfaceVariant,
             ),

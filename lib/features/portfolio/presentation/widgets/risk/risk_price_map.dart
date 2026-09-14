@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../domain/risk/risk_models.dart';
+import '../../risk_vietnamese_formatter.dart';
 import 'risk_overview.dart';
 
 class RiskPriceMap extends StatelessWidget {
@@ -27,7 +28,7 @@ class RiskPriceMap extends StatelessWidget {
           children: [
             Expanded(
               child: Text(
-                'Survival Price Map',
+                riskVi('priceMapTitle'),
                 style: theme.textTheme.headlineSmall?.copyWith(
                   fontWeight: FontWeight.w700,
                 ),
@@ -35,14 +36,14 @@ class RiskPriceMap extends StatelessWidget {
             ),
             if (currentPrice != null)
               Text(
-                'Current ${riskMaskedValue(currentPrice, hideValues)}',
+                '${riskVi('current')} ${riskMaskedValue(currentPrice, hideValues)}',
                 style: theme.textTheme.bodySmall,
               ),
           ],
         ),
         const SizedBox(height: 5),
         Text(
-          'Sorted context levels. Labels describe observations and user zones; they are not executable actions.',
+          riskVi('priceMapDescription'),
           style: theme.textTheme.bodySmall?.copyWith(
             color: theme.colorScheme.onSurfaceVariant,
           ),
@@ -54,7 +55,7 @@ class RiskPriceMap extends StatelessWidget {
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: Text(
-                'Price map is unavailable.',
+                riskVi('priceMapUnavailable'),
                 style: theme.textTheme.bodyMedium,
               ),
             ),
@@ -127,7 +128,10 @@ class _PriceLevel extends StatelessWidget {
                 ),
                 const SizedBox(height: 3),
                 if (level.labels.isEmpty)
-                  Text('Observed level', style: theme.textTheme.bodySmall)
+                  Text(
+                    riskVi('observedLevel'),
+                    style: theme.textTheme.bodySmall,
+                  )
                 else
                   Wrap(
                     spacing: 5,
@@ -136,7 +140,10 @@ class _PriceLevel extends StatelessWidget {
                       for (final label in level.labels)
                         Chip(
                           label: Text(
-                            riskRedactRiskText(label, hideValues),
+                            riskRedactRiskText(
+                              riskViPriceMapLabel(label),
+                              hideValues,
+                            ),
                             style: theme.textTheme.labelSmall,
                           ),
                         ),

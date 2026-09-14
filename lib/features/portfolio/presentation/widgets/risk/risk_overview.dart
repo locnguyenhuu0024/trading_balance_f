@@ -4,6 +4,7 @@ import '../../../application/risk_monitor_bridge.dart';
 import '../../../domain/risk/action_plan.dart';
 import '../../../domain/risk/risk_history.dart';
 import '../../../domain/risk/risk_models.dart';
+import '../../risk_vietnamese_formatter.dart';
 
 String riskValue(double? value, {int decimals = 2, String suffix = ''}) {
   if (value == null || !value.isFinite) return '-';
@@ -48,22 +49,7 @@ String riskMetricValue(RiskMetricValue? metric, {int decimals = 2}) {
 }
 
 String riskQualityLabel(RiskQuality quality) {
-  switch (quality.status) {
-    case RiskQualityStatus.complete:
-      return 'Fresh';
-    case RiskQualityStatus.partial:
-      return 'Partial assessment';
-    case RiskQualityStatus.stale:
-      return 'Stale data';
-    case RiskQualityStatus.error:
-      return 'Connection error';
-    case RiskQualityStatus.unsupported:
-      return 'Unsupported position';
-    case RiskQualityStatus.empty:
-      return 'No position selected';
-    case RiskQualityStatus.unavailable:
-      return 'Insufficient data';
-  }
+  return riskViQuality(quality);
 }
 
 bool riskQualityIsCurrent(RiskQuality? quality) =>
@@ -131,20 +117,20 @@ String riskComponentStateLabel(RiskSeverity? severity, RiskQuality quality) {
         ? '-'
         : '- · ${riskQualityLabel(quality)}';
   }
-  if (riskQualityIsCurrent(quality)) return severity.label;
-  return 'At least ${severity.label} · ${riskQualityLabel(quality)}';
+  if (riskQualityIsCurrent(quality)) return riskViSeverity(severity);
+  return '${riskVi('atLeast')} ${riskViSeverity(severity)} · ${riskQualityLabel(quality)}';
 }
 
 String riskKnownSeverityQualifier(RiskSeverity? severity, RiskQuality quality) {
   if (severity == null) return riskQualityLabel(quality);
   if (riskQualityIsCurrent(quality)) return riskQualityLabel(quality);
-  return 'Last known ${severity.label} · ${riskQualityLabel(quality)}';
+  return '${riskVi('lastKnown')} ${riskViSeverity(severity)} · ${riskQualityLabel(quality)}';
 }
 
 String riskStateLabelWithQuality(RiskSeverity? severity, RiskQuality quality) {
   if (severity == null) return '-';
-  if (riskQualityIsCurrent(quality)) return severity.label;
-  return 'Last known ${severity.label} · ${riskQualityLabel(quality)}';
+  if (riskQualityIsCurrent(quality)) return riskViSeverity(severity);
+  return '${riskVi('lastKnown')} ${riskViSeverity(severity)} · ${riskQualityLabel(quality)}';
 }
 
 Color riskQualitySeverityColor(
@@ -165,7 +151,7 @@ Color riskQualitySeverityColor(
 
 String riskAssessmentLabel(RiskAssessment? assessment) {
   if (assessment == null || assessment.state == null) return '-';
-  return assessment.state!.label;
+  return riskViSeverity(assessment.state);
 }
 
 Color riskSeverityColor(BuildContext context, RiskSeverity? severity) {
@@ -237,10 +223,12 @@ class RiskOverview extends StatelessWidget {
         : evaluation == null
         ? riskQualityLabel(state.quality)
         : evaluation.partial
-        ? 'Partial assessment'
+        ? riskVi('partialAssessment')
         : riskQualityLabel(evaluation.quality);
     final trendText = riskRedactRiskText(
-      trend?.text ?? velocity?.text ?? '- / Collecting history',
+      riskViGenerated(trend?.text ?? velocity?.text).isEmpty
+          ? '- / ${riskVi('collectingHistory')}'
+          : riskViGenerated(trend?.text ?? velocity?.text),
       hideValues,
     );
     final scenario = evaluation?.stressScenarios
@@ -251,24 +239,24 @@ class RiskOverview extends StatelessWidget {
         });
     final evaluatedPlan = planEvaluation;
     final planText = evaluatedPlan == null && plan == null
-        ? 'No plan defined'
+        ? riskVi('noPlan')
         : evaluatedPlan != null
         ? evaluatedPlan.hasPlan
               ? hideValues
-                    ? '****** active · ****** pending'
-                    : '${evaluatedPlan.activeCount} active · ${evaluatedPlan.unknownCount} pending'
-              : 'No plan defined'
+                    ? '****** ${riskVi('active')} · ****** ${riskVi('pending')}'
+                    : '${evaluatedPlan.activeCount} ${riskVi('active')} · ${evaluatedPlan.unknownCount} ${riskVi('pending')}'
+              : riskVi('noPlan')
         : plan!.rules.isNotEmpty || plan!.zones.isNotEmpty
         ? hideValues
-              ? '****** configured'
-              : '${plan!.rules.length + plan!.zones.length} configured'
-        : 'No plan defined';
+              ? '****** ${riskVi('configured')}'
+              : '${plan!.rules.length + plan!.zones.length} ${riskVi('configured')}'
+        : riskVi('noPlan');
 
     final heading = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Risk overview',
+          riskVi('riskOverview'),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: theme.textTheme.titleMedium?.copyWith(
@@ -278,7 +266,7 @@ class RiskOverview extends StatelessWidget {
         const SizedBox(height: 3),
         Text(
           riskRedactRiskText(
-            evaluation?.position.instrumentId ?? 'Selected isolated position',
+            evaluation?.position.instrumentId ?? riskVi('noIsolatedPosition'),
             hideValues,
           ),
           maxLines: 2,
@@ -332,8 +320,8 @@ class RiskOverview extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             _StatusAnswer(
-              label: 'Overall',
-              value: assessment?.label ?? '-',
+              label: riskVi('overall'),
+              value: riskViSeverity(assessment),
               qualifier: qualifier,
               color: riskQualitySeverityColor(
                 context,
@@ -367,64 +355,72 @@ class RiskOverview extends StatelessWidget {
             _AnswerGrid(
               answers: [
                 _Answer(
-                  label: 'Trend',
+                  label: riskVi('trend'),
                   value: trendText,
                   caption: velocity == null
-                      ? 'Since last check'
-                      : riskRedactRiskText(velocity!.text, hideValues),
+                      ? riskVi('sinceLastCheck')
+                      : riskRedactRiskText(
+                          riskViGenerated(velocity!.text),
+                          hideValues,
+                        ),
                   icon: Icons.trending_up,
                   onTap: onOverallTap,
                 ),
                 _Answer(
-                  label: 'Effective leverage',
+                  label: riskVi('effectiveLeverage'),
                   value: riskMaskedValue(
                     evaluation?.effectiveLeverage,
                     hideValues,
                     decimals: 2,
                     suffix: 'x',
                   ),
-                  caption: 'Trade notional / equity',
+                  caption: 'Giá trị giao dịch / vốn chủ sở hữu',
                   icon: Icons.stacked_line_chart,
                   onTap: onLeverageTap,
                 ),
                 _Answer(
-                  label: 'Debt',
+                  label: riskVi('debt'),
                   value: riskMaskedValue(
                     evaluation?.debt,
                     hideValues,
                     suffix: ' USDT',
                   ),
                   caption: riskRedactRiskText(
-                    evaluation?.metrics.debt.quality.reason ??
-                        'Outstanding liability',
+                    riskViGenerated(
+                          evaluation?.metrics.debt.quality.reason,
+                        ).isEmpty
+                        ? 'Khoản nợ còn lại'
+                        : riskViGenerated(
+                            evaluation?.metrics.debt.quality.reason,
+                          ),
                     hideValues,
                   ),
                   icon: Icons.account_balance_wallet_outlined,
                   onTap: onDebtTap,
                 ),
                 _Answer(
-                  label: 'True Exit',
+                  label: riskVi('trueExit'),
                   value: riskMaskedValue(
                     evaluation?.trueExitPrice,
                     hideValues,
                     suffix: ' USDT',
                   ),
                   caption: evaluation?.trueExitPrice == null
-                      ? 'Verified cost coverage required'
-                      : 'Verified cost estimate',
+                      ? 'Cần xác minh mức bao phủ chi phí'
+                      : 'Ước tính chi phí đã xác minh',
                   icon: Icons.flag_outlined,
                   onTap: onTrueExitTap,
                 ),
                 _Answer(
-                  label: '-10% scenario',
-                  value: scenario?.overallState?.label ?? '-',
+                  label: riskVi('scenarioTenPercent'),
+                  value: riskViSeverity(scenario?.overallState),
                   caption: scenario == null
-                      ? 'Scenario unavailable'
+                      ? 'Kịch bản chưa khả dụng'
                       : !stateIsFresh
-                      ? 'Last known scenario · ${riskQualityLabel(stateQuality)}'
+                      ? '${riskVi('lastKnownScenario')} · ${riskQualityLabel(stateQuality)}'
                       : hideValues
-                      ? 'Engine result at ******'
-                      : 'Engine result at ${riskValue(scenario.price)} USDT',
+                      ? '${riskVi('engineResultAt')} ******'
+                      : '${riskVi('engineResultAt')} ${riskValue(scenario.price)} USDT',
                   icon: Icons.show_chart,
                   color: riskQualitySeverityColor(
                     context,
@@ -434,11 +430,11 @@ class RiskOverview extends StatelessWidget {
                   onTap: onStressTap,
                 ),
                 _Answer(
-                  label: 'Plan status',
+                  label: riskVi('planStatus'),
                   value: planText,
                   caption: plan == null
-                      ? 'Rules and zones are not loaded'
-                      : 'User-authored rules only',
+                      ? riskVi('rulesNotLoaded')
+                      : riskVi('userAuthoredRulesOnly'),
                   icon: Icons.rule_folder_outlined,
                   onTap: onPlanTap,
                 ),
@@ -485,7 +481,7 @@ class _ComponentChips extends StatelessWidget {
             SizedBox(
               width: width,
               child: _ComponentChip(
-                label: 'Position',
+                label: riskVi('position'),
                 state: showStates ? evaluation?.positionAssessment.state : null,
                 assessment: showStates ? evaluation?.positionAssessment : null,
                 quality: quality,
@@ -495,7 +491,7 @@ class _ComponentChips extends StatelessWidget {
             SizedBox(
               width: width,
               child: _ComponentChip(
-                label: 'Market',
+                label: riskVi('market'),
                 state: showStates ? evaluation?.marketAssessment.state : null,
                 assessment: showStates ? evaluation?.marketAssessment : null,
                 quality: quality,
@@ -505,7 +501,7 @@ class _ComponentChips extends StatelessWidget {
             SizedBox(
               width: width,
               child: _ComponentChip(
-                label: 'Recovery',
+                label: riskVi('recovery'),
                 state: showStates ? evaluation?.recoveryAssessment.state : null,
                 assessment: showStates ? evaluation?.recoveryAssessment : null,
                 quality: quality,
@@ -565,7 +561,7 @@ class _ComponentChip extends StatelessWidget {
         : Semantics(
             button: true,
             label:
-                'Open $label risk details; ${stateLabel == '-' ? 'unavailable' : stateLabel}',
+                'Mở chi tiết rủi ro ${label.toLowerCase()}; ${stateLabel == '-' ? 'chưa khả dụng' : stateLabel}',
             child: InkWell(
               borderRadius: BorderRadius.circular(20),
               onTap: onTap,
@@ -631,7 +627,7 @@ class _BufferHero extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Liquidation buffer',
+                      riskVi('liquidationBuffer'),
                       style: theme.textTheme.labelLarge,
                     ),
                     Align(alignment: Alignment.centerRight, child: value),
@@ -643,7 +639,7 @@ class _BufferHero extends StatelessWidget {
                 children: [
                   Expanded(
                     child: Text(
-                      'Liquidation buffer',
+                      riskVi('liquidationBuffer'),
                       style: theme.textTheme.labelLarge,
                     ),
                   ),
@@ -673,13 +669,16 @@ class _BufferHero extends StatelessWidget {
             spacing: 18,
             runSpacing: 4,
             children: [
-              Text('Current $current USDT', style: theme.textTheme.bodySmall),
               Text(
-                'Liquidation $liquidation USDT',
+                '${riskVi('current')} $current USDT',
                 style: theme.textTheme.bodySmall,
               ),
               Text(
-                'Volatility multiple ${riskMaskedValue(volatilityMultiple, hideValues, suffix: 'x')}',
+                '${riskVi('liquidation')} $liquidation USDT',
+                style: theme.textTheme.bodySmall,
+              ),
+              Text(
+                '${riskVi('volatilityMultiple')} ${riskMaskedValue(volatilityMultiple, hideValues, suffix: 'x')}',
                 style: theme.textTheme.bodySmall,
               ),
             ],
@@ -691,7 +690,7 @@ class _BufferHero extends StatelessWidget {
         ? child
         : Semantics(
             button: true,
-            label: 'Open liquidation buffer details',
+            label: 'Mở chi tiết biên thanh lý',
             child: InkWell(
               borderRadius: BorderRadius.circular(10),
               onTap: onTap,
@@ -716,7 +715,7 @@ class _QualityChip extends StatelessWidget {
       _ => Theme.of(context).colorScheme.onSurfaceVariant,
     };
     return Semantics(
-      label: 'Data quality: $label',
+      label: 'Chất lượng dữ liệu: $label',
       child: Container(
         constraints: const BoxConstraints(maxWidth: 170),
         padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
@@ -803,7 +802,7 @@ class _StatusAnswer extends StatelessWidget {
         ? child
         : Semantics(
             button: true,
-            label: 'Open overall risk details',
+            label: 'Mở chi tiết rủi ro tổng thể',
             child: InkWell(
               borderRadius: BorderRadius.circular(10),
               onTap: onTap,
@@ -872,7 +871,7 @@ class _AnswerCard extends StatelessWidget {
     final theme = Theme.of(context);
     final color = answer.color ?? theme.colorScheme.primary;
     final child = Container(
-      key: ValueKey<String>('risk-answer-${answer.label}'),
+      key: ValueKey<String>('risk-answer-${_answerKey(answer.label)}'),
       constraints: const BoxConstraints(minHeight: 52),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
@@ -920,7 +919,7 @@ class _AnswerCard extends StatelessWidget {
         ? child
         : Semantics(
             button: true,
-            label: 'Open ${answer.label}',
+            label: 'Mở ${answer.label}',
             child: InkWell(
               borderRadius: BorderRadius.circular(10),
               onTap: answer.onTap,
@@ -929,3 +928,12 @@ class _AnswerCard extends StatelessWidget {
           );
   }
 }
+
+String _answerKey(String label) => const <String, String>{
+  'Xu hướng': 'Trend',
+  'Đòn bẩy hiệu quả': 'Effective leverage',
+  'Nợ': 'Debt',
+  'True Exit': 'True Exit',
+  '-10% kịch bản': '-10% scenario',
+  'Kế hoạch': 'Plan status',
+}[label] ?? label;

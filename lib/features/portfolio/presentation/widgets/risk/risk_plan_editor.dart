@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../application/risk_monitor_bridge.dart';
 import '../../../domain/risk/action_plan.dart';
 import '../../../domain/risk/risk_models.dart';
+import '../../risk_vietnamese_formatter.dart';
 import '../../providers/risk_dashboard_provider.dart';
 import 'risk_overview.dart';
 
@@ -58,7 +59,7 @@ class _RiskPlanEditorState extends State<RiskPlanEditor> {
   Future<void> _commit(RiskPlan next) async {
     final errors = next.validate();
     if (errors.isNotEmpty) {
-      setState(() => _error = errors.join('\n'));
+      setState(() => _error = riskViGenerated(errors.join('\n')));
       return;
     }
     setState(() {
@@ -72,7 +73,9 @@ class _RiskPlanEditorState extends State<RiskPlanEditor> {
     if (!result.accepted) {
       setState(() {
         _saving = false;
-        _error = result.message ?? 'Plan could not be saved.';
+        _error = result.message == null
+            ? 'Không thể lưu kế hoạch.'
+            : riskViError(result.message);
       });
       return;
     }
@@ -199,7 +202,7 @@ class _RiskPlanEditorState extends State<RiskPlanEditor> {
               children: [
                 Expanded(
                   child: Text(
-                    'Your plan',
+                    riskVi('yourPlan'),
                     style: theme.textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.w700,
                     ),
@@ -216,8 +219,8 @@ class _RiskPlanEditorState extends State<RiskPlanEditor> {
             const SizedBox(height: 4),
             Text(
               widget.evaluation == null
-                  ? 'Rules remain unevaluated until a complete metric is available.'
-                  : 'User-authored text is displayed as text and never executed.',
+                  ? 'Quy tắc chưa được đánh giá cho đến khi có chỉ số đầy đủ.'
+                  : 'Văn bản do người dùng tạo được hiển thị nguyên dạng và không bao giờ được thực thi.',
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),
@@ -225,19 +228,19 @@ class _RiskPlanEditorState extends State<RiskPlanEditor> {
             const SizedBox(height: 10),
             if (_plan.rules.isEmpty && _plan.zones.isEmpty)
               Text(
-                'No plan defined',
+                riskVi('noPlan'),
                 style: theme.textTheme.bodyMedium?.copyWith(
                   fontWeight: FontWeight.w700,
                 ),
               )
             else ...[
               if (_plan.rules.isNotEmpty) ...[
-                Text('Rules', style: theme.textTheme.labelLarge),
+                Text(riskVi('rules'), style: theme.textTheme.labelLarge),
                 for (final rule in _plan.rules) _ruleTile(rule, planEvaluation),
               ],
               if (_plan.zones.isNotEmpty) ...[
                 const SizedBox(height: 6),
-                Text('Price zones', style: theme.textTheme.labelLarge),
+                Text(riskVi('priceZones'), style: theme.textTheme.labelLarge),
                 for (final zone in _plan.zones) _zoneTile(zone, planEvaluation),
               ],
             ],
@@ -249,18 +252,21 @@ class _RiskPlanEditorState extends State<RiskPlanEditor> {
                 OutlinedButton.icon(
                   onPressed: _saving ? null : () => _addRule(),
                   icon: const Icon(Icons.add, size: 18),
-                  label: const Text('Create rule'),
+                  label: Text(riskVi('createRule')),
                 ),
                 OutlinedButton.icon(
                   onPressed: _saving ? null : () => _addZone(),
                   icon: const Icon(Icons.crop_free, size: 18),
-                  label: const Text('Create zone'),
+                  label: Text(riskVi('createZone')),
                 ),
               ],
             ),
             if (_error != null) ...[
               const SizedBox(height: 8),
-              Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
+              Text(
+                riskViGenerated(_error),
+                style: TextStyle(color: theme.colorScheme.error),
+              ),
             ],
           ],
         ),
@@ -276,32 +282,33 @@ class _RiskPlanEditorState extends State<RiskPlanEditor> {
         break;
       }
     }
-    final stateText =
-        result?.state.name ?? (rule.enabled ? 'pending' : 'disabled');
+    final stateText = result?.state == null
+        ? (rule.enabled ? riskVi('pending') : 'đã tắt')
+        : riskVi(result!.state.name);
     return ListTile(
       contentPadding: EdgeInsets.zero,
       leading: Icon(rule.enabled ? Icons.rule : Icons.rule_outlined),
       title: Text(riskRedactRiskText(rule.displayLabel, widget.hideValues)),
       subtitle: Text(
         riskRedactRiskText(
-          '${riskPlanMetricName(rule.metric)} · $stateText${result?.reason == null ? '' : ' · ${result!.reason}'}',
+          '${riskViPlanMetric(rule.metric)} · $stateText${result?.reason == null ? '' : ' · ${riskViGenerated(result!.reason)}'}',
           widget.hideValues,
         ),
       ),
       trailing: PopupMenuButton<String>(
-        tooltip: 'Edit rule',
+        tooltip: riskVi('editRule'),
         onSelected: (value) {
           if (value == 'edit') _addRule(rule);
           if (value == 'toggle') _toggleRule(rule);
           if (value == 'delete') _deleteRule(rule);
         },
         itemBuilder: (_) => [
-          const PopupMenuItem(value: 'edit', child: Text('Edit')),
+          PopupMenuItem(value: 'edit', child: Text(riskVi('edit'))),
           PopupMenuItem(
             value: 'toggle',
-            child: Text(rule.enabled ? 'Disable' : 'Enable'),
+            child: Text(rule.enabled ? riskVi('disable') : riskVi('enable')),
           ),
-          const PopupMenuItem(value: 'delete', child: Text('Delete')),
+          PopupMenuItem(value: 'delete', child: Text(riskVi('delete'))),
         ],
       ),
     );
@@ -315,8 +322,9 @@ class _RiskPlanEditorState extends State<RiskPlanEditor> {
         break;
       }
     }
-    final stateText =
-        result?.state.name ?? (zone.enabled ? 'pending' : 'disabled');
+    final stateText = result?.state == null
+        ? (zone.enabled ? riskVi('pending') : 'đã tắt')
+        : riskVi(result!.state.name);
     return ListTile(
       contentPadding: EdgeInsets.zero,
       leading: Icon(zone.enabled ? Icons.crop_free : Icons.crop_square),
@@ -325,19 +333,19 @@ class _RiskPlanEditorState extends State<RiskPlanEditor> {
         '${widget.hideValues ? '******' : riskValue(zone.lowerPrice)}–${widget.hideValues ? '******' : riskValue(zone.upperPrice)} USDT · $stateText',
       ),
       trailing: PopupMenuButton<String>(
-        tooltip: 'Edit zone',
+        tooltip: riskVi('editZone'),
         onSelected: (value) {
           if (value == 'edit') _addZone(zone);
           if (value == 'toggle') _toggleZone(zone);
           if (value == 'delete') _deleteZone(zone);
         },
         itemBuilder: (_) => [
-          const PopupMenuItem(value: 'edit', child: Text('Edit')),
+          PopupMenuItem(value: 'edit', child: Text(riskVi('edit'))),
           PopupMenuItem(
             value: 'toggle',
-            child: Text(zone.enabled ? 'Disable' : 'Enable'),
+            child: Text(zone.enabled ? riskVi('disable') : riskVi('enable')),
           ),
-          const PopupMenuItem(value: 'delete', child: Text('Delete')),
+          PopupMenuItem(value: 'delete', child: Text(riskVi('delete'))),
         ],
       ),
     );
@@ -416,7 +424,7 @@ class _RuleDialogState extends State<_RuleDialog> {
     );
     final errors = rule.validate();
     if (errors.isNotEmpty) {
-      setState(() => _error = errors.join('\n'));
+      setState(() => _error = riskViGenerated(errors.join('\n')));
       return;
     }
     Navigator.of(context).pop(rule);
@@ -426,26 +434,28 @@ class _RuleDialogState extends State<_RuleDialog> {
   Widget build(BuildContext context) {
     final isDynamic = _metric == RiskPlanMetric.priceVsTrueExit;
     return AlertDialog(
-      title: Text(widget.initial == null ? 'Create rule' : 'Edit rule'),
+      title: Text(
+        widget.initial == null ? riskVi('createRule') : riskVi('editRule'),
+      ),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             TextField(
               controller: _title,
-              decoration: const InputDecoration(labelText: 'Title'),
+              decoration: const InputDecoration(labelText: 'Tiêu đề'),
             ),
             const SizedBox(height: 8),
             DropdownButtonFormField<RiskPlanMetric>(
               initialValue: _metric,
-              decoration: const InputDecoration(labelText: 'Metric'),
+              decoration: InputDecoration(labelText: 'Chỉ số'),
               items: [
                 for (final metric in RiskPlanMetric.values.where(
                   (item) => item != RiskPlanMetric.trueExitPrice,
                 ))
                   DropdownMenuItem(
                     value: metric,
-                    child: Text(riskPlanMetricName(metric)),
+                    child: Text(riskViPlanMetric(metric)),
                   ),
               ],
               onChanged: (value) => setState(() => _metric = value ?? _metric),
@@ -453,12 +463,12 @@ class _RuleDialogState extends State<_RuleDialog> {
             const SizedBox(height: 8),
             DropdownButtonFormField<RiskPlanComparison>(
               initialValue: _comparison,
-              decoration: const InputDecoration(labelText: 'Comparison'),
+              decoration: InputDecoration(labelText: 'So sánh'),
               items: [
                 for (final comparison in RiskPlanComparison.values)
                   DropdownMenuItem(
                     value: comparison,
-                    child: Text(riskPlanComparisonName(comparison)),
+                    child: Text(riskViPlanComparison(comparison)),
                   ),
               ],
               onChanged: (value) =>
@@ -469,7 +479,7 @@ class _RuleDialogState extends State<_RuleDialog> {
               TextField(
                 controller: _threshold,
                 obscureText: widget.hideValues,
-                decoration: const InputDecoration(labelText: 'Threshold'),
+                decoration: const InputDecoration(labelText: 'Ngưỡng'),
                 keyboardType: const TextInputType.numberWithOptions(
                   decimal: true,
                 ),
@@ -479,9 +489,7 @@ class _RuleDialogState extends State<_RuleDialog> {
                 TextField(
                   controller: _upper,
                   obscureText: widget.hideValues,
-                  decoration: const InputDecoration(
-                    labelText: 'Upper threshold',
-                  ),
+                  decoration: const InputDecoration(labelText: 'Ngưỡng trên'),
                   keyboardType: const TextInputType.numberWithOptions(
                     decimal: true,
                   ),
@@ -492,17 +500,19 @@ class _RuleDialogState extends State<_RuleDialog> {
             TextField(
               controller: _note,
               maxLines: 2,
-              decoration: const InputDecoration(labelText: 'Note (optional)'),
+              decoration: const InputDecoration(
+                labelText: 'Ghi chú (tùy chọn)',
+              ),
             ),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              title: const Text('Enabled'),
+              title: Text(riskVi('enabled')),
               value: _enabled,
               onChanged: (value) => setState(() => _enabled = value),
             ),
             if (_error != null)
               Text(
-                _error!,
+                riskViGenerated(_error),
                 style: TextStyle(color: Theme.of(context).colorScheme.error),
               ),
           ],
@@ -511,9 +521,9 @@ class _RuleDialogState extends State<_RuleDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
+          child: Text(riskVi('cancel')),
         ),
-        ElevatedButton(onPressed: _save, child: const Text('Save rule')),
+        ElevatedButton(onPressed: _save, child: Text(riskVi('saveRule'))),
       ],
     );
   }
@@ -577,7 +587,7 @@ class _ZoneDialogState extends State<_ZoneDialog> {
     );
     final errors = zone.validate();
     if (errors.isNotEmpty) {
-      setState(() => _error = errors.join('\n'));
+      setState(() => _error = riskViGenerated(errors.join('\n')));
       return;
     }
     Navigator.of(context).pop(zone);
@@ -586,20 +596,22 @@ class _ZoneDialogState extends State<_ZoneDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text(widget.initial == null ? 'Create zone' : 'Edit zone'),
+      title: Text(
+        widget.initial == null ? riskVi('createZone') : riskVi('editZone'),
+      ),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             TextField(
               controller: _title,
-              decoration: const InputDecoration(labelText: 'Title'),
+              decoration: const InputDecoration(labelText: 'Tiêu đề'),
             ),
             const SizedBox(height: 8),
             TextField(
               controller: _lower,
               obscureText: widget.hideValues,
-              decoration: const InputDecoration(labelText: 'Lower price'),
+              decoration: const InputDecoration(labelText: 'Giá thấp'),
               keyboardType: const TextInputType.numberWithOptions(
                 decimal: true,
               ),
@@ -608,7 +620,7 @@ class _ZoneDialogState extends State<_ZoneDialog> {
             TextField(
               controller: _upper,
               obscureText: widget.hideValues,
-              decoration: const InputDecoration(labelText: 'Upper price'),
+              decoration: const InputDecoration(labelText: 'Giá cao'),
               keyboardType: const TextInputType.numberWithOptions(
                 decimal: true,
               ),
@@ -617,17 +629,19 @@ class _ZoneDialogState extends State<_ZoneDialog> {
             TextField(
               controller: _note,
               maxLines: 2,
-              decoration: const InputDecoration(labelText: 'Note (optional)'),
+              decoration: const InputDecoration(
+                labelText: 'Ghi chú (tùy chọn)',
+              ),
             ),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              title: const Text('Enabled'),
+              title: Text(riskVi('enabled')),
               value: _enabled,
               onChanged: (value) => setState(() => _enabled = value),
             ),
             if (_error != null)
               Text(
-                _error!,
+                riskViGenerated(_error),
                 style: TextStyle(color: Theme.of(context).colorScheme.error),
               ),
           ],
@@ -636,9 +650,9 @@ class _ZoneDialogState extends State<_ZoneDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
+          child: Text(riskVi('cancel')),
         ),
-        ElevatedButton(onPressed: _save, child: const Text('Save zone')),
+        ElevatedButton(onPressed: _save, child: Text(riskVi('saveZone'))),
       ],
     );
   }

@@ -11,6 +11,7 @@ import '../domain/risk/risk_models.dart';
 import 'portfolio_details_screen.dart';
 import 'portfolio_screen.dart';
 import 'providers/risk_dashboard_provider.dart';
+import 'risk_vietnamese_formatter.dart';
 import 'widgets/risk/risk_history_view.dart';
 import 'widgets/risk/risk_market_card.dart';
 import 'widgets/risk/risk_overview.dart';
@@ -71,7 +72,11 @@ class _RiskDashboardScreenState extends ConsumerState<RiskDashboardScreen> {
         : await _bridge.start(commandId: riskCommandId('home-start'));
     if (!mounted || result.accepted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      TextSnackBar(message: result.message ?? 'Refresh unavailable'),
+      TextSnackBar(
+        message: result.message == null
+            ? riskVi('refreshUnavailable')
+            : riskViError(result.message),
+      ),
     );
   }
 
@@ -133,18 +138,20 @@ class _RiskDashboardScreenState extends ConsumerState<RiskDashboardScreen> {
         backgroundColor: background,
         foregroundColor: foreground,
         elevation: 0,
-        title: const Text('Risk Home'),
+        title: Text(riskVi('riskHome')),
         actions: [
           IconButton(
             key: const Key('risk-privacy'),
-            tooltip: hidden ? 'Show risk amounts' : 'Hide risk amounts',
+            tooltip: hidden
+                ? riskVi('showRiskAmounts')
+                : riskVi('hideRiskAmounts'),
             icon: Icon(hidden ? Icons.visibility_off : Icons.visibility),
             onPressed: () =>
                 ref.read(hideBalanceProvider.notifier).state = !hidden,
           ),
           IconButton(
             key: const Key('risk-settings'),
-            tooltip: 'Risk settings',
+            tooltip: riskVi('riskSettings'),
             icon: const Icon(Icons.tune),
             onPressed: () => RiskSettingsSheet.show(
               context,
@@ -156,7 +163,7 @@ class _RiskDashboardScreenState extends ConsumerState<RiskDashboardScreen> {
           ),
           IconButton(
             key: const Key('portfolio-details'),
-            tooltip: 'Portfolio details',
+            tooltip: riskVi('portfolioDetails'),
             icon: const Icon(Icons.account_balance_wallet_outlined),
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute<void>(
@@ -274,10 +281,7 @@ class _DashboardBody extends StatelessWidget {
                     ],
                     if (state.unsaved) ...[
                       const SizedBox(height: 10),
-                      const _Notice(
-                        message:
-                            'Local risk changes are unsaved. OS delivery remains paused until storage confirms them.',
-                      ),
+                      _Notice(message: riskVi('localChangesUnsaved')),
                     ],
                     const SizedBox(height: 12),
                     const _PrivacyNote(),
@@ -460,7 +464,7 @@ class _DashboardBody extends StatelessWidget {
   void _showMarket(BuildContext context, RiskEvaluation evaluation) {
     _showSheet(
       context,
-      'Market inputs and reasons',
+      riskVi('marketInputsReasons'),
       _reactive(
         (current) => RiskMarketCard(
           evaluation: _evaluationFor(current, evaluation),
@@ -475,14 +479,14 @@ class _DashboardBody extends StatelessWidget {
   void _showReasons(BuildContext context, RiskEvaluation evaluation) {
     _showSheet(
       context,
-      'Why this state',
+      riskVi('whyThisState'),
       _reactive((current) {
         final latest = _evaluationFor(current, evaluation);
         return ListView(
           padding: const EdgeInsets.all(16),
           children: [
             Text(
-              latest?.overallState?.label ?? '-',
+              riskViSeverity(latest?.overallState),
               style: Theme.of(context).textTheme.headlineSmall,
             ),
             if (latest?.overallState != null &&
@@ -496,15 +500,17 @@ class _DashboardBody extends StatelessWidget {
               ),
             const SizedBox(height: 10),
             if (latest == null || latest.reasons.isEmpty)
-              const Text('No complete reason is available.'),
+              Text(riskVi('noCompleteReason')),
             for (final reason in latest?.reasons ?? const <RiskReason>[])
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.info_outline),
-                title: Text(riskRedactRiskText(reason.message, hideValues)),
+                title: Text(
+                  riskRedactRiskText(riskViReason(reason.message), hideValues),
+                ),
                 subtitle: Text(
                   riskRedactRiskText(
-                    '${reason.factorId} · observed ${reason.observedValue == null ? '-' : riskValue(reason.observedValue)} ${reason.unit ?? ''} · ${reason.source ?? '-'}',
+                    '${reason.factorId} · ${riskVi('observed').toLowerCase()} ${reason.observedValue == null ? '-' : riskValue(reason.observedValue)} ${reason.unit ?? ''} · ${reason.source ?? '-'}',
                     hideValues,
                   ),
                 ),
@@ -518,22 +524,22 @@ class _DashboardBody extends StatelessWidget {
   void _showExposure(BuildContext context, RiskEvaluation evaluation) {
     _showSheet(
       context,
-      'Exposure and sensitivity',
+      riskVi('exposureSensitivity'),
       _reactive((current) {
         final latest = _evaluationFor(current, evaluation);
         if (latest == null) {
-          return const Center(child: Text('Exposure is unavailable.'));
+          return Center(child: Text(riskVi('exposureUnavailable')));
         }
         return ListView(
           padding: const EdgeInsets.all(16),
           children: [
             _MetricSheetRow(
-              label: 'Quantity',
+              label: riskVi('quantity'),
               value: riskMaskedValue(latest.metrics.quantity.value, hideValues),
               hideValues: hideValues,
             ),
             _MetricSheetRow(
-              label: 'Trade notional',
+              label: riskVi('tradeNotional'),
               value: riskMaskedValue(
                 latest.metrics.tradeNotional.value,
                 hideValues,
@@ -542,7 +548,7 @@ class _DashboardBody extends StatelessWidget {
               hideValues: hideValues,
             ),
             _MetricSheetRow(
-              label: 'Gross asset exposure',
+              label: riskVi('grossAssetExposure'),
               value: riskMaskedValue(
                 latest.metrics.grossAssetExposure.value,
                 hideValues,
@@ -551,7 +557,7 @@ class _DashboardBody extends StatelessWidget {
               hideValues: hideValues,
             ),
             _MetricSheetRow(
-              label: 'Equity',
+              label: riskVi('equity'),
               value: riskMaskedValue(
                 latest.metrics.equity.value,
                 hideValues,
@@ -560,7 +566,7 @@ class _DashboardBody extends StatelessWidget {
               hideValues: hideValues,
             ),
             _MetricSheetRow(
-              label: 'Trade sensitivity / 0.01',
+              label: riskVi('tradeSensitivity'),
               value: riskMaskedValue(
                 latest.metrics.tradeSensitivityPerPoint.value,
                 hideValues,
@@ -569,7 +575,7 @@ class _DashboardBody extends StatelessWidget {
               hideValues: hideValues,
             ),
             _MetricSheetRow(
-              label: 'Equity sensitivity / 0.01',
+              label: riskVi('equitySensitivity'),
               value: riskMaskedValue(
                 latest.metrics.equitySensitivityPerPoint.value,
                 hideValues,
@@ -578,7 +584,7 @@ class _DashboardBody extends StatelessWidget {
               hideValues: hideValues,
             ),
             _MetricSheetRow(
-              label: 'Margin ratio',
+              label: riskVi('marginRatio'),
               value: riskMaskedPercent(
                 latest.metrics.marginRatio.value,
                 hideValues,
@@ -594,7 +600,7 @@ class _DashboardBody extends StatelessWidget {
   void _showRecovery(BuildContext context, RiskEvaluation evaluation) {
     _showSheet(
       context,
-      'Recovery and costs',
+      riskVi('recoveryCosts'),
       _reactive(
         (current) => RiskRecoveryView(
           evaluation: _evaluationFor(current, evaluation),
@@ -608,7 +614,7 @@ class _DashboardBody extends StatelessWidget {
   void _showStress(BuildContext context, RiskEvaluation evaluation) {
     _showSheet(
       context,
-      'Scenarios',
+      riskVi('scenarios'),
       _reactive(
         (current) => RiskStressView(
           evaluation: _stressEvaluation(current, evaluation),
@@ -641,7 +647,7 @@ class _DashboardBody extends StatelessWidget {
         .then((result) {
           if (!result.accepted || !context.mounted) return;
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Custom scenario price saved')),
+            SnackBar(content: Text(riskVi('customScenarioPriceSaved'))),
           );
         });
   }
@@ -663,7 +669,7 @@ class _DashboardBody extends StatelessWidget {
         .then((result) {
           if (result.accepted && context.mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Custom scenario price removed')),
+              SnackBar(content: Text(riskVi('customScenarioPriceRemoved'))),
             );
           }
         });
@@ -672,7 +678,7 @@ class _DashboardBody extends StatelessWidget {
   void _showPriceMap(BuildContext context, RiskEvaluation evaluation) {
     _showSheet(
       context,
-      'Price map',
+      riskVi('priceMap'),
       _reactive((current) {
         final latest = _evaluationFor(current, evaluation);
         return RiskPriceMap(
@@ -687,7 +693,7 @@ class _DashboardBody extends StatelessWidget {
   void _showPlan(BuildContext context, RiskEvaluation evaluation) {
     _showSheet(
       context,
-      'Your plan',
+      riskVi('yourPlan'),
       _reactive((current) {
         final latest = _evaluationFor(current, evaluation);
         final episodeKey = selectedEpisodeKey != null && !_sameAccount(current)
@@ -733,7 +739,7 @@ class _DashboardBody extends StatelessWidget {
   void _showHistory(BuildContext context) {
     _showSheet(
       context,
-      'History',
+      riskVi('history'),
       _reactive(
         (current) => RiskHistoryView(
           events: current.events,
@@ -1168,7 +1174,7 @@ class _PositionAccordionState extends State<_PositionAccordion> {
                           ),
                           Icon(
                             _expanded ? Icons.expand_less : Icons.expand_more,
-                            semanticLabel: _expanded ? 'Collapse' : 'Expand',
+                            semanticLabel: _expanded ? 'Thu gọn' : 'Mở rộng',
                           ),
                         ],
                       ),
@@ -1186,14 +1192,14 @@ class _PositionAccordionState extends State<_PositionAccordion> {
                             ),
                           ),
                           _SummaryMetric(
-                            label: 'Buffer',
+                            label: riskVi('buffer'),
                             value: riskMaskedPercent(
                               entry.evaluation?.buffer,
                               widget.hideValues,
                             ),
                           ),
                           _SummaryMetric(
-                            label: 'Leverage',
+                            label: riskVi('leverage'),
                             value: riskMaskedValue(
                               entry.evaluation?.effectiveLeverage,
                               widget.hideValues,
@@ -1201,23 +1207,23 @@ class _PositionAccordionState extends State<_PositionAccordion> {
                             ),
                           ),
                           _SummaryMetric(
-                            label: 'Quality',
+                            label: riskVi('quality'),
                             value: riskQualityLabel(entry.quality),
                           ),
                           _SummaryMetric(
-                            label: 'Direction',
+                            label: riskVi('direction'),
                             value: _positionDirection(entry),
                           ),
                           _SummaryMetric(
-                            label: 'Mode',
+                            label: riskVi('mode'),
                             value: _positionMarginMode(entry),
                           ),
                           _SummaryMetric(
-                            label: 'Type',
+                            label: riskVi('type'),
                             value: _positionInstrumentType(entry),
                           ),
                           _SummaryMetric(
-                            label: 'Freshness',
+                            label: riskVi('freshness'),
                             value: _positionFreshnessLabel(
                               entry,
                               widget.hideValues,
@@ -1225,12 +1231,12 @@ class _PositionAccordionState extends State<_PositionAccordion> {
                           ),
                           if (failed)
                             _SummaryChip(
-                              label: 'Failed',
+                              label: riskVi('failed'),
                               color: theme.colorScheme.error,
                             )
                           else if (entry.evaluation?.reasons.isNotEmpty == true)
                             _SummaryChip(
-                              label: 'Alert',
+                              label: riskVi('alert'),
                               color: theme.colorScheme.tertiary,
                             ),
                         ],
@@ -1324,7 +1330,7 @@ class _PositionDetailUnavailable extends StatelessWidget {
   Widget build(BuildContext context) {
     final message = error == null || error!.trim().isEmpty
         ? riskQualityLabel(quality)
-        : 'Unable to load position details: ${riskRedactRiskText(error!, hideValues)}';
+        : 'Không thể tải chi tiết vị thế: ${riskRedactRiskText(riskViError(error), hideValues)}';
     return Padding(padding: const EdgeInsets.all(10), child: Text(message));
   }
 }
@@ -1341,15 +1347,15 @@ String _positionInstrument(RiskPositionMonitorViewState entry) {
   }
   final id = entry.positionId?.trim();
   if (id != null && id.isNotEmpty) return id;
-  return entry.episodeKey.isEmpty ? 'Position' : entry.episodeKey;
+  return entry.episodeKey.isEmpty ? riskVi('position') : entry.episodeKey;
 }
 
 String _positionStateLabel(RiskPositionMonitorViewState entry) {
   if (_positionHasFailure(entry)) {
     final known = entry.evaluation?.overallState;
     return known == null
-        ? 'Connection error'
-        : 'Last known ${known.label} · Connection error';
+        ? riskQualityLabel(entry.quality)
+        : '${riskVi('lastKnown')} ${riskViSeverity(known)} · ${riskQualityLabel(entry.quality)}';
   }
   return riskStateLabelWithQuality(
     entry.evaluation?.overallState,
@@ -1385,9 +1391,11 @@ String _positionFreshnessLabel(
   bool hideValues,
 ) {
   final freshness = entry.freshness;
-  if (freshness == null) return 'Unknown';
+  if (freshness == null) return riskVi('unknown');
   if (hideValues) return '******';
-  return _formatRiskTimestamp(freshness).replaceFirst('Last check', 'Observed');
+  return _formatRiskTimestamp(
+    freshness,
+  ).replaceFirst(riskVi('lastCheck'), riskVi('observed'));
 }
 
 bool _positionHasFailure(RiskPositionMonitorViewState entry) =>
@@ -1401,15 +1409,15 @@ String _positionSemanticsLabel(
   final parts = <String>[
     _positionInstrument(entry),
     _positionStateLabel(entry),
-    'buffer ${riskMaskedPercent(entry.evaluation?.buffer, hideValues)}',
-    'leverage ${riskMaskedValue(entry.evaluation?.effectiveLeverage, hideValues, suffix: 'x')}',
+    '${riskVi('buffer').toLowerCase()} ${riskMaskedPercent(entry.evaluation?.buffer, hideValues)}',
+    '${riskVi('leverage').toLowerCase()} ${riskMaskedValue(entry.evaluation?.effectiveLeverage, hideValues, suffix: 'x')}',
     riskQualityLabel(entry.quality),
-    'direction ${_positionDirection(entry)}',
-    'mode ${_positionMarginMode(entry)}',
-    'type ${_positionInstrumentType(entry)}',
-    'freshness ${_positionFreshnessLabel(entry, hideValues)}',
-    if (_positionHasFailure(entry)) 'Failed',
-    if (entry.evaluation?.reasons.isNotEmpty == true) 'Alert',
+    '${riskVi('direction').toLowerCase()} ${_positionDirection(entry)}',
+    '${riskVi('mode').toLowerCase()} ${_positionMarginMode(entry)}',
+    '${riskVi('type').toLowerCase()} ${_positionInstrumentType(entry)}',
+    '${riskVi('freshness').toLowerCase()} ${_positionFreshnessLabel(entry, hideValues)}',
+    if (_positionHasFailure(entry)) riskVi('failed'),
+    if (entry.evaluation?.reasons.isNotEmpty == true) riskVi('alert'),
   ];
   return parts.join(' · ');
 }
@@ -1429,20 +1437,22 @@ class _MonitorStatus extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final quality = riskQualityLabel(state.quality);
-    final running = state.isRunning ? 'Monitoring active' : 'Monitoring paused';
+    final running = state.isRunning
+        ? riskVi('monitoringActive')
+        : riskVi('monitoringPaused');
     final requestStatus = switch (state.requestStatus) {
-      RiskMonitorRequestStatus.backingOff => 'Retrying soon',
-      RiskMonitorRequestStatus.refreshing => 'Refreshing',
-      RiskMonitorRequestStatus.authBlocked => 'Authentication blocked',
-      RiskMonitorRequestStatus.partial => 'Partial monitor update',
-      RiskMonitorRequestStatus.ready => 'Monitor ready',
-      RiskMonitorRequestStatus.unavailable => 'Monitor unavailable',
+      RiskMonitorRequestStatus.backingOff => riskVi('retryingSoon'),
+      RiskMonitorRequestStatus.refreshing => riskVi('refreshing'),
+      RiskMonitorRequestStatus.authBlocked => riskVi('authenticationBlocked'),
+      RiskMonitorRequestStatus.partial => riskVi('partialMonitorUpdate'),
+      RiskMonitorRequestStatus.ready => riskVi('monitorReady'),
+      RiskMonitorRequestStatus.unavailable => riskVi('monitorUnavailable'),
     };
     final showRequestStatus =
         state.positionEntries.isNotEmpty ||
         state.requestStatus != RiskMonitorRequestStatus.unavailable;
     final owner = state.ownerLabel.trim().isEmpty
-        ? 'foreground'
+        ? riskVi('foreground')
         : riskRedactRiskText(state.ownerLabel, hideValues);
     return Card(
       key: const Key('risk-monitor-status'),
@@ -1477,18 +1487,21 @@ class _MonitorStatus extends StatelessWidget {
                 state.requestStatus == RiskMonitorRequestStatus.backingOff)
               Text(
                 hideValues
-                    ? 'retry time ******'
-                    : 'retry ${_formatRiskTimestamp(state.retryAt)}',
+                    ? '${riskVi('retryTime')} ******'
+                    : 'thử lại ${_formatRiskTimestamp(state.retryAt)}',
                 style: theme.textTheme.bodySmall,
               ),
             if (!state.backgroundAvailable)
-              Text('Background unavailable', style: theme.textTheme.bodySmall),
+              Text(
+                riskVi('backgroundUnavailable'),
+                style: theme.textTheme.bodySmall,
+              ),
             if (state.lastError != null)
               Text(
-                riskRedactRiskText(state.lastError!, hideValues),
+                riskRedactRiskText(riskViError(state.lastError), hideValues),
                 style: TextStyle(color: theme.colorScheme.error, fontSize: 12),
               ),
-            TextButton(onPressed: onRefresh, child: const Text('Refresh')),
+            TextButton(onPressed: onRefresh, child: Text(riskVi('refresh'))),
           ],
         ),
       ),
@@ -1560,7 +1573,7 @@ class _PositionContext extends StatelessWidget {
               label: riskRedactRiskText(position.instrumentType, hideValues),
             ),
             Text(
-              'Selected position',
+              riskVi('selectedPosition'),
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),
@@ -1628,14 +1641,14 @@ class _SinceLastCheck extends StatelessWidget {
               runSpacing: 4,
               children: [
                 Text(
-                  'Trend and velocity',
+                  riskVi('trendVelocity'),
                   style: theme.textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w700,
                   ),
                 ),
                 Text(
                   hideValues
-                      ? 'Last check ******'
+                      ? '${riskVi('lastCheck')} ******'
                       : _formatRiskTimestamp(observedAt),
                   style: theme.textTheme.bodySmall,
                 ),
@@ -1647,28 +1660,32 @@ class _SinceLastCheck extends StatelessWidget {
               runSpacing: 8,
               children: [
                 _CheckValue(
-                  label: 'Change',
+                  label: riskVi('change'),
                   value: hideValues
-                      ? '- / Hidden'
-                      : state.trend?.text ?? '- / Collecting history',
+                      ? '- / ${riskVi('hidden')}'
+                      : (riskViGenerated(state.trend?.text).isEmpty
+                            ? '- / ${riskVi('collectingHistory')}'
+                            : riskViGenerated(state.trend?.text)),
                 ),
                 _CheckValue(
-                  label: 'Velocity',
+                  label: riskVi('velocity'),
                   value: hideValues
-                      ? '- / Hidden'
-                      : state.velocity?.text ?? '- / Collecting history',
+                      ? '- / ${riskVi('hidden')}'
+                      : (riskViGenerated(state.velocity?.text).isEmpty
+                            ? '- / ${riskVi('collectingHistory')}'
+                            : riskViGenerated(state.velocity?.text)),
                 ),
                 _CheckValue(
-                  label: 'Quality',
+                  label: riskVi('quality'),
                   value: riskQualityLabel(state.quality),
                 ),
               ],
             ),
             const SizedBox(height: 10),
-            Text('Previous check', style: theme.textTheme.labelLarge),
+            Text(riskVi('previousCheck'), style: theme.textTheme.labelLarge),
             const SizedBox(height: 4),
             if (previousCheck == null)
-              Text('No previous check', style: theme.textTheme.bodyMedium)
+              Text(riskVi('noPreviousCheck'), style: theme.textTheme.bodyMedium)
             else
               _PreviousCheckValues(
                 comparison: previousCheck!,
@@ -1726,14 +1743,14 @@ class _PreviousCheckValues extends StatelessWidget {
       runSpacing: 8,
       children: [
         _CheckValue(
-          label: 'Overall',
+          label: riskVi('overall'),
           value: _stateRange(
             comparison.baseline.overallState,
             comparison.current.overallState,
           ),
         ),
         _CheckValue(
-          label: 'Buffer',
+          label: riskVi('buffer'),
           value: _numberRange(
             comparison.baseline.bufferPercentage,
             comparison.current.bufferPercentage,
@@ -1745,7 +1762,7 @@ class _PreviousCheckValues extends StatelessWidget {
           ),
         ),
         _CheckValue(
-          label: 'Leverage',
+          label: riskVi('leverage'),
           value: _numberRange(
             comparison.baseline.effectiveLeverage,
             comparison.current.effectiveLeverage,
@@ -1756,7 +1773,7 @@ class _PreviousCheckValues extends StatelessWidget {
           ),
         ),
         _CheckValue(
-          label: 'Debt',
+          label: riskVi('debt'),
           value: _numberRange(
             comparison.baseline.debt,
             comparison.current.debt,
@@ -1767,7 +1784,7 @@ class _PreviousCheckValues extends StatelessWidget {
           ),
         ),
         _CheckValue(
-          label: 'True Exit',
+          label: riskVi('trueExit'),
           value: _numberRange(
             comparison.baseline.trueExitVerified
                 ? comparison.baseline.trueExit
@@ -1780,7 +1797,7 @@ class _PreviousCheckValues extends StatelessWidget {
           ),
         ),
         _CheckValue(
-          label: 'Structure',
+          label: riskVi('structure'),
           value: _textRange(
             comparison.baseline.structureLabel,
             comparison.current.structureLabel,
@@ -1788,7 +1805,7 @@ class _PreviousCheckValues extends StatelessWidget {
           ),
         ),
         _CheckValue(
-          label: 'Funding',
+          label: riskVi('funding'),
           value: _textRange(
             comparison.baseline.fundingLabel,
             comparison.current.fundingLabel,
@@ -1809,7 +1826,7 @@ class _PreviousCheckValues extends StatelessWidget {
 }
 
 String _stateRange(RiskSeverity? before, RiskSeverity? after) =>
-    '${before?.label ?? '-'} → ${after?.label ?? '-'}';
+    '${riskViSeverity(before)} → ${riskViSeverity(after)}';
 
 String _numberRange(
   double? before,
@@ -1855,7 +1872,7 @@ String _fractionRange(double? before, double? after, bool hideValues) {
 }
 
 String _textRange(String? before, String? after, bool hideValues) =>
-    '${riskRedactRiskText(before ?? '-', hideValues)} → ${riskRedactRiskText(after ?? '-', hideValues)}';
+    '${riskRedactRiskText(riskViGenerated(before).isEmpty ? '-' : riskViGenerated(before), hideValues)} → ${riskRedactRiskText(riskViGenerated(after).isEmpty ? '-' : riskViGenerated(after), hideValues)}';
 
 class _TopReasons extends StatelessWidget {
   const _TopReasons({
@@ -1888,20 +1905,20 @@ class _TopReasons extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    'Top reasons',
+                    riskVi('topReasons'),
                     style: theme.textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.w700,
                     ),
                   ),
                 ),
-                TextButton(onPressed: onOpen, child: const Text('See all')),
+                TextButton(onPressed: onOpen, child: Text(riskVi('seeAll'))),
               ],
             ),
             for (final reason in reasons.take(3))
               Padding(
                 padding: const EdgeInsets.only(bottom: 5),
                 child: Text(
-                  '• ${riskRedactRiskText(reason.message, hideValues)}',
+                  '• ${riskRedactRiskText(riskViReason(reason.message), hideValues)}',
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -1914,10 +1931,10 @@ class _TopReasons extends StatelessWidget {
 }
 
 String _formatRiskTimestamp(DateTime? value) {
-  if (value == null) return 'Last check -';
+  if (value == null) return '${riskVi('lastCheck')} -';
   final local = value.toLocal();
   final minute = local.minute.toString().padLeft(2, '0');
-  return 'Last check ${local.month}/${local.day} ${local.hour}:$minute';
+  return '${riskVi('lastCheck')} ${local.month}/${local.day} ${local.hour}:$minute';
 }
 
 class _UnavailableDashboard extends StatelessWidget {
@@ -1935,16 +1952,14 @@ class _UnavailableDashboard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final title = switch (state.quality.status) {
-      RiskQualityStatus.empty => 'No isolated position selected',
-      RiskQualityStatus.error => 'Risk data unavailable',
-      RiskQualityStatus.unsupported => 'Position is unsupported',
-      RiskQualityStatus.stale => 'Last risk snapshot is stale',
-      RiskQualityStatus.partial => 'Partial risk assessment',
-      _ => 'Waiting for risk data',
+      RiskQualityStatus.empty => riskVi('noIsolatedPosition'),
+      RiskQualityStatus.error => riskVi('riskDataUnavailable'),
+      RiskQualityStatus.unsupported => riskVi('positionUnsupported'),
+      RiskQualityStatus.stale => riskVi('staleSnapshot'),
+      RiskQualityStatus.partial => riskVi('partialAssessment'),
+      _ => riskVi('waitingRiskData'),
     };
-    final body =
-        state.quality.reason ??
-        'Risk Home needs a complete typed snapshot before it can assess the position.';
+    final body = state.quality.reason ?? riskVi('snapshotNeeded');
     return Card(
       key: const Key('risk-empty-state'),
       elevation: 0,
@@ -1967,12 +1982,12 @@ class _UnavailableDashboard extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 6),
-            Text(riskRedactRiskText(body, hideValues)),
+            Text(riskRedactRiskText(riskViError(body), hideValues)),
             const SizedBox(height: 12),
             ElevatedButton.icon(
               onPressed: onRefresh,
               icon: const Icon(Icons.refresh),
-              label: const Text('Refresh risk data'),
+              label: Text(riskVi('refreshRiskData')),
             ),
           ],
         ),
@@ -2005,32 +2020,32 @@ class _DrilldownRow extends StatelessWidget {
       runSpacing: 8,
       children: [
         _DrillButton(
-          label: 'Exposure & sensitivity',
+          label: riskVi('exposureSensitivity'),
           icon: Icons.analytics_outlined,
           onPressed: onExposure,
         ),
         _DrillButton(
-          label: 'Recovery & costs',
+          label: riskVi('recoveryCosts'),
           icon: Icons.flag_outlined,
           onPressed: onRecovery,
         ),
         _DrillButton(
-          label: 'Scenarios',
+          label: riskVi('scenarios'),
           icon: Icons.show_chart,
           onPressed: onStress,
         ),
         _DrillButton(
-          label: 'Price map',
+          label: riskVi('priceMap'),
           icon: Icons.map_outlined,
           onPressed: onMap,
         ),
         _DrillButton(
-          label: 'Plan',
+          label: riskVi('plan'),
           icon: Icons.rule_outlined,
           onPressed: onPlan,
         ),
         _DrillButton(
-          label: 'History',
+          label: riskVi('history'),
           icon: Icons.history,
           onPressed: onHistory,
         ),
@@ -2109,10 +2124,9 @@ class _PrivacyNote extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Semantics(
-      label:
-          'Performance amounts stay hidden on Risk Home. Open Portfolio details to reveal them for this visit.',
+      label: riskVi('privacySemantics'),
       child: Text(
-        'Risk Home keeps performance amounts out of the first view and notifications. Portfolio details has an explicit reveal step.',
+        riskVi('privacyNote'),
         style: Theme.of(context).textTheme.bodySmall?.copyWith(
           color: Theme.of(context).colorScheme.onSurfaceVariant,
         ),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../domain/risk/risk_models.dart';
+import '../../risk_vietnamese_formatter.dart';
 import 'risk_overview.dart';
 
 class RiskMarketCard extends StatelessWidget {
@@ -32,7 +33,7 @@ class RiskMarketCard extends StatelessWidget {
     final quality =
         stateQuality ??
         evaluation?.quality ??
-        const RiskQuality.unavailable(reason: 'Market unavailable');
+        const RiskQuality.unavailable(reason: 'Thị trường chưa khả dụng');
     final displayedState = assessment?.state;
     final effectiveQuality = riskComponentQuality(quality, assessment);
     final stateLabel = riskComponentStateLabel(
@@ -61,7 +62,7 @@ class RiskMarketCard extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    'Market risk',
+                    riskVi('marketRisk'),
                     style: theme.textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.w700,
                     ),
@@ -92,8 +93,9 @@ class RiskMarketCard extends StatelessWidget {
             const SizedBox(height: 5),
             Text(
               riskRedactRiskText(
-                market?.marketContextLabel ??
-                    'Market inputs are independent from position math',
+                riskViGenerated(market?.marketContextLabel).isEmpty
+                    ? 'Dữ liệu thị trường độc lập với phép tính vị thế'
+                    : riskViGenerated(market?.marketContextLabel),
                 hideValues,
               ),
               style: theme.textTheme.bodySmall?.copyWith(
@@ -106,55 +108,64 @@ class RiskMarketCard extends StatelessWidget {
               runSpacing: 8,
               children: [
                 _MarketValue(
-                  label: 'Structure',
+                  label: riskVi('structure'),
                   value: riskRedactRiskText(
-                    market?.assetStructureLabel ?? '-',
+                    riskViGenerated(market?.assetStructureLabel).isEmpty
+                        ? '-'
+                        : riskViGenerated(market?.assetStructureLabel),
                     hideValues,
                   ),
                 ),
                 _MarketValue(
-                  label: 'Volatility',
+                  label: riskVi('volatility'),
                   value: riskRedactRiskText(
-                    market?.volatilityLabel ??
-                        (market?.dailyVolatility == null
-                            ? '-'
-                            : riskPercent(market!.dailyVolatility)),
+                    market?.volatilityLabel == null
+                        ? (market?.dailyVolatility == null
+                              ? '-'
+                              : riskPercent(market!.dailyVolatility))
+                        : riskViGenerated(market!.volatilityLabel),
                     hideValues,
                   ),
                 ),
                 _MarketValue(
-                  label: 'Funding',
+                  label: riskVi('funding'),
                   value: riskRedactRiskText(
-                    market?.fundingLabel ?? '-',
+                    market?.fundingLabel == null
+                        ? '-'
+                        : riskViGenerated(market!.fundingLabel),
                     hideValues,
                   ),
                 ),
                 _MarketValue(
-                  label: 'Open interest',
+                  label: riskVi('openInterest'),
                   value: riskRedactRiskText(
-                    market?.openInterestLabel ?? '-',
+                    market?.openInterestLabel == null
+                        ? '-'
+                        : riskViGenerated(market!.openInterestLabel),
                     hideValues,
                   ),
                 ),
                 _MarketValue(
-                  label: 'Volume',
+                  label: riskVi('volume'),
                   value: riskRedactRiskText(
-                    market?.volumePressureLabel ?? '-',
+                    market?.volumePressureLabel == null
+                        ? '-'
+                        : riskViGenerated(market!.volumePressureLabel),
                     hideValues,
                   ),
                 ),
                 _MarketValue(
-                  label: 'Daily volatility',
+                  label: riskVi('dailyVolatility'),
                   value: riskMaskedPercent(market?.dailyVolatility, hideValues),
                 ),
                 _MarketValue(
-                  label: 'Support / resistance',
+                  label: riskVi('supportResistance'),
                   value: market?.support == null && market?.resistance == null
                       ? '-'
                       : '${riskMaskedValue(market?.support, hideValues)} / ${riskMaskedValue(market?.resistance, hideValues)}',
                 ),
                 _MarketValue(
-                  label: 'Funding / interval',
+                  label: riskVi('fundingInterval'),
                   value:
                       market?.normalizedFunding8h == null &&
                           market?.fundingIntervalHours == null
@@ -162,7 +173,7 @@ class RiskMarketCard extends StatelessWidget {
                       : '${riskMaskedPercent(market?.normalizedFunding8h, hideValues)} · ${riskMaskedValue(market?.fundingIntervalHours, hideValues, decimals: 1)}h',
                 ),
                 _MarketValue(
-                  label: 'OI / price change',
+                  label: riskVi('oiPriceChange'),
                   value:
                       market?.openInterestChange == null &&
                           market?.marketPriceChange == null
@@ -176,18 +187,18 @@ class RiskMarketCard extends StatelessWidget {
               _QualityMessage(
                 icon: Icons.info_outline,
                 text:
-                    'Partial market context: ${riskRedactRiskText(missing.join('; '), hideValues)}',
+                    '${riskVi('partialMarketContext')}: ${riskRedactRiskText(missing.map(riskViGenerated).join('; '), hideValues)}',
               ),
             ],
             if (reasons.isNotEmpty) ...[
               const SizedBox(height: 12),
-              Text('Why this state', style: theme.textTheme.labelLarge),
+              Text(riskVi('whyThisState'), style: theme.textTheme.labelLarge),
               const SizedBox(height: 5),
               for (final reason in reasons.take(3))
                 Padding(
                   padding: const EdgeInsets.only(bottom: 4),
                   child: Text(
-                    '• ${riskRedactRiskText(reason.message, hideValues)}',
+                    '• ${riskRedactRiskText(riskViReason(reason.message), hideValues)}',
                     style: theme.textTheme.bodySmall,
                   ),
                 ),
@@ -207,7 +218,7 @@ class RiskMarketCard extends StatelessWidget {
                 child: TextButton.icon(
                   onPressed: onOpen,
                   icon: const Icon(Icons.open_in_new, size: 17),
-                  label: const Text('Market inputs and reasons'),
+                  label: Text(riskVi('marketInputsReasons')),
                 ),
               ),
             ],
@@ -270,11 +281,11 @@ class _MarketSourceEvidence extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Market evidence', style: theme.textTheme.labelLarge),
+        Text(riskVi('marketEvidence'), style: theme.textTheme.labelLarge),
         const SizedBox(height: 4),
         Text(
           riskRedactRiskText(
-            'Source ${market.source ?? '-'} · Observed ${_marketTime(market.observedAt)} · Source time ${_marketTime(market.sourceAt)}',
+            '${riskVi('source')} ${market.source ?? '-'} · ${riskVi('observed')} ${_marketTime(market.observedAt)} · ${riskVi('sourceTime')} ${_marketTime(market.sourceAt)}',
             hideValues,
           ),
           style: theme.textTheme.bodySmall,
@@ -283,7 +294,7 @@ class _MarketSourceEvidence extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             riskRedactRiskText(
-              '${reason.message} · observed ${reason.observedValue == null ? '-' : riskValue(reason.observedValue)} ${reason.unit ?? ''} · threshold ${reason.threshold ?? '-'} · window ${reason.window ?? '-'} · source ${reason.source ?? '-'} · time ${_marketTime(reason.observedAt)}',
+              '${riskViReason(reason.message)} · ${riskVi('observed').toLowerCase()} ${reason.observedValue == null ? '-' : riskValue(reason.observedValue)} ${reason.unit ?? ''} · ngưỡng ${reason.threshold ?? '-'} · khoảng thời gian ${reason.window ?? '-'} · ${riskVi('source').toLowerCase()} ${reason.source ?? '-'} · thời gian ${_marketTime(reason.observedAt)}',
               hideValues,
             ),
             maxLines: 4,

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../domain/risk/risk_events.dart';
 import '../../../domain/risk/risk_history.dart';
 import '../../../domain/risk/risk_models.dart';
+import '../../risk_vietnamese_formatter.dart';
 import 'risk_overview.dart';
 
 class RiskHistoryView extends StatelessWidget {
@@ -38,7 +39,7 @@ class RiskHistoryView extends StatelessWidget {
           children: [
             Expanded(
               child: Text(
-                'History and checks',
+                riskVi('historyAndChecks'),
                 style: theme.textTheme.headlineSmall?.copyWith(
                   fontWeight: FontWeight.w700,
                 ),
@@ -48,35 +49,39 @@ class RiskHistoryView extends StatelessWidget {
               TextButton.icon(
                 onPressed: onClearHistory,
                 icon: const Icon(Icons.delete_sweep_outlined, size: 18),
-                label: const Text('Clear history'),
+                label: Text(riskVi('clearHistory')),
               ),
           ],
         ),
         const SizedBox(height: 12),
         _HistoryCard(
-          title: 'Trend and velocity',
+          title: riskVi('trendVelocity'),
           child: Wrap(
             spacing: 16,
             runSpacing: 10,
             children: [
               _HistoryValue(
-                label: 'Trend',
+                label: riskVi('trend'),
                 value: hideValues
-                    ? '- / Hidden'
-                    : trend?.text ?? '- / Collecting history',
+                    ? '- / ${riskVi('hidden')}'
+                    : (riskViGenerated(trend?.text).isEmpty
+                          ? '- / ${riskVi('collectingHistory')}'
+                          : riskViGenerated(trend?.text)),
               ),
               _HistoryValue(
-                label: 'Velocity',
+                label: riskVi('velocity'),
                 value: hideValues
-                    ? '- / Hidden'
-                    : velocity?.text ?? '- / Collecting history',
+                    ? '- / ${riskVi('hidden')}'
+                    : (riskViGenerated(velocity?.text).isEmpty
+                          ? '- / ${riskVi('collectingHistory')}'
+                          : riskViGenerated(velocity?.text)),
               ),
               _HistoryValue(
-                label: 'Samples',
+                label: riskVi('samples'),
                 value: hideValues ? '******' : '${samples.length}',
               ),
               _HistoryValue(
-                label: 'Latest',
+                label: riskVi('latest'),
                 value: latest == null ? '-' : _time(latest.observedAt),
               ),
             ],
@@ -84,42 +89,45 @@ class RiskHistoryView extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         _HistoryCard(
-          title: 'Previous check',
+          title: riskVi('previousCheck'),
           child: previousCheck == null
-              ? Text('No previous check', style: theme.textTheme.bodyMedium)
+              ? Text(
+                  riskVi('noPreviousCheck'),
+                  style: theme.textTheme.bodyMedium,
+                )
               : Wrap(
                   spacing: 16,
                   runSpacing: 10,
                   children: [
                     _HistoryValue(
-                      label: 'Overall',
+                      label: riskVi('overall'),
                       value: _comparisonState(previousCheck!),
                     ),
                     _HistoryValue(
-                      label: 'Buffer',
+                      label: riskVi('buffer'),
                       value: _comparisonBuffer(previousCheck!),
                     ),
                     _HistoryValue(
-                      label: 'Leverage',
+                      label: riskVi('leverage'),
                       value: _comparisonLeverage(previousCheck!),
                     ),
                     _HistoryValue(
-                      label: 'Debt',
+                      label: riskVi('debt'),
                       value: _comparisonDebt(previousCheck!),
                     ),
                     _HistoryValue(
-                      label: 'True Exit',
+                      label: riskVi('trueExit'),
                       value: _comparisonTrueExit(previousCheck!),
                     ),
                     _HistoryValue(
-                      label: 'Structure',
+                      label: riskVi('structure'),
                       value: _comparisonText(
                         previousCheck!.baseline.structureLabel,
                         previousCheck!.current.structureLabel,
                       ),
                     ),
                     _HistoryValue(
-                      label: 'Funding',
+                      label: riskVi('funding'),
                       value: _comparisonText(
                         previousCheck!.baseline.fundingLabel,
                         previousCheck!.current.fundingLabel,
@@ -134,10 +142,10 @@ class RiskHistoryView extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         _HistoryCard(
-          title: 'Daily summary',
+          title: riskVi('dailySummary'),
           child: summaries.isEmpty
               ? Text(
-                  'No daily summary captured yet.',
+                  riskVi('noDailySummary'),
                   style: theme.textTheme.bodyMedium,
                 )
               : Column(
@@ -154,12 +162,9 @@ class RiskHistoryView extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         _HistoryCard(
-          title: 'Risk events',
+          title: riskVi('riskEvents'),
           child: events.isEmpty
-              ? Text(
-                  'No risk events recorded.',
-                  style: theme.textTheme.bodyMedium,
-                )
+              ? Text(riskVi('noRiskEvents'), style: theme.textTheme.bodyMedium)
               : Column(
                   children: [
                     for (final event in events.reversed.take(40))
@@ -167,11 +172,14 @@ class RiskHistoryView extends StatelessWidget {
                         contentPadding: EdgeInsets.zero,
                         leading: Icon(_eventIcon(event.kind)),
                         title: Text(
-                          riskRedactRiskText(event.message, hideValues),
+                          riskRedactRiskText(
+                            riskViEvent(event.message),
+                            hideValues,
+                          ),
                         ),
                         subtitle: Text(
                           riskRedactRiskText(
-                            '${event.kind.name} · ${event.factorId ?? '-'} · previous ${riskMaskedValue(event.previousValue, hideValues)} · current ${riskMaskedValue(event.currentValue, hideValues)} · source ${event.source ?? '-'}',
+                            '${riskViEventKind(event.kind.name)} · ${event.factorId ?? '-'} · trước ${riskMaskedValue(event.previousValue, hideValues)} · hiện tại ${riskMaskedValue(event.currentValue, hideValues)} · ${riskVi('source').toLowerCase()} ${event.source ?? '-'}',
                             hideValues,
                           ),
                         ),
@@ -201,14 +209,14 @@ class RiskHistoryView extends StatelessWidget {
     );
     final quality = riskQualityLabel(summary.quality);
     final coverage = summary.interestCoverageComplete
-        ? 'Complete'
-        : 'Partial / unknown';
+        ? 'Đầy đủ'
+        : 'Một phần / chưa rõ';
     final text = [
-      'Overall ${riskStateLabelWithQuality(summary.overallState, summary.quality)} · Position ${riskStateLabelWithQuality(summary.positionState, summary.quality)} · Market ${riskStateLabelWithQuality(summary.marketState, summary.quality)} · Recovery ${riskStateLabelWithQuality(summary.recoveryState, summary.quality)}',
-      'Buffer $buffer · Leverage $leverage',
-      'Interest actual $actual · known $known · coverage $coverage · quality ${summary.actualInterestQuality == null ? '-' : riskQualityLabel(summary.actualInterestQuality!)}',
-      'Major change ${riskRedactRiskText(summary.majorChange ?? '-', hideValues)}',
-      'Plan ${hideValues ? '******' : summary.activeRuleCount} active · ${hideValues ? '******' : summary.unknownRuleCount} pending · snapshot quality $quality · ${summary.timeZone}',
+      '${riskVi('overall')} ${riskStateLabelWithQuality(summary.overallState, summary.quality)} · ${riskVi('position')} ${riskStateLabelWithQuality(summary.positionState, summary.quality)} · ${riskVi('market')} ${riskStateLabelWithQuality(summary.marketState, summary.quality)} · ${riskVi('recovery')} ${riskStateLabelWithQuality(summary.recoveryState, summary.quality)}',
+      '${riskVi('buffer')} $buffer · ${riskVi('leverage')} $leverage',
+      'Lãi thực tế $actual · đã biết $known · bao phủ $coverage · chất lượng ${summary.actualInterestQuality == null ? '-' : riskQualityLabel(summary.actualInterestQuality!)}',
+      'Thay đổi lớn ${riskRedactRiskText(riskViGenerated(summary.majorChange), hideValues)}',
+      'Kế hoạch ${hideValues ? '******' : summary.activeRuleCount} ${riskVi('active')} · ${hideValues ? '******' : summary.unknownRuleCount} ${riskVi('pending')} · chất lượng ảnh chụp $quality · ${summary.timeZone}',
     ].join('\n');
     return riskRedactRiskText(text, hideValues);
   }
@@ -278,13 +286,19 @@ class RiskHistoryView extends StatelessWidget {
   }
 
   String _comparisonText(String? before, String? after) {
-    final left = riskRedactRiskText(before ?? '-', hideValues);
-    final right = riskRedactRiskText(after ?? '-', hideValues);
+    final left = riskRedactRiskText(
+      riskViGenerated(before).isEmpty ? '-' : riskViGenerated(before),
+      hideValues,
+    );
+    final right = riskRedactRiskText(
+      riskViGenerated(after).isEmpty ? '-' : riskViGenerated(after),
+      hideValues,
+    );
     return '$left → $right';
   }
 
   String _stateValue(RiskSeverity? state, RiskQuality quality) {
-    return state?.label ?? '-';
+    return riskViSeverity(state);
   }
 
   String _comparisonNumber(

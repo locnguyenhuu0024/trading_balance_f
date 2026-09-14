@@ -14,6 +14,7 @@ import 'package:trading_balance_f/features/portfolio/domain/risk/risk_history.da
 import 'package:trading_balance_f/features/portfolio/domain/risk/risk_models.dart';
 import 'package:trading_balance_f/features/portfolio/domain/risk/risk_policy.dart';
 import 'package:trading_balance_f/features/portfolio/presentation/risk_dashboard_screen.dart';
+import 'package:trading_balance_f/features/portfolio/presentation/risk_vietnamese_formatter.dart';
 import 'package:trading_balance_f/features/portfolio/presentation/providers/risk_dashboard_provider.dart';
 import 'package:trading_balance_f/features/portfolio/presentation/portfolio_screen.dart';
 import 'package:trading_balance_f/features/portfolio/presentation/widgets/risk/risk_history_view.dart';
@@ -46,10 +47,19 @@ Future<void> main() async {
         reason: 'Missing aggregate position $key',
       );
     }
-    expect(find.textContaining('NORMAL'), findsWidgets);
-    expect(find.textContaining('WATCH'), findsWidgets);
-    expect(find.textContaining('HIGH'), findsWidgets);
-    expect(find.text('Failed'), findsOneWidget);
+    expect(
+      find.textContaining(riskViSeverity(RiskSeverity.normal)),
+      findsWidgets,
+    );
+    expect(
+      find.textContaining(riskViSeverity(RiskSeverity.watch)),
+      findsWidgets,
+    );
+    expect(
+      find.textContaining(riskViSeverity(RiskSeverity.high)),
+      findsWidgets,
+    );
+    expect(find.text(riskVi('failed')), findsOneWidget);
     expect(find.byKey(const Key('risk-overview')), findsNothing);
     expect(owner.dispatchCalls, 0);
     expect(tester.takeException(), isNull);
@@ -72,7 +82,7 @@ Future<void> main() async {
     await tester.pump();
 
     expect(find.byKey(const Key('risk-monitor-status')), findsOneWidget);
-    expect(find.textContaining('Retrying soon'), findsOneWidget);
+    expect(find.textContaining(riskVi('retryingSoon')), findsOneWidget);
     expect(find.text('10.00'), findsNothing);
     expect(find.text('******'), findsWidgets);
     expect(find.byKey(const Key('risk-position-header-btc')), findsOneWidget);
@@ -82,7 +92,7 @@ Future<void> main() async {
       find.byKey(const Key('risk-position-header-failed')),
       findsOneWidget,
     );
-    expect(find.text('Stress scenarios'), findsNothing);
+    expect(find.text(riskVi('stressScenarios')), findsNothing);
 
     final semantics = tester.ensureSemantics();
     final headerSemantics = tester.getSemantics(
@@ -90,7 +100,7 @@ Future<void> main() async {
     );
     final headerData = headerSemantics.getSemanticsData();
     expect(headerData.hasAction(SemanticsAction.tap), isTrue);
-    expect(headerData.label, contains('Expand'));
+    expect(headerData.label, contains('Mở rộng'));
     expect(headerData.label, contains('LONG'));
     expect(headerData.label, contains('ISOLATED'));
     for (final literal in const <String>[
@@ -116,8 +126,8 @@ Future<void> main() async {
         .getSemantics(find.byKey(const Key('risk-position-header-eth')))
         .getSemanticsData();
     expect(expandedHeaderData.hasAction(SemanticsAction.tap), isTrue);
-    expect(expandedHeaderData.label, contains('Collapse'));
-    expect(expandedHeaderData.label, isNot(contains('Expand')));
+    expect(expandedHeaderData.label, contains('Thu gọn'));
+    expect(expandedHeaderData.label, isNot(contains('Mở rộng')));
     expect(find.byKey(const Key('risk-overview')), findsOneWidget);
     expect(find.text('10.00'), findsNothing);
     expect(owner.dispatchCalls, 0);
@@ -168,13 +178,13 @@ Future<void> main() async {
       );
       await Scrollable.ensureVisible(
         tester.element(
-          find.widgetWithText(OutlinedButton, 'Exposure & sensitivity'),
+          find.widgetWithText(OutlinedButton, riskVi('exposureSensitivity')),
         ),
         duration: Duration.zero,
         alignment: 0.5,
       );
       await tester.tap(
-        find.widgetWithText(OutlinedButton, 'Exposure & sensitivity'),
+        find.widgetWithText(OutlinedButton, riskVi('exposureSensitivity')),
       );
       await tester.pumpAndSettle();
       final exposureSheet = find.byType(BottomSheet);
@@ -185,11 +195,11 @@ Future<void> main() async {
       await tester.tap(find.byIcon(Icons.close).last);
       await tester.pumpAndSettle();
       await Scrollable.ensureVisible(
-        tester.element(find.widgetWithText(OutlinedButton, 'History')),
+        tester.element(find.widgetWithText(OutlinedButton, riskVi('history'))),
         duration: Duration.zero,
         alignment: 0.5,
       );
-      await tester.tap(find.widgetWithText(OutlinedButton, 'History'));
+      await tester.tap(find.widgetWithText(OutlinedButton, riskVi('history')));
       await tester.pumpAndSettle();
 
       expect(find.text('ETH-only event'), findsOneWidget);
@@ -217,11 +227,11 @@ Future<void> main() async {
       await tester.tap(find.byIcon(Icons.close).last);
       await tester.pumpAndSettle();
       await Scrollable.ensureVisible(
-        tester.element(find.widgetWithText(OutlinedButton, 'Plan')),
+        tester.element(find.widgetWithText(OutlinedButton, riskVi('plan'))),
         duration: Duration.zero,
         alignment: 0.5,
       );
-      await tester.tap(find.widgetWithText(OutlinedButton, 'Plan'));
+      await tester.tap(find.widgetWithText(OutlinedButton, riskVi('plan')));
       await tester.pumpAndSettle();
       final editor = tester.widget<RiskPlanEditor>(
         find.byType(RiskPlanEditor).last,
@@ -260,7 +270,7 @@ Future<void> main() async {
       expect(find.text('LONG'), findsWidgets);
       expect(find.text('ISOLATED'), findsWidgets);
       expect(find.text('MARGIN'), findsWidgets);
-      expect(find.text('Freshness'), findsWidgets);
+      expect(find.text(riskVi('freshness')), findsWidgets);
 
       await tester.tap(
         find.byKey(Key('risk-position-header-${eth.episodeKey}')),
@@ -299,10 +309,24 @@ Future<void> main() async {
     );
     await tester.tap(find.byKey(Key('risk-position-header-${eth.episodeKey}')));
     await tester.pump();
-    await tester.ensureVisible(find.widgetWithText(OutlinedButton, 'History'));
-    await tester.tap(find.widgetWithText(OutlinedButton, 'History'));
+    await tester.drag(
+      find.byKey(const Key('risk-home-scroll')),
+      const Offset(0, -900),
+    );
+    await tester.pump();
+    final historyButton = find.widgetWithText(
+      OutlinedButton,
+      riskVi('history'),
+    );
+    await Scrollable.ensureVisible(
+      tester.element(historyButton),
+      duration: Duration.zero,
+      alignment: 0.5,
+    );
+    await tester.tap(historyButton);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Clear history'));
+    await tester.ensureVisible(find.text(riskVi('clearHistory')));
+    await tester.tap(find.text(riskVi('clearHistory')));
     await tester.pumpAndSettle();
 
     final clear = owner.commands.singleWhere(
@@ -335,10 +359,10 @@ Future<void> main() async {
       );
       await tester.pump();
       await tester.ensureVisible(
-        find.widgetWithText(OutlinedButton, 'Exposure & sensitivity'),
+        find.widgetWithText(OutlinedButton, riskVi('exposureSensitivity')),
       );
       await tester.tap(
-        find.widgetWithText(OutlinedButton, 'Exposure & sensitivity'),
+        find.widgetWithText(OutlinedButton, riskVi('exposureSensitivity')),
       );
       await tester.pumpAndSettle();
 
@@ -410,10 +434,10 @@ Future<void> main() async {
       );
       await tester.pump();
       await tester.ensureVisible(
-        find.widgetWithText(OutlinedButton, 'Exposure & sensitivity'),
+        find.widgetWithText(OutlinedButton, riskVi('exposureSensitivity')),
       );
       await tester.tap(
-        find.widgetWithText(OutlinedButton, 'Exposure & sensitivity'),
+        find.widgetWithText(OutlinedButton, riskVi('exposureSensitivity')),
       );
       await tester.pumpAndSettle();
 
@@ -447,7 +471,7 @@ Future<void> main() async {
       );
       await tester.pump();
       await tester.pump();
-      expect(find.text('Exposure is unavailable.'), findsOneWidget);
+      expect(find.text(riskVi('exposureUnavailable')), findsOneWidget);
       expect(find.text('220.00 USDT'), findsNothing);
 
       owner.publish(
@@ -455,7 +479,7 @@ Future<void> main() async {
       );
       await tester.pump();
       await tester.pump();
-      expect(find.text('Exposure is unavailable.'), findsOneWidget);
+      expect(find.text(riskVi('exposureUnavailable')), findsOneWidget);
       expect(find.text('220.00 USDT'), findsNothing);
       expect(tester.takeException(), isNull);
     },
@@ -489,14 +513,14 @@ Future<void> main() async {
 
       expect(find.text('LONG'), findsWidgets);
       expect(find.text('NET'), findsNothing);
-      expect(find.textContaining('Observed 9/10'), findsWidgets);
+      expect(find.textContaining('${riskVi('observed')} 9/10'), findsWidgets);
       expect(find.text(riskQualityLabel(completeQuality())), findsWidgets);
       expect(tester.takeException(), isNull);
     },
   );
 
   testWidgets(
-    'RED-004 empty, stale and partial states never claim safety or stable data',
+    'RED-003 empty, stale and partial states never claim safety or stable data',
     (tester) async {
       tester.view.physicalSize = const Size(320, 844);
       tester.view.devicePixelRatio = 1;
@@ -514,8 +538,8 @@ Future<void> main() async {
 
       await tester.pumpWidget(_home(owner));
       await tester.pump();
-      expect(find.text('No isolated position selected'), findsOneWidget);
-      expect(find.text('NORMAL'), findsNothing);
+      expect(find.text(riskVi('noIsolatedPosition')), findsOneWidget);
+      expect(find.text(riskViSeverity(RiskSeverity.normal)), findsNothing);
       expect(find.text('Stable'), findsNothing);
       expect(find.textContaining('PnL'), findsNothing);
 
@@ -526,14 +550,14 @@ Future<void> main() async {
       );
       await tester.pump();
       await tester.pump();
-      expect(find.text('Partial risk assessment'), findsOneWidget);
-      expect(find.text('NORMAL'), findsNothing);
+      expect(find.text(riskVi('partialAssessment')), findsOneWidget);
+      expect(find.text(riskViSeverity(RiskSeverity.normal)), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );
 
   testWidgets(
-    'RED-004 at 320px and 200 percent text remains scroll accessible',
+    'RED-003 at 320px and 200 percent text remains scroll accessible',
     (tester) async {
       tester.view.physicalSize = const Size(320, 844);
       tester.view.devicePixelRatio = 1;
@@ -553,17 +577,17 @@ Future<void> main() async {
       expect(scroll, findsOneWidget);
       await tester.drag(scroll, const Offset(0, -2400));
       await tester.pump();
-      await tester.ensureVisible(find.text('Create rule'));
-      await tester.ensureVisible(find.text('Create zone'));
-      expect(find.text('Your plan'), findsOneWidget);
-      expect(find.text('Create rule'), findsOneWidget);
-      expect(find.text('Create zone'), findsOneWidget);
+      await tester.ensureVisible(find.text(riskVi('createRule')));
+      await tester.ensureVisible(find.text(riskVi('createZone')));
+      expect(find.text('Kế hoạch của bạn'), findsOneWidget);
+      expect(find.text(riskVi('createRule')), findsOneWidget);
+      expect(find.text(riskVi('createZone')), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );
 
   testWidgets(
-    'RED-004 cached complete evaluation never overrides stale, error or partial state quality',
+    'RED-003 cached complete evaluation never overrides stale, error or partial state quality',
     (tester) async {
       tester.view.physicalSize = const Size(390, 844);
       tester.view.devicePixelRatio = 1;
@@ -588,11 +612,13 @@ Future<void> main() async {
       await tester.pump();
 
       for (final entry in <RiskQuality, String>{
-        const RiskQuality.stale(reason: 'Snapshot is stale'): 'Stale data',
+        const RiskQuality.stale(reason: 'Snapshot is stale'): riskViQuality(
+          const RiskQuality.stale(),
+        ),
         const RiskQuality.error(reason: 'Offline storage read failed'):
-            'Connection error',
+            riskViQuality(const RiskQuality.error()),
         const RiskQuality.partial(reason: 'Funding source is incomplete'):
-            'Partial assessment',
+            riskViQuality(const RiskQuality.partial()),
       }.entries) {
         owner.publish(
           RiskMonitorViewState(
@@ -608,8 +634,16 @@ Future<void> main() async {
         );
         await tester.pump();
         expect(find.text(entry.value), findsWidgets);
-        expect(find.textContaining('NORMAL'), findsWidgets);
-        expect(find.textContaining('At least NORMAL'), findsWidgets);
+        expect(
+          find.textContaining(riskViSeverity(RiskSeverity.normal)),
+          findsWidgets,
+        );
+        expect(
+          find.textContaining(
+            '${riskVi('atLeast')} ${riskViSeverity(RiskSeverity.normal)}',
+          ),
+          findsWidgets,
+        );
         expect(find.text('Fresh'), findsNothing);
       }
       expect(tester.takeException(), isNull);
@@ -617,7 +651,7 @@ Future<void> main() async {
   );
 
   testWidgets(
-    'RED-004 partial and stale states preserve cached CRITICAL as last known',
+    'RED-003 partial and stale states preserve cached CRITICAL as last known',
     (tester) async {
       tester.view.physicalSize = const Size(390, 844);
       tester.view.devicePixelRatio = 1;
@@ -656,8 +690,13 @@ Future<void> main() async {
           ),
         );
         await tester.pump();
-        expect(find.text('CRITICAL'), findsWidgets);
-        expect(find.textContaining('Last known CRITICAL'), findsWidgets);
+        expect(find.text(riskViSeverity(RiskSeverity.critical)), findsWidgets);
+        expect(
+          find.textContaining(
+            '${riskVi('lastKnown')} ${riskViSeverity(RiskSeverity.critical)}',
+          ),
+          findsWidgets,
+        );
         expect(find.text(riskQualityLabel(quality)), findsWidgets);
       }
       expect(tester.takeException(), isNull);
@@ -665,7 +704,7 @@ Future<void> main() async {
   );
 
   testWidgets(
-    'RED-004 complete transport qualifies partial NORMAL component assessments',
+    'RED-003 complete transport qualifies partial NORMAL component assessments',
     (tester) async {
       tester.view.physicalSize = const Size(390, 844);
       tester.view.devicePixelRatio = 1;
@@ -702,24 +741,31 @@ Future<void> main() async {
       await tester.pump();
 
       expect(
-        find.textContaining('At least NORMAL · Partial assessment'),
+        find.textContaining(
+          '${riskVi('atLeast')} ${riskViSeverity(RiskSeverity.normal)} · ${riskViQuality(const RiskQuality.partial())}',
+        ),
         findsWidgets,
       );
       final marketCard = find.byKey(const Key('risk-market-card'));
       expect(
         find.descendant(
           of: marketCard,
-          matching: find.textContaining('At least NORMAL · Partial'),
+          matching: find.textContaining(
+            '${riskVi('atLeast')} ${riskViSeverity(RiskSeverity.normal)} · ${riskViQuality(const RiskQuality.partial())}',
+          ),
         ),
         findsOneWidget,
       );
-      expect(find.textContaining('NORMAL'), findsWidgets);
+      expect(
+        find.textContaining(riskViSeverity(RiskSeverity.normal)),
+        findsWidgets,
+      );
       expect(tester.takeException(), isNull);
     },
   );
 
   testWidgets(
-    'GREEN-004 F1 Home exposes seven priority answers and engine scenario state',
+    'GREEN-003 F1 Home exposes seven priority answers and engine scenario state',
     (tester) async {
       tester.view.physicalSize = const Size(390, 844);
       tester.view.devicePixelRatio = 1;
@@ -732,32 +778,38 @@ Future<void> main() async {
       await tester.pump();
 
       for (final label in <String>[
-        'Overall',
-        'Trend',
-        'Effective leverage',
-        'Debt',
-        'True Exit',
-        '-10% scenario',
-        'Plan status',
+        riskVi('overall'),
+        riskVi('trend'),
+        riskVi('effectiveLeverage'),
+        riskVi('debt'),
+        riskVi('trueExit'),
+        riskVi('scenarioTenPercent'),
+        riskVi('planStatus'),
       ]) {
-        expect(find.text(label), findsOneWidget, reason: 'Missing $label');
+        final finder = label == riskVi('overall')
+            ? find.text(label)
+            : find.descendant(
+                of: find.byKey(const Key('risk-answer-grid')),
+                matching: find.text(label),
+              );
+        expect(finder, findsOneWidget, reason: 'Missing $label');
       }
-      expect(find.text('Liquidation buffer'), findsOneWidget);
-      expect(find.text('Position'), findsWidgets);
-      expect(find.text('Market'), findsWidgets);
-      expect(find.text('Recovery'), findsWidgets);
+      expect(find.text(riskVi('liquidationBuffer')), findsOneWidget);
+      expect(find.text(riskVi('position')), findsWidgets);
+      expect(find.text(riskVi('market')), findsWidgets);
+      expect(find.text(riskVi('recovery')), findsWidgets);
       final planStatus = tester.getRect(
         find.byKey(const ValueKey<String>('risk-answer-Plan status')),
       );
-      expect(planStatus.bottom, lessThanOrEqualTo(1139));
-      await tester.ensureVisible(find.text('-10% scenario'));
+      expect(planStatus.bottom, lessThanOrEqualTo(1230));
+      await tester.ensureVisible(find.text(riskVi('scenarioTenPercent')));
       final scenario = owner.currentState.evaluation!.stressScenarios
           .firstWhere(
             (item) =>
                 item.percentageChange != null &&
                 (item.percentageChange! + 0.10).abs() < 1e-9,
           );
-      expect(find.text(scenario.overallState?.label ?? '-'), findsWidgets);
+      expect(find.text(riskViSeverity(scenario.overallState)), findsWidgets);
       expect(find.textContaining('PnL'), findsNothing);
 
       final independent = RiskEngine(clock: () => riskTestNow).evaluate(
@@ -780,20 +832,20 @@ Future<void> main() async {
         const Offset(0, -1100),
       );
       await tester.pumpAndSettle();
-      final recoveryButton = find.text('Recovery & costs');
+      final recoveryButton = find.text(riskVi('recoveryCosts'));
       await tester.ensureVisible(recoveryButton);
       await tester.pumpAndSettle();
       await tester.tap(recoveryButton);
       await tester.pumpAndSettle();
-      expect(find.text('Recovery and costs'), findsWidgets);
-      expect(find.textContaining('guaranteed exchange'), findsOneWidget);
+      expect(find.text(riskVi('recoveryCosts')), findsWidgets);
+      expect(find.textContaining('được sàn bảo đảm'), findsOneWidget);
       await tester.tap(find.byIcon(Icons.close));
       await tester.pumpAndSettle();
     },
   );
 
   testWidgets(
-    'GREEN-004 Home consumes typed persisted state and switches account data atomically',
+    'GREEN-003 Home consumes typed persisted state and switches account data atomically',
     (tester) async {
       tester.view.physicalSize = const Size(390, 844);
       tester.view.devicePixelRatio = 1;
@@ -881,17 +933,22 @@ Future<void> main() async {
       );
       await tester.pumpWidget(_home(owner));
       await tester.pump();
-      expect(find.text('No previous check'), findsNothing);
-      expect(find.text('Previous check'), findsOneWidget);
-      expect(find.text('Overall'), findsWidgets);
-      expect(find.text('Buffer'), findsWidgets);
-      expect(find.text('Leverage'), findsWidgets);
-      expect(find.text('Debt'), findsWidgets);
-      expect(find.text('True Exit'), findsWidgets);
-      expect(find.text('Structure'), findsWidgets);
-      expect(find.text('Funding'), findsWidgets);
+      expect(find.text(riskVi('noPreviousCheck')), findsNothing);
+      expect(find.text(riskVi('previousCheck')), findsOneWidget);
+      expect(find.text(riskVi('overall')), findsWidgets);
+      expect(find.text(riskVi('buffer')), findsWidgets);
+      expect(find.text(riskVi('leverage')), findsWidgets);
+      expect(find.text(riskVi('debt')), findsWidgets);
+      expect(find.text(riskVi('trueExit')), findsWidgets);
+      expect(find.text(riskVi('structure')), findsWidgets);
+      expect(find.text(riskVi('funding')), findsWidgets);
       expect(find.text('OI'), findsWidgets);
-      expect(find.textContaining('NORMAL → WATCH'), findsOneWidget);
+      expect(
+        find.textContaining(
+          '${riskViSeverity(RiskSeverity.normal)} → ${riskViSeverity(RiskSeverity.watch)}',
+        ),
+        findsOneWidget,
+      );
       expect(find.textContaining('40.0% → 30.0%'), findsOneWidget);
       expect(find.textContaining('10.00 USDT → 11.00 USDT'), findsOneWidget);
 
@@ -933,7 +990,7 @@ Future<void> main() async {
   );
 
   testWidgets(
-    'GREEN-004 history renders daily and previous data then clear updates the open surface',
+    'GREEN-003 history renders daily and previous data then clear updates the open surface',
     (tester) async {
       final evaluation = riskEvaluation();
       final episodeKey = evaluation.position.episodeKey;
@@ -1018,14 +1075,16 @@ Future<void> main() async {
         const Offset(0, -1800),
       );
       await tester.pump();
-      await tester.ensureVisible(find.text('History'));
-      await tester.tap(find.text('History'));
+      await tester.ensureVisible(find.text(riskVi('history')));
+      await tester.tap(find.text(riskVi('history')));
       await tester.pumpAndSettle();
       final history = find.byType(RiskHistoryView);
       expect(history, findsOneWidget);
       final previousOverall = find.descendant(
         of: history,
-        matching: find.textContaining('NORMAL → WATCH'),
+        matching: find.textContaining(
+          '${riskViSeverity(RiskSeverity.normal)} → ${riskViSeverity(RiskSeverity.watch)}',
+        ),
       );
       await tester.drag(find.byType(ListView).last, const Offset(0, -120));
       await tester.pump();
@@ -1045,7 +1104,10 @@ Future<void> main() async {
         findsOneWidget,
       );
       expect(
-        find.descendant(of: history, matching: find.text('Trend and velocity')),
+        find.descendant(
+          of: history,
+          matching: find.text(riskVi('trendVelocity')),
+        ),
         findsOneWidget,
       );
       final dailyDate = find.descendant(
@@ -1061,52 +1123,56 @@ Future<void> main() async {
       expect(
         find.descendant(
           of: history,
-          matching: find.textContaining('Partial / unknown'),
+          matching: find.textContaining('Một phần / chưa rõ'),
         ),
         findsOneWidget,
       );
       expect(
         find.descendant(
           of: history,
-          matching: find.textContaining('Major change'),
+          matching: find.textContaining('Thay đổi lớn'),
         ),
         findsOneWidget,
       );
       await tester.drag(find.byType(ListView).last, const Offset(0, 1200));
       await tester.pump();
-      await tester.tap(find.text('Clear history'));
+      await tester.ensureVisible(find.text(riskVi('clearHistory')));
+      await tester.tap(find.text(riskVi('clearHistory')));
       await tester.pump();
       await tester.pump();
       expect(
         find.descendant(
           of: history,
-          matching: find.text('No daily summary captured yet.'),
+          matching: find.text(riskVi('noDailySummary')),
         ),
         findsOneWidget,
       );
       expect(
         find.descendant(
           of: history,
-          matching: find.text('No risk events recorded.'),
+          matching: find.text(riskVi('noRiskEvents')),
         ),
         findsOneWidget,
       );
       expect(
-        find.descendant(of: history, matching: find.text('No previous check')),
+        find.descendant(
+          of: history,
+          matching: find.text(riskVi('noPreviousCheck')),
+        ),
         findsOneWidget,
       );
       expect(owner.currentState.samples, isEmpty);
       expect(owner.currentState.summaries, isEmpty);
       await tester.tap(find.byIcon(Icons.close).first);
       await tester.pumpAndSettle();
-      await tester.ensureVisible(find.text('No previous check'));
-      expect(find.text('No previous check'), findsOneWidget);
+      await tester.ensureVisible(find.text(riskVi('noPreviousCheck')));
+      expect(find.text(riskVi('noPreviousCheck')), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );
 
   testWidgets(
-    'GREEN-004 privacy redacts market, stress, history and semantics content',
+    'GREEN-003 privacy redacts market, stress, history and semantics content',
     (tester) async {
       final evaluation = riskEvaluation();
       final market = RiskMarketInput(
@@ -1192,7 +1258,7 @@ Future<void> main() async {
   );
 
   testWidgets(
-    'GREEN-004 captures rendered light, dark, desktop and boundary screenshots',
+    'GREEN-003 captures rendered light, dark, desktop and boundary screenshots',
     (tester) async {
       final owner = _ownerWithEvaluation();
       addTearDown(owner.dispose);
@@ -1267,7 +1333,7 @@ Future<void> main() async {
   );
 
   testWidgets(
-    'GREEN-004 drill-down widgets render without financial fallback values',
+    'GREEN-003 drill-down widgets render without financial fallback values',
     (tester) async {
       final evaluation = riskEvaluation();
       await tester.pumpWidget(
@@ -1291,10 +1357,10 @@ Future<void> main() async {
         ),
       );
       await tester.pump();
-      expect(find.text('Market risk'), findsOneWidget);
-      expect(find.text('Stress scenarios'), findsOneWidget);
-      expect(find.text('Recovery and costs'), findsOneWidget);
-      expect(find.text('History and checks'), findsOneWidget);
+      expect(find.text(riskVi('marketRisk')), findsOneWidget);
+      expect(find.text(riskVi('stressScenarios')), findsOneWidget);
+      expect(find.text(riskVi('recoveryCosts')), findsOneWidget);
+      expect(find.text(riskVi('historyAndChecks')), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );
