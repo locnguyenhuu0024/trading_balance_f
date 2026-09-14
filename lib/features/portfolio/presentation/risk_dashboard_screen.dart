@@ -205,6 +205,7 @@ class _DashboardBody extends StatelessWidget {
     required this.onPlanChanged,
     required this.onSettingsChanged,
     required this.onRefresh,
+    this.selectedEpisodeKey,
   });
 
   final RiskMonitorViewState state;
@@ -220,6 +221,7 @@ class _DashboardBody extends StatelessWidget {
   final ValueChanged<RiskPlan> onPlanChanged;
   final ValueChanged<RiskSettings> onSettingsChanged;
   final Future<void> Function() onRefresh;
+  final String? selectedEpisodeKey;
 
   @override
   Widget build(BuildContext context) {
@@ -248,7 +250,15 @@ class _DashboardBody extends StatelessWidget {
                       onRefresh: onRefresh,
                     ),
                     const SizedBox(height: 10),
-                    if (evaluation == null)
+                    if (state.positionEntries.isNotEmpty)
+                      _PositionAccordionList(
+                        entries: state.positionEntries,
+                        hideValues: hideValues,
+                        isWide: isWide,
+                        buildDetails: (context, entry, wide) =>
+                            _buildPositionDetails(context, entry, wide),
+                      )
+                    else if (evaluation == null)
                       _UnavailableDashboard(
                         state: state,
                         hideValues: hideValues,
@@ -279,6 +289,63 @@ class _DashboardBody extends StatelessWidget {
         );
       },
     );
+  }
+
+  Widget _buildPositionDetails(
+    BuildContext context,
+    RiskPositionMonitorViewState entry,
+    bool isWide,
+  ) {
+    final evaluation = entry.evaluation;
+    if (evaluation == null) {
+      return _PositionDetailUnavailable(
+        quality: entry.quality,
+        error: entry.lastError,
+        hideValues: hideValues,
+      );
+    }
+    final detailsState = RiskMonitorViewState(
+      isRunning: state.isRunning,
+      backgroundAvailable: state.backgroundAvailable,
+      ownerLabel: state.ownerLabel,
+      accountHash: state.accountHash,
+      episodeKey: entry.episodeKey,
+      evaluation: evaluation,
+      planEvaluation: entry.planEvaluation,
+      plan: entry.plan,
+      settings: entry.settings ?? settings,
+      market: entry.market,
+      samples: entry.samples,
+      summaries: entry.summaries,
+      previousCheck: entry.previousCheck,
+      trend: entry.trend,
+      velocity: entry.velocity,
+      events: entry.events,
+      quality: entry.quality,
+      unsaved: entry.unsaved,
+      lastError: entry.lastError,
+      notificationCapability: state.notificationCapability,
+      requestStatus: state.requestStatus,
+      retryAt: state.retryAt,
+      requestEndpointClass: state.requestEndpointClass,
+    );
+    final details = _DashboardBody(
+      state: detailsState,
+      plan: detailsState.plan,
+      planEvaluation: detailsState.planEvaluation,
+      settings: detailsState.settings ?? settings,
+      market: detailsState.market,
+      samples: detailsState.samples ?? const <RiskHistorySample>[],
+      summaries: detailsState.summaries ?? const <RiskDailySummary>[],
+      previousCheck: detailsState.previousCheck,
+      bridge: bridge,
+      hideValues: hideValues,
+      selectedEpisodeKey: entry.episodeKey,
+      onPlanChanged: onPlanChanged,
+      onSettingsChanged: onSettingsChanged,
+      onRefresh: onRefresh,
+    );
+    return details._completeDashboard(context, evaluation, isWide);
   }
 
   Widget _completeDashboard(
@@ -623,11 +690,21 @@ class _DashboardBody extends StatelessWidget {
       'Your plan',
       _reactive((current) {
         final latest = _evaluationFor(current, evaluation);
-        final episodeKey =
-            latest?.position.episodeKey ?? current.episodeKey ?? '';
-        final currentPlan =
-            current.plan != null &&
-                (episodeKey.isEmpty || current.plan!.episodeKey == episodeKey)
+        final episodeKey = selectedEpisodeKey != null && !_sameAccount(current)
+            ? ''
+            : selectedEpisodeKey ??
+                  current.primaryPosition?.episodeKey ??
+                  current.episodeKey ??
+                  latest?.position.episodeKey ??
+                  '';
+        final currentPlan = current.positionEntries.isNotEmpty
+            ? (current.plan != null &&
+                      (episodeKey.isEmpty ||
+                          current.plan!.episodeKey == episodeKey)
+                  ? current.plan
+                  : null)
+            : current.plan != null &&
+                  (episodeKey.isEmpty || current.plan!.episodeKey == episodeKey)
             ? current.plan
             : _sameSession(current) &&
                   (plan != null &&
@@ -671,7 +748,10 @@ class _DashboardBody extends StatelessWidget {
           previousCheck: current.previousCheck,
           hideValues: hideValues,
           onClearHistory: () => bridge.send(
-            RiskMonitorCommand.clearHistory(id: riskCommandId('history-clear')),
+            RiskMonitorCommand.clearHistory(
+              id: riskCommandId('history-clear'),
+              episodeKey: _selectedEpisodeFor(current),
+            ),
           ),
         ),
       ),
@@ -679,29 +759,67 @@ class _DashboardBody extends StatelessWidget {
   }
 
   Widget _reactive(Widget Function(RiskMonitorViewState) builder) {
-    return StreamBuilder<RiskMonitorViewState>(
-      stream: bridge.states,
-      initialData: bridge.currentState,
-      builder: (context, snapshot) => builder(snapshot.data ?? state),
+    return _ReactiveSheet(
+      bridge: bridge,
+      initialState: state,
+      selectedEpisodeKey: selectedEpisodeKey,
+      builder: builder,
     );
   }
 
-  bool _sameSession(RiskMonitorViewState current) {
-    final accountMatches =
-        state.accountHash == null ||
+  RiskPositionMonitorViewState? _selectedEntryFor(
+    RiskMonitorViewState current,
+  ) {
+    final selectedKey = selectedEpisodeKey;
+    if (selectedKey == null || selectedKey.trim().isEmpty) return null;
+    for (final entry in current.positionEntries) {
+      if (entry.episodeKey == selectedKey) return entry;
+    }
+    return null;
+  }
+
+  String _selectedEpisodeFor(RiskMonitorViewState current) {
+    if (selectedEpisodeKey != null && !_sameAccount(current)) return '';
+    final selected = _selectedEntryFor(current);
+    return selected?.episodeKey ??
+        current.episodeKey ??
+        selectedEpisodeKey ??
+        '';
+  }
+
+  bool _sameAccount(RiskMonitorViewState current) {
+    final selectedKey = selectedEpisodeKey;
+    if (selectedKey != null && selectedKey.trim().isNotEmpty) {
+      final original = state.accountHash?.trim();
+      final currentHash = current.accountHash?.trim();
+      return original != null &&
+          original.isNotEmpty &&
+          currentHash != null &&
+          currentHash.isNotEmpty &&
+          original == currentHash;
+    }
+    return state.accountHash == null ||
         current.accountHash == null ||
         state.accountHash == current.accountHash;
+  }
+
+  bool _sameSession(RiskMonitorViewState current) {
     final episodeMatches =
         state.episodeKey == null ||
         current.episodeKey == null ||
         state.episodeKey == current.episodeKey;
-    return accountMatches && episodeMatches;
+    return _sameAccount(current) && episodeMatches;
   }
 
   RiskEvaluation? _evaluationFor(
     RiskMonitorViewState current,
     RiskEvaluation fallback,
-  ) => current.evaluation ?? (_sameSession(current) ? fallback : null);
+  ) {
+    if (selectedEpisodeKey != null && current.positionEntries.isNotEmpty) {
+      return _selectedEntryFor(current)?.evaluation;
+    }
+    return current.evaluation ?? (_sameSession(current) ? fallback : null);
+  }
 
   RiskEvaluation? _stressEvaluation(
     RiskMonitorViewState current,
@@ -775,6 +893,146 @@ class _DashboardBody extends StatelessWidget {
   }
 }
 
+class _ReactiveSheet extends StatefulWidget {
+  const _ReactiveSheet({
+    required this.bridge,
+    required this.initialState,
+    required this.selectedEpisodeKey,
+    required this.builder,
+  });
+
+  final RiskMonitorBridge bridge;
+  final RiskMonitorViewState initialState;
+  final String? selectedEpisodeKey;
+  final Widget Function(RiskMonitorViewState) builder;
+
+  @override
+  State<_ReactiveSheet> createState() => _ReactiveSheetState();
+}
+
+class _ReactiveSheetState extends State<_ReactiveSheet> {
+  RiskMonitorViewState? _lastKnownSelectedState;
+
+  @override
+  void initState() {
+    super.initState();
+    // The aggregate state is not a valid selected-position cache: its root
+    // projection may belong to a different episode. Populate the cache only
+    // after a verified selected entry has been observed.
+    _lastKnownSelectedState = null;
+  }
+
+  @override
+  void didUpdateWidget(covariant _ReactiveSheet oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.selectedEpisodeKey != widget.selectedEpisodeKey ||
+        oldWidget.initialState.accountHash != widget.initialState.accountHash) {
+      _lastKnownSelectedState = null;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<RiskMonitorViewState>(
+      stream: widget.bridge.states,
+      initialData: widget.bridge.currentState,
+      builder: (context, snapshot) =>
+          widget.builder(_resolve(snapshot.data ?? widget.bridge.currentState)),
+    );
+  }
+
+  RiskMonitorViewState _resolve(RiskMonitorViewState current) {
+    final selectedKey = widget.selectedEpisodeKey;
+    if (selectedKey == null || selectedKey.trim().isEmpty) return current;
+    if (!_verifiedSameAccount(current)) {
+      return _unavailableState(current, selectedKey);
+    }
+    final selected = _selectedEntryFor(current, selectedKey);
+    if (selected == null) {
+      // Keep the newest verified selected snapshot while aggregate discovery
+      // briefly omits that position. Never use the root primary projection.
+      return _lastKnownSelectedState ?? _unavailableState(current, selectedKey);
+    }
+    final projected = _selectedState(current, selected);
+    _lastKnownSelectedState = projected;
+    return projected;
+  }
+
+  bool _verifiedSameAccount(RiskMonitorViewState current) {
+    final original = widget.initialState.accountHash?.trim();
+    final currentHash = current.accountHash?.trim();
+    return original != null &&
+        original.isNotEmpty &&
+        currentHash != null &&
+        currentHash.isNotEmpty &&
+        original == currentHash;
+  }
+
+  RiskPositionMonitorViewState? _selectedEntryFor(
+    RiskMonitorViewState current,
+    String selectedKey,
+  ) {
+    for (final entry in current.positionEntries) {
+      if (entry.episodeKey == selectedKey) return entry;
+    }
+    return null;
+  }
+
+  RiskMonitorViewState _selectedState(
+    RiskMonitorViewState current,
+    RiskPositionMonitorViewState selected,
+  ) {
+    return RiskMonitorViewState(
+      isRunning: current.isRunning,
+      backgroundAvailable: current.backgroundAvailable,
+      ownerLabel: current.ownerLabel,
+      accountHash: current.accountHash,
+      episodeKey: selected.episodeKey,
+      evaluation: selected.evaluation,
+      planEvaluation: selected.planEvaluation,
+      plan: selected.plan,
+      settings:
+          selected.settings ?? current.settings ?? widget.initialState.settings,
+      market: selected.market,
+      samples: selected.samples,
+      summaries: selected.summaries,
+      previousCheck: selected.previousCheck,
+      trend: selected.trend,
+      velocity: selected.velocity,
+      events: selected.events,
+      quality: selected.quality,
+      unsaved: selected.unsaved,
+      lastError: selected.lastError,
+      notificationCapability: current.notificationCapability,
+      // Keep the cache episode-local as well as account-verified. Retaining
+      // the aggregate list here would allow a later fallback consumer to
+      // observe unrelated positions while the selected entry is omitted.
+      positions: <RiskPositionMonitorViewState>[selected],
+      requestStatus: current.requestStatus,
+      retryAt: current.retryAt,
+      requestEndpointClass: current.requestEndpointClass,
+    );
+  }
+
+  RiskMonitorViewState _unavailableState(
+    RiskMonitorViewState current,
+    String selectedKey,
+  ) {
+    return RiskMonitorViewState(
+      isRunning: current.isRunning,
+      backgroundAvailable: current.backgroundAvailable,
+      ownerLabel: current.ownerLabel,
+      accountHash: current.accountHash,
+      episodeKey: selectedKey,
+      quality: current.quality,
+      notificationCapability: current.notificationCapability,
+      requestStatus: current.requestStatus,
+      retryAt: current.retryAt,
+      requestEndpointClass: current.requestEndpointClass,
+    );
+  }
+}
+
 bool _sameCustomPrices(
   Iterable<double> configured,
   Iterable<double> evaluated,
@@ -788,6 +1046,372 @@ bool _sameCustomPrices(
     remaining.removeAt(index);
   }
   return remaining.isEmpty;
+}
+
+class _PositionAccordionList extends StatelessWidget {
+  const _PositionAccordionList({
+    required this.entries,
+    required this.hideValues,
+    required this.isWide,
+    required this.buildDetails,
+  });
+
+  final List<RiskPositionMonitorViewState> entries;
+  final bool hideValues;
+  final bool isWide;
+  final Widget Function(BuildContext, RiskPositionMonitorViewState, bool)
+  buildDetails;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      key: const Key('risk-position-accordion-list'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final entry in entries)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: _PositionAccordion(
+              key: ValueKey<String>(
+                'risk-position-accordion-${entry.episodeKey}',
+              ),
+              entry: entry,
+              hideValues: hideValues,
+              isWide: isWide,
+              buildDetails: buildDetails,
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _PositionAccordion extends StatefulWidget {
+  const _PositionAccordion({
+    super.key,
+    required this.entry,
+    required this.hideValues,
+    required this.isWide,
+    required this.buildDetails,
+  });
+
+  final RiskPositionMonitorViewState entry;
+  final bool hideValues;
+  final bool isWide;
+  final Widget Function(BuildContext, RiskPositionMonitorViewState, bool)
+  buildDetails;
+
+  @override
+  State<_PositionAccordion> createState() => _PositionAccordionState();
+}
+
+class _PositionAccordionState extends State<_PositionAccordion> {
+  bool _expanded = false;
+
+  void _toggle() {
+    setState(() => _expanded = !_expanded);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final entry = widget.entry;
+    final instrument = _positionInstrument(entry);
+    final stateLabel = _positionStateLabel(entry);
+    final failed = _positionHasFailure(entry);
+    final headerKey = Key('risk-position-header-${entry.episodeKey}');
+    return Card(
+      key: ValueKey<String>('risk-position-card-${entry.episodeKey}'),
+      margin: EdgeInsets.zero,
+      elevation: 0,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10),
+        side: BorderSide(color: theme.dividerColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Semantics(
+            container: true,
+            button: true,
+            expanded: _expanded,
+            label: _positionSemanticsLabel(entry, widget.hideValues),
+            onTap: _toggle,
+            child: InkWell(
+              key: headerKey,
+              onTap: _toggle,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
+                child: LayoutBuilder(
+                  builder: (context, constraints) => Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Wrap(
+                        alignment: WrapAlignment.spaceBetween,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        spacing: 8,
+                        runSpacing: 7,
+                        children: [
+                          ConstrainedBox(
+                            constraints: BoxConstraints(
+                              maxWidth: constraints.maxWidth - 48,
+                            ),
+                            child: Text(
+                              riskRedactRiskText(instrument, widget.hideValues),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                          Icon(
+                            _expanded ? Icons.expand_less : Icons.expand_more,
+                            semanticLabel: _expanded ? 'Collapse' : 'Expand',
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 6,
+                        children: [
+                          _SummaryChip(
+                            label: stateLabel,
+                            color: riskQualitySeverityColor(
+                              context,
+                              entry.quality,
+                              entry.evaluation?.overallState,
+                            ),
+                          ),
+                          _SummaryMetric(
+                            label: 'Buffer',
+                            value: riskMaskedPercent(
+                              entry.evaluation?.buffer,
+                              widget.hideValues,
+                            ),
+                          ),
+                          _SummaryMetric(
+                            label: 'Leverage',
+                            value: riskMaskedValue(
+                              entry.evaluation?.effectiveLeverage,
+                              widget.hideValues,
+                              suffix: 'x',
+                            ),
+                          ),
+                          _SummaryMetric(
+                            label: 'Quality',
+                            value: riskQualityLabel(entry.quality),
+                          ),
+                          _SummaryMetric(
+                            label: 'Direction',
+                            value: _positionDirection(entry),
+                          ),
+                          _SummaryMetric(
+                            label: 'Mode',
+                            value: _positionMarginMode(entry),
+                          ),
+                          _SummaryMetric(
+                            label: 'Type',
+                            value: _positionInstrumentType(entry),
+                          ),
+                          _SummaryMetric(
+                            label: 'Freshness',
+                            value: _positionFreshnessLabel(
+                              entry,
+                              widget.hideValues,
+                            ),
+                          ),
+                          if (failed)
+                            _SummaryChip(
+                              label: 'Failed',
+                              color: theme.colorScheme.error,
+                            )
+                          else if (entry.evaluation?.reasons.isNotEmpty == true)
+                            _SummaryChip(
+                              label: 'Alert',
+                              color: theme.colorScheme.tertiary,
+                            ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          if (_expanded)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+              child: widget.buildDetails(context, entry, widget.isWide),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SummaryMetric extends StatelessWidget {
+  const _SummaryMetric({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minWidth: 66, maxWidth: 150),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(label, style: Theme.of(context).textTheme.labelSmall),
+          Text(
+            value,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w700),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SummaryChip extends StatelessWidget {
+  const _SummaryChip({required this.label, required this.color});
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        label,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+          color: color == scheme.onSurfaceVariant ? scheme.onSurface : color,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
+  }
+}
+
+class _PositionDetailUnavailable extends StatelessWidget {
+  const _PositionDetailUnavailable({
+    required this.quality,
+    required this.error,
+    required this.hideValues,
+  });
+
+  final RiskQuality quality;
+  final String? error;
+  final bool hideValues;
+
+  @override
+  Widget build(BuildContext context) {
+    final message = error == null || error!.trim().isEmpty
+        ? riskQualityLabel(quality)
+        : 'Unable to load position details: ${riskRedactRiskText(error!, hideValues)}';
+    return Padding(padding: const EdgeInsets.all(10), child: Text(message));
+  }
+}
+
+String _positionInstrument(RiskPositionMonitorViewState entry) {
+  final position = entry.position ?? entry.evaluation?.position;
+  if (position != null) {
+    final instrument = position.instrumentId.trim();
+    if (instrument.isNotEmpty) return instrument;
+    final base = position.baseCurrency?.trim();
+    if (base != null && base.isNotEmpty) {
+      return '$base-${position.quoteCurrency}';
+    }
+  }
+  final id = entry.positionId?.trim();
+  if (id != null && id.isNotEmpty) return id;
+  return entry.episodeKey.isEmpty ? 'Position' : entry.episodeKey;
+}
+
+String _positionStateLabel(RiskPositionMonitorViewState entry) {
+  if (_positionHasFailure(entry)) {
+    final known = entry.evaluation?.overallState;
+    return known == null
+        ? 'Connection error'
+        : 'Last known ${known.label} · Connection error';
+  }
+  return riskStateLabelWithQuality(
+    entry.evaluation?.overallState,
+    entry.quality,
+  );
+}
+
+String _positionDirection(RiskPositionMonitorViewState entry) {
+  final position = entry.position ?? entry.evaluation?.position;
+  final side = position?.positionSide.trim() ?? entry.positionSide.trim();
+  final normalized = side.toLowerCase();
+  return normalized == 'short' || normalized == 'sell' ? 'SHORT' : 'LONG';
+}
+
+String _positionMarginMode(RiskPositionMonitorViewState entry) {
+  final position = entry.position ?? entry.evaluation?.position;
+  final mode = position?.mode;
+  return switch (mode) {
+    RiskAccountMode.newMode || RiskAccountMode.oldMode => 'ISOLATED',
+    RiskAccountMode.unsupported => 'UNSUPPORTED',
+    null => '-',
+  };
+}
+
+String _positionInstrumentType(RiskPositionMonitorViewState entry) {
+  final position = entry.position ?? entry.evaluation?.position;
+  final type = position?.instrumentType.trim();
+  return type == null || type.isEmpty ? '-' : type.toUpperCase();
+}
+
+String _positionFreshnessLabel(
+  RiskPositionMonitorViewState entry,
+  bool hideValues,
+) {
+  final freshness = entry.freshness;
+  if (freshness == null) return 'Unknown';
+  if (hideValues) return '******';
+  return _formatRiskTimestamp(freshness).replaceFirst('Last check', 'Observed');
+}
+
+bool _positionHasFailure(RiskPositionMonitorViewState entry) =>
+    entry.lastError?.trim().isNotEmpty == true ||
+    entry.quality.status == RiskQualityStatus.error;
+
+String _positionSemanticsLabel(
+  RiskPositionMonitorViewState entry,
+  bool hideValues,
+) {
+  final parts = <String>[
+    _positionInstrument(entry),
+    _positionStateLabel(entry),
+    'buffer ${riskMaskedPercent(entry.evaluation?.buffer, hideValues)}',
+    'leverage ${riskMaskedValue(entry.evaluation?.effectiveLeverage, hideValues, suffix: 'x')}',
+    riskQualityLabel(entry.quality),
+    'direction ${_positionDirection(entry)}',
+    'mode ${_positionMarginMode(entry)}',
+    'type ${_positionInstrumentType(entry)}',
+    'freshness ${_positionFreshnessLabel(entry, hideValues)}',
+    if (_positionHasFailure(entry)) 'Failed',
+    if (entry.evaluation?.reasons.isNotEmpty == true) 'Alert',
+  ];
+  return parts.join(' · ');
 }
 
 class _MonitorStatus extends StatelessWidget {
@@ -806,6 +1430,17 @@ class _MonitorStatus extends StatelessWidget {
     final theme = Theme.of(context);
     final quality = riskQualityLabel(state.quality);
     final running = state.isRunning ? 'Monitoring active' : 'Monitoring paused';
+    final requestStatus = switch (state.requestStatus) {
+      RiskMonitorRequestStatus.backingOff => 'Retrying soon',
+      RiskMonitorRequestStatus.refreshing => 'Refreshing',
+      RiskMonitorRequestStatus.authBlocked => 'Authentication blocked',
+      RiskMonitorRequestStatus.partial => 'Partial monitor update',
+      RiskMonitorRequestStatus.ready => 'Monitor ready',
+      RiskMonitorRequestStatus.unavailable => 'Monitor unavailable',
+    };
+    final showRequestStatus =
+        state.positionEntries.isNotEmpty ||
+        state.requestStatus != RiskMonitorRequestStatus.unavailable;
     final owner = state.ownerLabel.trim().isEmpty
         ? 'foreground'
         : riskRedactRiskText(state.ownerLabel, hideValues);
@@ -831,6 +1466,21 @@ class _MonitorStatus extends StatelessWidget {
             ),
             Text(running, style: theme.textTheme.labelLarge),
             Text('· $owner · $quality', style: theme.textTheme.bodySmall),
+            if (showRequestStatus)
+              Text(
+                '· $requestStatus',
+                key: const Key('risk-monitor-request-status'),
+                style: theme.textTheme.bodySmall,
+              ),
+            if (showRequestStatus &&
+                state.retryAt != null &&
+                state.requestStatus == RiskMonitorRequestStatus.backingOff)
+              Text(
+                hideValues
+                    ? 'retry time ******'
+                    : 'retry ${_formatRiskTimestamp(state.retryAt)}',
+                style: theme.textTheme.bodySmall,
+              ),
             if (!state.backgroundAvailable)
               Text('Background unavailable', style: theme.textTheme.bodySmall),
             if (state.lastError != null)

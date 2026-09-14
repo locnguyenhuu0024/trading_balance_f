@@ -1,6 +1,6 @@
 # Task 26 — Collapsible all-position Risk Dashboard
 
-Status: PENDING
+Status: PASS
 Executor: implementation executor
 Executor Class: E1
 Target Route: Luna XHigh
@@ -64,15 +64,15 @@ Blocks verification until user applies: NO.
 Scenario: multi-position collapsed dashboard at responsive/privacy boundaries.
 Command/method: `flutter test test/features/portfolio/risk/risk_dashboard_test.dart test/features/portfolio/risk/risk_editors_test.dart --plain-name "RED-003 collapsible all-position dashboard" --reporter compact`
 Expected: current single-evaluation UI fails aggregate accordion assertions.
-Actual: PENDING
-Status: PENDING
+Actual: Pre-implementation UI failed because `risk-position-header-btc` was absent; later regression-first checks also exposed legacy-primary drill-down selection, stale omission fallback, cross-account leakage, and missing LONG normalization before their fixes.
+Status: PASS
 
 ### GREEN — GREEN-003
 Scenario: expand ETH while BTC/SUI remain collapsed.
 Command/method: same files with `--plain-name "GREEN-003 collapsible all-position dashboard"`.
 Expected: AC-007-AC-009 pass and command/request spy count remains zero.
-Actual: PENDING
-Status: PENDING
+Actual: Exact selector passed after the final changes; ETH and SUI expanded independently, all summaries remained reachable, privacy/accessibility assertions passed, and expansion dispatch count stayed zero.
+Status: PASS
 
 Verification ceiling: V2.
 Escalate only if: aggregate protocol is missing a field required by the approved summary/detail contract.
@@ -82,10 +82,10 @@ Escalate only if: aggregate protocol is missing a field required by the approved
 Required: YES
 Affected canonical build unit: Flutter application
 Exact secret-free build command: `flutter build web --no-pub`
-Executed after final task-local change: NO
-Result: PENDING
-Exit/status: PENDING
-Compiler/parser/type/reference/link/build errors: PENDING
+Executed after final task-local change: YES
+Result: PASS
+Exit/status: 0
+Compiler/parser/type/reference/link/build errors: none; only non-fatal existing Wasm/font warnings
 
 ### External Verification
 
@@ -102,21 +102,21 @@ Return `BLOCKED` for protocol mismatch, network/monitor mutation requirement, pr
 
 ## 10. Execution Ledger
 
-- [ ] inspect referenced symbols
-- [ ] implement P03
-- [ ] add/update tests
-- [ ] execute formal RED then GREEN
-- [ ] run task buildability gate
-- [ ] confirm protected configuration boundary
+- [x] inspect referenced symbols
+- [x] implement P03
+- [x] add/update tests
+- [x] execute formal RED then GREEN
+- [x] run task buildability gate
+- [x] confirm protected configuration boundary
 
 ## 11. Coordinator Audit
 
-Scope: PENDING
-Acceptance criteria: PENDING
-Test quality: PENDING
-RED evidence: PENDING
-GREEN evidence: PENDING
-RED-before-GREEN: PENDING
-Architecture/contract conformance: PENDING
-Task buildability gate: PENDING
-Verdict: PENDING
+Scope: PASS — product/test changes are limited to the two authorized T26 files; coordinator-owned telemetry is the only additional changed path; no protected configuration path changed.
+Acceptance criteria: PASS — AC-007, AC-008, and AC-009 independently audited PASS.
+Test quality: PASS — distinct position/account fixtures prove deterministic order, fresh-visit collapse, independent lazy expansion, selected-episode details/plan/history, latest-known omission handling, same-key account isolation, zero expansion commands, responsive layout, semantic state transitions, and privacy redaction.
+RED evidence: PASS — the pre-implementation aggregate selector failed on the absent BTC header; remediation-first tests also observed the isolated contract failures before source fixes.
+GREEN evidence: PASS — exact GREEN-003 passed; full dashboard/editor V2 suite passed 25/25; the corrected cross-account same-episode test independently passed 1/1.
+RED-before-GREEN: PASS — failures were observed before each corresponding implementation/remediation change, followed by passing final selectors.
+Architecture/contract conformance: PASS — accordion state is presentation-only; reactive sheets select by verified account plus episode, fail closed across account boundaries, preserve the latest verified selected snapshot during temporary omission, and retain the long-only direction seam for future short support.
+Task buildability gate: PASS — `flutter build web --no-pub` completed with exit 0 after the final task-local test change.
+Verdict: PASS — independent final audit closed AUD-T26-001, AUD-T26-002, and AUD-T26-003.

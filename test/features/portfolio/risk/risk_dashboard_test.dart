@@ -15,17 +15,486 @@ import 'package:trading_balance_f/features/portfolio/domain/risk/risk_models.dar
 import 'package:trading_balance_f/features/portfolio/domain/risk/risk_policy.dart';
 import 'package:trading_balance_f/features/portfolio/presentation/risk_dashboard_screen.dart';
 import 'package:trading_balance_f/features/portfolio/presentation/providers/risk_dashboard_provider.dart';
+import 'package:trading_balance_f/features/portfolio/presentation/portfolio_screen.dart';
 import 'package:trading_balance_f/features/portfolio/presentation/widgets/risk/risk_history_view.dart';
 import 'package:trading_balance_f/features/portfolio/presentation/widgets/risk/risk_market_card.dart';
 import 'package:trading_balance_f/features/portfolio/presentation/widgets/risk/risk_recovery_view.dart';
 import 'package:trading_balance_f/features/portfolio/presentation/widgets/risk/risk_stress_view.dart';
 import 'package:trading_balance_f/features/portfolio/presentation/widgets/risk/risk_overview.dart';
+import 'package:trading_balance_f/features/portfolio/presentation/widgets/risk/risk_plan_editor.dart';
 import 'package:trading_balance_f/features/settings/presentation/settings_screen.dart';
 
 import 'fixtures/risk_test_fixtures.dart';
 
 Future<void> main() async {
   final screenshotFontFamily = await _loadScreenshotFont();
+  testWidgets('RED-003 collapsible all-position dashboard', (tester) async {
+    tester.view.physicalSize = const Size(320, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final owner = _countingOwner(_aggregateDashboardState());
+    addTearDown(owner.dispose);
+    await tester.pumpWidget(_home(owner));
+    await tester.pump();
+
+    for (final key in const <String>['btc', 'eth', 'sui', 'failed']) {
+      expect(
+        find.byKey(Key('risk-position-header-$key')),
+        findsOneWidget,
+        reason: 'Missing aggregate position $key',
+      );
+    }
+    expect(find.textContaining('NORMAL'), findsWidgets);
+    expect(find.textContaining('WATCH'), findsWidgets);
+    expect(find.textContaining('HIGH'), findsWidgets);
+    expect(find.text('Failed'), findsOneWidget);
+    expect(find.byKey(const Key('risk-overview')), findsNothing);
+    expect(owner.dispatchCalls, 0);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('GREEN-003 collapsible all-position dashboard', (tester) async {
+    tester.view.physicalSize = const Size(320, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final owner = _countingOwner(_aggregateDashboardState());
+    addTearDown(owner.dispose);
+    await tester.pumpWidget(
+      MediaQuery(
+        data: const MediaQueryData(textScaler: TextScaler.linear(2)),
+        child: _home(owner, hidden: true),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byKey(const Key('risk-monitor-status')), findsOneWidget);
+    expect(find.textContaining('Retrying soon'), findsOneWidget);
+    expect(find.text('10.00'), findsNothing);
+    expect(find.text('******'), findsWidgets);
+    expect(find.byKey(const Key('risk-position-header-btc')), findsOneWidget);
+    expect(find.byKey(const Key('risk-position-header-eth')), findsOneWidget);
+    expect(find.byKey(const Key('risk-position-header-sui')), findsOneWidget);
+    expect(
+      find.byKey(const Key('risk-position-header-failed')),
+      findsOneWidget,
+    );
+    expect(find.text('Stress scenarios'), findsNothing);
+
+    final semantics = tester.ensureSemantics();
+    final headerSemantics = tester.getSemantics(
+      find.byKey(const Key('risk-position-header-eth')),
+    );
+    final headerData = headerSemantics.getSemanticsData();
+    expect(headerData.hasAction(SemanticsAction.tap), isTrue);
+    expect(headerData.label, contains('Expand'));
+    expect(headerData.label, contains('LONG'));
+    expect(headerData.label, contains('ISOLATED'));
+    for (final literal in const <String>[
+      '10.00',
+      '2.00',
+      '4.00',
+      '0.40',
+      '9/10',
+      '14:09',
+      '14:00',
+      '21:00',
+    ]) {
+      expect(headerData.label, isNot(contains(literal)));
+    }
+
+    await tester.ensureVisible(
+      find.byKey(const Key('risk-position-header-eth')),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('risk-position-header-eth')));
+    await tester.pump();
+    final expandedHeaderData = tester
+        .getSemantics(find.byKey(const Key('risk-position-header-eth')))
+        .getSemanticsData();
+    expect(expandedHeaderData.hasAction(SemanticsAction.tap), isTrue);
+    expect(expandedHeaderData.label, contains('Collapse'));
+    expect(expandedHeaderData.label, isNot(contains('Expand')));
+    expect(find.byKey(const Key('risk-overview')), findsOneWidget);
+    expect(find.text('10.00'), findsNothing);
+    expect(owner.dispatchCalls, 0);
+
+    await Scrollable.ensureVisible(
+      tester.element(find.byKey(const Key('risk-position-header-sui'))),
+      duration: Duration.zero,
+      alignment: 0.5,
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('risk-position-header-sui')));
+    await tester.pump();
+    expect(find.byKey(const Key('risk-overview')), findsNWidgets(2));
+    expect(owner.dispatchCalls, 0);
+    semantics.dispose();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'RED-003 selected aggregate episode stays isolated in reactive drill-downs',
+    (tester) async {
+      tester.view.physicalSize = const Size(900, 3000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final entries = _distinctAggregateEntries();
+      final owner = _countingOwner(_distinctAggregateState(entries));
+      addTearDown(owner.dispose);
+      await tester.pumpWidget(_home(owner));
+      await tester.pump();
+
+      final eth = entries.firstWhere(
+        (entry) => entry.position?.instrumentId == 'ETH-USDT',
+      );
+      await tester.tap(
+        find.byKey(Key('risk-position-header-${eth.episodeKey}')),
+      );
+      await tester.pump();
+      final ethOverview = find.byKey(const Key('risk-overview'));
+      expect(
+        find.descendant(of: ethOverview, matching: find.text('33.3%')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: ethOverview, matching: find.text('40.0%')),
+        findsNothing,
+      );
+      await Scrollable.ensureVisible(
+        tester.element(
+          find.widgetWithText(OutlinedButton, 'Exposure & sensitivity'),
+        ),
+        duration: Duration.zero,
+        alignment: 0.5,
+      );
+      await tester.tap(
+        find.widgetWithText(OutlinedButton, 'Exposure & sensitivity'),
+      );
+      await tester.pumpAndSettle();
+      final exposureSheet = find.byType(BottomSheet);
+      expect(
+        find.descendant(of: exposureSheet, matching: find.text('90.00 USDT')),
+        findsNWidgets(2),
+      );
+      await tester.tap(find.byIcon(Icons.close).last);
+      await tester.pumpAndSettle();
+      await Scrollable.ensureVisible(
+        tester.element(find.widgetWithText(OutlinedButton, 'History')),
+        duration: Duration.zero,
+        alignment: 0.5,
+      );
+      await tester.tap(find.widgetWithText(OutlinedButton, 'History'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('ETH-only event'), findsOneWidget);
+      expect(find.text('BTC-only event'), findsNothing);
+
+      // A bridge update can briefly omit the selected entry while the
+      // aggregate snapshot is reconciled. The open sheet must retain the
+      // last-known ETH episode rather than falling back to BTC/root data.
+      owner.publish(
+        _distinctAggregateState(
+          entries
+              .where((entry) => entry.episodeKey != eth.episodeKey)
+              .toList(growable: false),
+        ),
+      );
+      await tester.pump();
+      expect(find.text('ETH-only event'), findsOneWidget);
+      expect(find.text('BTC-only event'), findsNothing);
+
+      // Restore the complete aggregate before closing the sheet so the
+      // accordion remains present for the independent plan assertion.
+      owner.publish(_distinctAggregateState(entries));
+      await tester.pump();
+
+      await tester.tap(find.byIcon(Icons.close).last);
+      await tester.pumpAndSettle();
+      await Scrollable.ensureVisible(
+        tester.element(find.widgetWithText(OutlinedButton, 'Plan')),
+        duration: Duration.zero,
+        alignment: 0.5,
+      );
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Plan'));
+      await tester.pumpAndSettle();
+      final editor = tester.widget<RiskPlanEditor>(
+        find.byType(RiskPlanEditor).last,
+      );
+      expect(editor.episodeKey, eth.episodeKey);
+      expect(find.text('ETH plan marker'), findsNWidgets(2));
+      expect(find.text('BTC plan marker'), findsNothing);
+      expect(owner.dispatchCalls, 0);
+    },
+  );
+
+  testWidgets(
+    'RED-003 aggregate header keeps input order eligibility freshness and reset',
+    (tester) async {
+      tester.view.physicalSize = const Size(900, 1200);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final entries = _distinctAggregateEntries();
+      final owner = _countingOwner(_distinctAggregateState(entries));
+      addTearDown(owner.dispose);
+      await tester.pumpWidget(_home(owner));
+      await tester.pump();
+
+      final eth = entries.firstWhere(
+        (entry) => entry.position?.instrumentId == 'ETH-USDT',
+      );
+      final btc = entries.firstWhere(
+        (entry) => entry.position?.instrumentId == 'BTC-USDT',
+      );
+      expect(
+        tester.getTopLeft(find.text('ETH-USDT')).dy,
+        lessThan(tester.getTopLeft(find.text('BTC-USDT')).dy),
+      );
+      expect(find.text('LONG'), findsWidgets);
+      expect(find.text('ISOLATED'), findsWidgets);
+      expect(find.text('MARGIN'), findsWidgets);
+      expect(find.text('Freshness'), findsWidgets);
+
+      await tester.tap(
+        find.byKey(Key('risk-position-header-${eth.episodeKey}')),
+      );
+      await tester.pump();
+      expect(find.byKey(const Key('risk-overview')), findsOneWidget);
+      final freshVisitOwner = _countingOwner(_distinctAggregateState(entries));
+      addTearDown(freshVisitOwner.dispose);
+      await tester.pumpWidget(_home(freshVisitOwner, visitKey: 'fresh'));
+      await tester.pump();
+      expect(find.byKey(const Key('risk-overview')), findsNothing);
+      expect(
+        find.byKey(Key('risk-position-header-${btc.episodeKey}')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('RED-003 history mutation retains the selected episode key', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(900, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final entries = _distinctAggregateEntries();
+    final owner = _countingOwner(_distinctAggregateState(entries));
+    addTearDown(owner.dispose);
+    await tester.pumpWidget(_home(owner));
+    await tester.pump();
+
+    final eth = entries.firstWhere(
+      (entry) => entry.position?.instrumentId == 'ETH-USDT',
+    );
+    await tester.tap(find.byKey(Key('risk-position-header-${eth.episodeKey}')));
+    await tester.pump();
+    await tester.ensureVisible(find.widgetWithText(OutlinedButton, 'History'));
+    await tester.tap(find.widgetWithText(OutlinedButton, 'History'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Clear history'));
+    await tester.pumpAndSettle();
+
+    final clear = owner.commands.singleWhere(
+      (command) => command.type == RiskMonitorCommandType.clearHistory,
+    );
+    expect(clear.episodeKey, eth.episodeKey);
+    expect(owner.dispatchCalls, 1);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'RED-003 selected sheet caches the latest verified entry and fails closed across accounts',
+    (tester) async {
+      tester.view.physicalSize = const Size(900, 1800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final entries = _distinctAggregateEntries();
+      final owner = _countingOwner(_distinctAggregateState(entries));
+      addTearDown(owner.dispose);
+      await tester.pumpWidget(_home(owner));
+      await tester.pump();
+
+      final eth = entries.firstWhere(
+        (entry) => entry.position?.instrumentId == 'ETH-USDT',
+      );
+      await tester.tap(
+        find.byKey(Key('risk-position-header-${eth.episodeKey}')),
+      );
+      await tester.pump();
+      await tester.ensureVisible(
+        find.widgetWithText(OutlinedButton, 'Exposure & sensitivity'),
+      );
+      await tester.tap(
+        find.widgetWithText(OutlinedButton, 'Exposure & sensitivity'),
+      );
+      await tester.pumpAndSettle();
+
+      final exposureSheet = find.byType(BottomSheet);
+      expect(
+        find.descendant(of: exposureSheet, matching: find.text('90.00 USDT')),
+        findsNWidgets(2),
+      );
+
+      final updatedEth = _distinctPositionEntry(
+        riskEvaluation(),
+        instrumentId: 'ETH-USDT',
+        baseCurrency: 'ETH',
+        positionId: 'eth-position',
+        markPrice: 11,
+        severity: RiskSeverity.watch,
+        title: 'ETH V1 plan marker',
+        eventMessage: 'ETH V1 event',
+      );
+      final v1Entries = <RiskPositionMonitorViewState>[
+        updatedEth,
+        ...entries.where((entry) => entry.episodeKey != eth.episodeKey),
+      ];
+      owner.publish(_distinctAggregateState(v1Entries));
+      await tester.pump();
+      await tester.pump();
+      expect(
+        find.descendant(of: exposureSheet, matching: find.text('110.00 USDT')),
+        findsNWidgets(2),
+      );
+
+      final omissionEntries = v1Entries
+          .where((entry) => entry.episodeKey != eth.episodeKey)
+          .toList(growable: false);
+      owner.publish(_distinctAggregateState(omissionEntries));
+      await tester.pump();
+      expect(
+        find.descendant(of: exposureSheet, matching: find.text('110.00 USDT')),
+        findsNWidgets(2),
+      );
+      expect(
+        find.descendant(of: exposureSheet, matching: find.text('90.00 USDT')),
+        findsNothing,
+      );
+
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'RED-003 selected sheet fails closed for mismatched and missing accounts',
+    (tester) async {
+      tester.view.physicalSize = const Size(900, 1800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final entries = _distinctAggregateEntries();
+      final owner = _countingOwner(_distinctAggregateState(entries));
+      addTearDown(owner.dispose);
+      await tester.pumpWidget(_home(owner));
+      await tester.pump();
+
+      final eth = entries.firstWhere(
+        (entry) => entry.position?.instrumentId == 'ETH-USDT',
+      );
+      await tester.tap(
+        find.byKey(Key('risk-position-header-${eth.episodeKey}')),
+      );
+      await tester.pump();
+      await tester.ensureVisible(
+        find.widgetWithText(OutlinedButton, 'Exposure & sensitivity'),
+      );
+      await tester.tap(
+        find.widgetWithText(OutlinedButton, 'Exposure & sensitivity'),
+      );
+      await tester.pumpAndSettle();
+
+      final crossAccountEth = _rekeyDistinctEntry(
+        _distinctPositionEntry(
+          riskEvaluation(),
+          instrumentId: 'ETH-USDT',
+          baseCurrency: 'ETH',
+          positionId: 'other-account-eth',
+          markPrice: 22,
+          severity: RiskSeverity.watch,
+          title: 'Other account plan marker',
+          eventMessage: 'Other account event',
+          accountNamespace: 'other-account',
+        ),
+        accountPositionId: 'other-account-eth',
+        episodeKey: eth.episodeKey,
+      );
+      expect(crossAccountEth.episodeKey, eth.episodeKey);
+      expect(crossAccountEth.position?.accountNamespace, 'other-account');
+      expect(crossAccountEth.position?.markPrice, 22);
+      final crossAccountEntries = <RiskPositionMonitorViewState>[
+        crossAccountEth,
+        ...entries.where((entry) => entry.episodeKey != eth.episodeKey),
+      ];
+      owner.publish(
+        _distinctAggregateState(
+          crossAccountEntries,
+          accountHash: 'other-account',
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('Exposure is unavailable.'), findsOneWidget);
+      expect(find.text('220.00 USDT'), findsNothing);
+
+      owner.publish(
+        _distinctAggregateState(crossAccountEntries, accountHash: null),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('Exposure is unavailable.'), findsOneWidget);
+      expect(find.text('220.00 USDT'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'RED-003 net direction normalizes to long and freshness is distinct from quality',
+    (tester) async {
+      tester.view.physicalSize = const Size(900, 1200);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final netEntry = _distinctPositionEntry(
+        riskEvaluation(),
+        instrumentId: 'NET-USDT',
+        baseCurrency: 'NET',
+        positionId: 'net-position',
+        markPrice: 11,
+        severity: RiskSeverity.normal,
+        title: 'NET plan marker',
+        eventMessage: 'NET-only event',
+        positionSide: 'net',
+      );
+      final owner = _countingOwner(
+        _distinctAggregateState([netEntry], accountHash: 'net-account'),
+      );
+      addTearDown(owner.dispose);
+      await tester.pumpWidget(_home(owner));
+      await tester.pump();
+
+      expect(find.text('LONG'), findsWidgets);
+      expect(find.text('NET'), findsNothing);
+      expect(find.textContaining('Observed 9/10'), findsWidgets);
+      expect(find.text(riskQualityLabel(completeQuality())), findsWidgets);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets(
     'RED-004 empty, stale and partial states never claim safety or stable data',
     (tester) async {
@@ -835,13 +1304,16 @@ ProviderScope _homeOwnerScope(
   InMemoryRiskMonitorOwner owner,
   Widget child, {
   ThemeMode themeMode = ThemeMode.light,
+  bool hidden = false,
+  String? visitKey,
 }) {
   return ProviderScope(
-    key: ValueKey<String>('risk-home-$themeMode'),
+    key: ValueKey<String>('risk-home-$themeMode-${visitKey ?? 'default'}'),
     overrides: [
       riskMonitorOwnerProvider.overrideWithValue(owner),
       riskMonitorBridgeProvider.overrideWithValue(RiskMonitorBridge(owner)),
       themeModeProvider.overrideWith((ref) => themeMode),
+      hideBalanceProvider.overrideWith((ref) => hidden),
     ],
     child: child,
   );
@@ -851,6 +1323,8 @@ Widget _home(
   InMemoryRiskMonitorOwner owner, {
   ThemeMode themeMode = ThemeMode.light,
   String? fontFamily,
+  bool hidden = false,
+  String? visitKey,
 }) {
   return _homeOwnerScope(
     owner,
@@ -872,7 +1346,300 @@ Widget _home(
       ),
     ),
     themeMode: themeMode,
+    hidden: hidden,
+    visitKey: visitKey,
   );
+}
+
+RiskPositionMonitorViewState _positionEntry(
+  RiskEvaluation base, {
+  required String key,
+  required RiskSeverity severity,
+  RiskQuality? quality,
+  String? lastError,
+}) {
+  final evaluation = RiskEvaluation(
+    position: base.position,
+    metrics: base.metrics,
+    positionAssessment: base.positionAssessment,
+    marketAssessment: base.marketAssessment,
+    recoveryAssessment: base.recoveryAssessment,
+    overallState: severity,
+    quality: quality ?? base.quality,
+    reasons: base.reasons,
+    stressScenarios: base.stressScenarios,
+    priceMap: base.priceMap,
+    evaluatedAt: base.evaluatedAt,
+    policyVersion: base.policyVersion,
+    missingReasons: base.missingReasons,
+    exchangePnlBasis: base.exchangePnlBasis,
+  );
+  return RiskPositionMonitorViewState(
+    positionId: key,
+    episodeKey: key,
+    position: base.position,
+    evaluation: evaluation,
+    quality: quality ?? base.quality,
+    lastError: lastError,
+  );
+}
+
+RiskMonitorViewState _aggregateDashboardState() {
+  final base = riskEvaluation();
+  return RiskMonitorViewState(
+    isRunning: true,
+    backgroundAvailable: true,
+    accountHash: 'aggregate-account',
+    quality: completeQuality(),
+    requestStatus: RiskMonitorRequestStatus.backingOff,
+    retryAt: riskTestNow.add(const Duration(seconds: 30)),
+    positions: <RiskPositionMonitorViewState>[
+      _positionEntry(base, key: 'btc', severity: RiskSeverity.normal),
+      _positionEntry(base, key: 'eth', severity: RiskSeverity.watch),
+      _positionEntry(base, key: 'sui', severity: RiskSeverity.high),
+      _positionEntry(
+        base,
+        key: 'failed',
+        severity: RiskSeverity.normal,
+        quality: const RiskQuality.error(reason: 'Synthetic position failure'),
+        lastError: 'Position request failed',
+      ),
+    ],
+  );
+}
+
+List<RiskPositionMonitorViewState> _distinctAggregateEntries() {
+  final base = riskEvaluation();
+  return <RiskPositionMonitorViewState>[
+    _distinctPositionEntry(
+      base,
+      instrumentId: 'ETH-USDT',
+      baseCurrency: 'ETH',
+      positionId: 'eth-position',
+      markPrice: 9,
+      severity: RiskSeverity.watch,
+      title: 'ETH plan marker',
+      eventMessage: 'ETH-only event',
+    ),
+    _distinctPositionEntry(
+      base,
+      instrumentId: 'BTC-USDT',
+      baseCurrency: 'BTC',
+      positionId: 'btc-position',
+      markPrice: 10,
+      severity: RiskSeverity.normal,
+      title: 'BTC plan marker',
+      eventMessage: 'BTC-only event',
+    ),
+    _distinctPositionEntry(
+      base,
+      instrumentId: 'SUI-USDT',
+      baseCurrency: 'SUI',
+      positionId: 'sui-position',
+      markPrice: 8,
+      severity: RiskSeverity.high,
+      title: 'SUI plan marker',
+      eventMessage: 'SUI-only event',
+    ),
+  ];
+}
+
+RiskMonitorViewState _distinctAggregateState(
+  List<RiskPositionMonitorViewState> entries, {
+  String? accountHash = 'distinct-aggregate-account',
+}) {
+  final primary = entries.firstWhere(
+    (entry) => entry.position?.instrumentId == 'BTC-USDT',
+    orElse: () => entries.first,
+  );
+  return RiskMonitorViewState(
+    isRunning: true,
+    backgroundAvailable: true,
+    accountHash: accountHash,
+    episodeKey: primary.episodeKey,
+    evaluation: primary.evaluation,
+    plan: primary.plan,
+    events: primary.events,
+    samples: primary.samples,
+    summaries: primary.summaries,
+    quality: completeQuality(),
+    requestStatus: RiskMonitorRequestStatus.ready,
+    positions: entries,
+  );
+}
+
+RiskPositionMonitorViewState _distinctPositionEntry(
+  RiskEvaluation base, {
+  required String instrumentId,
+  required String baseCurrency,
+  required String positionId,
+  required double markPrice,
+  required RiskSeverity severity,
+  required String title,
+  required String eventMessage,
+  String? positionSide,
+  String accountNamespace = 'distinct-account',
+}) {
+  final observedAt = riskTestNow.add(Duration(minutes: markPrice.toInt()));
+  final position = RiskPosition(
+    instrumentId: instrumentId,
+    instrumentType: base.position.instrumentType,
+    mode: base.position.mode,
+    collateralCurrency: base.position.collateralCurrency,
+    positionSide: positionSide ?? base.position.positionSide,
+    accountNamespace: accountNamespace,
+    positionId: positionId,
+    createdAt: DateTime.utc(2026, 9, 1),
+    updatedAt: observedAt,
+    observedAt: observedAt,
+    baseCurrency: baseCurrency,
+    quoteCurrency: base.position.quoteCurrency,
+    positionCurrency: baseCurrency,
+    accountCurrency: base.position.accountCurrency,
+    liabilityCurrency: base.position.liabilityCurrency,
+    rawQuantity: base.position.rawQuantity,
+    quantity: base.position.quantity,
+    margin: base.position.margin,
+    markPrice: markPrice,
+    entryPrice: base.position.entryPrice,
+    liquidationPrice: base.position.liquidationPrice,
+    unrealizedPnl: base.position.unrealizedPnl,
+    reportedLeverage: base.position.reportedLeverage,
+    marginRatio: base.position.marginRatio,
+    maintenanceRequirement: base.position.maintenanceRequirement,
+    reportedLiability: base.position.reportedLiability,
+    reportedInterest: base.position.reportedInterest,
+    baseBalance: base.position.baseBalance,
+    quoteBalance: base.position.quoteBalance,
+    baseBorrowed: base.position.baseBorrowed,
+    quoteBorrowed: base.position.quoteBorrowed,
+    baseInterest: base.position.baseInterest,
+    quoteInterest: base.position.quoteInterest,
+    hourlyBorrowRate: base.position.hourlyBorrowRate,
+    entryFeeRate: base.position.entryFeeRate,
+    exitFeeRate: base.position.exitFeeRate,
+    costAttribution: base.position.costAttribution,
+    quality: completeQuality(observedAt, 'distinct-position'),
+    eligibility: base.position.eligibility,
+    source: 'distinct-position',
+  );
+  final evaluated = RiskEngine(clock: () => observedAt).evaluate(
+    position,
+    policy: const RiskPolicy(),
+    market: const RiskMarketInput(
+      state: RiskSeverity.normal,
+      complete: true,
+      dailyVolatility: 0.1,
+    ),
+    now: observedAt,
+  );
+  final evaluation = RiskEvaluation(
+    position: evaluated.position,
+    metrics: evaluated.metrics,
+    positionAssessment: evaluated.positionAssessment,
+    marketAssessment: evaluated.marketAssessment,
+    recoveryAssessment: evaluated.recoveryAssessment,
+    overallState: severity,
+    quality: evaluated.quality,
+    reasons: evaluated.reasons,
+    stressScenarios: evaluated.stressScenarios,
+    priceMap: evaluated.priceMap,
+    evaluatedAt: evaluated.evaluatedAt,
+    policyVersion: evaluated.policyVersion,
+    missingReasons: evaluated.missingReasons,
+    exchangePnlBasis: evaluated.exchangePnlBasis,
+  );
+  final episodeKey = position.episodeKey;
+  final at = observedAt;
+  return RiskPositionMonitorViewState(
+    positionId: positionId,
+    episodeKey: episodeKey,
+    position: position,
+    evaluation: evaluation,
+    plan: riskPlan(
+      episode: episodeKey,
+      rules: [riskRule(episode: episodeKey, title: title)],
+    ),
+    events: [
+      RiskEvent(
+        id: 'event-$positionId',
+        episodeKey: episodeKey,
+        kind: RiskEventKind.stateChange,
+        message: eventMessage,
+        createdAt: at,
+        observedAt: at,
+        severity: severity,
+        source: 'distinct-fixture',
+      ),
+    ],
+    samples: [
+      riskSample(
+        episode: episodeKey,
+        at: at,
+        markPrice: markPrice,
+        state: severity,
+      ),
+    ],
+    summaries: [
+      RiskDailySummary(
+        episodeKey: episodeKey,
+        dateKey: '2026-09-${markPrice.toInt()}',
+        timeZone: 'UTC',
+        capturedAt: at,
+        quality: completeQuality(at, 'distinct-summary'),
+        overallState: severity,
+        buffer: evaluation.buffer,
+        effectiveLeverage: evaluation.effectiveLeverage,
+        majorChange: eventMessage,
+      ),
+    ],
+    quality: completeQuality(at, 'distinct-position'),
+  );
+}
+
+RiskPositionMonitorViewState _rekeyDistinctEntry(
+  RiskPositionMonitorViewState entry, {
+  required String accountPositionId,
+  required String episodeKey,
+}) {
+  return RiskPositionMonitorViewState(
+    positionId: accountPositionId,
+    episodeKey: episodeKey,
+    positionSide: entry.positionSide,
+    position: entry.position,
+    evaluation: entry.evaluation,
+    planEvaluation: entry.planEvaluation,
+    plan: entry.plan,
+    settings: entry.settings,
+    market: entry.market,
+    samples: entry.samples,
+    summaries: entry.summaries,
+    previousCheck: entry.previousCheck,
+    trend: entry.trend,
+    velocity: entry.velocity,
+    events: entry.events,
+    quality: entry.quality,
+    unsaved: entry.unsaved,
+    lastError: entry.lastError,
+    freshnessAt: entry.freshnessAt,
+  );
+}
+
+_CountingRiskMonitorOwner _countingOwner(RiskMonitorViewState state) =>
+    _CountingRiskMonitorOwner(initial: state);
+
+class _CountingRiskMonitorOwner extends InMemoryRiskMonitorOwner {
+  _CountingRiskMonitorOwner({required super.initial});
+
+  int dispatchCalls = 0;
+  final List<RiskMonitorCommand> commands = <RiskMonitorCommand>[];
+
+  @override
+  Future<RiskMonitorCommandResult> dispatch(RiskMonitorCommand command) {
+    dispatchCalls++;
+    commands.add(command);
+    return super.dispatch(command);
+  }
 }
 
 Future<String> _loadScreenshotFont() async {
