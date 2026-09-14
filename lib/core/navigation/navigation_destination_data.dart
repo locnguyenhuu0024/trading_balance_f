@@ -39,4 +39,9 @@ const navigationItems = <NavigationItemData>[
     icon: Icons.settings_outlined,
     selectedIcon: Icons.settings,
   ),
+  NavigationItemData(
+    label: 'Risk',
+    icon: Icons.shield_outlined,
+    selectedIcon: Icons.shield,
+  ),
 ];

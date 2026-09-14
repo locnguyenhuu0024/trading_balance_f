@@ -3,10 +3,27 @@
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'dart:async';
 
 import '../navigation/navigation_preferences.dart';
 import '../timezone/app_time_zone.dart';
 import '../typography/app_text_scale.dart';
+
+/// Broadcasts credential mutations to the single risk owner.  The payload is
+/// intentionally empty: account identity is resolved by the next monitor
+/// capture and no secret crosses the lifecycle boundary.
+final class CredentialMutationBus {
+  CredentialMutationBus._();
+
+  static final StreamController<void> _controller =
+      StreamController<void>.broadcast();
+
+  static Stream<void> get changes => _controller.stream;
+
+  static void notify() {
+    if (!_controller.isClosed) _controller.add(null);
+  }
+}
 
 /// Provider cung cấp instance của SecureStorageHelper
 final secureStorageProvider = Provider<SecureStorageHelper>((ref) {
@@ -47,6 +64,7 @@ class SecureStorageHelper {
       _storage.write(key: _okxSecretKey, value: secretKey),
       _storage.write(key: _okxPassphrase, value: passphrase),
     ]);
+    CredentialMutationBus.notify();
   }
 
   /// Lấy cấu hình Ẩn số dư mặc định
@@ -137,5 +155,6 @@ class SecureStorageHelper {
       _storage.delete(key: _okxSecretKey),
       _storage.delete(key: _okxPassphrase),
     ]);
+    CredentialMutationBus.notify();
   }
 }

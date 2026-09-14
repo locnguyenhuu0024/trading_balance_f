@@ -58,7 +58,8 @@ void main() {
     expect(find.text('Lệnh'), findsNothing);
     expect(find.text('Thị trường'), findsNothing);
     expect(find.text('Cài đặt'), findsNothing);
-    expect(TradingNavigationBar.items, hasLength(5));
+    expect(TradingNavigationBar.items, hasLength(6));
+    expect(find.byKey(const Key('navigation-destination-5')), findsOneWidget);
     for (var index = 0; index < TradingNavigationBar.items.length; index++) {
       expect(find.byKey(Key('navigation-destination-$index')), findsOneWidget);
     }
@@ -76,6 +77,11 @@ void main() {
     await tester.tap(find.byKey(const Key('navigation-destination-2')));
     await tester.pump();
     expect(find.text('Quản lý Giao dịch'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('navigation-destination-5')));
+    await tester.pump();
+    expect(find.text('Risk Home'), findsOneWidget);
+    expect(find.text('Risk'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
   });

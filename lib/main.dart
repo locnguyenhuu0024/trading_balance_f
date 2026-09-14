@@ -316,6 +316,7 @@ class WebStorageHelper extends SecureStorageHelper {
       _prefs.setString('OKX_SECRET_KEY', secretKey),
       _prefs.setString('OKX_PASSPHRASE', passphrase),
     ]);
+    CredentialMutationBus.notify();
   }
 
   @override
@@ -415,5 +416,6 @@ class WebStorageHelper extends SecureStorageHelper {
       _prefs.remove('OKX_SECRET_KEY'),
       _prefs.remove('OKX_PASSPHRASE'),
     ]);
+    CredentialMutationBus.notify();
   }
 }

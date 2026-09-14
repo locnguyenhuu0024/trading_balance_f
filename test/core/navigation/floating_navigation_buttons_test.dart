@@ -62,7 +62,7 @@ void main() {
       find.byKey(const Key('floating-navigation-destination-0')),
     );
     final last = tester.getRect(
-      find.byKey(const Key('floating-navigation-destination-4')),
+      find.byKey(const Key('floating-navigation-destination-5')),
     );
 
     expect(group.top, greaterThan(0));
@@ -84,7 +84,7 @@ void main() {
         find.byKey(const Key('floating-navigation-destination-0')),
       );
       final last = tester.getRect(
-        find.byKey(const Key('floating-navigation-destination-4')),
+        find.byKey(const Key('floating-navigation-destination-5')),
       );
 
       expect(first.center.dy, lessThan(last.center.dy));
@@ -227,7 +227,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    for (var index = 0; index < 5; index++) {
+    for (var index = 0; index < 6; index++) {
       expect(
         find.byKey(Key('floating-navigation-destination-$index')),
         findsOneWidget,
