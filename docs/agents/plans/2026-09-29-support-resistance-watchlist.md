@@ -1,7 +1,7 @@
 # Implementation Plan: Support and Resistance Watchlist
 
-Status: READY_FOR_APPROVAL
-Execution: T28 PASS; T29 PASS; T30 authorized on 2026-09-30 after the requested T29 commit.
+Status: APPROVED
+Execution: T28 PASS; T29 PASS; T30 PASS; final integration audit PASS on 2026-09-30.
 Date: 2026-09-29
 Tier: L
 Specification: `docs/agents/specs/2026-09-29-support-resistance-watchlist-design.md`
@@ -21,7 +21,7 @@ Decisions D-001..007 are user-resolved; D-008 is the explicit first-launch defau
 |---|---|---|
 | Domain/data | `lib/features/support_resistance/domain/{level_calculator,models}.dart`, `data/market_repository.dart` | Add validated public market data and pure level calculation. |
 | State/persistence | `lib/features/support_resistance/data/watchlist_store.dart`, `presentation/providers/watchlist_provider.dart` | Add independent persisted lists and global mode/timeframe. |
-| UI/integration | `lib/features/support_resistance/presentation/{support_resistance_screen.dart,providers/levels_provider.dart}`, `lib/core/navigation/{navigation_destination_data,main_navigation_shell}.dart` | Add seventh destination and screen. |
+| UI/integration | `lib/features/support_resistance/presentation/{support_resistance_screen.dart,providers/levels_provider.dart}`, `lib/core/navigation/{navigation_destination_data,main_navigation_shell,trading_navigation_bar}.dart` | Add seventh destination and screen; keep fixed navigation reachable at narrow widths. |
 | Tests | `test/features/support_resistance/{level_calculator_test,market_repository_test,watchlist_provider_test,support_resistance_screen_test}.dart`, `test/core/navigation/main_navigation_shell_test.dart` | Focused behavior, state, and navigation coverage. |
 
 The files above are planned exact write surfaces; an executor must stop for coordinator review if another file becomes necessary. Existing protected files remain name-only metadata.
@@ -76,7 +76,7 @@ GREEN: choose different lists in two modes and D1, recreate controller, recover 
 
 ### P03 — Screen, refresh and navigation (T30)
 
-Add a searchable multi-select UI, mode/timeframe controls, per-coin cards with current price and levels, accessible loading/error/sparse/stale states, one-minute mounted refresh and manual refresh, plus nav integration in fixed/floating layouts. Use provider keys/generation to ignore obsolete responses. Update existing nav test and add focused screen test.
+Add a searchable multi-select UI, mode/timeframe controls, per-coin cards with current price and levels, accessible loading/error/sparse/stale states, one-minute mounted refresh and manual refresh, plus nav integration in fixed/floating layouts. Keep fixed navigation horizontally reachable when seven 48 px touch targets exceed a narrow viewport; floating navigation already scrolls. Use provider keys/generation to ignore obsolete responses. Update existing nav test and add focused screen test.
 
 RED: switch mode/timeframe while an old request is pending; old result does not replace current state, and one coin's failure does not hide the other.
 GREEN: add two coins, display ordered five-per-side data, switch timeframe/mode, refresh, and navigate through the seventh item on a narrow screen.

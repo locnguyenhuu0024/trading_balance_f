@@ -94,80 +94,96 @@ class _TradingNavigationBarState extends State<TradingNavigationBar>
           child: LayoutBuilder(
             builder: (context, constraints) {
               const barTop = TradingNavigationBar.crestHeight;
-              final cellWidth =
-                  constraints.maxWidth / TradingNavigationBar.items.length;
               final buttonScale = _normalizeScale(widget.buttonScale);
+              final targetSize = math.max(48.0, 52.0 * buttonScale).toDouble();
+              final contentWidth = math.max(
+                constraints.maxWidth,
+                targetSize * TradingNavigationBar.items.length,
+              );
+              final cellWidth =
+                  contentWidth / TradingNavigationBar.items.length;
               final buttonOpacity = _normalizeOpacity(widget.buttonOpacity);
 
-              return Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  Positioned.fill(
-                    child: IgnorePointer(
-                      child: AnimatedBuilder(
-                        animation: _selectionController,
-                        builder: (context, _) {
-                          return CustomPaint(
-                            key: const Key('navigation-bar-silhouette'),
-                            painter: _NavigationSurfacePainter(
-                              color: surfaceColor,
-                              barTop: barTop,
-                              barHeight: TradingNavigationBar.barHeight,
-                              selectedIndex: widget.selectedIndex,
-                              previousIndex: _previousIndex,
-                              destinationCount:
-                                  TradingNavigationBar.items.length,
-                              buttonScale: buttonScale,
-                              progress: Curves.easeOutCubic.transform(
-                                disableAnimations
-                                    ? 1
-                                    : _selectionController.value,
+              final content = SizedBox(
+                width: contentWidth,
+                height: constraints.maxHeight,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        child: AnimatedBuilder(
+                          animation: _selectionController,
+                          builder: (context, _) {
+                            return CustomPaint(
+                              key: const Key('navigation-bar-silhouette'),
+                              painter: _NavigationSurfacePainter(
+                                color: surfaceColor,
+                                barTop: barTop,
+                                barHeight: TradingNavigationBar.barHeight,
+                                selectedIndex: widget.selectedIndex,
+                                previousIndex: _previousIndex,
+                                destinationCount:
+                                    TradingNavigationBar.items.length,
+                                buttonScale: buttonScale,
+                                progress: Curves.easeOutCubic.transform(
+                                  disableAnimations
+                                      ? 1
+                                      : _selectionController.value,
+                                ),
                               ),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                  ),
-                  Positioned(
-                    top: barTop,
-                    left: 0,
-                    right: 0,
-                    height: TradingNavigationBar.barHeight,
-                    child: ClipPath(
-                      clipper: _NavigationBarSurfaceClipper(
-                        selectedIndex: widget.selectedIndex,
-                        destinationCount: TradingNavigationBar.items.length,
-                        buttonScale: buttonScale,
-                      ),
-                      child: Material(
-                        key: const Key('navigation-bar-surface'),
-                        color: surfaceColor,
-                        child: const SizedBox(
-                          key: Key('navigation-bar-layout'),
+                            );
+                          },
                         ),
                       ),
                     ),
-                  ),
-                  for (
-                    var index = 0;
-                    index < TradingNavigationBar.items.length;
-                    index++
-                  )
-                    _DestinationControl(
-                      index: index,
-                      item: TradingNavigationBar.items[index],
-                      isSelected: index == widget.selectedIndex,
-                      cellLeft: cellWidth * index,
-                      cellWidth: cellWidth,
-                      surfaceColor: surfaceColor,
-                      contentColor: contentColor,
-                      buttonScale: buttonScale,
-                      buttonOpacity: buttonOpacity,
-                      duration: duration,
-                      onTap: () => widget.onDestinationSelected(index),
+                    Positioned(
+                      top: barTop,
+                      left: 0,
+                      right: 0,
+                      height: TradingNavigationBar.barHeight,
+                      child: ClipPath(
+                        clipper: _NavigationBarSurfaceClipper(
+                          selectedIndex: widget.selectedIndex,
+                          destinationCount: TradingNavigationBar.items.length,
+                          buttonScale: buttonScale,
+                        ),
+                        child: Material(
+                          key: const Key('navigation-bar-surface'),
+                          color: surfaceColor,
+                          child: const SizedBox(
+                            key: Key('navigation-bar-layout'),
+                          ),
+                        ),
+                      ),
                     ),
-                ],
+                    for (
+                      var index = 0;
+                      index < TradingNavigationBar.items.length;
+                      index++
+                    )
+                      _DestinationControl(
+                        index: index,
+                        item: TradingNavigationBar.items[index],
+                        isSelected: index == widget.selectedIndex,
+                        cellLeft: cellWidth * index,
+                        cellWidth: cellWidth,
+                        surfaceColor: surfaceColor,
+                        contentColor: contentColor,
+                        buttonScale: buttonScale,
+                        buttonOpacity: buttonOpacity,
+                        duration: duration,
+                        onTap: () => widget.onDestinationSelected(index),
+                      ),
+                  ],
+                ),
+              );
+
+              if (contentWidth <= constraints.maxWidth) return content;
+              return SingleChildScrollView(
+                key: const Key('navigation-bar-horizontal-scroll'),
+                scrollDirection: Axis.horizontal,
+                child: content,
               );
             },
           ),

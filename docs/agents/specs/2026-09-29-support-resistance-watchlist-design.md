@@ -1,6 +1,6 @@
 # Design Specification: Support and Resistance Watchlist
 
-Status: READY_FOR_PLAN
+Status: APPROVED
 Date: 2026-09-29
 Tier: L — cross-layer market data, persistence, and primary navigation
 Decision Ledger: `docs/agents/decisions/2026-09-29-support-resistance-watchlist-decisions.md`

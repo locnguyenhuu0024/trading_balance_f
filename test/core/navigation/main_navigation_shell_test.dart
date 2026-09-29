@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/navigation/main_navigation_shell.dart';
+import 'package:trading_balance_f/core/navigation/navigation_preferences.dart';
+import 'package:trading_balance_f/core/navigation/navigation_preferences_provider.dart';
 import 'package:trading_balance_f/core/navigation/trading_navigation_bar.dart';
 import 'package:trading_balance_f/core/network/okx_websocket_service.dart';
 import 'package:trading_balance_f/features/fractal_tracker/data/fractal_model.dart';
@@ -15,6 +17,10 @@ import 'package:trading_balance_f/features/orders/presentation/providers/order_p
 import 'package:trading_balance_f/features/portfolio/data/okx_balance_model.dart';
 import 'package:trading_balance_f/features/portfolio/presentation/providers/portfolio_provider.dart';
 import 'package:trading_balance_f/features/settings/presentation/settings_screen.dart';
+import 'package:trading_balance_f/features/support_resistance/data/watchlist_store.dart';
+import 'package:trading_balance_f/features/support_resistance/domain/models.dart';
+import 'package:trading_balance_f/features/support_resistance/presentation/providers/levels_provider.dart';
+import 'package:trading_balance_f/features/support_resistance/presentation/providers/watchlist_provider.dart';
 
 class _FakeOkxWebsocketService extends OkxWebsocketService {
   @override
@@ -34,6 +40,22 @@ void main() {
   testWidgets('shows all primary destinations and switches selected content', (
     tester,
   ) async {
+    final watchlist = WatchlistController(
+      store: WatchlistStore(storage: _MemoryWatchlistStorage()),
+      loadActiveInstruments: (marketMode) async =>
+          const <SupportResistanceInstrument>[],
+    );
+    await watchlist.load();
+    final levels = SupportResistanceLevelsController(
+      loadLevels:
+          ({required marketMode, required instrumentId, required timeframe}) =>
+              Future<SupportResistanceMarketSnapshot>.error(
+                StateError(
+                  'No market request expected for an empty watchlist.',
+                ),
+              ),
+    );
+
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
@@ -47,6 +69,8 @@ void main() {
           positionsFutureProvider.overrideWith((ref) async => <OkxPosition>[]),
           ordersFutureProvider.overrideWith((ref) async => <OkxOrder>[]),
           themeModeProvider.overrideWith((ref) => ThemeMode.light),
+          supportResistanceWatchlistProvider.overrideWith((ref) => watchlist),
+          supportResistanceLevelsProvider.overrideWith((ref) => levels),
         ],
         child: const MaterialApp(home: MainNavigationShell()),
       ),
@@ -58,8 +82,9 @@ void main() {
     expect(find.text('Lệnh'), findsNothing);
     expect(find.text('Thị trường'), findsNothing);
     expect(find.text('Cài đặt'), findsNothing);
-    expect(TradingNavigationBar.items, hasLength(6));
+    expect(TradingNavigationBar.items, hasLength(7));
     expect(find.byKey(const Key('navigation-destination-5')), findsOneWidget);
+    expect(find.byKey(const Key('navigation-destination-6')), findsOneWidget);
     for (var index = 0; index < TradingNavigationBar.items.length; index++) {
       expect(find.byKey(Key('navigation-destination-$index')), findsOneWidget);
     }
@@ -80,9 +105,118 @@ void main() {
 
     await tester.tap(find.byKey(const Key('navigation-destination-5')));
     await tester.pump();
-    expect(find.text('Risk Home'), findsOneWidget);
+    expect(find.text('Trang tổng quan rủi ro'), findsOneWidget);
     expect(find.text('Risk'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('navigation-destination-6')));
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(find.text('Hỗ trợ và kháng cự'), findsOneWidget);
+    expect(find.text('Chọn coin để bắt đầu'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
   });
+
+  testWidgets('seventh destination stays reachable at narrow widths', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    for (final mode in <NavigationDisplayMode>[
+      NavigationDisplayMode.bar,
+      NavigationDisplayMode.floating,
+    ]) {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            navigationPreferencesInitialProvider.overrideWithValue(
+              NavigationPreferences.defaults.copyWith(displayMode: mode),
+            ),
+          ],
+          child: MaterialApp(
+            home: MainNavigationShell(
+              destinationBuilder: (context, index) =>
+                  Center(child: Text('Destination $index')),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final isFixed = mode == NavigationDisplayMode.bar;
+      final scrollKey = isFixed
+          ? const Key('navigation-bar-horizontal-scroll')
+          : const Key('floating-navigation-horizontal-scroll');
+      final destinationKey = isFixed
+          ? const Key('navigation-destination-6')
+          : const Key('floating-navigation-destination-6');
+
+      expect(find.byKey(scrollKey), findsOneWidget);
+      await tester.drag(find.byKey(scrollKey), const Offset(-1000, 0));
+      await tester.pumpAndSettle();
+      expect(
+        tester.getSize(find.byKey(destinationKey)).width,
+        greaterThanOrEqualTo(48),
+      );
+      await tester.tap(find.byKey(destinationKey));
+      await tester.pumpAndSettle();
+      expect(find.text('Destination 6'), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    }
+  });
+
+  testWidgets('seventh destination opens the support and resistance screen', (
+    tester,
+  ) async {
+    final watchlist = WatchlistController(
+      store: WatchlistStore(storage: _MemoryWatchlistStorage()),
+      loadActiveInstruments: (marketMode) async =>
+          const <SupportResistanceInstrument>[],
+    );
+    await watchlist.load();
+    final levels = SupportResistanceLevelsController(
+      loadLevels:
+          ({required marketMode, required instrumentId, required timeframe}) =>
+              Future<SupportResistanceMarketSnapshot>.error(
+                StateError(
+                  'No market request expected for an empty watchlist.',
+                ),
+              ),
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          supportResistanceWatchlistProvider.overrideWith((ref) => watchlist),
+          supportResistanceLevelsProvider.overrideWith((ref) => levels),
+        ],
+        child: const MaterialApp(home: MainNavigationShell()),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('navigation-destination-6')));
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(find.text('Hỗ trợ và kháng cự'), findsOneWidget);
+    expect(find.text('Chọn coin để bắt đầu'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+}
+
+class _MemoryWatchlistStorage implements WatchlistStorage {
+  String? _snapshot;
+
+  @override
+  Future<String?> readSnapshot() async => _snapshot;
+
+  @override
+  Future<bool> writeSnapshot(String encodedSnapshot) async {
+    _snapshot = encodedSnapshot;
+    return true;
+  }
 }

@@ -22,7 +22,7 @@ void main() {
       final openTime = now;
       final adapter = _RecordingAdapter((request) {
         if (request.uri.path == SupportResistanceRepository.tickerEndpoint) {
-          return _WireResponse(<String, Object?>{
+          return const _WireResponse(<String, Object?>{
             'code': '0',
             'data': <Object?>[
               <String, Object?>{'instId': 'ETH-USDT', 'last': '104'},

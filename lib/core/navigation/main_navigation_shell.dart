@@ -7,6 +7,7 @@ import '../../features/orders/presentation/orders_screen.dart';
 import '../../features/portfolio/presentation/portfolio_screen.dart';
 import '../../features/portfolio/presentation/risk_dashboard_screen.dart';
 import '../../features/settings/presentation/settings_screen.dart';
+import '../../features/support_resistance/presentation/support_resistance_screen.dart';
 import 'navigation_preferences_provider.dart';
 import 'navigation_presentation_host.dart';
 
@@ -43,6 +44,8 @@ class _MainNavigationShellState extends ConsumerState<MainNavigationShell> {
         return const SettingsScreen();
       case 5:
         return const RiskDashboardScreen();
+      case 6:
+        return const SupportResistanceScreen();
       case 0:
       default:
         return const PortfolioScreen();

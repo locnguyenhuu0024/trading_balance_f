@@ -112,7 +112,7 @@ class SupportResistanceRepository {
     final rows = _mapRows(response, tickerEndpoint);
     if (rows.length != 1 ||
         _text(rows.single['instId'])?.toUpperCase() != normalized) {
-      throw SupportResistanceRepositoryException(
+      throw const SupportResistanceRepositoryException(
         failure: SupportResistanceRepositoryFailure.unavailableTicker,
         message: 'No exact-market ticker was returned',
         endpoint: tickerEndpoint,
@@ -120,7 +120,7 @@ class SupportResistanceRepository {
     }
     final lastPrice = _number(rows.single['last']);
     if (lastPrice == null || !lastPrice.isFinite || lastPrice <= 0) {
-      throw SupportResistanceRepositoryException(
+      throw const SupportResistanceRepositoryException(
         failure: SupportResistanceRepositoryFailure.unavailableTicker,
         message: 'The exact-market ticker price was invalid',
         endpoint: tickerEndpoint,
@@ -363,7 +363,7 @@ class SupportResistanceRepository {
         ? RegExp(r'^[A-Z0-9]+-USDT$')
         : RegExp(r'^[A-Z0-9]+-USDT-SWAP$');
     if (!pattern.hasMatch(normalized)) {
-      throw SupportResistanceRepositoryException(
+      throw const SupportResistanceRepositoryException(
         failure: SupportResistanceRepositoryFailure.invalidRequest,
         message: 'Instrument key does not match the selected market mode',
         endpoint: '',

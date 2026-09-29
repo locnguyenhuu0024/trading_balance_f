@@ -44,4 +44,9 @@ const navigationItems = <NavigationItemData>[
     icon: Icons.shield_outlined,
     selectedIcon: Icons.shield,
   ),
+  NavigationItemData(
+    label: 'Hỗ trợ',
+    icon: Icons.stacked_line_chart_outlined,
+    selectedIcon: Icons.stacked_line_chart,
+  ),
 ];

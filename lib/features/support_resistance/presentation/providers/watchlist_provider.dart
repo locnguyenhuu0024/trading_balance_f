@@ -110,8 +110,9 @@ class WatchlistController extends ChangeNotifier {
       return WatchlistMutationResult.invalidInstrument;
     }
     final selected = _snapshot.instrumentIdsFor(marketMode);
-    if (selected.contains(instrumentId))
+    if (selected.contains(instrumentId)) {
       return WatchlistMutationResult.duplicate;
+    }
     if (selected.length >= WatchlistSnapshot.maximumSelectionsPerMode) {
       return WatchlistMutationResult.limitReached;
     }
