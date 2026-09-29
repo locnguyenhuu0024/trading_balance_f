@@ -1,6 +1,6 @@
 # Design Specification: Support and Resistance Watchlist
 
-Status: BLOCKED_ON_CLARIFICATION
+Status: READY_FOR_PLAN
 Date: 2026-09-29
 Tier: L — cross-layer market data, persistence, and primary navigation
 Decision Ledger: `docs/agents/decisions/2026-09-29-support-resistance-watchlist-decisions.md`
@@ -28,8 +28,8 @@ Out of scope: trading, alerts, chart drawing, manual level editing, changes to B
 
 ## 3. Requirements
 
-- REQ-001: Offer one screen-wide Spot/Perpetual mode. A searchable picker shows all currently trading USDT instruments available in that mode. The selected watchlist is ordered, unique, persisted separately per mode, and capped at 10. A fresh installation starts empty with a selection prompt.
-- REQ-002: Offer one screen-wide H1/H4/H6/D1/W1 timeframe and persist the last mode/timeframe. These labels mean actual UTC-aligned intervals, independently of BMAG's period labels.
+- REQ-001: Offer one screen-wide Spot/Perpetual mode. A searchable picker shows all currently trading USDT instruments available in that mode. The selected watchlist is ordered, unique, persisted separately per mode, and capped at 10. A fresh installation starts in Spot with an empty list and a selection prompt.
+- REQ-002: Offer one screen-wide H1/H4/H6/D1/W1 timeframe and persist the last mode/timeframe. On first launch, select H6. These labels mean actual UTC-aligned intervals, independently of BMAG's period labels.
 - REQ-003: For every selected coin, use its active-market current price and the newest 300 confirmed candles at the selected interval. Open, malformed, duplicate, out-of-order, or wrong-instrument candles may not create levels. Historical pagination is permitted to obtain 300 confirmed candles.
 - REQ-004: Derive reproducible swing levels, merge close candidates, classify against current price, and show up to the five nearest levels on each side in distance order. Never fabricate missing levels.
 - REQ-005: Load and refresh each coin independently. Refresh once per minute only while the screen is mounted, plus on explicit refresh or selection/mode/timeframe change. Show per-coin loading, unavailable, and sparse-results states; one coin failure must not hide another coin's result.
@@ -63,7 +63,7 @@ Independent example: with current price 100, representative levels 95, 97, 100, 
 
 `SupportResistanceCalculator` (new pure domain function) receives validated candles and a reference price and returns ordered level lists. It performs no network or persistence work.
 
-`WatchlistStore`/controller (new) persists two ordered coin lists plus mode/timeframe using the existing SharedPreferences dependency. It sanitizes unknown/duplicate/over-limit stored records; failed writes preserve the last confirmed selection and show a recoverable error. The screen watches selected keys and exposes independent async states per coin. Selection changes invalidate only affected requests; late responses from an old key must not overwrite the current view.
+`WatchlistStore`/controller (new) persists two ordered coin lists plus mode/timeframe as one versioned snapshot using the existing SharedPreferences dependency. It sanitizes malformed/duplicate/over-limit stored records and invalid mode/timeframe values; syntactically valid saved instruments that have since been delisted remain visible for removal. Only active instruments from the mode-specific catalog may be newly added. Failed writes preserve the last confirmed selection and show a recoverable error. The screen watches selected keys and exposes independent async states per coin. Selection changes invalidate only affected requests; late responses from an old key must not overwrite the current view.
 
 The screen uses `NavigationContentFrame`, app theme, adaptive price formatter, and distinct sections per coin. It displays the market mode, timeframe, reference price, fetch time, count and ascending/descending level sequences with nearest first. Coin picker offers search and clear selected state, with add/remove disabled at the 10-coin limit as appropriate. A seventh nav item receives a short Vietnamese label and accessible semantics.
 

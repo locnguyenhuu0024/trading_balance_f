@@ -1,7 +1,7 @@
 # Implementation Plan: Support and Resistance Watchlist
 
-Status: BLOCKED_ON_CLARIFICATION
-Execution: T28 PASS (authorized separately on 2026-09-29); T29 and T30 ON_HOLD by user instruction.
+Status: READY_FOR_APPROVAL
+Execution: T28 PASS; T29 PASS; T30 authorized on 2026-09-30 after the requested T29 commit.
 Date: 2026-09-29
 Tier: L
 Specification: `docs/agents/specs/2026-09-29-support-resistance-watchlist-design.md`
@@ -11,11 +11,11 @@ Decision Ledger: `docs/agents/decisions/2026-09-29-support-resistance-watchlist-
 
 Implement REQ-001..006 and AC-001..005 from the specification. This is a planning artifact only. Product/test/runtime code changes begin only after the user explicitly approves this presented plan and task checklist.
 
-The user separately authorized T28 while the first-launch default for later tasks remains open. T28 passed its independent audit; this does not authorize T29, T30, or final feature rollout.
+The user separately authorized T28 and then T29. Both passed independent audits. The user authorized T30 after the T29 commit; final feature rollout still requires the final integration audit.
 
 ## 2. Preconditions and repository impact
 
-User decisions D-001..007 are resolved. The existing BMAG and Risk algorithms remain untouched. No dependency-manifest, configuration, environment, CI, deployment, or generated configuration files may be read or written by an agent. No user-owned external configuration action is required.
+Decisions D-001..007 are user-resolved; D-008 is the explicit first-launch default assumption. The existing BMAG and Risk algorithms remain untouched. No dependency-manifest, configuration, environment, CI, deployment, or generated configuration files may be read or written by an agent. No user-owned external configuration action is required.
 
 | Area | Planned files | Change |
 |---|---|---|
@@ -69,7 +69,7 @@ Stop: exchange response cannot establish the specified UTC interval, or integrat
 
 ### P02 — Persisted selections (T29)
 
-Create a nonsensitive SharedPreferences-backed store and controller for separate unique ordered Spot/Perpetual lists (10 each), last mode and timeframe, initial empty watchlists, search-result validation, and save-error rollback. Keep this state separate from BMAG and Risk.
+Create a nonsensitive SharedPreferences-backed store and controller for one versioned persisted snapshot with separate unique ordered Spot/Perpetual lists (10 each), last mode and timeframe, first-launch Spot/H6 with empty lists, active-catalog validation for additions, and save-error rollback. Keep this state separate from BMAG and Risk.
 
 RED: malformed stored entries and an eleventh/duplicate insert cannot leak into state; a failed write restores last confirmed selection.
 GREEN: choose different lists in two modes and D1, recreate controller, recover both lists and D1.
