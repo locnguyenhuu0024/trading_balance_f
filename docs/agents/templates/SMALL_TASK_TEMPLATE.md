@@ -1,9 +1,17 @@
 # Task <NN> — <Topic>
 
-Status: PENDING | READY | EXECUTING | VERIFYING | PASS | REWORK | BLOCKED
+Status: PENDING | READY | EXECUTING | VERIFYING | PASS | REWORK | BLOCKED | BLOCKED_ROUTE
 Plan: <path>#P01
+Agent Role: implementation_executor
 Executor Class: E0 | E1 | E2
-Target Route: Luna High | Luna XHigh | Luna Max
+Target Model: gpt-6-luna
+Target Effort: high | xhigh | max
+Target Route: gpt-6-luna / <high|xhigh|max>
+Route Binding: EXPLICIT
+Parent Route Inheritance: FORBIDDEN
+Dispatch Route Status: PENDING | MATCH | UNVERIFIABLE | MISMATCH | ROUTE_UNAVAILABLE
+
+Before execution, the coordinator must pass Target Model + Target Effort explicitly in the child spawn call. Parent/default inheritance is prohibited. `MISMATCH` or `ROUTE_UNAVAILABLE` blocks execution/PASS; `UNVERIFIABLE` is valid only after verified explicit binding.
 
 ## Objective
 <one observable implementation outcome>
@@ -44,7 +52,7 @@ Blocked until returned: YES | NO
 ## External Configuration / Environment Action
 <none | target file/path + location/section/key + exact non-secret snippet using <SET_BY_USER> for secrets + scope + reason + validation/restart>. Do not apply it. If target/location/semantics are unknown, ask the user immediately.
 
-Do not self-escalate model/effort. If the selected executor route is insufficient, report the observed implementation difficulty to the coordinator for `E0 -> E1 -> E2` reclassification.
+Do not self-escalate model/effort. If the selected executor route is insufficient, report the observed implementation difficulty to the coordinator for `E0 -> E1 -> E2` reclassification. If the runtime-reported role/model/effort does not match this task contract, stop further mutation and return `ROUTE_MISMATCH` rather than continuing on the inherited/default route.
 
 ## Stop Conditions
 Return `BLOCKED` if a design decision, missing information, contradictory non-protected repository evidence, required protected configuration/environment information, or write outside Allowed scope is required. Never inspect protected config to resolve a blocker.

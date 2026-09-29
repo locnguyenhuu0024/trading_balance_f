@@ -1,33 +1,52 @@
 # Task <NN> — <Topic>
 
-Status: PENDING | READY | EXECUTING | VERIFYING | PASS | REWORK | BLOCKED
-Executor: implementation executor
+Status: PENDING | READY | EXECUTING | VERIFYING | PASS | REWORK | BLOCKED | BLOCKED_ROUTE
+Agent Role: implementation_executor
 Executor Class: E0 | E1 | E2
-Target Route: Luna High | Luna XHigh | Luna Max
+Target Model: gpt-6-luna
+Target Effort: high | xhigh | max
+Target Route: gpt-6-luna / <high|xhigh|max>
+Route Binding: EXPLICIT
+Parent Route Inheritance: FORBIDDEN
 Specification: `<path>`
 Plan: `<path>`
 Plan Steps: P<...>
 Requirements: REQ-<...>
 Acceptance Criteria: AC-<...>
 
-## 1. Objective
+## 1. Dispatch Compliance
+
+Before this task may enter `EXECUTING`, the coordinator must spawn an `implementation_executor` with **both Target Model and Target Effort explicitly supplied to the runtime**. Omitting either field or inheriting the coordinator/parent route is prohibited.
+
+Dispatch Route Status: PENDING | MATCH | UNVERIFIABLE | MISMATCH | ROUTE_UNAVAILABLE
+Requested Model: PENDING
+Requested Effort: PENDING
+Observed Effective Model: unavailable | <runtime value>
+Observed Effective Effort: unavailable | <runtime value>
+
+- `MATCH`: runtime reports the configured route.
+- `UNVERIFIABLE`: explicit model+effort binding succeeded but runtime does not expose the effective route.
+- `MISMATCH`: stop further mutation and return the task to coordinator recovery/redispatch; a stronger route still counts as mismatch.
+- `ROUTE_UNAVAILABLE`: do not spawn an inherited/default writer; mark `BLOCKED_ROUTE` and obtain a task-specific routing decision.
+
+## 2. Objective
 
 <one bounded implementation outcome>
 
 Done when: <observable completion condition>
 
-## 2. Preconditions
+## 3. Preconditions
 
 Predecessors: T<...> = PASS or none
 Required decisions/assumptions: D-<...>, A-<...> or none
 Required repository/environment state: <...>
 
-## 3. Allowed Scope
+## 4. Allowed Scope
 
 Files/modules/APIs/data structures/symbols:
 - `<exact path/symbol>`
 
-## 4. Forbidden Scope
+## 5. Forbidden Scope
 
 Do not:
 - read, search within, parse, summarize, or content-diff protected repository configuration/environment files;
@@ -40,7 +59,7 @@ Do not:
 
 If required work exceeds Allowed Scope, return `BLOCKED`. If a required fact depends on protected configuration/environment contents, ask the user immediately through the coordinator; never inspect the file.
 
-## 5. Executor Contract
+## 6. Executor Contract
 
 Follow P<...> in order:
 1. <mechanical implementation step>
@@ -52,7 +71,7 @@ Preserved behavior: <...>
 
 Do not invent missing architecture/product semantics. If the contract is insufficient, return `BLOCKED`. Do not self-escalate the executor model/effort; report evidence to the coordinator, which owns any `E0 -> E1 -> E2` escalation.
 
-## 6. External Configuration / Environment Actions
+## 7. External Configuration / Environment Actions
 
 Agents do not apply protected configuration/environment changes.
 
@@ -60,11 +79,11 @@ Planned action: <none | target file/path + location/section/key + exact non-secr
 Discovered additional action during execution: <none | same schema; if target/location/semantics unknown, BLOCKED and ask user>
 Blocks verification until user applies: YES | NO
 
-## 7. Tests
+## 8. Tests
 
 - TEST-001: <test to add/update and what it proves>
 
-## 8. Mandatory Verification
+## 9. Mandatory Verification
 
 ### RED — RED-001
 Scenario: <...>
@@ -117,7 +136,7 @@ Task/verification blocked until returned: YES | NO
 
 If subtype is `WINDOWS_INTEGRATED_AUTH_CONTEXT` and the constraint is already established, do not retry the same Codex-local trusted-auth path merely to reconfirm SSPI failure.
 
-## 9. Stop Conditions
+## 10. Stop Conditions
 
 Return `BLOCKED` when:
 - repository evidence contradicts the approved contract;
@@ -129,8 +148,10 @@ Return `BLOCKED` when:
 
 Report blocker + evidence + affected IDs + coordinator decision required.
 
-## 10. Execution Ledger
+## 11. Execution Ledger
 
+- [ ] confirm dispatch role/class/model/effort match this task and `Route Binding = EXPLICIT`
+- [ ] confirm parent/default route inheritance was not used
 - [ ] inspect referenced symbols
 - [ ] implement assigned P-step(s)
 - [ ] add/update required tests
@@ -143,7 +164,7 @@ Report blocker + evidence + affected IDs + coordinator decision required.
 - [ ] confirm no protected configuration/environment file content was read or modified
 - [ ] report External Configuration / Environment Actions as none or fully specified
 
-## 11. Coordinator Audit
+## 12. Coordinator Audit
 
 Scope: PENDING
 Acceptance criteria: PENDING
@@ -154,6 +175,8 @@ RED-before-GREEN: PENDING
 Evidence reused vs rerun: PENDING
 Rerun reason: N/A | <why executor evidence was insufficient>
 Architecture/contract conformance: PENDING
+Dispatch route compliance: PENDING | MATCH | UNVERIFIABLE | MISMATCH | ROUTE_UNAVAILABLE
+Parent route inheritance: PENDING | NO | YES
 Task buildability gate: PENDING | PASS | FAIL | BLOCKED_ENVIRONMENT | N/A
 Verdict: PENDING
 

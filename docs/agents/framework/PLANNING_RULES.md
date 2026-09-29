@@ -63,24 +63,47 @@ Default routing when the runtime supports explicit main-model selection:
 
 | Reasoning | Orchestration | Main coordinator |
 | --- | --- | --- |
-| `STANDARD` | `LOW` | `gpt-5.6-sol` / `medium` |
-| `HARD` | `LOW` | `gpt-5.6-sol` / `high` |
-| `STANDARD` | `HIGH` | `gpt-6-astra` / `low` |
-| `HARD` | `HIGH` | `gpt-6-astra` / `low`, with hard bounded reasoning delegated to `gpt-5.6-sol` / `high` reasoning subagents |
+| `STANDARD` | `LOW` | `gpt-6-sol` / `medium` |
+| `HARD` | `LOW` | `gpt-6-sol` / `high` |
+| `STANDARD` | `HIGH` | `gpt-6-sol` / `medium` |
+| `HARD` | `HIGH` | `gpt-6-sol` / `medium`, with hard bounded reasoning delegated to `gpt-6-sol` / `high` or higher reasoning subagents |
 
 Do not map planning tier directly to coordinator model. A Tier-L decision can still be one hard reasoning problem suited to Sol High; a Tier-M change can become orchestration-heavy when it has many independent tasks and integration waves. If the current runtime fixes the main model, treat this table as best-effort routing guidance, not a reason to block planning.
 
 ### Specification/planning decomposition and parallel reasoning
 
-The coordinator owns every canonical specification/plan and all final requirement/architecture interpretations, but it should offload independently bounded analysis/drafting units when doing so improves performance/price or reduces coordinator context.
+The coordinator owns every canonical specification/plan and all final requirement/architecture interpretations. It may perform single-workstream or tightly atomic planning analysis directly, but **multi-workstream planning has a mandatory fan-out gate**.
 
-After material ambiguities are resolved, candidate reasoning units include:
-- repository facts/current behavior/evidence extraction -> usually `R0`/`R1`;
-- requirement-to-acceptance-criterion mapping, edge cases, normal failure modes, bounded interface/database analysis -> usually `R2`;
-- architecture/concurrency/distributed-system/performance/high-impact trade-offs -> usually `R3`;
-- independent critique/adversarial review -> choose the lowest sufficient route from `R1`–`R3`, escalating only with evidence.
+#### Material planning-workstream classification
 
-Independent units may run in parallel. Each subagent returns a bounded proposal/evidence package keyed to the relevant stable IDs; it does not finalize product semantics, approve architecture, or directly own the canonical artifact. The coordinator reconciles contradictions, resolves source-of-truth precedence, deduplicates prose, and writes/finalizes the canonical specification/plan.
+Before substantive multi-domain planning is finalized, identify the technical workstreams that materially contribute to the change. Typical workstreams include:
+- frontend/UI/client behavior;
+- backend/service/API behavior;
+- database/data semantics;
+- external integration/contracts;
+- security/permissions;
+- migration/compatibility;
+- performance/concurrency;
+- infrastructure/runtime architecture.
+
+A workstream is **material** when it requires its own repository evidence, design/edge-case/acceptance-criterion analysis, or can materially change the implementation contract. A workstream is **independently analyzable** when it can return useful bounded evidence/proposals without depending on another workstream's unfinished conclusion. Do not manufacture workstreams from directories, file types, or implementation steps merely to increase fan-out.
+
+#### Mandatory planning fan-out
+
+When **two or more material workstreams are independently analyzable**, dispatch separate reasoning subagents for those workstreams before finalizing the specification/plan, when child dispatch is available.
+
+Special rule: **material frontend + material backend automatically requires at least two separate reasoning workstreams**. For normal feature planning, route each to `R2` / `gpt-6-sol` / `medium` by default. Use `R1` only for genuinely routine bounded analysis; use `R3+` only when that workstream's technical reasoning independently warrants escalation.
+
+Each subagent returns a bounded proposal/evidence package keyed to relevant stable IDs; it does not finalize product semantics, approve architecture, or directly own the canonical artifact. The coordinator performs fan-in, reconciles contradictions, resolves source-of-truth precedence, synthesizes frontend/backend/API/data interfaces, deduplicates prose, and writes/finalizes the canonical specification/plan.
+
+Valid reasons to skip mandatory planning fan-out are limited to:
+- `SINGLE_MATERIAL_WORKSTREAM` — after classification, fewer than two material workstreams exist;
+- `NOT_INDEPENDENT_ATOMIC_CONTRACT` — the apparently separate surfaces cannot be analyzed independently without creating speculative or contradictory contracts;
+- `RUNTIME_CHILD_DISPATCH_UNAVAILABLE` — the runtime cannot dispatch the required reasoning children.
+
+Handoff cost, token saving, convenience, coordinator speed, or "only two domains" are not valid skip reasons once the mandatory trigger is met. When dispatch is unavailable, record `Fan-out Required: YES` and `Fan-out Compliance: UNAVAILABLE`; the coordinator may continue planning itself but must not silently treat the gate as satisfied.
+
+A plan/spec that requires fan-out cannot become `READY_FOR_APPROVAL` until required reasoning results are collected and reconciled, or a permitted skip/unavailable state is recorded. Outside this mandatory gate, use normal cost/latency judgment: optional reasoning fan-out remains appropriate only when its expected benefit exceeds duplicated context + handoff + fan-in/reconciliation overhead.
 
 #### Planning-subagent result transport
 
@@ -88,7 +111,7 @@ Planning/reasoning subagents return their bounded proposal/evidence package as t
 
 All runtime IDs are typed opaque identifiers. Never use a subagent/recipient-agent ID, agent name, turn/item/call ID, or other handle as a session/thread ID. Only the coordinator may send/resume a subagent for follow-up, and only with the exact ID type required by that runtime primitive. An `invalid session id` during fan-in is a transport misuse: stop that malformed route and recover through the correct subagent collection primitive rather than retrying or coercing the ID.
 
-Treat parallel reasoning as a latency/context optimization, not an automatic cost saving. Fan out only when the expected benefit exceeds duplicated context + handoff + fan-in/reconciliation overhead.
+Outside the mandatory planning-workstream gate, treat parallel reasoning as a latency/context optimization rather than an automatic cost saving. Optional fan-out should be used only when the expected benefit exceeds duplicated context + handoff + fan-in/reconciliation overhead. A triggered mandatory workstream fan-out is governed by the gate above, not by this optional-cost heuristic.
 
 ### Planning telemetry
 
@@ -97,6 +120,7 @@ During planning/brainstorm/spec/plan work, the coordinator records only high-lev
 - one `clarification_round` event per material user decision/brainstorm round, with counts of open/resolved decisions but without copying the full conversation;
 - `spec_ready` / `plan_ready` with requirement/AC/task counts and revision number;
 - reasoning-subagent dispatch/completion with `R0`-`R5`, work type, configured/effective route when exposed, outcome, duration/usage when exposed, and coordinator adoption (`USED|PARTIAL|DISCARDED`);
+- planning-workstream coverage: total/material workstream counts, `fanout_required`, required-vs-actual planning reasoning agents, `fanout_compliance`, and permitted `fanout_skip_reason`;
 - `route_escalated` only when a route actually changes.
 
 Do not optimize the workflow to make telemetry look good. Telemetry observes the normal planning contract; it does not replace clarification, source-of-truth precedence, approval, or traceability.
@@ -107,16 +131,18 @@ Before finalizing each task, classify its **implementation entropy** separately 
 
 | Executor class | Use when | Target |
 | --- | --- | --- |
-| `E0 — mechanical` | implementation is repetitive/obvious and requires almost no coding judgment | `gpt-5.6-luna` / `high` |
-| `E1 — normal bounded` | normal clearly specified implementation with explicit invariants/AC and moderate coding judgment | `gpt-5.6-luna` / `xhigh` **default** |
-| `E2 — complex bounded` | coding is intrinsically intricate (complex SQL/transactions/state machines/algorithms/migrations/many invariants) while product and architecture decisions are already resolved | `gpt-5.6-luna` / `max` |
+| `E0 — mechanical` | implementation is repetitive/obvious and requires almost no coding judgment | `gpt-6-luna` / `high` |
+| `E1 — normal bounded` | normal clearly specified implementation with explicit invariants/AC and moderate coding judgment | `gpt-6-luna` / `xhigh` **default** |
+| `E2 — complex bounded` | coding is intrinsically intricate (complex SQL/transactions/state machines/algorithms/migrations/many invariants) while product and architecture decisions are already resolved | `gpt-6-luna` / `max` |
 
 Planning rules:
-- Record the selected executor class in each task artifact. Do not derive executor class mechanically from Tier S/M/L.
+- Record a complete executor dispatch contract in each task artifact; do not record only a human-readable route label. Required fields are `Agent Role: implementation_executor`, `Executor Class`, `Target Model`, `Target Effort`, `Route Binding: EXPLICIT`, and `Parent Route Inheritance: FORBIDDEN`.
+- Derive `Target Model`/`Target Effort` from the selected `E0`/`E1`/`E2` class and keep them canonical for dispatch. Do not derive executor class mechanically from Tier S/M/L.
+- A task is not dispatch-ready if model/effort would be omitted from the child spawn call or inherited from the coordinator.
 - Lower executor cost by reducing **decision entropy**: resolve requirements, architecture, edge cases, write surfaces, invariants, and RED/GREEN expectations before dispatch.
 - Prefer `E0`/`E1` when the task has been made mechanical enough; do not use `E2` as a blanket safety default.
 - If the task still requires product/architecture invention, it is not ready for any executor class; return to clarification/planning.
-- Terra is not part of the default implementation ladder. Use it only when explicit workload/runtime evidence justifies an exception.
+- Legacy GPT-5.6 Terra is not part of the default implementation ladder. GPT-6 has no Terra tier; use legacy Terra only when explicit compatibility/runtime evidence justifies an exception.
 
 ### Protected configuration/environment planning boundary
 
@@ -318,6 +344,8 @@ Soft concurrency guidance across reasoning + implementation subagents:
 
 These are not quotas or targets to fill. Use fewer agents when the work is small or coordination overhead dominates. Reasoning/read-only fan-out may be broader than writer fan-out because it has lower merge risk. Only the coordinator should expand concurrency by default; nested subagents should not recursively fan out unless the coordinator explicitly delegates that authority for a bounded reason.
 
+This concurrency/cost guidance does **not** override the mandatory planning-workstream fan-out gate. When that gate requires separate reasoning workstreams, dispatch the minimum required workstream agents even if the coordinator could perform the analyses itself.
+
 ### Soft processed-token targets
 
 Use these only as planning heuristics when token estimates are available:
@@ -372,6 +400,11 @@ Before dispatch, confirm applicable items:
 - user-authorized assumptions are recorded;
 - architecture/significant design decisions are resolved;
 - dependencies/predecessors are known;
+- material planning workstreams have been explicitly identified and classified for independence;
+- if two or more material workstreams are independently analyzable, the mandatory planning fan-out has `PASS`, or an allowed `EXCEPTION`/`UNAVAILABLE` state and exact skip reason is recorded;
+- if both frontend and backend are material, at least two separate planning reasoning workstreams were dispatched/collected unless `NOT_INDEPENDENT_ATOMIC_CONTRACT` or `RUNTIME_CHILD_DISPATCH_UNAVAILABLE` is explicitly evidenced;
+- executor dispatch contract is complete: role, `E*` class, exact target model, exact target effort, `Route Binding: EXPLICIT`, and `Parent Route Inheritance: FORBIDDEN`;
+- the planned runtime path can explicitly bind the selected child model/effort, or the task is marked `BLOCKED_ROUTE` rather than silently inheriting the coordinator route;
 - allowed and forbidden scope are explicit;
 - interfaces/contracts and important edge/failure behavior are defined;
 - required tests are defined;

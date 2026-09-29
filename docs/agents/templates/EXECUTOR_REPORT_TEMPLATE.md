@@ -1,10 +1,22 @@
 # Executor Completion Report — T<NN>
 
-Status: DONE | BLOCKED
+Status: DONE | BLOCKED | ROUTE_MISMATCH
+Agent Role: implementation_executor
 Executor Class: E0 | E1 | E2
-Configured Route: Luna High | Luna XHigh | Luna Max
-Observed Effective Route: <same | runtime-reported different | unavailable>
+Configured Model: gpt-6-luna
+Configured Effort: high | xhigh | max
+Requested Model: <actual spawn argument>
+Requested Effort: <actual spawn argument>
+Route Binding Mode: EXPLICIT | INHERITED | UNAVAILABLE
+Parent Route Inherited: NO | YES | UNKNOWN
+Observed Effective Model: <runtime value | unavailable>
+Observed Effective Effort: <runtime value | unavailable>
+Dispatch Route Status: MATCH | MISMATCH | UNVERIFIABLE | ROUTE_UNAVAILABLE
 Escalation: none | E0->E1 | E1->E2 | exceptional — <evidence/reason>
+
+Route compliance rule:
+- `INHERITED`, `MISMATCH`, or `ROUTE_UNAVAILABLE` must not be reported as normal `DONE`; stop further mutation and return the route failure to the coordinator.
+- `UNVERIFIABLE` is allowed only when model+effort were explicitly requested and the runtime simply does not expose the effective route.
 
 Changed files:
 - `<path>` — <one-line change>
@@ -90,6 +102,10 @@ Telemetry envelope (for coordinator logging; no chain-of-thought):
 - work_type: <short category>
 - task_ids: <T/AC/TEST IDs>
 - configured_route: <model + effort>
+- requested_model / requested_effort: <actual spawn arguments>
+- route_binding_mode: <EXPLICIT | INHERITED | UNAVAILABLE>
+- parent_route_inherited: <NO | YES | UNKNOWN>
+- dispatch_route_status: <MATCH | MISMATCH | UNVERIFIABLE | ROUTE_UNAVAILABLE>
 - effective_route: <runtime-reported value | unavailable>
 - started_at / ended_at / duration_ms: <observed values | unavailable>
 - terminal_outcome: <PASS | REWORK | BLOCKED | FAILED | UNKNOWN>
@@ -97,6 +113,6 @@ Telemetry envelope (for coordinator logging; no chain-of-thought):
 - escalation: <none | from -> to + reason code>
 - verification_level: <V1 | V2 | V3 | V4 | N/A>
 - usage: <input/output/reasoning/cache tokens + cost when runtime exposes them; otherwise null>
-- error_category: <none | environment | transport | verification | contract | other>
+- error_category: <none | environment | transport | verification | contract | route_mismatch | route_unavailable | other>
 
 The coordinator may add `result_use` and `route_assessment` after fan-in/audit. Do not include chain-of-thought, full prompts, secrets, protected configuration contents, source-code bodies, diffs, or raw command output in this envelope.

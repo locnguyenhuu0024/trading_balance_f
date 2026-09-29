@@ -14,7 +14,7 @@ Use English for source code, identifiers, comments, specifications, plans, task 
 
 ## 2. Roles
 
-Use strict planner-executor-auditor separation for non-trivial implementation work.
+Use strict planner-executor-auditor separation for **all repository-mutating implementation/remediation work**, including trivial or one-line changes. The coordinator/planner/auditor remains non-writing for product/test/migration/generated-runtime behavior unless the user grants a task-specific emergency override after a documented executor-routing/runtime failure.
 
 **Coordinator / planner / auditor**
 - owns repository inspection, requirements, clarification, architecture, canonical specifications/plans, task decomposition, dispatch, synthesis, audit, remediation decisions, and final integration;
@@ -25,13 +25,13 @@ Main coordinator routing when explicit model/effort selection is supported:
 
 | Class | Dominant workload | Target main coordinator |
 | --- | --- | --- |
-| `C1 — standard` | normal planning/spec writing, review, audit, bounded multi-step feature/bug work with modest coordination | `gpt-5.6-sol` / `medium` **default P/P route** |
-| `C2 — reasoning-heavy` | difficult architecture, concurrency, production diagnosis, complex trade-offs, cross-module reasoning where the main difficulty is depth of thought | `gpt-5.6-sol` / `high` |
-| `C3 — orchestration-heavy` | many independently ready tasks/subagents, multi-wave dependency DAGs, long multi-phase execution, large integration/audit coordination where the main difficulty is orchestration | `gpt-6-astra` / `low` |
+| `C1 — standard` | normal planning/spec writing, review, audit, bounded multi-step feature/bug work with modest coordination | `gpt-6-sol` / `medium` **default P/P route** |
+| `C2 — reasoning-heavy` | difficult architecture, concurrency, production diagnosis, complex trade-offs, cross-module reasoning where the main difficulty is depth of thought | `gpt-6-sol` / `high` |
+| `C3 — orchestration-heavy` | many independently ready tasks/subagents, multi-wave dependency DAGs, long multi-phase execution, large integration/audit coordination where the main difficulty is orchestration | `gpt-6-sol` / `medium` |
 
 Coordinator-routing rules:
 - Judge **reasoning complexity** and **orchestration complexity** separately. A single hard technical question normally favors `C2`; many moderate independent tasks normally favor `C3`.
-- When both are high, prefer `C3` for orchestration and delegate the hardest bounded reasoning dimensions to `R3` or higher GPT-5.6 reasoning subagents rather than forcing the coordinator itself to do every deep-analysis step.
+- When both are high, prefer `C3` for orchestration and delegate the hardest bounded reasoning dimensions to `R3` or higher GPT-6 reasoning subagents rather than forcing the coordinator itself to do every deep-analysis step.
 - Do not escalate the main coordinator merely because the repository or diff is large. Escalate only when the dominant decision or coordination structure justifies it.
 - If the runtime fixes the main model for the current session, do not block solely because the preferred coordinator route is unavailable. Keep ownership with the current coordinator, compensate with bounded reasoning subagents when useful, and never claim a model/effort route that the runtime did not expose.
 
@@ -42,31 +42,78 @@ Coordinator-routing rules:
 - These subagents do not implement product/test/config/migration changes, do not approve requirements, do not change architecture or scope, do not directly finalize canonical planning artifacts, and do not change task/checklist status. Final synthesis, requirement interpretation, canonical spec/plan ownership, routing, and audit verdict remain owned by the coordinator/planner/auditor.
 - The coordinator may fan out multiple reasoning subagents in the same wave when their questions are independent and their outputs can be reconciled without one depending on another's unfinished conclusion.
 - Only the coordinator owns fan-out/fan-in decisions by default; do not create recursive child-agent trees merely to increase parallelism.
-- Use the **lowest-cost GPT-5.6 route that is plausibly sufficient**. Escalate only when task complexity or observed evidence justifies it.
+- Use the **lowest-cost GPT-6 route that is plausibly sufficient**. Escalate only when task complexity or observed evidence justifies it.
 
 Reasoning-subagent routing:
 
 | Class | Typical work | Target model / effort |
 | --- | --- | --- |
-| `R0 — mechanical` | trivial extraction/classification/formatting/simple lookup; repository/tool inspection when the question is factual rather than judgment-heavy | `gpt-5.6-luna` / `low` or `medium` for trivial work; prefer `high` when multi-step repository/tool use or evidence collection needs stronger reliability |
-| `R1 — routine` | bounded routine analysis after semantics are known | **general/evidence/comparison work:** `gpt-5.6-luna` / `high` or `xhigh`; **code-centric review/debug/SQL/API behavioral analysis:** `gpt-5.6-sol` / `low` |
-| `R2 — standard` | plan validation, normal code review, backend/module design, database/API trade-offs, debugging with several hypotheses, normal Redis/Kafka/system analysis | `gpt-5.6-sol` / `medium` **default professional reasoning route** |
-| `R3 — hard` | distributed systems, concurrency/race conditions, production incidents, performance bottlenecks, complex query plans, cross-module architecture, high-impact technical decisions | `gpt-5.6-sol` / `high` |
-| `R4 — exceptional` | unusually constraint-heavy/high-risk analysis where `R3` is materially insufficient | `gpt-5.6-sol` / `xhigh` |
-| `R5 — max` | best-possible deep analysis after lower tiers were materially insufficient, or explicit user request for maximum effort | `gpt-5.6-sol` / `max` |
+| `R0 — mechanical` | trivial extraction/classification/formatting/simple lookup; repository/tool inspection when the question is factual rather than judgment-heavy | `gpt-6-luna` / `medium` for trivial work; prefer `high` when multi-step repository/tool use or evidence collection needs stronger reliability |
+| `R1 — routine` | bounded routine analysis after semantics are known | **general/evidence/comparison work:** `gpt-6-luna` / `high` or `xhigh`; **code-centric review/debug/SQL/API behavioral analysis:** `gpt-6-sol` / `low` |
+| `R2 — standard` | plan validation, normal code review, backend/module design, database/API trade-offs, debugging with several hypotheses, normal Redis/Kafka/system analysis | `gpt-6-sol` / `medium` **default professional reasoning route** |
+| `R3 — hard` | distributed systems, concurrency/race conditions, production incidents, performance bottlenecks, complex query plans, cross-module architecture, high-impact technical decisions | `gpt-6-sol` / `high` |
+| `R4 — exceptional` | unusually constraint-heavy/high-risk analysis where `R3` is materially insufficient | **hard debugging/diagnosis:** `gpt-6-sol` / `max`; **extreme architecture/migration/end-to-end reasoning:** `gpt-6-astra` / `medium` |
+| `R5 — max` | best-possible deep analysis after lower tiers were materially insufficient, or explicit user request for maximum effort | `gpt-6-astra` / `high`; use `xhigh` only for an explicit maximum-effort request |
 
 Routing rules:
 - Classify each candidate reasoning handoff as `R0`–`R5` before dispatch, then classify the **work type** where `R0`/`R1` could plausibly use either Luna or Sol. Choose from actual decision complexity and work type, not file count or task title.
-- `R0`: keep trivial extraction/classification/formatting at Luna low/medium; use Luna high when the work is still mechanical but involves multi-step repository/tool navigation or evidence collection.
+- `R0`: keep trivial extraction/classification/formatting at Luna medium; use Luna high when the work is still mechanical but involves multi-step repository/tool navigation or evidence collection.
 - `R1`: use Luna high/xhigh for general reasoning, evidence synthesis, known-option comparison, and other bounded non-code-centric checks; use Sol low when correctness depends materially on code semantics, SQL behavior, API behavior, localized debugging, or code-review reliability.
-- `R2`: this remains the normal professional reasoning-subagent default. For an independently bounded non-trivial analysis/review unit, spawn one `R2` Sol-medium subagent by default unless the handoff would obviously cost more than doing it directly.
+- `R2`: this remains the normal professional reasoning-subagent default. For an independently bounded non-trivial analysis/review unit, normally spawn one `R2` Sol-medium subagent. Outside the mandatory planning-workstream gate below, the coordinator may skip an optional handoff when its overhead clearly exceeds the benefit; **that cost exception never overrides a triggered mandatory planning-workstream fan-out**.
 - `R3+`: delegate a focused reasoning subagent whenever the difficult part can be bounded without delegating the final product/architecture decision itself. The coordinator must synthesize the result and owns the final decision.
 - Prefer the **smallest useful reasoning wave**, not a single-agent rule and not maximum fan-out. Run independent dimensions in parallel when doing so materially reduces coordinator context or critical-path latency; avoid duplicate agents answering the same question unless deliberate independent/adversarial review is the purpose.
 - Parallelism does not inherently reduce model cost. Account for duplicated context, handoff, fan-in, and reconciliation overhead; do not spawn another subagent when that overhead is likely to exceed the expected reasoning/context/latency benefit.
-- Do not jump directly to `xhigh` or `max`. Escalate `low -> medium -> high -> xhigh -> max` only when unresolved contradictions, inadequate evidence, failed prior analysis, or task criticality justify the extra cost. Treat `R4`/`R5` as exceptional; combined `xhigh`/`max` usage should normally stay below roughly 5% of reasoning-subagent dispatches.
+- Do not jump directly to the highest configured route. Escalate through the `R0 -> R1 -> R2 -> R3 -> R4 -> R5` capability ladder only when unresolved contradictions, inadequate evidence, failed prior analysis, or task criticality justify the extra cost. Treat `R4`/`R5` as exceptional; combined `R4`/`R5` usage should normally stay below roughly 5% of reasoning-subagent dispatches.
 - A higher effort is not automatically better. Stop escalating once the evidence is sufficient to make the required decision safely.
-- If the runtime does not expose the requested child model/effort, do not claim that route was used. Do not silently upgrade to `xhigh`/`max`; use the nearest safe lower-cost available GPT-5.6 route or keep the decision with the coordinator.
+- If the runtime cannot expose the effective child model/effort after dispatch, do not infer it. This is distinct from failing to request a route: an explicitly bound requested route may be recorded with effective route `unavailable`, but parent/default inheritance must never be treated as equivalent to an explicit child route.
+- Do not silently upgrade to `R4`/`R5`; if the requested reasoning route cannot be expressed by the runtime, choose an explicitly selectable safe route or keep the decision with the coordinator.
 - Reasoning subagents inherit repository safety, context-minimization, canonical-path, and evidence rules.
+
+### Mandatory planning-workstream fan-out gate
+
+During requirements analysis, specification writing, and implementation planning, the coordinator must classify the technical analysis surface into **material planning workstreams** before finalizing the canonical artifact.
+
+A workstream is **material** when it requires its own repository evidence, design/edge-case/acceptance-criterion analysis, or can materially change the implementation contract. Typical workstreams include frontend/UI, backend/service/API, database/data, external integration, security/permissions, migration, performance/concurrency, and infrastructure/runtime architecture. A trivial or purely derived consumer/wiring change is not material merely because it belongs to a different directory or technology.
+
+Mandatory fan-out rules:
+1. When there are **two or more material workstreams that can be analyzed independently**, the coordinator **MUST dispatch separate reasoning subagents for those workstreams before the specification/plan can be finalized**, when the runtime supports child dispatch.
+2. **Material frontend + material backend in the same change is an automatic trigger for at least two separate planning reasoning workstreams.** Default each normal workstream to `R2` / `gpt-6-sol` / `medium`; use `R1` only when the analysis is genuinely routine, and `R3+` only when the bounded workstream itself justifies it.
+3. Cross-layer/interface synthesis remains coordinator-owned. The coordinator reconciles frontend/backend/API/data contradictions after fan-in and owns the final canonical contract; subagents provide bounded evidence/proposals only.
+4. Handoff cost, token saving, "the coordinator can do it faster", or the fact that there are only two domains are **not valid reasons** to skip this mandatory gate once the trigger is met.
+5. Fan-out may be skipped only when the coordinator records one of these reasons with evidence: `SINGLE_MATERIAL_WORKSTREAM`, `NOT_INDEPENDENT_ATOMIC_CONTRACT`, or `RUNTIME_CHILD_DISPATCH_UNAVAILABLE`.
+6. If child dispatch is unavailable, record `Fan-out Required: YES`, `Fan-out Compliance: UNAVAILABLE`, and the runtime limitation; the coordinator may continue the read-only planning analysis itself, but must not silently represent the workflow as compliant fan-out.
+7. A specification/plan that requires fan-out must not transition to `READY_FOR_APPROVAL` until every required workstream result has been collected and reconciled, or a permitted recorded exception/unavailable state applies.
+
+For each planning cycle, preserve at minimum: identified workstreams, material/non-material classification, independence classification, requested reasoning route, logical agent-run ID when dispatched, completion/adoption status, required-vs-actual reasoning-agent count, fan-out compliance, and any permitted skip reason.
+
+### Mandatory child-dispatch role and route binding
+
+Before spawning **any** reasoning, implementation, or audit child, the coordinator must resolve the dispatch contract to explicit fields:
+- `agent_role`: `reasoning` | `implementation_executor` | `auditor`;
+- `route_class`: the selected `R*`/`E*` class when applicable;
+- `requested_model`: exact runtime model identifier;
+- `requested_effort`: exact runtime effort value;
+- `route_binding_mode`: `EXPLICIT`.
+- `parent_route_inheritance`: `FORBIDDEN`.
+
+When the runtime supports child model/effort selection, the coordinator **must pass both `requested_model` and `requested_effort` in the spawn/dispatch operation**. Omitting either field, relying on runtime defaults, or allowing the child to inherit the coordinator/parent model or effort is prohibited. A planned route label in a task file does not satisfy this requirement by itself.
+
+Role binding is also mandatory:
+- `E0`/`E1`/`E2` work must be dispatched as `implementation_executor`; a reasoning/advisory child must not be used as the writer.
+- `R0`-`R5` work must remain read-only/advisory and must not mutate product/test/migration/generated-runtime behavior.
+- If the runtime exposes an agent profile/type selector, the coordinator must set the role-appropriate child type explicitly; if it exposes only a generic child primitive, the assigned role and write/read-only boundary must be explicit in the child contract.
+
+Dispatch validation:
+1. resolve role + class + exact model + exact effort before spawn;
+2. submit those values explicitly to the runtime;
+3. record the requested route and binding mode;
+4. if the runtime immediately exposes effective model/effort, require an exact match before repository mutation;
+5. if a mismatch becomes observable after work starts, stop further mutation, mark `ROUTE_MISMATCH`, preserve/audit any existing changes, and recover/redispatch safely;
+6. do not accept a mismatched route merely because it is nominally stronger or more expensive.
+
+If the runtime does **not** support explicit child route selection at all, do not silently spawn an inherited/default implementation executor. Mark `ROUTE_UNAVAILABLE`/`BLOCKED_ROUTE` for implementation work and obtain a task-specific user decision for an alternate explicitly identified route/runtime. For read-only reasoning, the coordinator may keep the work itself or use another explicitly selectable route.
+
+If the runtime supports explicit binding but does not expose the effective route afterward, execution may proceed with `dispatch_route_status = UNVERIFIABLE` only when the spawn request itself explicitly bound both model and effort. `UNVERIFIABLE` never means `INHERITED`.
 
 ### Inter-agent transport and fan-in contract
 
@@ -114,21 +161,21 @@ Privacy/safety rules:
 - is selected dynamically from **implementation entropy**, after requirements/architecture are already resolved;
 - implements the approved contract; it does not redesign it.
 
-Implementation-executor routing when explicit model/effort selection is supported:
+Implementation-executor routing (the selected route must be explicitly bound at dispatch when the runtime supports child routing):
 
 | Class | Typical bounded implementation | Target |
 | --- | --- | --- |
-| `E0 — mechanical` | renames, DTO/mapping changes, straightforward fixture/test edits, obvious CRUD/wiring/type fixes, repetitive mechanical changes with very low decision entropy | `gpt-5.6-luna` / `high` |
-| `E1 — normal bounded` | normal service/repository/API/frontend implementation, clearly specified multi-file work, routine integration where the contract and invariants are already explicit | `gpt-5.6-luna` / `xhigh` **default implementation route** |
-| `E2 — complex bounded` | complex SQL, transaction/state-machine behavior, tricky algorithms, migration logic, many interacting invariants, or implementation where coding difficulty is high but product/architecture decisions are already resolved | `gpt-5.6-luna` / `max` |
+| `E0 — mechanical` | renames, DTO/mapping changes, straightforward fixture/test edits, obvious CRUD/wiring/type fixes, repetitive mechanical changes with very low decision entropy | `gpt-6-luna` / `high` |
+| `E1 — normal bounded` | normal service/repository/API/frontend implementation, clearly specified multi-file work, routine integration where the contract and invariants are already explicit | `gpt-6-luna` / `xhigh` **default implementation route** |
+| `E2 — complex bounded` | complex SQL, transaction/state-machine behavior, tricky algorithms, migration logic, many interacting invariants, or implementation where coding difficulty is high but product/architecture decisions are already resolved | `gpt-6-luna` / `max` |
 
 Executor-routing rules:
 - Choose `E0`/`E1`/`E2` from **implementation entropy**, not task tier, file count, or perceived importance. A high-impact task can still be `E0` after the coordinator has made it mechanical; a small task can be `E2` if the coding itself is intricate.
 - Escalate `E0 -> E1 -> E2` only when observed implementation difficulty, failed attempts, or evidence shows the lower route is insufficient. Do not start at `E2` merely for safety when the task is mechanical.
 - If `E2` cannot complete the approved contract, the coordinator must diagnose **why** before selecting a stronger writer: implementation difficulty may justify an exceptional stronger executor, but requirement/design/architecture ambiguity returns to coordinator reasoning/replanning instead of blind writer escalation.
-- Do not route implementation through Terra by default. Terra is an exception route only when workload-specific evidence or runtime availability demonstrates a concrete advantage.
+- Do not route new implementation through legacy GPT-5.6 Terra by default. GPT-6 has no Terra tier; retain Terra only as a compatibility/runtime exception when concrete evidence requires it.
 
-If the runtime does not expose the effective child model/effort, do not claim a specific route was used. If it explicitly reports an executor model/effort different from the selected task route, report the mismatch; do not silently claim the configured route executed.
+If the runtime does not expose the effective child model/effort after an explicitly bound spawn, record the effective route as `unavailable` and `dispatch_route_status = UNVERIFIABLE`; do not infer it. If the runtime reports an executor model/effort different from the selected task route, treat it as `ROUTE_MISMATCH`: stop further mutation, do not mark the task `PASS`, and recover/redispatch under the exact configured route or block for a task-specific routing decision.
 
 ## 3. Personal-project security and tool policy
 

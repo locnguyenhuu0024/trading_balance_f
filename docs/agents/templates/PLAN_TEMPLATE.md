@@ -47,6 +47,30 @@ For each action:
 
 Unknown target/location/semantics -> stop and ask user; never inspect config to infer them.
 
+## Planning Workstream Decomposition
+
+Classify planning analysis before the canonical plan is finalized.
+
+| Workstream | Material | Independently Analyzable | Reasoning Route | Agent Run | Status / Adoption |
+|---|---|---|---|---|---|
+| Frontend/UI | YES/NO | YES/NO | `<R* / model / effort | N/A>` | `<logical agent_run_id | N/A>` | `<PENDING/COMPLETE + USED/PARTIAL/DISCARDED | N/A>` |
+| Backend/API | YES/NO | YES/NO | `<R* / model / effort | N/A>` | `<logical agent_run_id | N/A>` | `<...>` |
+| `<other material workstream>` | YES/NO | YES/NO | `<...>` | `<...>` | `<...>` |
+
+Fan-out Required: YES | NO
+Required Reasoning Agents: <integer>
+Actual Reasoning Agents: <integer>
+Fan-out Compliance: PASS | EXCEPTION | UNAVAILABLE | VIOLATION | PENDING
+Skip Reason: N/A | SINGLE_MATERIAL_WORKSTREAM | NOT_INDEPENDENT_ATOMIC_CONTRACT | RUNTIME_CHILD_DISPATCH_UNAVAILABLE
+Cross-workstream synthesis: <frontend/backend/API/data/interface contradictions reconciled by coordinator, or N/A>
+
+Rules:
+- Two or more material independently analyzable workstreams require separate reasoning subagents when child dispatch is available.
+- Material frontend + material backend automatically requires at least two separate planning reasoning runs before finalization.
+- Handoff cost, token saving, coordinator speed, or "only two domains" are not valid skip reasons for a triggered mandatory fan-out.
+- The coordinator owns final cross-layer synthesis and canonical plan text.
+- A required fan-out must be `PASS`, or have a permitted `EXCEPTION`/`UNAVAILABLE` state with the exact skip reason, before this plan becomes `READY_FOR_APPROVAL`.
+
 ## 5. Dependency Graph
 
 ```text
@@ -166,6 +190,7 @@ Rules:
 
 ## 14. Completion Gate
 
+- [ ] planning workstream coverage gate is `PASS`, or a permitted `EXCEPTION`/`UNAVAILABLE` state with exact skip reason is recorded
 - [ ] every task PASS
 - [ ] every code-producing task had a `PASS` task buildability gate at its final task-local executable state
 - [ ] compile-coupled changes were merged or compatibility-staged; no task was passed while relying on a later task to restore buildability

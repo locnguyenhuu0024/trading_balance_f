@@ -46,14 +46,40 @@ Do not log every shell/tool call or raw output. Aggregate tool activity as count
 
 Transport failures such as `ORCHESTRATION_TRANSPORT_ERROR`, environment blockers, SSPI activation/clear events, and telemetry-write failures should each produce a concise event so weekly analysis can distinguish model quality from infrastructure noise.
 
-### Executor-model selection at dispatch
+### Executor-model selection and binding at dispatch
 
 For every implementation/remediation task, dispatch using the executor class recorded in the task/plan:
-- `E0` -> `gpt-5.6-luna` / `high`;
-- `E1` -> `gpt-5.6-luna` / `xhigh` (**default**);
-- `E2` -> `gpt-5.6-luna` / `max`.
+- `E0` -> `gpt-6-luna` / `high`;
+- `E1` -> `gpt-6-luna` / `xhigh` (**default**);
+- `E2` -> `gpt-6-luna` / `max`.
 
-If no class is recorded, the coordinator must classify implementation entropy before dispatch rather than silently defaulting to Max. Escalate only after evidence that the selected route is insufficient. An executor failure caused by unresolved requirement/design/architecture ambiguity returns to coordinator reasoning/replanning; it is not solved by blindly increasing executor effort. Terra is not a default writer route.
+The mapping above is a **runtime dispatch requirement**, not documentation only. Before each executor spawn, the coordinator must validate the task contains:
+- `Agent Role: implementation_executor`;
+- `Executor Class: E0|E1|E2`;
+- exact `Target Model`;
+- exact `Target Effort`;
+- `Route Binding: EXPLICIT`;
+- `Parent Route Inheritance: FORBIDDEN`.
+
+Then perform this dispatch state machine:
+1. `PREPARED`: resolve the exact model/effort from the task's executor class.
+2. `BOUND`: pass **both** model and effort explicitly in the child spawn/dispatch call. Never omit them and never rely on parent/session defaults.
+3. `VALIDATED`: when the runtime exposes effective model/effort at or immediately after spawn, require an exact match before allowing repository mutation.
+4. `RUNNING`: proceed only after explicit binding succeeded. If effective route is not observable, record `UNVERIFIABLE`; do not infer it.
+5. `ROUTE_MISMATCH`: if effective role/model/effort differs from the task contract, stop further mutation, terminate/recover the child safely when supported, audit any existing writes, and redispatch with the exact configured route. A stronger model is still a mismatch.
+6. `BLOCKED_ROUTE`: if the runtime cannot explicitly express the required child model/effort, do **not** spawn an inherited/default writer. Obtain a task-specific user decision for an alternate explicitly identified route/runtime.
+
+If no class is recorded, the coordinator must classify implementation entropy before dispatch rather than silently defaulting to Max. Escalate only after evidence that the selected route is insufficient. An executor failure caused by unresolved requirement/design/architecture ambiguity returns to coordinator reasoning/replanning; it is not solved by blindly increasing executor effort. Legacy GPT-5.6 Terra is not a default writer route; GPT-6 has no Terra tier.
+
+### Mandatory executor route-compliance gate
+
+An implementation/remediation task cannot reach `PASS` unless route compliance is established:
+- planned role/class/model/effort are present;
+- actual spawn request explicitly bound the planned model and effort;
+- parent/default inheritance was not used;
+- runtime-reported effective route is `MATCH`, or is `UNVERIFIABLE` only because the runtime does not expose it after a verified explicit binding.
+
+`INHERITED`, `MISMATCH`, or `ROUTE_UNAVAILABLE` is not acceptable PASS evidence. If a mismatch is discovered only after the executor has already written files, preserve the diff, stop additional writes, independently audit the changed surface, and route the task through `REWORK`/safe redispatch rather than accepting the result as compliant.
 
 The executor receives:
 - the active task contract;
@@ -114,7 +140,7 @@ When execution is genuinely stalled, recover in this order:
 1. preserve the existing executor and inspect its terminal/runtime status when supported;
 2. resume or nudge the same executor when the runtime explicitly supports doing so safely;
 3. restart/replace the executor only after the existing execution is proven terminated or unusable;
-4. coordinator direct implementation is a last resort and requires explicit user authorization unless the already-approved workflow expressly permits coordinator implementation.
+4. coordinator direct implementation is prohibited by default. It is allowed only after a documented executor `BLOCKED_ROUTE`/terminal runtime failure and a **task-specific explicit user override** naming the affected task; blanket workflow approval or a prior general execution authorization does not authorize coordinator implementation.
 
 Never spawn a replacement executor while the original executor is `RUNNING` or `UNKNOWN` if both could write the same task surface. Never classify `no response yet` or `no diff yet` as a terminal executor failure.
 
