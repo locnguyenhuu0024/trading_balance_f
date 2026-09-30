@@ -10,6 +10,15 @@ From the project root, run:
 ./release_build.sh
 ```
 
+Only deploy web, run:
+```bash
+flutter clean
+flutter build web --release
+
+cd build/web
+vercel --prod
+```
+
 It resolves dependencies once, builds web and macOS release artifacts in
 parallel, then deploys `build/web` to Vercel production only when both builds
 succeed. The first deployment may prompt for Vercel authentication and project
