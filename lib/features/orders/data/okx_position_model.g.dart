@@ -19,6 +19,19 @@ _$OkxPositionImpl _$$OkxPositionImplFromJson(Map<String, dynamic> json) =>
       uplRatio: json['uplRatio'] as String? ?? '',
       mgnMode: json['mgnMode'] as String? ?? '',
       notionalUsd: json['notionalUsd'] as String? ?? '',
+      instType: json['instType'] as String? ?? '',
+      positionId: json['positionId'] as String? ?? '',
+      signedSize: json['signedSize'] as String? ?? '',
+      size: json['size'] as String? ?? '',
+      direction: json['direction'] as String? ?? '',
+      marginCurrency: json['marginCurrency'] as String? ?? '',
+      positionCurrency: json['positionCurrency'] as String? ?? '',
+      identity:
+          json['identity'] as Map<String, dynamic>? ??
+          const <String, dynamic>{},
+      eligibleActions:
+          json['eligibleActions'] as Map<String, dynamic>? ??
+          const <String, dynamic>{},
     );
 
 Map<String, dynamic> _$$OkxPositionImplToJson(_$OkxPositionImpl instance) =>
@@ -34,4 +47,13 @@ Map<String, dynamic> _$$OkxPositionImplToJson(_$OkxPositionImpl instance) =>
       'uplRatio': instance.uplRatio,
       'mgnMode': instance.mgnMode,
       'notionalUsd': instance.notionalUsd,
+      'instType': instance.instType,
+      'positionId': instance.positionId,
+      'signedSize': instance.signedSize,
+      'size': instance.size,
+      'direction': instance.direction,
+      'marginCurrency': instance.marginCurrency,
+      'positionCurrency': instance.positionCurrency,
+      'identity': instance.identity,
+      'eligibleActions': instance.eligibleActions,
     };

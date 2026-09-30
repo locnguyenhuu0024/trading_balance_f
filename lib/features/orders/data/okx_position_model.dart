@@ -21,8 +21,45 @@ class OkxPosition with _$OkxPosition {
     @Default('') String uplRatio, // Tỷ lệ Lãi/lỗ
     @Default('') String mgnMode, // Chế độ Margin (cross hoặc isolated)
     @Default('') String notionalUsd, // Giá trị danh nghĩa vị thế theo USD
+    @Default('') String instType,
+    @Default('') String positionId,
+    @Default('') String signedSize,
+    @Default('') String size,
+    @Default('') String direction,
+    @Default('') String marginCurrency,
+    @Default('') String positionCurrency,
+    @Default(<String, dynamic>{}) Map<String, dynamic> identity,
+    @Default(<String, dynamic>{}) Map<String, dynamic> eligibleActions,
   }) = _OkxPosition;
 
   factory OkxPosition.fromJson(Map<String, dynamic> json) =>
       _$OkxPositionFromJson(json);
+}
+
+/// Projects the private trade API's account-owned position into the shared
+/// position-card model. The action identity and eligibility always come from
+/// the backend response, never from the read-only OKX display path.
+OkxPosition positionFromTradeJson(Map<String, dynamic> json) {
+  return OkxPosition(
+    instId: _tradeString(json['instrumentId'] ?? json['instId']),
+    posSide: _tradeString(json['positionSide'] ?? json['posSide']),
+    pos: _tradeString(json['size'] ?? json['pos']),
+    mgnMode: _tradeString(json['marginMode'] ?? json['mgnMode']),
+    instType: _tradeString(json['instrumentType'] ?? json['instType']),
+    positionId: _tradeString(json['positionId']),
+    signedSize: _tradeString(json['signedSize']),
+    size: _tradeString(json['size']),
+    direction: _tradeString(json['direction']),
+    marginCurrency: _tradeString(json['marginCurrency']),
+    positionCurrency: _tradeString(json['positionCurrency']),
+    identity: _tradeMap(json['identity']),
+    eligibleActions: _tradeMap(json['eligibleActions']),
+  );
+}
+
+String _tradeString(dynamic value) => value == null ? '' : value.toString();
+
+Map<String, dynamic> _tradeMap(dynamic value) {
+  if (value is! Map) return const <String, dynamic>{};
+  return value.map((key, item) => MapEntry(key.toString(), item));
 }
