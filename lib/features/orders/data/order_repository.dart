@@ -15,12 +15,21 @@ final orderRepositoryProvider = Provider<OrderRepository>((ref) {
 class OrderRepository {
   final Dio _dio;
 
+  static const _allPositionTypes = ['MARGIN', 'SWAP', 'FUTURES'];
+  static const _allOrderTypes = ['SPOT', 'MARGIN', 'SWAP', 'FUTURES'];
+
   OrderRepository(this._dio);
 
   /// Lấy danh sách VỊ THẾ MỞ (Open Positions - Margin, Futures, Swap)
   Future<List<OkxPosition>> getOpenPositions({required String instType}) async {
     // SPOT không có vị thế mở, nên nếu filter là SPOT thì trả về mảng rỗng
     if (instType == 'SPOT') return [];
+    if (instType == 'ALL') {
+      final positionsByType = await Future.wait(
+        _allPositionTypes.map((type) => getOpenPositions(instType: type)),
+      );
+      return positionsByType.expand((positions) => positions).toList();
+    }
 
     try {
       final response = await _dio.get(
@@ -46,6 +55,13 @@ class OrderRepository {
 
   /// Lấy danh sách lệnh ĐANG CHỜ (Active/Pending)
   Future<List<OkxOrder>> getPendingOrders({required String instType}) async {
+    if (instType == 'ALL') {
+      final ordersByType = await Future.wait(
+        _allOrderTypes.map((type) => getPendingOrders(instType: type)),
+      );
+      return _sortNewestFirst(ordersByType.expand((orders) => orders).toList());
+    }
+
     try {
       final response = await _dio.get(
         '/api/v5/trade/orders-pending',
@@ -64,6 +80,13 @@ class OrderRepository {
 
   /// Lấy danh sách LỊCH SỬ lệnh (7 ngày qua)
   Future<List<OkxOrder>> getOrdersHistory({required String instType}) async {
+    if (instType == 'ALL') {
+      final ordersByType = await Future.wait(
+        _allOrderTypes.map((type) => getOrdersHistory(instType: type)),
+      );
+      return _sortNewestFirst(ordersByType.expand((orders) => orders).toList());
+    }
+
     try {
       final response = await _dio.get(
         '/api/v5/trade/orders-history',
@@ -88,6 +111,25 @@ class OrderRepository {
     } else {
       throw Exception('Lỗi từ OKX API: ${orderResponse.msg}');
     }
+  }
+
+  List<OkxOrder> _sortNewestFirst(List<OkxOrder> orders) {
+    final indexes = List<int>.generate(orders.length, (index) => index);
+    indexes.sort((leftIndex, rightIndex) {
+      final leftTime = int.tryParse(orders[leftIndex].cTime);
+      final rightTime = int.tryParse(orders[rightIndex].cTime);
+
+      if (leftTime == null && rightTime == null) {
+        return leftIndex.compareTo(rightIndex);
+      }
+      if (leftTime == null) return 1;
+      if (rightTime == null) return -1;
+
+      final timeOrder = rightTime.compareTo(leftTime);
+      return timeOrder != 0 ? timeOrder : leftIndex.compareTo(rightIndex);
+    });
+
+    return indexes.map((index) => orders[index]).toList();
   }
 
   // --- Hàm hỗ trợ xử lý lỗi dùng chung ---

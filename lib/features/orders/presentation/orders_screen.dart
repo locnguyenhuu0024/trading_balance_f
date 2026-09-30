@@ -36,12 +36,27 @@ class OrdersScreen extends ConsumerStatefulWidget {
 
 class _OrdersScreenState extends ConsumerState<OrdersScreen> {
   Timer? _refreshTimer;
+  int _allRefreshTicks = 0;
 
   @override
   void initState() {
     super.initState();
     _refreshTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       final currentTab = ref.read(orderTabProvider);
+      final currentFilter = ref.read(orderFilterProvider);
+
+      if (currentFilter == 'ALL') {
+        _allRefreshTicks++;
+        if (_allRefreshTicks < 5) return;
+        _allRefreshTicks = 0;
+      } else {
+        _allRefreshTicks = 0;
+      }
+
+      final isLoading = currentTab == OrderTab.positions
+          ? ref.read(positionsFutureProvider).isLoading
+          : ref.read(ordersFutureProvider).isLoading;
+      if (isLoading) return;
 
       if (currentTab == OrderTab.positions) {
         ref.invalidate(positionsFutureProvider);

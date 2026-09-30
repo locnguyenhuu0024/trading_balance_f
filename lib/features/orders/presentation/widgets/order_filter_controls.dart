@@ -18,7 +18,7 @@ class OrderFilterControls extends StatelessWidget {
   final ValueChanged<OrderTab> onTabChanged;
   final ValueChanged<String> onFilterChanged;
 
-  static const _filters = ['SPOT', 'MARGIN', 'SWAP', 'FUTURES'];
+  static const _filters = ['ALL', 'SPOT', 'MARGIN', 'SWAP', 'FUTURES'];
 
   @override
   Widget build(BuildContext context) {
@@ -81,8 +81,12 @@ class OrderFilterControls extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         if (constraints.maxWidth < 600) {
-          return Column(
-            children: [tabSelect, const SizedBox(height: 10), filterSelect],
+          return Row(
+            children: [
+              Expanded(child: tabSelect),
+              const SizedBox(width: 8),
+              Expanded(child: filterSelect),
+            ],
           );
         }
 
