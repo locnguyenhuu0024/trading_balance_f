@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'navigation_destination_data.dart';
 import 'navigation_preferences.dart';
 
-/// Six independent navigation buttons anchored to one physical screen edge.
+/// Navigation buttons anchored to one physical screen edge.
 /// Decorative gaps intentionally have no hit-testable widget above the page.
 class FloatingNavigationButtons extends StatelessWidget {
   const FloatingNavigationButtons({
@@ -14,6 +14,7 @@ class FloatingNavigationButtons extends StatelessWidget {
     required this.selectedIndex,
     required this.isDark,
     required this.onDestinationSelected,
+    this.destinations = navigationItems,
     this.buttonScale = 1,
     this.buttonOpacity = 0.5,
   });
@@ -26,6 +27,7 @@ class FloatingNavigationButtons extends StatelessWidget {
   final int selectedIndex;
   final bool isDark;
   final ValueChanged<int> onDestinationSelected;
+  final List<NavigationItemData> destinations;
   final double buttonScale;
   final double buttonOpacity;
 
@@ -45,6 +47,7 @@ class FloatingNavigationButtons extends StatelessWidget {
         : const Duration(milliseconds: 220);
     final buttonScale = _normalizeScale(this.buttonScale);
     final buttonOpacity = _normalizeOpacity(this.buttonOpacity);
+    final destinations = this.destinations;
     final targetSize = math.max(48.0, _targetSize * buttonScale).toDouble();
     final labelHeight = _labelHeight * buttonScale;
     final verticalSlotWidth = math
@@ -54,7 +57,7 @@ class FloatingNavigationButtons extends StatelessWidget {
     Widget buttonBuilder(int index, bool horizontal) {
       return _FloatingDestinationButton(
         index: index,
-        item: navigationItems[index],
+        item: destinations[index],
         isSelected: index == selectedIndex,
         labelPlacement: horizontal && edge == NavigationEdge.bottom
             ? _LabelPlacement.before
@@ -78,6 +81,7 @@ class FloatingNavigationButtons extends StatelessWidget {
         left: mediaQuery.viewPadding.left + _edgeGap,
         right: mediaQuery.viewPadding.right + _edgeGap,
         child: _HorizontalNavigationGroup(
+          destinationCount: destinations.length,
           targetSize: targetSize,
           labelHeight: labelHeight,
           buttonBuilder: (index) => buttonBuilder(index, true),
@@ -89,6 +93,7 @@ class FloatingNavigationButtons extends StatelessWidget {
         left: mediaQuery.viewPadding.left + _edgeGap,
         right: mediaQuery.viewPadding.right + _edgeGap,
         child: _HorizontalNavigationGroup(
+          destinationCount: destinations.length,
           targetSize: targetSize,
           labelHeight: labelHeight,
           buttonBuilder: (index) => buttonBuilder(index, true),
@@ -100,6 +105,7 @@ class FloatingNavigationButtons extends StatelessWidget {
         bottom: bottomOffset,
         left: mediaQuery.viewPadding.left + _edgeGap,
         child: _VerticalNavigationGroup(
+          destinationCount: destinations.length,
           targetSize: targetSize,
           labelHeight: labelHeight,
           slotWidth: verticalSlotWidth,
@@ -112,6 +118,7 @@ class FloatingNavigationButtons extends StatelessWidget {
         bottom: bottomOffset,
         right: mediaQuery.viewPadding.right + _edgeGap,
         child: _VerticalNavigationGroup(
+          destinationCount: destinations.length,
           targetSize: targetSize,
           labelHeight: labelHeight,
           slotWidth: verticalSlotWidth,
@@ -134,11 +141,13 @@ class FloatingNavigationButtons extends StatelessWidget {
 
 class _HorizontalNavigationGroup extends StatelessWidget {
   const _HorizontalNavigationGroup({
+    required this.destinationCount,
     required this.targetSize,
     required this.labelHeight,
     required this.buttonBuilder,
   });
 
+  final int destinationCount;
   final double targetSize;
   final double labelHeight;
   final Widget Function(int index) buttonBuilder;
@@ -152,17 +161,19 @@ class _HorizontalNavigationGroup extends StatelessWidget {
           final availableWidth = constraints.maxWidth;
           const minimumGap = 4.0;
           final maxGap = 8.0 * targetSize / 52.0;
-          final buttonWidth = targetSize * navigationItems.length;
+          final buttonWidth = targetSize * destinationCount;
           final gap = math.min(
             maxGap,
             math.max(
               minimumGap,
-              (availableWidth - buttonWidth) / (navigationItems.length - 1),
+              (availableWidth - buttonWidth) /
+                  math.max(1, destinationCount - 1),
             ),
           );
           final requiredWidth =
-              buttonWidth + gap * (navigationItems.length - 1);
+              buttonWidth + gap * math.max(0, destinationCount - 1);
           final group = _HorizontalButtons(
+            destinationCount: destinationCount,
             gap: gap,
             buttonBuilder: buttonBuilder,
           );
@@ -183,8 +194,13 @@ class _HorizontalNavigationGroup extends StatelessWidget {
 }
 
 class _HorizontalButtons extends StatelessWidget {
-  const _HorizontalButtons({required this.gap, required this.buttonBuilder});
+  const _HorizontalButtons({
+    required this.destinationCount,
+    required this.gap,
+    required this.buttonBuilder,
+  });
 
+  final int destinationCount;
   final double gap;
   final Widget Function(int index) buttonBuilder;
 
@@ -193,9 +209,9 @@ class _HorizontalButtons extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        for (var index = 0; index < navigationItems.length; index++) ...[
+        for (var index = 0; index < destinationCount; index++) ...[
           buttonBuilder(index),
-          if (index < navigationItems.length - 1) SizedBox(width: gap),
+          if (index < destinationCount - 1) SizedBox(width: gap),
         ],
       ],
     );
@@ -204,12 +220,14 @@ class _HorizontalButtons extends StatelessWidget {
 
 class _VerticalNavigationGroup extends StatelessWidget {
   const _VerticalNavigationGroup({
+    required this.destinationCount,
     required this.targetSize,
     required this.labelHeight,
     required this.slotWidth,
     required this.buttonBuilder,
   });
 
+  final int destinationCount;
   final double targetSize;
   final double labelHeight;
   final double slotWidth;
@@ -225,17 +243,19 @@ class _VerticalNavigationGroup extends StatelessWidget {
           const minimumGap = 4.0;
           final maxGap = 8.0 * targetSize / 52.0;
           final itemHeight = targetSize + labelHeight;
-          final buttonHeight = itemHeight * navigationItems.length;
+          final buttonHeight = itemHeight * destinationCount;
           final gap = math.min(
             maxGap,
             math.max(
               minimumGap,
-              (availableHeight - buttonHeight) / (navigationItems.length - 1),
+              (availableHeight - buttonHeight) /
+                  math.max(1, destinationCount - 1),
             ),
           );
           final requiredHeight =
-              buttonHeight + gap * (navigationItems.length - 1);
+              buttonHeight + gap * math.max(0, destinationCount - 1);
           final group = _VerticalButtons(
+            destinationCount: destinationCount,
             gap: gap,
             buttonBuilder: buttonBuilder,
           );
@@ -255,8 +275,13 @@ class _VerticalNavigationGroup extends StatelessWidget {
 }
 
 class _VerticalButtons extends StatelessWidget {
-  const _VerticalButtons({required this.gap, required this.buttonBuilder});
+  const _VerticalButtons({
+    required this.destinationCount,
+    required this.gap,
+    required this.buttonBuilder,
+  });
 
+  final int destinationCount;
   final double gap;
   final Widget Function(int index) buttonBuilder;
 
@@ -265,9 +290,9 @@ class _VerticalButtons extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        for (var index = 0; index < navigationItems.length; index++) ...[
+        for (var index = 0; index < destinationCount; index++) ...[
           buttonBuilder(index),
-          if (index < navigationItems.length - 1) SizedBox(height: gap),
+          if (index < destinationCount - 1) SizedBox(height: gap),
         ],
       ],
     );

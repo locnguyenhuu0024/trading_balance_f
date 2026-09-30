@@ -57,12 +57,29 @@ void main() {
     );
   }
 
+  testWidgets('offers a control to choose visible navigation pages', (
+    tester,
+  ) async {
+    await tester.pumpWidget(settingsApp(_SettingsStorage()));
+
+    expect(
+      find.byKey(const Key('settings-navigation-visibility')),
+      findsOneWidget,
+    );
+  });
+
   testWidgets(
     'shows edge selection only for floating navigation and saves it',
     (tester) async {
       final storage = _SettingsStorage();
       await tester.pumpWidget(settingsApp(storage));
 
+      expect(
+        find.byKey(const Key('settings-navigation-mode-select')),
+        findsNothing,
+      );
+      await tester.tap(find.byKey(const Key('settings-navigation-appearance')));
+      await tester.pumpAndSettle();
       expect(
         find.byKey(const Key('settings-navigation-mode-select')),
         findsOneWidget,
@@ -99,6 +116,8 @@ void main() {
     final storage = _SettingsStorage(failNavigationSave: true);
     await tester.pumpWidget(settingsApp(storage));
 
+    await tester.tap(find.byKey(const Key('settings-navigation-appearance')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('settings-navigation-mode-select')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Nút nổi').last);
@@ -109,11 +128,7 @@ void main() {
       findsNothing,
     );
     expect(
-      find.byKey(const Key('settings-navigation-save-error')),
-      findsOneWidget,
-    );
-    expect(
-      find.text('Không lưu được tùy chọn điều hướng. Vui lòng thử lại.'),
+      find.byKey(const Key('settings-navigation-dialog-save-error')),
       findsOneWidget,
     );
   });
@@ -125,18 +140,24 @@ void main() {
     await tester.pumpWidget(settingsApp(storage));
 
     expect(
-      find.byKey(const Key('settings-navigation-size-select')),
+      find.byKey(const Key('settings-navigation-appearance')),
       findsOneWidget,
     );
     expect(
+      find.byKey(const Key('settings-navigation-size-select')),
+      findsNothing,
+    );
+    expect(
       find.byKey(const Key('settings-navigation-opacity-select')),
-      findsOneWidget,
+      findsNothing,
     );
     expect(
       find.byKey(const Key('settings-app-text-scale-select')),
       findsOneWidget,
     );
 
+    await tester.tap(find.byKey(const Key('settings-navigation-appearance')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('settings-navigation-size-select')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Lớn').last);
@@ -153,12 +174,85 @@ void main() {
 
     expect(storage.savedNavigationPreferences?.buttonOpacity, 0.75);
 
+    await tester.tap(find.text('Đóng'));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('settings-app-text-scale-select')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Rất lớn').last);
     await tester.pumpAndSettle();
 
     expect(storage.savedAppTextScale, 1.3);
+  });
+
+  testWidgets('keeps Settings locked and saves visibility changes', (
+    tester,
+  ) async {
+    final storage = _SettingsStorage();
+    await tester.pumpWidget(settingsApp(storage));
+
+    await tester.tap(find.byKey(const Key('settings-navigation-visibility')));
+    await tester.pumpAndSettle();
+
+    for (final id in [
+      'home',
+      'bmag',
+      'orders',
+      'market',
+      'settings',
+      'risk',
+      'support',
+    ]) {
+      expect(
+        find.byKey(Key('settings-navigation-visible-$id')),
+        findsOneWidget,
+      );
+    }
+
+    final settingsCheckbox = tester.widget<CheckboxListTile>(
+      find.byKey(const Key('settings-navigation-visible-settings')),
+    );
+    expect(settingsCheckbox.value, isTrue);
+    expect(settingsCheckbox.onChanged, isNull);
+
+    await tester.tap(find.byKey(const Key('settings-navigation-visible-bmag')));
+    await tester.pumpAndSettle();
+
+    expect(
+      storage.savedNavigationPreferences?.enabledDestinationIds,
+      isNot(contains('bmag')),
+    );
+    expect(
+      tester
+          .widget<CheckboxListTile>(
+            find.byKey(const Key('settings-navigation-visible-bmag')),
+          )
+          .value,
+      isFalse,
+    );
+  });
+
+  testWidgets('restores visibility after a failed save', (tester) async {
+    await tester.pumpWidget(
+      settingsApp(_SettingsStorage(failNavigationSave: true)),
+    );
+    await tester.tap(find.byKey(const Key('settings-navigation-visibility')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('settings-navigation-visible-bmag')));
+    await tester.pumpAndSettle();
+
+    expect(
+      tester
+          .widget<CheckboxListTile>(
+            find.byKey(const Key('settings-navigation-visible-bmag')),
+          )
+          .value,
+      isTrue,
+    );
+    expect(
+      find.byKey(const Key('settings-navigation-dialog-save-error')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('rolls back app text size when persistence fails', (

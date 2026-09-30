@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'navigation_destination_data.dart';
+
 enum NavigationDisplayMode { bar, floating }
 
 enum NavigationEdge { top, bottom, left, right }
@@ -21,6 +23,7 @@ class NavigationPreferences {
     required this.floatingEdge,
     this.buttonScale = _defaultButtonScale,
     this.buttonOpacity = _defaultButtonOpacity,
+    this.enabledDestinationIds = navigationDestinationIds,
   });
 
   static const currentVersion = 1;
@@ -53,18 +56,23 @@ class NavigationPreferences {
   final NavigationEdge floatingEdge;
   final double buttonScale;
   final double buttonOpacity;
+  final List<String> enabledDestinationIds;
 
   NavigationPreferences copyWith({
     NavigationDisplayMode? displayMode,
     NavigationEdge? floatingEdge,
     double? buttonScale,
     double? buttonOpacity,
+    List<String>? enabledDestinationIds,
   }) {
     return NavigationPreferences(
       displayMode: displayMode ?? this.displayMode,
       floatingEdge: floatingEdge ?? this.floatingEdge,
       buttonScale: buttonScale ?? this.buttonScale,
       buttonOpacity: buttonOpacity ?? this.buttonOpacity,
+      enabledDestinationIds: enabledDestinationIds == null
+          ? this.enabledDestinationIds
+          : normalizeEnabledDestinationIds(enabledDestinationIds),
     );
   }
 
@@ -75,6 +83,7 @@ class NavigationPreferences {
       'edge': floatingEdge.name,
       'buttonScale': buttonScale,
       'buttonOpacity': buttonOpacity,
+      'enabledDestinationIds': enabledDestinationIds,
     });
   }
 
@@ -92,6 +101,9 @@ class NavigationPreferences {
         floatingEdge: _edgeFrom(decoded['edge']),
         buttonScale: normalizeButtonScale(decoded['buttonScale']),
         buttonOpacity: normalizeButtonOpacity(decoded['buttonOpacity']),
+        enabledDestinationIds: decoded.containsKey('enabledDestinationIds')
+            ? normalizeEnabledDestinationIds(decoded['enabledDestinationIds'])
+            : navigationDestinationIds,
       );
     } on FormatException {
       return defaults;
@@ -138,6 +150,23 @@ class NavigationPreferences {
     return parsed;
   }
 
+  /// Keeps only known identities in canonical order and always retains
+  /// Settings. A malformed or wholly unusable value safely enables every page.
+  static List<String> normalizeEnabledDestinationIds(Object? value) {
+    if (value is! List) return navigationDestinationIds;
+
+    final requestedIds = value.whereType<String>().toSet();
+    final knownIds = navigationDestinationIds
+        .where(requestedIds.contains)
+        .toList(growable: false);
+    if (knownIds.isEmpty) return navigationDestinationIds;
+
+    final enabledIds = <String>{...knownIds, navigationSettingsId};
+    return navigationDestinationIds
+        .where(enabledIds.contains)
+        .toList(growable: false);
+  }
+
   static double? _numberFrom(Object? value) {
     if (value is num) return value.toDouble();
     if (value is String) return double.tryParse(value);
@@ -150,18 +179,33 @@ class NavigationPreferences {
         other.displayMode == displayMode &&
         other.floatingEdge == floatingEdge &&
         other.buttonScale == buttonScale &&
-        other.buttonOpacity == buttonOpacity;
+        other.buttonOpacity == buttonOpacity &&
+        _sameDestinationIds(other.enabledDestinationIds);
   }
 
   @override
-  int get hashCode =>
-      Object.hash(displayMode, floatingEdge, buttonScale, buttonOpacity);
+  int get hashCode => Object.hash(
+    displayMode,
+    floatingEdge,
+    buttonScale,
+    buttonOpacity,
+    Object.hashAll(enabledDestinationIds),
+  );
+
+  bool _sameDestinationIds(List<String> otherIds) {
+    if (enabledDestinationIds.length != otherIds.length) return false;
+    for (var index = 0; index < enabledDestinationIds.length; index++) {
+      if (enabledDestinationIds[index] != otherIds[index]) return false;
+    }
+    return true;
+  }
 
   @override
   String toString() {
     return 'NavigationPreferences('
         'displayMode: $displayMode, floatingEdge: $floatingEdge, '
-        'buttonScale: $buttonScale, buttonOpacity: $buttonOpacity)';
+        'buttonScale: $buttonScale, buttonOpacity: $buttonOpacity, '
+        'enabledDestinationIds: $enabledDestinationIds)';
   }
 }
 

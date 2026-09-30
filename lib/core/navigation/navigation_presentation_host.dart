@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'floating_navigation_buttons.dart';
 import 'navigation_content_frame.dart';
+import 'navigation_destination_data.dart';
 import 'navigation_preferences.dart';
 import 'trading_navigation_bar.dart';
 
@@ -16,6 +17,7 @@ class NavigationPresentationHost extends StatelessWidget {
     super.key,
     required this.child,
     required this.preferences,
+    required this.destinations,
     required this.selectedIndex,
     required this.isDark,
     required this.onDestinationSelected,
@@ -23,6 +25,9 @@ class NavigationPresentationHost extends StatelessWidget {
 
   final Widget child;
   final NavigationPreferences preferences;
+  final List<NavigationItemData> destinations;
+
+  /// Visible slot selected in [destinations].
   final int selectedIndex;
   final bool isDark;
   final ValueChanged<int> onDestinationSelected;
@@ -47,6 +52,7 @@ class NavigationPresentationHost extends StatelessWidget {
               right: 0,
               bottom: 0,
               child: TradingNavigationBar(
+                destinations: destinations,
                 selectedIndex: selectedIndex,
                 isDark: isDark,
                 buttonScale: preferences.buttonScale,
@@ -58,6 +64,7 @@ class NavigationPresentationHost extends StatelessWidget {
           else
             FloatingNavigationButtons(
               edge: preferences.floatingEdge,
+              destinations: destinations,
               selectedIndex: selectedIndex,
               isDark: isDark,
               buttonScale: preferences.buttonScale,

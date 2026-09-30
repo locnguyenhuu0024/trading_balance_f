@@ -26,6 +26,45 @@ void main() {
       );
     });
 
+    test('round-trips normalized destination membership', () {
+      const preferences = NavigationPreferences(
+        displayMode: NavigationDisplayMode.floating,
+        floatingEdge: NavigationEdge.left,
+        enabledDestinationIds: ['support', 'bmag', 'bmag', 'unknown'],
+      );
+
+      expect(
+        NavigationPreferences.decode(
+          preferences.encode(),
+        ).enabledDestinationIds,
+        ['bmag', 'settings', 'support'],
+      );
+    });
+
+    test('normalizes malformed membership without losing Settings', () {
+      expect(
+        NavigationPreferences.decode(
+          '{"version":1,"mode":"floating","edge":"right",'
+          '"enabledDestinationIds":["risk","unknown","risk"]}',
+        ).enabledDestinationIds,
+        ['settings', 'risk'],
+      );
+      expect(
+        NavigationPreferences.decode(
+          '{"version":1,"mode":"floating","edge":"right",'
+          '"enabledDestinationIds":["unknown"]}',
+        ).enabledDestinationIds,
+        NavigationPreferences.defaults.enabledDestinationIds,
+      );
+      expect(
+        NavigationPreferences.decode(
+          '{"version":1,"mode":"floating","edge":"right",'
+          '"enabledDestinationIds":[]}',
+        ).enabledDestinationIds,
+        NavigationPreferences.defaults.enabledDestinationIds,
+      );
+    });
+
     test(
       'uses fixed-bottom defaults for missing, malformed, and future data',
       () {

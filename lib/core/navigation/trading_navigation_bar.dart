@@ -11,6 +11,7 @@ class TradingNavigationBar extends StatefulWidget {
     required this.selectedIndex,
     required this.isDark,
     required this.onDestinationSelected,
+    this.destinations = navigationItems,
     this.buttonScale = 1,
     this.buttonOpacity = 0.5,
     this.bottomInset = 0,
@@ -26,6 +27,7 @@ class TradingNavigationBar extends StatefulWidget {
   final int selectedIndex;
   final bool isDark;
   final ValueChanged<int> onDestinationSelected;
+  final List<NavigationItemData> destinations;
   final double buttonScale;
   final double buttonOpacity;
   final double bottomInset;
@@ -53,6 +55,11 @@ class _TradingNavigationBarState extends State<TradingNavigationBar>
   @override
   void didUpdateWidget(covariant TradingNavigationBar oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!_sameDestinationOrder(oldWidget.destinations, widget.destinations)) {
+      _previousIndex = widget.selectedIndex;
+      _selectionController.value = 1;
+      return;
+    }
     if (oldWidget.selectedIndex == widget.selectedIndex) return;
 
     _previousIndex = oldWidget.selectedIndex;
@@ -98,10 +105,9 @@ class _TradingNavigationBarState extends State<TradingNavigationBar>
               final targetSize = math.max(48.0, 52.0 * buttonScale).toDouble();
               final contentWidth = math.max(
                 constraints.maxWidth,
-                targetSize * TradingNavigationBar.items.length,
+                targetSize * widget.destinations.length,
               );
-              final cellWidth =
-                  contentWidth / TradingNavigationBar.items.length;
+              final cellWidth = contentWidth / widget.destinations.length;
               final buttonOpacity = _normalizeOpacity(widget.buttonOpacity);
 
               final content = SizedBox(
@@ -123,8 +129,7 @@ class _TradingNavigationBarState extends State<TradingNavigationBar>
                                 barHeight: TradingNavigationBar.barHeight,
                                 selectedIndex: widget.selectedIndex,
                                 previousIndex: _previousIndex,
-                                destinationCount:
-                                    TradingNavigationBar.items.length,
+                                destinationCount: widget.destinations.length,
                                 buttonScale: buttonScale,
                                 progress: Curves.easeOutCubic.transform(
                                   disableAnimations
@@ -145,7 +150,7 @@ class _TradingNavigationBarState extends State<TradingNavigationBar>
                       child: ClipPath(
                         clipper: _NavigationBarSurfaceClipper(
                           selectedIndex: widget.selectedIndex,
-                          destinationCount: TradingNavigationBar.items.length,
+                          destinationCount: widget.destinations.length,
                           buttonScale: buttonScale,
                         ),
                         child: Material(
@@ -159,12 +164,12 @@ class _TradingNavigationBarState extends State<TradingNavigationBar>
                     ),
                     for (
                       var index = 0;
-                      index < TradingNavigationBar.items.length;
+                      index < widget.destinations.length;
                       index++
                     )
                       _DestinationControl(
                         index: index,
-                        item: TradingNavigationBar.items[index],
+                        item: widget.destinations[index],
                         isSelected: index == widget.selectedIndex,
                         cellLeft: cellWidth * index,
                         cellWidth: cellWidth,
@@ -195,6 +200,17 @@ class _TradingNavigationBarState extends State<TradingNavigationBar>
   static double _normalizeScale(double value) {
     if (!value.isFinite) return 1;
     return value.clamp(0.9, 1.1).toDouble();
+  }
+
+  static bool _sameDestinationOrder(
+    List<NavigationItemData> first,
+    List<NavigationItemData> second,
+  ) {
+    if (first.length != second.length) return false;
+    for (var index = 0; index < first.length; index++) {
+      if (first[index].id != second[index].id) return false;
+    }
+    return true;
   }
 
   static double _normalizeOpacity(double value) {

@@ -93,6 +93,12 @@ class NavigationPreferencesController
     );
   }
 
+  Future<void> setEnabledDestinationIds(List<String> destinationIds) {
+    return update(
+      state.preferences.copyWith(enabledDestinationIds: destinationIds),
+    );
+  }
+
   Future<void> update(NavigationPreferences nextPreferences) async {
     if (state.isSaving || nextPreferences == state.preferences) return;
 

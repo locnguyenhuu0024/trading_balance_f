@@ -2,10 +2,12 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/navigation/main_navigation_shell.dart';
 import 'package:trading_balance_f/core/navigation/navigation_preferences.dart';
 import 'package:trading_balance_f/core/navigation/navigation_preferences_provider.dart';
+import 'package:trading_balance_f/core/security/secure_storage_helper.dart';
 import 'package:trading_balance_f/core/navigation/trading_navigation_bar.dart';
 import 'package:trading_balance_f/core/network/okx_websocket_service.dart';
 import 'package:trading_balance_f/features/fractal_tracker/data/fractal_model.dart';
@@ -34,6 +36,19 @@ class _FakeOkxWebsocketService extends OkxWebsocketService {
 
   @override
   void subscribeToTickers(List<String> coinSymbols) {}
+}
+
+class _MemoryNavigationStorage extends SecureStorageHelper {
+  _MemoryNavigationStorage() : super(const FlutterSecureStorage());
+
+  NavigationPreferences? savedPreferences;
+
+  @override
+  Future<void> saveNavigationPreferences(
+    NavigationPreferences preferences,
+  ) async {
+    savedPreferences = preferences;
+  }
 }
 
 void main() {
@@ -166,6 +181,88 @@ void main() {
 
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();
+    }
+  });
+
+  testWidgets('filters hidden pages and maps visible slots in both modes', (
+    tester,
+  ) async {
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    tester.view.physicalSize = const Size(320, 800);
+    tester.view.devicePixelRatio = 1;
+
+    for (final mode in [
+      NavigationDisplayMode.bar,
+      NavigationDisplayMode.floating,
+    ]) {
+      final storage = _MemoryNavigationStorage();
+      final container = ProviderContainer(
+        overrides: [
+          secureStorageProvider.overrideWithValue(storage),
+          navigationPreferencesInitialProvider.overrideWithValue(
+            NavigationPreferences.defaults.copyWith(
+              displayMode: mode,
+              enabledDestinationIds: ['home', 'bmag', 'orders', 'settings'],
+            ),
+          ),
+          themeModeProvider.overrideWith((ref) => ThemeMode.light),
+        ],
+      );
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp(
+            home: MainNavigationShell(
+              destinationBuilder: (context, index) => Text('Screen $index'),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final keyPrefix = mode == NavigationDisplayMode.bar
+          ? 'navigation-destination-'
+          : 'floating-navigation-destination-';
+      expect(find.byTooltip('BMAG'), findsOneWidget);
+      await tester.tap(find.byKey(Key('${keyPrefix}1')));
+      await tester.pumpAndSettle();
+      expect(find.text('Screen 1'), findsOneWidget);
+
+      await container
+          .read(navigationPreferencesProvider.notifier)
+          .setEnabledDestinationIds(['home', 'orders', 'settings']);
+      await tester.pumpAndSettle();
+      expect(find.text('Screen 0'), findsOneWidget);
+      expect(find.byTooltip('BMAG'), findsNothing);
+      expect(find.byKey(Key('${keyPrefix}3')), findsNothing);
+
+      await tester.tap(find.byKey(Key('${keyPrefix}1')));
+      await tester.pumpAndSettle();
+      expect(find.text('Screen 2'), findsOneWidget);
+
+      await container
+          .read(navigationPreferencesProvider.notifier)
+          .setEnabledDestinationIds(['home', 'bmag', 'orders', 'settings']);
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('BMAG'), findsOneWidget);
+      await tester.tap(find.byKey(Key('${keyPrefix}1')));
+      await tester.pumpAndSettle();
+      expect(find.text('Screen 1'), findsOneWidget);
+
+      await container
+          .read(navigationPreferencesProvider.notifier)
+          .setEnabledDestinationIds(['orders', 'settings']);
+      await tester.pumpAndSettle();
+      expect(find.text('Screen 4'), findsOneWidget);
+      expect(find.byTooltip('BMAG'), findsNothing);
+      await tester.tap(find.byKey(Key('${keyPrefix}0')));
+      await tester.pumpAndSettle();
+      expect(find.text('Screen 2'), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      container.dispose();
     }
   });
 

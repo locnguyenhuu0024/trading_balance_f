@@ -8,6 +8,7 @@ import '../../features/portfolio/presentation/portfolio_screen.dart';
 import '../../features/portfolio/presentation/risk_dashboard_screen.dart';
 import '../../features/settings/presentation/settings_screen.dart';
 import '../../features/support_resistance/presentation/support_resistance_screen.dart';
+import 'navigation_destination_data.dart';
 import 'navigation_preferences_provider.dart';
 import 'navigation_presentation_host.dart';
 
@@ -27,13 +28,13 @@ class MainNavigationShell extends ConsumerStatefulWidget {
 class _MainNavigationShellState extends ConsumerState<MainNavigationShell> {
   int _selectedIndex = 0;
 
-  Widget _buildSelectedScreen(BuildContext context) {
+  Widget _buildSelectedScreen(BuildContext context, int selectedIndex) {
     final destinationBuilder = widget.destinationBuilder;
     if (destinationBuilder != null) {
-      return destinationBuilder(context, _selectedIndex);
+      return destinationBuilder(context, selectedIndex);
     }
 
-    switch (_selectedIndex) {
+    switch (selectedIndex) {
       case 1:
         return const FractalScreen();
       case 2:
@@ -52,6 +53,18 @@ class _MainNavigationShellState extends ConsumerState<MainNavigationShell> {
     }
   }
 
+  int _screenIndexForDestinationId(String id) {
+    return navigationItems
+        .firstWhere((destination) => destination.id == id)
+        .screenIndex;
+  }
+
+  int _fallbackScreenIndex(List<String> enabledIds) {
+    return enabledIds.contains(navigationHomeId)
+        ? _screenIndexForDestinationId(navigationHomeId)
+        : _screenIndexForDestinationId(navigationSettingsId);
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = ref.watch(isDarkModeProvider);
@@ -59,19 +72,56 @@ class _MainNavigationShellState extends ConsumerState<MainNavigationShell> {
     final navigationPreferences = ref.watch(
       navigationPreferencesProvider.select((state) => state.preferences),
     );
+    ref.listen<List<String>>(
+      navigationPreferencesProvider.select(
+        (state) => state.preferences.enabledDestinationIds,
+      ),
+      (previous, enabledIds) {
+        final selectedId = navigationItems
+            .firstWhere(
+              (destination) => destination.screenIndex == _selectedIndex,
+            )
+            .id;
+        if (!enabledIds.contains(selectedId)) {
+          setState(() => _selectedIndex = _fallbackScreenIndex(enabledIds));
+        }
+      },
+    );
+
+    final enabledIds = navigationPreferences.enabledDestinationIds;
+    final destinations = navigationItems
+        .where((destination) => enabledIds.contains(destination.id))
+        .toList(growable: false);
+    final selectedScreenIndex =
+        enabledIds.contains(
+          navigationItems
+              .firstWhere(
+                (destination) => destination.screenIndex == _selectedIndex,
+              )
+              .id,
+        )
+        ? _selectedIndex
+        : _fallbackScreenIndex(enabledIds);
+    final selectedVisibleIndex = destinations.indexWhere(
+      (destination) => destination.screenIndex == selectedScreenIndex,
+    );
 
     return Material(
       color: backgroundColor,
       child: NavigationPresentationHost(
         preferences: navigationPreferences,
-        selectedIndex: _selectedIndex,
+        destinations: destinations,
+        selectedIndex: selectedVisibleIndex,
         isDark: isDark,
         onDestinationSelected: (index) {
-          if (index != _selectedIndex) {
-            setState(() => _selectedIndex = index);
+          if (index >= 0 && index < destinations.length) {
+            final screenIndex = destinations[index].screenIndex;
+            if (screenIndex != _selectedIndex) {
+              setState(() => _selectedIndex = screenIndex);
+            }
           }
         },
-        child: _buildSelectedScreen(context),
+        child: _buildSelectedScreen(context, selectedScreenIndex),
       ),
     );
   }
