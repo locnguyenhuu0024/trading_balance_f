@@ -21,6 +21,7 @@ class StrategyMarketRepository {
   static const candlesEndpoint = '/api/v5/market/candles';
   static const maximumCandleCount = 500;
   static const candlePageSize = 300;
+  static const maximumPublicTickerAge = Duration(seconds: 15);
 
   final Dio _dio;
   final RiskRequestCoordinator requestCoordinator;
@@ -43,10 +44,15 @@ class StrategyMarketRepository {
         continue;
       }
       final instrumentId = _text(raw['instId'])?.toUpperCase();
-      final base = _text(raw['baseCcy'])?.toUpperCase();
-      if (instrumentId == null || base == null) continue;
-      if (!RegExp(r'^[A-Z0-9]+-USDT-SWAP$').hasMatch(instrumentId) ||
-          instrumentId != '$base-USDT-SWAP' ||
+      if (instrumentId == null) continue;
+      final instrumentMatch =
+          RegExp(r'^([A-Z0-9]+)-USDT-SWAP$').firstMatch(instrumentId);
+      if (instrumentMatch == null) continue;
+      final base = instrumentMatch.group(1)!;
+      final metadataBase = _text(raw['baseCcy'])?.toUpperCase();
+      if ((metadataBase != null &&
+              metadataBase.isNotEmpty &&
+              metadataBase != base) ||
           !seen.add(instrumentId)) {
         continue;
       }
@@ -79,7 +85,7 @@ class StrategyMarketRepository {
       );
     }
     final age = now.difference(timestamp);
-    if (age.isNegative || age > const Duration(seconds: 4)) {
+    if (age.isNegative || age > maximumPublicTickerAge) {
       throw const StrategyMarketException('The selected swap ticker is stale.');
     }
     final previousTimestamp = _lastTickerTimestamps[normalized];

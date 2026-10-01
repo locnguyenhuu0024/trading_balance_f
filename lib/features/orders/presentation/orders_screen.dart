@@ -100,6 +100,9 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     final timeZoneId = ref.watch(appTimeZoneProvider);
     final exchangeRate = ref.watch(vndExchangeRateProvider).value ?? 25400.0;
     final isBalanceHidden = ref.watch(hideBalanceProvider);
+    final isTradeAuthenticated = ref
+        .watch(tradeSessionProvider)
+        .isAuthenticated;
 
     final bgColor = isDark ? const Color(0xFF121212) : Colors.white;
     final textColor = isDark ? Colors.white : Colors.black;
@@ -111,9 +114,30 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
         foregroundColor: textColor,
         elevation: 0,
         centerTitle: true,
-        title: const Text(
-          'Quản lý Giao dịch',
-          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Quản lý Giao dịch',
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+            ),
+            const SizedBox(width: 6),
+            Tooltip(
+              message: isTradeAuthenticated ? 'Đã đăng nhập' : 'Chưa đăng nhập',
+              child: Semantics(
+                label: isTradeAuthenticated ? 'Đã đăng nhập' : 'Chưa đăng nhập',
+                child: Icon(
+                  isTradeAuthenticated
+                      ? Icons.verified_user_outlined
+                      : Icons.lock_outline,
+                  size: 18,
+                  color: isTradeAuthenticated
+                      ? Colors.green.shade700
+                      : Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
       body: NavigationContentFrame(

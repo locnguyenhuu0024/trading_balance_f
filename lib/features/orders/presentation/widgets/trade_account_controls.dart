@@ -37,131 +37,128 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
                     flow.accountIdentifier == session.accountIdentifier,
               );
 
-    return Card(
-      margin: const EdgeInsets.fromLTRB(12, 6, 12, 4),
-      child: Padding(
-        padding: const EdgeInsets.all(10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Expanded(
-                  child: Text(
-                    'Giao dịch riêng tư',
-                    style: TextStyle(fontWeight: FontWeight.w700),
-                  ),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 6, 12, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (api.isConfigured && isAuthenticated)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton.icon(
+                onPressed:
+                    _busy || hasUnresolvedOperation || activePositionAction
+                    ? null
+                    : _closeAll,
+                icon: const Icon(Icons.warning_amber_rounded, size: 18),
+                label: const Text('Đóng tất cả vị thế'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.redAccent,
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
                 ),
-              ],
+              ),
             ),
-            if (!api.isConfigured)
-              const Text(
-                'Chỉ xem vị thế. Hãy cấu hình API khi build rồi đăng nhập trong Cài đặt để bật thao tác.',
-                style: TextStyle(fontSize: 11),
-              )
-            else if (isAuthenticated) ...[
-              Text(
-                'Tài khoản: ${session?.accountIdentifier.isNotEmpty == true ? session!.accountIdentifier : '••••'}',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
+          if (!api.isConfigured)
+            const Text(
+              'Chỉ xem vị thế. Hãy cấu hình API khi build rồi đăng nhập trong Cài đặt để bật thao tác.',
+              style: TextStyle(fontSize: 11),
+            )
+          else if (!isAuthenticated) ...[
+            Text(
+              'Vị thế chỉ đọc vẫn được hiển thị. Đăng nhập trong Cài đặt để bật thao tác.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            if (sessionState.isLoading) ...[
               const SizedBox(height: 8),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed:
-                      _busy || hasUnresolvedOperation || activePositionAction
-                      ? null
-                      : _closeAll,
-                  icon: const Icon(Icons.warning_amber_rounded, size: 18),
-                  label: const Text('Đóng tất cả vị thế'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.redAccent,
-                    visualDensity: VisualDensity.compact,
-                  ),
-                ),
-              ),
-              if (_busy) const LinearProgressIndicator(minHeight: 2),
-            ] else ...[
-              if (sessionState.isLoading) ...[
-                const SizedBox(height: 8),
-                const LinearProgressIndicator(minHeight: 2),
-              ],
-              Text(
-                'Vị thế chỉ đọc vẫn được hiển thị. Đăng nhập trong Cài đặt để bật thao tác.',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ],
-            if (sessionState.errorMessage != null && api.isConfigured) ...[
-              const SizedBox(height: 4),
-              Text(
-                sessionState.errorMessage!,
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.error,
-                  fontSize: 11,
-                ),
-              ),
-            ],
-            if (pendingOperations.isNotEmpty) ...[
-              const SizedBox(height: 10),
-              const Divider(height: 1),
-              const SizedBox(height: 8),
-              const Text(
-                'Thao tác cần tra cứu',
-                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
-              ),
-              const SizedBox(height: 4),
-              for (final operation in pendingOperations)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 3),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: Text(
-                          '${operation.targetLabel} · ${_actionLabel(operation.action)} · ${operation.status}\n${operation.operationId}',
-                          style: const TextStyle(fontSize: 10),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      OutlinedButton(
-                        onPressed: _busy || !isAuthenticated
-                            ? null
-                            : () => _lookupPendingOperation(operation),
-                        style: OutlinedButton.styleFrom(
-                          visualDensity: VisualDensity.compact,
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
-                        ),
-                        child: const Text(
-                          'Tra cứu trạng thái',
-                          style: TextStyle(fontSize: 10),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              if (hasUnresolvedOperation)
-                Text(
-                  isAuthenticated
-                      ? 'Các thao tác mới đang tạm khóa cho đến khi tra cứu xong.'
-                      : 'Đăng nhập lại cùng tài khoản để tiếp tục tra cứu.',
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    fontSize: 10,
-                  ),
-                ),
-            ],
-            if (_statusMessage != null) ...[
-              const SizedBox(height: 6),
-              Semantics(
-                liveRegion: true,
-                child: Text(
-                  _statusMessage!,
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ),
+              const LinearProgressIndicator(minHeight: 2),
             ],
           ],
-        ),
+          if (sessionState.errorMessage != null && api.isConfigured) ...[
+            const SizedBox(height: 4),
+            Text(
+              sessionState.errorMessage!,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.error,
+                fontSize: 11,
+              ),
+            ),
+          ],
+          if (_busy) const LinearProgressIndicator(minHeight: 2),
+          if (pendingOperations.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Card(
+              margin: EdgeInsets.zero,
+              child: Padding(
+                padding: const EdgeInsets.all(10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Thao tác cần tra cứu',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    for (final operation in pendingOperations)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 3),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Text(
+                                '${operation.targetLabel} · ${_actionLabel(operation.action)} · ${operation.status}\n${operation.operationId}',
+                                style: const TextStyle(fontSize: 10),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            OutlinedButton(
+                              onPressed: _busy || !isAuthenticated
+                                  ? null
+                                  : () => _lookupPendingOperation(operation),
+                              style: OutlinedButton.styleFrom(
+                                visualDensity: VisualDensity.compact,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                ),
+                              ),
+                              child: const Text(
+                                'Tra cứu trạng thái',
+                                style: TextStyle(fontSize: 10),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    if (hasUnresolvedOperation)
+                      Text(
+                        isAuthenticated
+                            ? 'Các thao tác mới đang tạm khóa cho đến khi tra cứu xong.'
+                            : 'Đăng nhập lại cùng tài khoản để tiếp tục tra cứu.',
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          fontSize: 10,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+          if (_statusMessage != null) ...[
+            const SizedBox(height: 6),
+            Semantics(
+              liveRegion: true,
+              child: Text(
+                _statusMessage!,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }

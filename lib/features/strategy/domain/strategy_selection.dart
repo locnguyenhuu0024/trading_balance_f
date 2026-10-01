@@ -8,7 +8,10 @@ class StrategySelectedLevel {
 
   String get id => '${side.wireValue}:${price.toStringAsPrecision(14)}';
 
-  Map<String, Object> toJson() => {'side': side.wireValue, 'price': price};
+  Map<String, Object> toJson() => {
+    'side': side.wireValue,
+    'price': price.toString(),
+  };
 }
 
 class StrategySelectionException implements Exception {
@@ -123,7 +126,7 @@ class StrategySelection {
       'selectedLevels': selectedLevels.map((level) => level.toJson()).toList(),
       'entryBySide': {
         for (final entry in entryBySide.entries)
-          entry.key.wireValue: entry.value,
+          entry.key.wireValue: entry.value.toString(),
       },
       'totalMargin': totalMargin,
       'leverage': {

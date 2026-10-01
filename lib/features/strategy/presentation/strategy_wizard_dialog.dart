@@ -46,6 +46,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
   String? _instrumentId;
   String? _marketError;
   String? _workflowError;
+  String? _selectionNotice;
   Map<String, dynamic>? _preview;
   String? _previewHash;
   String? _savedDraftId;
@@ -140,6 +141,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
       _snapshot = null;
       _selected.clear();
       _entries.clear();
+      _selectionNotice = null;
       _invalidatePreview();
     });
     try {
@@ -152,9 +154,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
         _snapshot = snapshot;
         _isLoadingLevels = false;
       });
-      _reportedTickerFreshness = snapshot.ticker.isFreshAt(
-        DateTime.now().toUtc(),
-      );
+      _reportedTickerFreshness = _tickerIsFresh(snapshot.ticker);
       _updateTickerPolling();
     } on Object catch (error) {
       if (!mounted || generation != _marketGeneration) return;
@@ -165,11 +165,15 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
     }
   }
 
-  Future<void> _refreshTicker() async {
+  Future<void> _refreshTicker({bool manualRetry = false}) async {
     final id = _instrumentId;
     if (!mounted || id == null || _isTickerInFlight) return;
     final retryAt = _tickerRetryAt;
-    if (retryAt != null && DateTime.now().toUtc().isBefore(retryAt)) return;
+    if (!manualRetry &&
+        retryAt != null &&
+        DateTime.now().toUtc().isBefore(retryAt)) {
+      return;
+    }
     _isTickerInFlight = true;
     final generation = _marketGeneration;
     try {
@@ -195,9 +199,12 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
           candles: prior.candles,
           analysis: analysis,
         );
-        _reportedTickerFreshness = ticker.isFreshAt(DateTime.now().toUtc());
+        _reportedTickerFreshness = _tickerIsFresh(ticker);
+        final removedSelection = _reconcileSelectedLevels(analysis);
         _moveEntriesToNearest();
-        if (!_sameEntries(priorEntries, _entries)) _invalidatePreview();
+        if (removedSelection || !_sameEntries(priorEntries, _entries)) {
+          _invalidatePreview();
+        }
       });
     } on Object {
       _tickerFailureCount++;
@@ -207,7 +214,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
       );
       if (mounted && generation == _marketGeneration) {
         setState(() {
-          if (!(_snapshot?.ticker.isFreshAt(DateTime.now().toUtc()) ?? false)) {
+          if (!_quoteIsFresh) {
             _invalidatePreview();
           }
         });
@@ -223,6 +230,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
       final allowed = _allowedSides;
       _selected.removeWhere((_, item) => !allowed.contains(item.side));
       _entries.removeWhere((side, _) => !allowed.contains(side));
+      _selectionNotice = null;
       _moveEntriesToNearest();
       _invalidatePreview();
     });
@@ -250,6 +258,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
         if (_entries[side] == item.price) _entries.remove(side);
         _moveEntriesToNearest();
       }
+      _selectionNotice = null;
       _workflowError = null;
       _invalidatePreview();
     });
@@ -263,6 +272,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
     }
     setState(() {
       _entries[side] = price;
+      _selectionNotice = null;
       _workflowError = null;
       _invalidatePreview();
     });
@@ -292,6 +302,20 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
     }
   }
 
+  bool _reconcileSelectedLevels(StrategyAnalysis analysis) {
+    final selectedCount = _selected.length;
+    _selected.removeWhere((_, item) {
+      final currentLevels = item.side == StrategySide.long
+          ? analysis.supports
+          : analysis.resistances;
+      return !currentLevels.any((level) => level.price == item.price);
+    });
+    if (_selected.length == selectedCount) return false;
+    _selectionNotice =
+        'Giá đã di chuyển; mức không còn hợp lệ đã được bỏ chọn. Vui lòng kiểm tra lựa chọn.';
+    return true;
+  }
+
   StrategySelection? _selectionOrNull() {
     final snapshot = _snapshot;
     final instrumentId = _instrumentId;
@@ -319,7 +343,12 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
   }
 
   bool get _quoteIsFresh =>
-      _snapshot?.ticker.isFreshAt(DateTime.now().toUtc()) ?? false;
+      _snapshot == null ? false : _tickerIsFresh(_snapshot!.ticker);
+
+  bool _tickerIsFresh(StrategyTicker ticker) => ticker.isFreshAt(
+    DateTime.now().toUtc(),
+    maximumAge: StrategyMarketRepository.maximumPublicTickerAge,
+  );
 
   void _updateTickerPolling() {
     final shouldPoll = mounted && _appVisible && _snapshot != null;
@@ -363,8 +392,8 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
   }
 
   String? _validateBudget() {
-    final margin = double.tryParse(_marginController.text.trim());
-    if (margin == null || !margin.isFinite || margin <= 0) {
+    final margin = _positiveStrategyDecimal(_marginController.text);
+    if (margin == null) {
       return 'Nhập ngân sách ký quỹ USDT lớn hơn 0.';
     }
     for (final side in _entries.keys) {
@@ -377,11 +406,8 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
       }
     }
     if (_entries.length == 2) {
-      final longPercent = double.tryParse(_longPercentController.text.trim());
-      if (longPercent == null ||
-          !longPercent.isFinite ||
-          longPercent <= 0 ||
-          longPercent >= 100) {
+      final longPercent = _positiveStrategyDecimal(_longPercentController.text);
+      if (longPercent == null || longPercent >= 100) {
         return 'Tỷ lệ Long phải lớn hơn 0% và nhỏ hơn 100%.';
       }
     }
@@ -400,7 +426,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
     if (!_quoteIsFresh) {
       setState(
         () => _workflowError =
-            'Giá SWAP đã cũ. Chờ một báo giá mới trước khi xem lại.',
+            'Giá SWAP đã cũ. Quay lại bước chọn vùng và nhấn làm mới trước khi xem lại.',
       );
       return;
     }
@@ -421,12 +447,15 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
     }
     final sidePercent = <StrategySide, String>{};
     if (_entries.length == 2) {
-      final long = double.parse(_longPercentController.text.trim());
-      sidePercent[StrategySide.long] = long.toString();
+      final normalizedLongPercent = _normalizeStrategyDecimalInput(
+        _longPercentController.text,
+      )!;
+      final long = double.parse(normalizedLongPercent);
+      sidePercent[StrategySide.long] = normalizedLongPercent;
       sidePercent[StrategySide.short] = (100 - long).toString();
     }
     final request = selection.toRequestJson(
-      totalMargin: _marginController.text.trim(),
+      totalMargin: _normalizeStrategyDecimalInput(_marginController.text)!,
       leverage: leverage,
       sidePercent: sidePercent,
       allocation: _allocation,
@@ -503,13 +532,16 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
     };
     final sidePercent = <StrategySide, String>{};
     if (_entries.length == 2) {
-      final long = double.parse(_longPercentController.text.trim());
-      sidePercent[StrategySide.long] = long.toString();
+      final normalizedLongPercent = _normalizeStrategyDecimalInput(
+        _longPercentController.text,
+      )!;
+      final long = double.parse(normalizedLongPercent);
+      sidePercent[StrategySide.long] = normalizedLongPercent;
       sidePercent[StrategySide.short] = (100 - long).toString();
     }
     return {
       ...selection.toRequestJson(
-        totalMargin: _marginController.text.trim(),
+        totalMargin: _normalizeStrategyDecimalInput(_marginController.text)!,
         leverage: leverage,
         sidePercent: sidePercent,
         allocation: _allocation,
@@ -738,28 +770,41 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
     ),
   );
 
+  Future<void> _openInstrumentPicker() async {
+    if (_isLoadingInstruments || _isLoadingLevels || _isSaving) return;
+    final instrumentId = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => _StrategyInstrumentPicker(instruments: _instruments),
+    );
+    if (!mounted || instrumentId == null || instrumentId == _instrumentId) {
+      return;
+    }
+    await _loadLevels(instrumentId, _interval);
+  }
+
   Widget _buildSelectionStep(BuildContext context) {
     final snapshot = _snapshot;
+    final pickerEnabled =
+        !_isLoadingInstruments && !_isLoadingLevels && !_isSaving;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        DropdownButtonFormField<String>(
-          key: const Key('strategy-instrument-select'),
-          value: _instrumentId,
-          decoration: const InputDecoration(labelText: 'Hợp đồng USDT SWAP'),
-          items: _instruments
-              .map(
-                (item) => DropdownMenuItem(
-                  value: item.instrumentId,
-                  child: Text(item.instrumentId),
-                ),
-              )
-              .toList(growable: false),
-          onChanged: _isLoadingInstruments || _isLoadingLevels || _isSaving
-              ? null
-              : (value) {
-                  if (value != null) unawaited(_loadLevels(value, _interval));
-                },
+        InkWell(
+          key: const Key('strategy-instrument-picker'),
+          onTap: pickerEnabled ? _openInstrumentPicker : null,
+          borderRadius: BorderRadius.circular(4),
+          child: InputDecorator(
+            key: const Key('strategy-instrument-selected'),
+            isEmpty: _instrumentId == null,
+            decoration: InputDecoration(
+              labelText: 'Hợp đồng USDT SWAP',
+              enabled: pickerEnabled,
+              suffixIcon: const Icon(Icons.search),
+            ),
+            child: Text(_instrumentId ?? 'Chọn hợp đồng'),
+          ),
         ),
         const SizedBox(height: 12),
         DropdownButtonFormField<StrategyInterval>(
@@ -835,6 +880,14 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
               StrategySide.short,
               snapshot.analysis.resistances,
             ),
+          if (!_isLoadingLevels && _selectionOrNull() == null)
+            const _WizardNotice(
+              message:
+                  'Chọn ít nhất một mức hợp lệ và điểm vào gần giá nhất cho mỗi phía.',
+              error: true,
+            ),
+          if (_selectionNotice != null)
+            _WizardNotice(message: _selectionNotice!, error: true),
         ],
         if (_workflowError != null)
           _WizardNotice(message: _workflowError!, error: true),
@@ -843,7 +896,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
   }
 
   Widget _quoteBanner(StrategyTicker ticker) {
-    final fresh = ticker.isFreshAt(DateTime.now().toUtc());
+    final fresh = _tickerIsFresh(ticker);
     return Card(
       color: fresh ? null : Theme.of(context).colorScheme.errorContainer,
       child: ListTile(
@@ -852,7 +905,18 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
         title: Text(
           'Giá ${_price(ticker.lastPrice)}${fresh ? '' : ' · đã cũ'}',
         ),
-        subtitle: Text('Cập nhật ${_dateTime(ticker.observedAt)}'),
+        subtitle: Text(
+          fresh
+              ? 'Cập nhật ${_dateTime(ticker.observedAt)}'
+              : 'Cập nhật ${_dateTime(ticker.observedAt)} · Quá 15 giây; nhấn làm mới để thử lại.',
+        ),
+        trailing: fresh
+            ? null
+            : IconButton(
+                tooltip: 'Làm mới báo giá',
+                onPressed: () => unawaited(_refreshTicker(manualRetry: true)),
+                icon: const Icon(Icons.refresh),
+              ),
       ),
     );
   }
@@ -953,6 +1017,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
           ),
         if (sides.length == 2) ...[
           TextField(
+            key: const Key('strategy-long-percent-input'),
             controller: _longPercentController,
             enabled: !_isRequestingPreview,
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
@@ -1007,7 +1072,10 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
   }
 
   String get _shortPercentLabel {
-    final long = double.tryParse(_longPercentController.text.trim()) ?? 50;
+    final normalized = _normalizeStrategyDecimalInput(
+      _longPercentController.text,
+    );
+    final long = normalized == null ? 50 : double.tryParse(normalized) ?? 50;
     return (100 - long).toStringAsFixed(2).replaceFirst(RegExp(r'\.00$'), '');
   }
 
@@ -1083,7 +1151,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
         if (_step == 0)
           FilledButton(
             key: const Key('strategy-next-step-one'),
-            onPressed: _selectionOrNull() == null || !_quoteIsFresh
+            onPressed: _selectionOrNull() == null
                 ? null
                 : () => setState(() {
                     _step = 1;
@@ -1140,6 +1208,96 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
     if (error is StrategyApiException && error.isUnauthorized) {
       ref.read(tradeSessionProvider.notifier).expire();
     }
+  }
+}
+
+class _StrategyInstrumentPicker extends StatefulWidget {
+  const _StrategyInstrumentPicker({required this.instruments});
+
+  final List<StrategyInstrument> instruments;
+
+  @override
+  State<_StrategyInstrumentPicker> createState() =>
+      _StrategyInstrumentPickerState();
+}
+
+class _StrategyInstrumentPickerState extends State<_StrategyInstrumentPicker> {
+  String _query = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final query = _query.trim().toUpperCase();
+    final matches = widget.instruments
+        .where(
+          (instrument) =>
+              query.isEmpty ||
+              instrument.base.toUpperCase().contains(query) ||
+              instrument.instrumentId.toUpperCase().contains(query),
+        )
+        .toList(growable: false);
+
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+      child: FractionallySizedBox(
+        heightFactor: 0.86,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Tìm hợp đồng USDT SWAP',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                  ),
+                  IconButton(
+                    key: const Key('strategy-instrument-picker-close'),
+                    tooltip: 'Đóng',
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+              TextField(
+                key: const Key('strategy-instrument-search'),
+                decoration: const InputDecoration(
+                  labelText: 'Tìm coin hoặc cặp USDT',
+                  prefixIcon: Icon(Icons.search),
+                ),
+                onChanged: (value) => setState(() => _query = value.trim()),
+              ),
+              const SizedBox(height: 8),
+              Expanded(
+                child: matches.isEmpty
+                    ? const Center(
+                        child: Text('Không tìm thấy hợp đồng phù hợp.'),
+                      )
+                    : ListView.separated(
+                        itemCount: matches.length,
+                        separatorBuilder: (_, _) => const Divider(height: 1),
+                        itemBuilder: (context, index) {
+                          final instrument = matches[index];
+                          return ListTile(
+                            key: Key(
+                              'strategy-instrument-option-${instrument.instrumentId}',
+                            ),
+                            title: Text(instrument.instrumentId),
+                            subtitle: Text(instrument.base),
+                            onTap: () => Navigator.of(
+                              context,
+                            ).pop(instrument.instrumentId),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -1333,6 +1491,24 @@ class _WizardNotice extends StatelessWidget {
           : IconButton(onPressed: onRetry, icon: const Icon(Icons.refresh)),
     ),
   );
+}
+
+String? _normalizeStrategyDecimalInput(String input) {
+  final value = input.trim();
+  if (!RegExp(r'^(?:\d+(?:[.,]\d+)?|[.,]\d+)$').hasMatch(value)) {
+    return null;
+  }
+  if (value.contains(',') && RegExp(r'^\d{1,3}(?:,\d{3})+$').hasMatch(value)) {
+    return null;
+  }
+  return value.replaceAll(',', '.');
+}
+
+double? _positiveStrategyDecimal(String input) {
+  final normalized = _normalizeStrategyDecimalInput(input);
+  if (normalized == null) return null;
+  final value = double.tryParse(normalized);
+  return value != null && value.isFinite && value > 0 ? value : null;
 }
 
 List<Map<String, dynamic>> _preparedOrders(Map<String, dynamic> prepared) {

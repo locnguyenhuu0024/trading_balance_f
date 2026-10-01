@@ -267,15 +267,25 @@ class StrategyService:
                 502, "preview_inputs_unavailable",
                 "The selected instrument is not a live member of the requested USDT SWAP family.",
             )
-        base = instrument.get("baseCcy")
+        base = contract["instrumentId"].split("-", 1)[0]
+        instrument_base = instrument.get("baseCcy")
+        instrument_quote = instrument.get("quoteCcy")
+        base_matches = instrument_base is None or (
+            isinstance(instrument_base, str)
+            and (not instrument_base.strip() or instrument_base == base)
+        )
+        quote_matches = instrument_quote is None or (
+            isinstance(instrument_quote, str)
+            and (not instrument_quote.strip() or instrument_quote == "USDT")
+        )
         contract_value = _positive(instrument.get("ctVal"))
         contract_multiplier = _positive(instrument.get("ctMult"))
         tick_size = _positive(instrument.get("tickSz"))
         lot_size = _positive(instrument.get("lotSz"))
         minimum_size = _positive(instrument.get("minSz"))
         if (
-            not isinstance(base, str) or not base
-            or instrument.get("quoteCcy") != "USDT"
+            instrument.get("ctType") != "linear"
+            or not base_matches or not quote_matches
             or instrument.get("settleCcy") != "USDT"
             or instrument.get("ctValCcy") != base
             or contract_value is None or contract_multiplier is None

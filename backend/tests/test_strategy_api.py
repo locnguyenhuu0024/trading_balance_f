@@ -41,6 +41,7 @@ class FakeStrategyExchange:
         ]
         self.instrument_data: list[dict[str, Any]] = [
             {"instId": INSTRUMENT, "instType": "SWAP", "instFamily": "BTC-USDT", "state": "live",
+             "ctType": "linear",
              "baseCcy": "BTC", "quoteCcy": "USDT",
              "settleCcy": "USDT", "ctVal": "0.001", "ctMult": "1", "ctValCcy": "BTC",
              "tickSz": "0.1", "lotSz": "1", "minSz": "1"}
@@ -254,6 +255,52 @@ class StrategyApiTests(unittest.TestCase):
         self.assertEqual(status, 422, result)
         self.assertEqual(result["reason"], "order_below_minimum")
         self.assertEqual(self.exchange.trade_writes, [])
+
+    def test_red_blank_or_missing_swap_base_and_quote_metadata_allow_preview(self) -> None:
+        baseline = deepcopy(self.exchange.instrument_data)
+        cases = [
+            ("blank base and quote", {"baseCcy": "", "quoteCcy": ""}),
+            ("missing base and quote", {"baseCcy": None, "quoteCcy": None}),
+            ("blank base", {"baseCcy": ""}),
+            ("missing base", {"baseCcy": None}),
+            ("blank quote", {"quoteCcy": ""}),
+            ("missing quote", {"quoteCcy": None}),
+        ]
+        for label, metadata in cases:
+            with self.subTest(label=label):
+                self.exchange.instrument_data = deepcopy(baseline)
+                for key, value in metadata.items():
+                    if value is None:
+                        self.exchange.instrument_data[0].pop(key, None)
+                    else:
+                        self.exchange.instrument_data[0][key] = value
+                status, result = self.request("POST", "/v1/strategies/preview", self.one_sided_contract())
+                self.assertEqual(status, 200, result)
+                self.assertTrue(result.get("previewHash"))
+                self.assertEqual(self.exchange.trade_writes, [])
+
+    def test_red_conflicting_or_non_linear_swap_metadata_blocks_preview(self) -> None:
+        baseline = deepcopy(self.exchange.instrument_data)
+        cases = [
+            ("conflicting base", {"baseCcy": "ETH", "ctValCcy": "ETH"}),
+            ("conflicting quote", {"quoteCcy": "USDC"}),
+            ("inverse contract", {"ctType": "inverse"}),
+            ("missing contract type", {"ctType": None}),
+            ("conflicting contract value currency", {"ctValCcy": "USDT"}),
+            ("missing contract value", {"ctVal": None}),
+        ]
+        for label, metadata in cases:
+            with self.subTest(label=label):
+                self.exchange.instrument_data = deepcopy(baseline)
+                for key, value in metadata.items():
+                    if value is None:
+                        self.exchange.instrument_data[0].pop(key, None)
+                    else:
+                        self.exchange.instrument_data[0][key] = value
+                status, result = self.request("POST", "/v1/strategies/preview", self.one_sided_contract())
+                self.assertEqual(status, 502, result)
+                self.assertEqual(result["error"], "preview_inputs_unavailable")
+                self.assertEqual(self.exchange.trade_writes, [])
 
     def test_red_invalid_tick_and_marketable_level_are_rejected_before_save(self) -> None:
         invalid_tick = self.one_sided_contract()

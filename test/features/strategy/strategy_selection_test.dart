@@ -83,6 +83,30 @@ void main() {
         );
       }
     });
+
+    test('serializes selected and entry prices as decimal strings', () {
+      final selection = StrategySelection.validate(
+        instrumentId: 'BTC-USDT-SWAP',
+        interval: StrategyInterval.h6,
+        referencePrice: 100,
+        selectedLevels: const [
+          StrategySelectedLevel(side: StrategySide.long, price: 99.25),
+        ],
+        entryBySide: {StrategySide.long: 99.25},
+      );
+
+      final request = selection.toRequestJson(
+        totalMargin: '100.0',
+        leverage: {StrategySide.long: 5},
+        sidePercent: const {},
+        allocation: StrategyAllocation.equal,
+      );
+
+      expect(request['selectedLevels'], [
+        {'side': 'long', 'price': '99.25'},
+      ]);
+      expect(request['entryBySide'], {'long': '99.25'});
+    });
   });
 
   test('a delayed quote is stale and cannot be labeled current', () {

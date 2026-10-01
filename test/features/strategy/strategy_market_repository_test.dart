@@ -80,6 +80,29 @@ void main() {
         {
           'instType': 'SWAP',
           'state': 'live',
+          'settleCcy': 'USDT',
+          'ctType': 'linear',
+          'instId': 'ETH-USDT-SWAP',
+          'baseCcy': '',
+        },
+        {
+          'instType': 'SWAP',
+          'state': 'live',
+          'settleCcy': 'USDT',
+          'ctType': 'linear',
+          'instId': 'SOL-USDT-SWAP',
+        },
+        {
+          'instType': 'SWAP',
+          'state': 'live',
+          'settleCcy': 'USDT',
+          'ctType': 'linear',
+          'instId': 'XRP-USDT-SWAP',
+          'baseCcy': 'DOGE',
+        },
+        {
+          'instType': 'SWAP',
+          'state': 'live',
           'settleCcy': 'BTC',
           'ctType': 'inverse',
           'instId': 'BTC-USD-SWAP',
@@ -106,12 +129,39 @@ void main() {
 
     final instruments = await repository.getInstruments();
 
-    expect(instruments.map((item) => item.instrumentId), ['BTC-USDT-SWAP']);
+    expect(
+      instruments.map((item) => item.instrumentId),
+      ['BTC-USDT-SWAP', 'ETH-USDT-SWAP', 'SOL-USDT-SWAP'],
+    );
+    expect(instruments.map((item) => item.base), ['BTC', 'ETH', 'SOL']);
     expect(adapter.requests.single.uri.queryParameters['instType'], 'SWAP');
   });
 
-  test('uses the exchange timestamp and rejects stale ticker data', () async {
-    final exchangeTimestamp = now.subtract(const Duration(seconds: 5));
+  test('accepts public ticker data up to fifteen seconds old', () async {
+    final exchangeTimestamp = now.subtract(const Duration(seconds: 10));
+    final adapter = _OkxAdapter(
+      (_) => [
+        {
+          'instId': 'BTC-USDT-SWAP',
+          'last': '65000',
+          'ts': exchangeTimestamp.millisecondsSinceEpoch.toString(),
+        },
+      ],
+    );
+    final repository = _repository(adapter, now);
+
+    final ticker = await repository.getTicker(instrumentId: 'BTC-USDT-SWAP');
+
+    expect(ticker.observedAt, exchangeTimestamp);
+    expect(
+      ticker.isFreshAt(now, maximumAge: const Duration(seconds: 15)),
+      isTrue,
+    );
+    expect(ticker.isFreshAt(now), isFalse);
+  });
+
+  test('rejects public ticker data older than fifteen seconds', () async {
+    final exchangeTimestamp = now.subtract(const Duration(seconds: 16));
     final adapter = _OkxAdapter(
       (_) => [
         {
