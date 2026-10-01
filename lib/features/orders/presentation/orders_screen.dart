@@ -11,6 +11,8 @@ import '../../../core/widgets/crypto_icon.dart';
 import 'providers/order_provider.dart';
 import '../data/okx_order_model.dart';
 import '../data/okx_position_model.dart';
+import 'providers/position_action_flow_provider.dart';
+import 'providers/trade_session_provider.dart';
 import 'package:intl/intl.dart';
 import '../../portfolio/presentation/portfolio_screen.dart'; // Thêm import này để lấy trạng thái Dark Mode
 import '../../portfolio/presentation/widgets/portfolio_currency_amount.dart';
@@ -19,6 +21,8 @@ import '../../settings/presentation/settings_screen.dart'
 import 'widgets/order_filter_controls.dart';
 import 'widgets/order_notional.dart';
 import 'widgets/responsive_order_grid.dart';
+import 'widgets/position_action_controls.dart';
+import 'widgets/trade_account_controls.dart';
 
 String formatOrderTimestamp(String rawTimestamp, String timeZoneId) {
   final timestampMs = int.tryParse(rawTimestamp);
@@ -45,6 +49,13 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       final currentTab = ref.read(orderTabProvider);
       final currentFilter = ref.read(orderFilterProvider);
 
+      final tradeSession = ref.read(tradeSessionProvider);
+      if (tradeSession.session != null && !tradeSession.isAuthenticated) {
+        ref.read(tradeSessionProvider.notifier).expire();
+      }
+
+      if (currentTab == OrderTab.positions && currentFilter == 'SPOT') return;
+
       if (currentFilter == 'ALL') {
         _allRefreshTicks++;
         if (_allRefreshTicks < 5) return;
@@ -54,12 +65,18 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       }
 
       final isLoading = currentTab == OrderTab.positions
-          ? ref.read(positionsFutureProvider).isLoading
+          ? (ref.read(tradeSessionProvider).isAuthenticated
+                ? ref.read(tradePositionsProvider).isLoading
+                : ref.read(positionsFutureProvider).isLoading)
           : ref.read(ordersFutureProvider).isLoading;
       if (isLoading) return;
 
       if (currentTab == OrderTab.positions) {
-        ref.invalidate(positionsFutureProvider);
+        if (ref.read(tradeSessionProvider).isAuthenticated) {
+          ref.invalidate(tradePositionsProvider);
+        } else {
+          ref.invalidate(positionsFutureProvider);
+        }
       } else {
         ref.invalidate(ordersFutureProvider);
       }
@@ -152,59 +169,140 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     String timeZoneId,
   ) {
     if (currentTab == OrderTab.positions) {
+      final hasTradeSession = ref.watch(tradeSessionProvider).isAuthenticated;
       if (filter == 'SPOT') {
-        return Center(
-          child: Text(
-            'Giao dịch SPOT không hỗ trợ Vị thế mở.',
-            style: TextStyle(
-              fontSize: 12,
-              color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
+        return Column(
+          children: [
+            const TradeAccountControls(),
+            Expanded(
+              child: Center(
+                child: Text(
+                  'Giao dịch SPOT không hỗ trợ Vị thế mở.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
+                  ),
+                ),
+              ),
             ),
-          ),
+          ],
+        );
+      }
+
+      if (hasTradeSession) {
+        final positionsAsyncValue = ref.watch(tradePositionsProvider);
+        return Column(
+          children: [
+            const TradeAccountControls(),
+            Expanded(
+              child: RefreshIndicator(
+                color: isDark ? Colors.black : Colors.black,
+                backgroundColor: isDark ? Colors.white : Colors.white,
+                onRefresh: () async => ref.invalidate(tradePositionsProvider),
+                child: positionsAsyncValue.when(
+                  skipLoadingOnReload: true,
+                  loading: () => Center(
+                    child: CircularProgressIndicator(
+                      color: isDark ? Colors.white : Colors.black,
+                    ),
+                  ),
+                  error: (error, stack) => Center(
+                    child: Text(
+                      'Lỗi: $error',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: isDark ? Colors.redAccent : Colors.red,
+                      ),
+                    ),
+                  ),
+                  data: (snapshot) {
+                    final positions = filter == 'ALL'
+                        ? snapshot.positions
+                        : snapshot.positions
+                              .where(
+                                (position) =>
+                                    position.instType.toUpperCase() == filter,
+                              )
+                              .toList(growable: false);
+                    if (positions.isEmpty) {
+                      return _buildEmptyState(
+                        'Không có vị thế nào đang mở.',
+                        isDark,
+                      );
+                    }
+                    return ResponsiveOrderGrid(
+                      children: positions
+                          .map(
+                            (position) => _buildPositionCard(
+                              position,
+                              isDark,
+                              currency,
+                              exchangeRate,
+                              isBalanceHidden,
+                            ),
+                          )
+                          .toList(growable: false),
+                    );
+                  },
+                ),
+              ),
+            ),
+          ],
         );
       }
 
       final positionsAsyncValue = ref.watch(positionsFutureProvider);
-      return RefreshIndicator(
-        color: isDark ? Colors.black : Colors.black,
-        backgroundColor: isDark ? Colors.white : Colors.white,
-        onRefresh: () async => ref.invalidate(positionsFutureProvider),
-        child: positionsAsyncValue.when(
-          skipLoadingOnReload: true,
-          loading: () => Center(
-            child: CircularProgressIndicator(
-              color: isDark ? Colors.white : Colors.black,
-            ),
-          ),
-          error: (error, stack) => Center(
-            child: Text(
-              'Lỗi: $error',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 12,
-                color: isDark ? Colors.redAccent : Colors.red,
+      return Column(
+        children: [
+          const TradeAccountControls(),
+          Expanded(
+            child: RefreshIndicator(
+              color: isDark ? Colors.black : Colors.black,
+              backgroundColor: isDark ? Colors.white : Colors.white,
+              onRefresh: () async => ref.invalidate(positionsFutureProvider),
+              child: positionsAsyncValue.when(
+                skipLoadingOnReload: true,
+                loading: () => Center(
+                  child: CircularProgressIndicator(
+                    color: isDark ? Colors.white : Colors.black,
+                  ),
+                ),
+                error: (error, stack) => Center(
+                  child: Text(
+                    'Lỗi: $error',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: isDark ? Colors.redAccent : Colors.red,
+                    ),
+                  ),
+                ),
+                data: (positions) {
+                  if (positions.isEmpty) {
+                    return _buildEmptyState(
+                      'Không có vị thế nào đang mở.',
+                      isDark,
+                    );
+                  }
+                  return ResponsiveOrderGrid(
+                    children: positions
+                        .map(
+                          (position) => _buildPositionCard(
+                            position,
+                            isDark,
+                            currency,
+                            exchangeRate,
+                            isBalanceHidden,
+                          ),
+                        )
+                        .toList(growable: false),
+                  );
+                },
               ),
             ),
           ),
-          data: (positions) {
-            if (positions.isEmpty) {
-              return _buildEmptyState('Không có vị thế nào đang mở.', isDark);
-            }
-            return ResponsiveOrderGrid(
-              children: positions
-                  .map(
-                    (position) => _buildPositionCard(
-                      position,
-                      isDark,
-                      currency,
-                      exchangeRate,
-                      isBalanceHidden,
-                    ),
-                  )
-                  .toList(),
-            );
-          },
-        ),
+        ],
       );
     } else {
       final ordersAsyncValue = ref.watch(ordersFutureProvider);
@@ -343,17 +441,22 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
         : (isLong ? Colors.green : Colors.redAccent);
     final sideText = posSide == 'NET' ? 'VỊ THẾ' : (isLong ? 'LONG' : 'SHORT');
 
-    final double pnl = double.tryParse(position.upl) ?? 0.0;
-    final pnlColor = pnl >= 0 ? Colors.green : Colors.redAccent;
-    final pnlSign = pnl >= 0 ? '+' : '';
-    final String pnlFormatted = NumberFormat(
-      "#,##0.00",
-      "en_US",
-    ).format(pnl.abs());
+    final pnl = double.tryParse(position.upl);
+    final pnlColor = pnl == null
+        ? Colors.grey
+        : (pnl >= 0 ? Colors.green : Colors.redAccent);
+    final pnlSign = pnl == null ? '' : (pnl >= 0 ? '+' : '');
+    final pnlFormatted = pnl == null
+        ? '--'
+        : NumberFormat("#,##0.00", "en_US").format(pnl.abs());
 
-    final double pnlRatio = double.tryParse(position.uplRatio) ?? 0.0;
-    final String pnlRatioPercent =
-        '$pnlSign${(pnlRatio * 100).toStringAsFixed(2)}%';
+    final pnlRatio = double.tryParse(position.uplRatio);
+    final pnlRatioPercent = pnlRatio == null
+        ? '--'
+        : '${pnlRatio >= 0 ? '+' : ''}${(pnlRatio * 100).toStringAsFixed(2)}%';
+    final pnlRatioColor = pnlRatio == null
+        ? Colors.grey
+        : (pnlRatio >= 0 ? Colors.green : Colors.redAccent);
 
     final String baseCoin = position.instId.split('-').isNotEmpty
         ? position.instId.split('-').first
@@ -367,6 +470,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     final iconBgColor = isDark ? Colors.grey.shade800 : Colors.grey.shade100;
 
     return Card(
+      key: ValueKey(positionActionIdentityKey(position.identity)),
       elevation: 0,
       color: cardColor,
       margin: EdgeInsets.zero,
@@ -441,7 +545,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                         borderRadius: BorderRadius.circular(4),
                       ),
                       child: Text(
-                        '${position.lever}x',
+                        position.lever.isEmpty ? '--' : '${position.lever}x',
                         style: TextStyle(
                           color: isDark ? Colors.white70 : Colors.black87,
                           fontSize: 9,
@@ -453,6 +557,28 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                 ),
               ],
             ),
+            if (position.instType.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 8,
+                runSpacing: 2,
+                children: [
+                  Text(
+                    '${position.direction.toUpperCase()} · ${position.size}',
+                    style: TextStyle(color: subtitleColor, fontSize: 10),
+                  ),
+                  Text(
+                    '${position.instType} · ${position.mgnMode.toUpperCase()}',
+                    style: TextStyle(color: subtitleColor, fontSize: 10),
+                  ),
+                  if (position.marginCurrency.isNotEmpty)
+                    Text(
+                      'Ký quỹ ${position.marginCurrency}',
+                      style: TextStyle(color: subtitleColor, fontSize: 10),
+                    ),
+                ],
+              ),
+            ],
             Divider(
               height: 16,
               color: isDark ? Colors.grey.shade800 : Colors.grey.shade100,
@@ -485,7 +611,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                     Text(
                       pnlRatioPercent,
                       style: TextStyle(
-                        color: pnlColor,
+                        color: pnlRatioColor,
                         fontSize: 10,
                         fontWeight: FontWeight.w600,
                       ),
@@ -577,6 +703,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                 ),
               ],
             ),
+            PositionActionControls(position: position),
           ],
         ),
       ),

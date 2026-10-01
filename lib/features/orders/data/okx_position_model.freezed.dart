@@ -39,7 +39,18 @@ mixin _$OkxPosition {
   String get uplRatio => throw _privateConstructorUsedError; // Tỷ lệ Lãi/lỗ
   String get mgnMode =>
       throw _privateConstructorUsedError; // Chế độ Margin (cross hoặc isolated)
-  String get notionalUsd => throw _privateConstructorUsedError;
+  String get notionalUsd =>
+      throw _privateConstructorUsedError; // Giá trị danh nghĩa vị thế theo USD
+  String get instType => throw _privateConstructorUsedError;
+  String get positionId => throw _privateConstructorUsedError;
+  String get signedSize => throw _privateConstructorUsedError;
+  String get size => throw _privateConstructorUsedError;
+  String get direction => throw _privateConstructorUsedError;
+  String get marginCurrency => throw _privateConstructorUsedError;
+  String get positionCurrency => throw _privateConstructorUsedError;
+  Map<String, dynamic> get identity => throw _privateConstructorUsedError;
+  Map<String, dynamic> get eligibleActions =>
+      throw _privateConstructorUsedError;
 
   /// Serializes this OkxPosition to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
@@ -70,6 +81,15 @@ abstract class $OkxPositionCopyWith<$Res> {
     String uplRatio,
     String mgnMode,
     String notionalUsd,
+    String instType,
+    String positionId,
+    String signedSize,
+    String size,
+    String direction,
+    String marginCurrency,
+    String positionCurrency,
+    Map<String, dynamic> identity,
+    Map<String, dynamic> eligibleActions,
   });
 }
 
@@ -99,6 +119,15 @@ class _$OkxPositionCopyWithImpl<$Res, $Val extends OkxPosition>
     Object? uplRatio = null,
     Object? mgnMode = null,
     Object? notionalUsd = null,
+    Object? instType = null,
+    Object? positionId = null,
+    Object? signedSize = null,
+    Object? size = null,
+    Object? direction = null,
+    Object? marginCurrency = null,
+    Object? positionCurrency = null,
+    Object? identity = null,
+    Object? eligibleActions = null,
   }) {
     return _then(
       _value.copyWith(
@@ -146,6 +175,42 @@ class _$OkxPositionCopyWithImpl<$Res, $Val extends OkxPosition>
                 ? _value.notionalUsd
                 : notionalUsd // ignore: cast_nullable_to_non_nullable
                       as String,
+            instType: null == instType
+                ? _value.instType
+                : instType // ignore: cast_nullable_to_non_nullable
+                      as String,
+            positionId: null == positionId
+                ? _value.positionId
+                : positionId // ignore: cast_nullable_to_non_nullable
+                      as String,
+            signedSize: null == signedSize
+                ? _value.signedSize
+                : signedSize // ignore: cast_nullable_to_non_nullable
+                      as String,
+            size: null == size
+                ? _value.size
+                : size // ignore: cast_nullable_to_non_nullable
+                      as String,
+            direction: null == direction
+                ? _value.direction
+                : direction // ignore: cast_nullable_to_non_nullable
+                      as String,
+            marginCurrency: null == marginCurrency
+                ? _value.marginCurrency
+                : marginCurrency // ignore: cast_nullable_to_non_nullable
+                      as String,
+            positionCurrency: null == positionCurrency
+                ? _value.positionCurrency
+                : positionCurrency // ignore: cast_nullable_to_non_nullable
+                      as String,
+            identity: null == identity
+                ? _value.identity
+                : identity // ignore: cast_nullable_to_non_nullable
+                      as Map<String, dynamic>,
+            eligibleActions: null == eligibleActions
+                ? _value.eligibleActions
+                : eligibleActions // ignore: cast_nullable_to_non_nullable
+                      as Map<String, dynamic>,
           )
           as $Val,
     );
@@ -173,6 +238,15 @@ abstract class _$$OkxPositionImplCopyWith<$Res>
     String uplRatio,
     String mgnMode,
     String notionalUsd,
+    String instType,
+    String positionId,
+    String signedSize,
+    String size,
+    String direction,
+    String marginCurrency,
+    String positionCurrency,
+    Map<String, dynamic> identity,
+    Map<String, dynamic> eligibleActions,
   });
 }
 
@@ -201,6 +275,15 @@ class __$$OkxPositionImplCopyWithImpl<$Res>
     Object? uplRatio = null,
     Object? mgnMode = null,
     Object? notionalUsd = null,
+    Object? instType = null,
+    Object? positionId = null,
+    Object? signedSize = null,
+    Object? size = null,
+    Object? direction = null,
+    Object? marginCurrency = null,
+    Object? positionCurrency = null,
+    Object? identity = null,
+    Object? eligibleActions = null,
   }) {
     return _then(
       _$OkxPositionImpl(
@@ -248,6 +331,42 @@ class __$$OkxPositionImplCopyWithImpl<$Res>
             ? _value.notionalUsd
             : notionalUsd // ignore: cast_nullable_to_non_nullable
                   as String,
+        instType: null == instType
+            ? _value.instType
+            : instType // ignore: cast_nullable_to_non_nullable
+                  as String,
+        positionId: null == positionId
+            ? _value.positionId
+            : positionId // ignore: cast_nullable_to_non_nullable
+                  as String,
+        signedSize: null == signedSize
+            ? _value.signedSize
+            : signedSize // ignore: cast_nullable_to_non_nullable
+                  as String,
+        size: null == size
+            ? _value.size
+            : size // ignore: cast_nullable_to_non_nullable
+                  as String,
+        direction: null == direction
+            ? _value.direction
+            : direction // ignore: cast_nullable_to_non_nullable
+                  as String,
+        marginCurrency: null == marginCurrency
+            ? _value.marginCurrency
+            : marginCurrency // ignore: cast_nullable_to_non_nullable
+                  as String,
+        positionCurrency: null == positionCurrency
+            ? _value.positionCurrency
+            : positionCurrency // ignore: cast_nullable_to_non_nullable
+                  as String,
+        identity: null == identity
+            ? _value._identity
+            : identity // ignore: cast_nullable_to_non_nullable
+                  as Map<String, dynamic>,
+        eligibleActions: null == eligibleActions
+            ? _value._eligibleActions
+            : eligibleActions // ignore: cast_nullable_to_non_nullable
+                  as Map<String, dynamic>,
       ),
     );
   }
@@ -268,7 +387,17 @@ class _$OkxPositionImpl implements _OkxPosition {
     this.uplRatio = '',
     this.mgnMode = '',
     this.notionalUsd = '',
-  });
+    this.instType = '',
+    this.positionId = '',
+    this.signedSize = '',
+    this.size = '',
+    this.direction = '',
+    this.marginCurrency = '',
+    this.positionCurrency = '',
+    final Map<String, dynamic> identity = const <String, dynamic>{},
+    final Map<String, dynamic> eligibleActions = const <String, dynamic>{},
+  }) : _identity = identity,
+       _eligibleActions = eligibleActions;
 
   factory _$OkxPositionImpl.fromJson(Map<String, dynamic> json) =>
       _$$OkxPositionImplFromJson(json);
@@ -316,10 +445,49 @@ class _$OkxPositionImpl implements _OkxPosition {
   @override
   @JsonKey()
   final String notionalUsd;
+  // Giá trị danh nghĩa vị thế theo USD
+  @override
+  @JsonKey()
+  final String instType;
+  @override
+  @JsonKey()
+  final String positionId;
+  @override
+  @JsonKey()
+  final String signedSize;
+  @override
+  @JsonKey()
+  final String size;
+  @override
+  @JsonKey()
+  final String direction;
+  @override
+  @JsonKey()
+  final String marginCurrency;
+  @override
+  @JsonKey()
+  final String positionCurrency;
+  final Map<String, dynamic> _identity;
+  @override
+  @JsonKey()
+  Map<String, dynamic> get identity {
+    if (_identity is EqualUnmodifiableMapView) return _identity;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableMapView(_identity);
+  }
+
+  final Map<String, dynamic> _eligibleActions;
+  @override
+  @JsonKey()
+  Map<String, dynamic> get eligibleActions {
+    if (_eligibleActions is EqualUnmodifiableMapView) return _eligibleActions;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableMapView(_eligibleActions);
+  }
 
   @override
   String toString() {
-    return 'OkxPosition(instId: $instId, posSide: $posSide, pos: $pos, avgPx: $avgPx, markPx: $markPx, lever: $lever, liqPx: $liqPx, upl: $upl, uplRatio: $uplRatio, mgnMode: $mgnMode, notionalUsd: $notionalUsd)';
+    return 'OkxPosition(instId: $instId, posSide: $posSide, pos: $pos, avgPx: $avgPx, markPx: $markPx, lever: $lever, liqPx: $liqPx, upl: $upl, uplRatio: $uplRatio, mgnMode: $mgnMode, notionalUsd: $notionalUsd, instType: $instType, positionId: $positionId, signedSize: $signedSize, size: $size, direction: $direction, marginCurrency: $marginCurrency, positionCurrency: $positionCurrency, identity: $identity, eligibleActions: $eligibleActions)';
   }
 
   @override
@@ -339,12 +507,30 @@ class _$OkxPositionImpl implements _OkxPosition {
                 other.uplRatio == uplRatio) &&
             (identical(other.mgnMode, mgnMode) || other.mgnMode == mgnMode) &&
             (identical(other.notionalUsd, notionalUsd) ||
-                other.notionalUsd == notionalUsd));
+                other.notionalUsd == notionalUsd) &&
+            (identical(other.instType, instType) ||
+                other.instType == instType) &&
+            (identical(other.positionId, positionId) ||
+                other.positionId == positionId) &&
+            (identical(other.signedSize, signedSize) ||
+                other.signedSize == signedSize) &&
+            (identical(other.size, size) || other.size == size) &&
+            (identical(other.direction, direction) ||
+                other.direction == direction) &&
+            (identical(other.marginCurrency, marginCurrency) ||
+                other.marginCurrency == marginCurrency) &&
+            (identical(other.positionCurrency, positionCurrency) ||
+                other.positionCurrency == positionCurrency) &&
+            const DeepCollectionEquality().equals(other._identity, _identity) &&
+            const DeepCollectionEquality().equals(
+              other._eligibleActions,
+              _eligibleActions,
+            ));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
   @override
-  int get hashCode => Object.hash(
+  int get hashCode => Object.hashAll([
     runtimeType,
     instId,
     posSide,
@@ -357,7 +543,16 @@ class _$OkxPositionImpl implements _OkxPosition {
     uplRatio,
     mgnMode,
     notionalUsd,
-  );
+    instType,
+    positionId,
+    signedSize,
+    size,
+    direction,
+    marginCurrency,
+    positionCurrency,
+    const DeepCollectionEquality().hash(_identity),
+    const DeepCollectionEquality().hash(_eligibleActions),
+  ]);
 
   /// Create a copy of OkxPosition
   /// with the given fields replaced by the non-null parameter values.
@@ -386,6 +581,15 @@ abstract class _OkxPosition implements OkxPosition {
     final String uplRatio,
     final String mgnMode,
     final String notionalUsd,
+    final String instType,
+    final String positionId,
+    final String signedSize,
+    final String size,
+    final String direction,
+    final String marginCurrency,
+    final String positionCurrency,
+    final Map<String, dynamic> identity,
+    final Map<String, dynamic> eligibleActions,
   }) = _$OkxPositionImpl;
 
   factory _OkxPosition.fromJson(Map<String, dynamic> json) =
@@ -412,7 +616,25 @@ abstract class _OkxPosition implements OkxPosition {
   @override
   String get mgnMode; // Chế độ Margin (cross hoặc isolated)
   @override
-  String get notionalUsd;
+  String get notionalUsd; // Giá trị danh nghĩa vị thế theo USD
+  @override
+  String get instType;
+  @override
+  String get positionId;
+  @override
+  String get signedSize;
+  @override
+  String get size;
+  @override
+  String get direction;
+  @override
+  String get marginCurrency;
+  @override
+  String get positionCurrency;
+  @override
+  Map<String, dynamic> get identity;
+  @override
+  Map<String, dynamic> get eligibleActions;
 
   /// Create a copy of OkxPosition
   /// with the given fields replaced by the non-null parameter values.

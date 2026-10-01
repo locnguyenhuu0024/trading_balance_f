@@ -54,6 +54,68 @@ Finder _cardContainingPrice(String price) {
 }
 
 void main() {
+  testWidgets('backend positions show unavailable metrics as dashes', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _ordersApp(
+        positions: [
+          const OkxPosition(
+            instId: 'BTC-USDT-SWAP',
+            posSide: 'net',
+            instType: 'SWAP',
+            size: '2',
+            signedSize: '2',
+            direction: 'long',
+          ),
+        ],
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    final pnlRow = find
+        .ancestor(
+          of: find.text('Lãi / Lỗ chưa thực hiện:'),
+          matching: find.byType(Row),
+        )
+        .first;
+    expect(
+      find.descendant(of: pnlRow, matching: find.text('-- ')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: pnlRow, matching: find.text('--')),
+      findsOneWidget,
+    );
+
+    final notionalRow = find
+        .ancestor(of: find.text('Giá trị vị thế:'), matching: find.byType(Row))
+        .first;
+    expect(
+      find.descendant(of: notionalRow, matching: find.text('--')),
+      findsOneWidget,
+    );
+    final pricesRow = find
+        .ancestor(of: find.text('Giá vào'), matching: find.byType(Row))
+        .first;
+    expect(
+      find.descendant(of: pricesRow, matching: find.text('--')),
+      findsNWidgets(3),
+    );
+
+    final sideAndLeverageRow = find
+        .ancestor(of: find.text('VỊ THẾ'), matching: find.byType(Row))
+        .first;
+    expect(
+      find.descendant(of: sideAndLeverageRow, matching: find.text('--')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('position cards follow their content at every viewport width', (
     tester,
   ) async {
@@ -75,8 +137,17 @@ void main() {
       final cardRect = tester.getRect(card);
       final liquidationRect = tester.getRect(liquidation);
 
-      expect(cardRect.height, lessThan(270));
-      expect(cardRect.bottom - liquidationRect.bottom, closeTo(12, 0.5));
+      expect(cardRect.height, lessThan(500));
+      final actionReason = find.text(
+        'Chưa cấu hình TRADE_API_BASE_URL; chỉ xem vị thế.',
+      );
+      final actionReasonRect = tester.getRect(actionReason);
+      expect(cardRect.bottom - actionReasonRect.bottom, closeTo(12, 0.5));
+      expect(
+        cardRect.contains(tester.getRect(find.text('Đóng 100%')).center),
+        isTrue,
+      );
+      expect(actionReasonRect.top, greaterThan(liquidationRect.bottom));
       expect(tester.takeException(), isNull);
 
       await tester.pumpWidget(const SizedBox.shrink());
@@ -160,7 +231,15 @@ void main() {
             _cardContainingPrice(liquidationPrice),
           );
           final liquidationRect = tester.getRect(liquidation);
-          expect(cardRect.bottom - liquidationRect.bottom, closeTo(12, 0.5));
+          final actionReason = tester.getRect(
+            find.text('Chưa cấu hình TRADE_API_BASE_URL; chỉ xem vị thế.'),
+          );
+          expect(cardRect.height, lessThan(700));
+          expect(cardRect.bottom - actionReason.bottom, closeTo(12, 0.5));
+          expect(
+            cardRect.contains(tester.getRect(find.text('Đóng 100%')).center),
+            isTrue,
+          );
           expect(tester.takeException(), isNull);
 
           await tester.pumpWidget(const SizedBox.shrink());

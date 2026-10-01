@@ -7,8 +7,8 @@ import '../../data/order_repository.dart';
 import '../../data/okx_order_model.dart';
 import '../../data/okx_position_model.dart'; // Import thêm Position model
 
-/// Lưu trạng thái bộ lọc loại giao dịch. Đổi mặc định thành SWAP (Hợp đồng vĩnh cửu)
-final orderFilterProvider = StateProvider<String>((ref) => 'MARGIN');
+/// Lưu trạng thái bộ lọc loại giao dịch. Mặc định hiển thị tất cả loại giao dịch.
+final orderFilterProvider = StateProvider<String>((ref) => 'ALL');
 
 /// Thêm trạng thái 'positions' (Vị thế mở) vào Tab
 enum OrderTab { positions, pending, history }
