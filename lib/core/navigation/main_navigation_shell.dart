@@ -9,6 +9,7 @@ import '../../features/portfolio/presentation/risk_dashboard_screen.dart';
 import '../../features/settings/presentation/settings_screen.dart';
 import '../../features/support_resistance/presentation/support_resistance_screen.dart';
 import 'navigation_destination_data.dart';
+import 'navigation_preferences.dart';
 import 'navigation_preferences_provider.dart';
 import 'navigation_presentation_host.dart';
 
@@ -89,8 +90,15 @@ class _MainNavigationShellState extends ConsumerState<MainNavigationShell> {
     );
 
     final enabledIds = navigationPreferences.enabledDestinationIds;
-    final destinations = navigationItems
-        .where((destination) => enabledIds.contains(destination.id))
+    final destinationsById = {
+      for (final destination in navigationItems) destination.id: destination,
+    };
+    final orderedIds = NavigationPreferences.normalizeDestinationOrderIds(
+      navigationPreferences.destinationOrderIds,
+    );
+    final destinations = orderedIds
+        .where(enabledIds.contains)
+        .map((id) => destinationsById[id]!)
         .toList(growable: false);
     final selectedScreenIndex =
         enabledIds.contains(

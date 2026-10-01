@@ -13,10 +13,12 @@ class _SettingsStorage extends SecureStorageHelper {
   _SettingsStorage({
     this.failNavigationSave = false,
     this.failTextScaleSave = false,
+    this.navigationSaveGate,
   }) : super(const FlutterSecureStorage());
 
   final bool failNavigationSave;
   final bool failTextScaleSave;
+  final Completer<void>? navigationSaveGate;
   NavigationPreferences? savedNavigationPreferences;
   double? savedAppTextScale;
 
@@ -44,6 +46,7 @@ class _SettingsStorage extends SecureStorageHelper {
   Future<void> saveNavigationPreferences(
     NavigationPreferences preferences,
   ) async {
+    if (navigationSaveGate != null) await navigationSaveGate!.future;
     if (failNavigationSave) throw StateError('write failed');
     savedNavigationPreferences = preferences;
   }
@@ -241,19 +244,33 @@ void main() {
       'risk',
       'support',
     ]) {
-      expect(
-        find.byKey(Key('settings-navigation-visible-$id')),
-        findsOneWidget,
-      );
+      final row = find.byKey(Key('settings-navigation-visible-$id'));
+      await tester.ensureVisible(row);
+      await tester.pumpAndSettle();
+      expect(row, findsOneWidget);
     }
 
-    final settingsCheckbox = tester.widget<CheckboxListTile>(
-      find.byKey(const Key('settings-navigation-visible-settings')),
+    final settingsRow = find.byKey(
+      const Key('settings-navigation-visible-settings'),
     );
+    await tester.ensureVisible(settingsRow);
+    await tester.pumpAndSettle();
+    final settingsCheckbox = tester.widget<CheckboxListTile>(settingsRow);
     expect(settingsCheckbox.value, isTrue);
     expect(settingsCheckbox.onChanged, isNull);
+    expect(
+      tester
+          .widget<ReorderableDragStartListener>(
+            find.byKey(const Key('settings-navigation-drag-settings')),
+          )
+          .enabled,
+      isTrue,
+    );
 
-    await tester.tap(find.byKey(const Key('settings-navigation-visible-bmag')));
+    final bmagRow = find.byKey(const Key('settings-navigation-visible-bmag'));
+    await tester.ensureVisible(bmagRow);
+    await tester.pumpAndSettle();
+    await tester.tap(bmagRow);
     await tester.pumpAndSettle();
 
     expect(
@@ -268,6 +285,134 @@ void main() {
           .value,
       isFalse,
     );
+  });
+
+  testWidgets('reorders BMAG after Risk from the navigation drag handle', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final storage = _SettingsStorage();
+    await tester.pumpWidget(settingsApp(storage));
+    await tester.tap(find.byKey(const Key('settings-navigation-visibility')));
+    await tester.pumpAndSettle();
+
+    final bmagHandle = find.byKey(const Key('settings-navigation-drag-bmag'));
+    final riskRow = find.byKey(const Key('settings-navigation-visible-risk'));
+    final dragDistance =
+        tester.getTopLeft(riskRow).dy - tester.getCenter(bmagHandle).dy + 4;
+    await tester.drag(bmagHandle, Offset(0, dragDistance));
+    await tester.pumpAndSettle();
+
+    expect(storage.savedNavigationPreferences, isNotNull);
+    expect(storage.savedNavigationPreferences!.destinationOrderIds, [
+      'home',
+      'orders',
+      'market',
+      'settings',
+      'risk',
+      'bmag',
+      'support',
+    ]);
+    expect(
+      tester
+          .getTopLeft(find.byKey(const Key('settings-navigation-visible-bmag')))
+          .dy,
+      greaterThan(
+        tester
+            .getTopLeft(
+              find.byKey(const Key('settings-navigation-visible-risk')),
+            )
+            .dy,
+      ),
+    );
+  });
+
+  testWidgets('keeps a hidden destination in its reordered slot', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final storage = _SettingsStorage();
+    await tester.pumpWidget(settingsApp(storage));
+    await tester.tap(find.byKey(const Key('settings-navigation-visibility')));
+    await tester.pumpAndSettle();
+
+    final bmagHandle = find.byKey(const Key('settings-navigation-drag-bmag'));
+    final riskRow = find.byKey(const Key('settings-navigation-visible-risk'));
+    final dragDistance =
+        tester.getTopLeft(riskRow).dy - tester.getCenter(bmagHandle).dy + 4;
+    await tester.drag(bmagHandle, Offset(0, dragDistance));
+    await tester.pumpAndSettle();
+
+    final savedOrder = storage.savedNavigationPreferences!.destinationOrderIds;
+    await tester.tap(find.byKey(const Key('settings-navigation-visible-bmag')));
+    await tester.pumpAndSettle();
+    expect(
+      storage.savedNavigationPreferences!.enabledDestinationIds,
+      isNot(contains('bmag')),
+    );
+
+    await tester.tap(find.byKey(const Key('settings-navigation-visible-bmag')));
+    await tester.pumpAndSettle();
+    expect(
+      storage.savedNavigationPreferences!.enabledDestinationIds,
+      contains('bmag'),
+    );
+    expect(storage.savedNavigationPreferences!.destinationOrderIds, savedOrder);
+    expect(
+      tester
+          .getTopLeft(find.byKey(const Key('settings-navigation-visible-bmag')))
+          .dy,
+      greaterThan(
+        tester
+            .getTopLeft(
+              find.byKey(const Key('settings-navigation-visible-risk')),
+            )
+            .dy,
+      ),
+    );
+  });
+
+  testWidgets('disables reorder and checkbox actions during a save', (
+    tester,
+  ) async {
+    final gate = Completer<void>();
+    await tester.pumpWidget(
+      settingsApp(_SettingsStorage(navigationSaveGate: gate)),
+    );
+    await tester.tap(find.byKey(const Key('settings-navigation-visibility')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('settings-navigation-visible-bmag')));
+    await tester.pump();
+
+    expect(
+      tester
+          .widget<CheckboxListTile>(
+            find.byKey(const Key('settings-navigation-visible-home')),
+          )
+          .onChanged,
+      isNull,
+    );
+    expect(
+      tester
+          .widget<ReorderableDragStartListener>(
+            find.byKey(const Key('settings-navigation-drag-bmag')),
+          )
+          .enabled,
+      isFalse,
+    );
+
+    gate.complete();
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 
   testWidgets('restores visibility after a failed save', (tester) async {

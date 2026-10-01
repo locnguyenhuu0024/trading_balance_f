@@ -41,6 +41,54 @@ void main() {
       );
     });
 
+    test('round-trips destination order independently of visibility', () {
+      const preferences = NavigationPreferences(
+        displayMode: NavigationDisplayMode.floating,
+        floatingEdge: NavigationEdge.left,
+        enabledDestinationIds: ['home', 'settings'],
+        destinationOrderIds: [
+          'home',
+          'orders',
+          'market',
+          'settings',
+          'risk',
+          'bmag',
+          'support',
+        ],
+      );
+
+      final decoded = NavigationPreferences.decode(preferences.encode());
+      expect(decoded.destinationOrderIds, preferences.destinationOrderIds);
+      expect(decoded.enabledDestinationIds, ['home', 'settings']);
+    });
+
+    test(
+      'normalizes partial destination order without losing sibling values',
+      () {
+        final decoded = NavigationPreferences.decode(
+          '{"version":1,"mode":"floating","edge":"right",'
+          '"buttonScale":1.1,"buttonOpacity":0.75,'
+          '"enabledDestinationIds":["orders","risk"],'
+          '"destinationOrderIds":["risk","unknown","bmag","risk"]}',
+        );
+
+        expect(decoded.destinationOrderIds, [
+          'risk',
+          'bmag',
+          'home',
+          'orders',
+          'market',
+          'settings',
+          'support',
+        ]);
+        expect(decoded.enabledDestinationIds, ['orders', 'settings', 'risk']);
+        expect(decoded.displayMode, NavigationDisplayMode.floating);
+        expect(decoded.floatingEdge, NavigationEdge.right);
+        expect(decoded.buttonScale, 1.1);
+        expect(decoded.buttonOpacity, 0.75);
+      },
+    );
+
     test('normalizes malformed membership without losing Settings', () {
       expect(
         NavigationPreferences.decode(

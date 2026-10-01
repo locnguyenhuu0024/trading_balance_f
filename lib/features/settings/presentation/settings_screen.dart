@@ -762,56 +762,95 @@ class _NavigationVisibilityDialog extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(navigationPreferencesProvider);
     final enabledIds = state.preferences.enabledDestinationIds;
+    final orderedIds = NavigationPreferences.normalizeDestinationOrderIds(
+      state.preferences.destinationOrderIds,
+    );
+    final destinationsById = {
+      for (final destination in navigationItems) destination.id: destination,
+    };
+    final destinations = orderedIds
+        .map((id) => destinationsById[id]!)
+        .toList(growable: false);
 
     return AlertDialog(
       title: const Text('Trang điều hướng'),
+      scrollable: true,
       content: SizedBox(
         width: double.maxFinite,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (final destination in navigationItems)
-                CheckboxListTile(
-                  key: Key('settings-navigation-visible-${destination.id}'),
-                  value: enabledIds.contains(destination.id),
-                  title: Text(destination.label),
-                  controlAffinity: ListTileControlAffinity.leading,
-                  contentPadding: EdgeInsets.zero,
-                  onChanged:
-                      state.isSaving || destination.id == navigationSettingsId
-                      ? null
-                      : (isEnabled) {
-                          if (isEnabled == null) return;
-                          final nextIds = enabledIds.toSet();
-                          if (isEnabled) {
-                            nextIds.add(destination.id);
-                          } else {
-                            nextIds.remove(destination.id);
-                          }
-                          ref
-                              .read(navigationPreferencesProvider.notifier)
-                              .setEnabledDestinationIds(
-                                navigationDestinationIds
-                                    .where(nextIds.contains)
-                                    .toList(growable: false),
-                              );
-                        },
-                ),
-              if (state.errorMessage != null)
-                Padding(
-                  key: const Key('settings-navigation-dialog-save-error'),
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Text(
-                    state.errorMessage!,
-                    style: const TextStyle(
-                      color: Colors.redAccent,
-                      fontSize: 12,
+        height: MediaQuery.sizeOf(context).height * 0.55,
+        child: Column(
+          children: [
+            Expanded(
+              child: ReorderableListView(
+                buildDefaultDragHandles: false,
+                padding: EdgeInsets.zero,
+                onReorderItem: (oldIndex, newIndex) {
+                  if (state.isSaving) return;
+
+                  final nextOrder = [...orderedIds];
+                  final movedId = nextOrder.removeAt(oldIndex);
+                  nextOrder.insert(newIndex, movedId);
+                  ref
+                      .read(navigationPreferencesProvider.notifier)
+                      .setDestinationOrderIds(nextOrder);
+                },
+                children: [
+                  for (var index = 0; index < destinations.length; index++)
+                    CheckboxListTile(
+                      key: Key(
+                        'settings-navigation-visible-${destinations[index].id}',
+                      ),
+                      value: enabledIds.contains(destinations[index].id),
+                      title: Text(destinations[index].label),
+                      controlAffinity: ListTileControlAffinity.leading,
+                      contentPadding: EdgeInsets.zero,
+                      secondary: ReorderableDragStartListener(
+                        key: Key(
+                          'settings-navigation-drag-${destinations[index].id}',
+                        ),
+                        index: index,
+                        enabled: !state.isSaving,
+                        child: Icon(
+                          Icons.drag_handle_rounded,
+                          color: state.isSaving
+                              ? Colors.grey
+                              : Colors.grey.shade600,
+                        ),
+                      ),
+                      onChanged:
+                          state.isSaving ||
+                              destinations[index].id == navigationSettingsId
+                          ? null
+                          : (isEnabled) {
+                              if (isEnabled == null) return;
+                              final nextIds = enabledIds.toSet();
+                              if (isEnabled) {
+                                nextIds.add(destinations[index].id);
+                              } else {
+                                nextIds.remove(destinations[index].id);
+                              }
+                              ref
+                                  .read(navigationPreferencesProvider.notifier)
+                                  .setEnabledDestinationIds(
+                                    navigationDestinationIds
+                                        .where(nextIds.contains)
+                                        .toList(growable: false),
+                                  );
+                            },
                     ),
-                  ),
+                ],
+              ),
+            ),
+            if (state.errorMessage != null)
+              Padding(
+                key: const Key('settings-navigation-dialog-save-error'),
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  state.errorMessage!,
+                  style: const TextStyle(color: Colors.redAccent, fontSize: 12),
                 ),
-            ],
-          ),
+              ),
+          ],
         ),
       ),
       actions: [

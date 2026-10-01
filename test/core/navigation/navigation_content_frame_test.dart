@@ -9,6 +9,8 @@ void main() {
   Widget appFor(
     NavigationPreferences preferences, {
     double bottomInset = 0,
+    double bottomViewInset = 0,
+    bool inNavigationHost = true,
     Key? childKey,
   }) {
     return ProviderScope(
@@ -16,41 +18,112 @@ void main() {
         navigationPreferencesInitialProvider.overrideWithValue(preferences),
       ],
       child: MediaQuery(
-        data: MediaQueryData(viewPadding: EdgeInsets.only(bottom: bottomInset)),
+        data: MediaQueryData(
+          viewPadding: EdgeInsets.only(bottom: bottomInset),
+          viewInsets: EdgeInsets.only(bottom: bottomViewInset),
+        ),
         child: MaterialApp(
-          home: NavigationPresentationScope(
-            child: NavigationContentFrame(
-              child: SizedBox.expand(key: childKey),
-            ),
-          ),
+          home: inNavigationHost
+              ? NavigationPresentationScope(
+                  child: NavigationContentFrame(
+                    child: SizedBox.expand(key: childKey),
+                  ),
+                )
+              : NavigationContentFrame(child: SizedBox.expand(key: childKey)),
         ),
       ),
     );
   }
 
-  testWidgets('does not reserve layout space for floating navigation', (
-    tester,
-  ) async {
-    const childKey = Key('floating-navigation-content');
+  testWidgets(
+    'reserves the fixed bar height for every navigation mode and edge',
+    (tester) async {
+      for (final edge in NavigationEdge.values) {
+        final preferences = NavigationPreferences(
+          displayMode: NavigationDisplayMode.floating,
+          floatingEdge: edge,
+        );
+        await tester.pumpWidget(appFor(preferences, bottomInset: 24));
 
-    for (final edge in NavigationEdge.values) {
+        expect(
+          find.byKey(const Key('navigation-content-frame')),
+          findsOneWidget,
+        );
+        expect(
+          tester
+              .widget<Padding>(
+                find.byKey(const Key('navigation-content-frame')),
+              )
+              .padding,
+          const EdgeInsets.only(bottom: 100),
+        );
+      }
+
       await tester.pumpWidget(
         appFor(
-          NavigationPreferences(
-            displayMode: NavigationDisplayMode.floating,
-            floatingEdge: edge,
+          const NavigationPreferences(
+            displayMode: NavigationDisplayMode.bar,
+            floatingEdge: NavigationEdge.bottom,
           ),
           bottomInset: 24,
-          childKey: childKey,
         ),
       );
+      expect(
+        tester
+            .widget<Padding>(find.byKey(const Key('navigation-content-frame')))
+            .padding,
+        const EdgeInsets.only(bottom: 100),
+      );
+    },
+  );
 
-      expect(find.byKey(const Key('navigation-content-frame')), findsNothing);
-      expect(tester.getSize(find.byKey(childKey)), const Size(800, 600));
+  testWidgets('reserves 76 pixels with no bottom inset', (tester) async {
+    for (final preferences in [
+      const NavigationPreferences(
+        displayMode: NavigationDisplayMode.bar,
+        floatingEdge: NavigationEdge.bottom,
+      ),
+      for (final edge in NavigationEdge.values)
+        NavigationPreferences(
+          displayMode: NavigationDisplayMode.floating,
+          floatingEdge: edge,
+        ),
+    ]) {
+      await tester.pumpWidget(appFor(preferences));
+      expect(
+        tester
+            .widget<Padding>(find.byKey(const Key('navigation-content-frame')))
+            .padding,
+        const EdgeInsets.only(bottom: 76),
+      );
     }
   });
 
-  testWidgets('reserves the fixed bar and bottom safe area', (tester) async {
+  testWidgets('uses the larger keyboard or system bottom inset', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      appFor(
+        const NavigationPreferences(
+          displayMode: NavigationDisplayMode.bar,
+          floatingEdge: NavigationEdge.bottom,
+        ),
+        bottomInset: 16,
+        bottomViewInset: 24,
+      ),
+    );
+    expect(
+      tester
+          .widget<Padding>(find.byKey(const Key('navigation-content-frame')))
+          .padding,
+      const EdgeInsets.only(bottom: 100),
+    );
+  });
+
+  testWidgets('does not reserve space outside the navigation host', (
+    tester,
+  ) async {
+    const childKey = Key('outside-navigation-content');
     await tester.pumpWidget(
       appFor(
         const NavigationPreferences(
@@ -58,12 +131,12 @@ void main() {
           floatingEdge: NavigationEdge.bottom,
         ),
         bottomInset: 24,
+        inNavigationHost: false,
+        childKey: childKey,
       ),
     );
 
-    final frame = tester.widget<Padding>(
-      find.byKey(const Key('navigation-content-frame')),
-    );
-    expect(frame.padding, const EdgeInsets.only(bottom: 84));
+    expect(find.byKey(const Key('navigation-content-frame')), findsNothing);
+    expect(tester.getSize(find.byKey(childKey)), const Size(800, 600));
   });
 }

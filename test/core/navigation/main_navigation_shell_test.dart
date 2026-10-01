@@ -266,6 +266,80 @@ void main() {
     }
   });
 
+  testWidgets(
+    'reordered destinations retain stable screen routing in both modes',
+    (tester) async {
+      const reorderedIds = [
+        'home',
+        'orders',
+        'market',
+        'settings',
+        'risk',
+        'bmag',
+        'support',
+      ];
+
+      for (final mode in [
+        NavigationDisplayMode.bar,
+        NavigationDisplayMode.floating,
+      ]) {
+        final storage = _MemoryNavigationStorage();
+        final container = ProviderContainer(
+          overrides: [
+            secureStorageProvider.overrideWithValue(storage),
+            navigationPreferencesInitialProvider.overrideWithValue(
+              NavigationPreferences.defaults.copyWith(displayMode: mode),
+            ),
+            themeModeProvider.overrideWith((ref) => ThemeMode.light),
+          ],
+        );
+
+        await tester.pumpWidget(
+          UncontrolledProviderScope(
+            container: container,
+            child: MaterialApp(
+              home: MainNavigationShell(
+                destinationBuilder: (context, index) => Text('Screen $index'),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final isFixed = mode == NavigationDisplayMode.bar;
+        final keyPrefix = isFixed
+            ? 'navigation-destination-'
+            : 'floating-navigation-destination-';
+        await tester.tap(find.byKey(Key('${keyPrefix}1')));
+        await tester.pumpAndSettle();
+        expect(find.text('Screen 1'), findsOneWidget);
+
+        await container
+            .read(navigationPreferencesProvider.notifier)
+            .setDestinationOrderIds(reorderedIds);
+        await tester.pumpAndSettle();
+
+        expect(find.text('Screen 1'), findsOneWidget);
+        final riskDestination = find.byTooltip('Risk');
+        final bmagDestination = find.byTooltip('BMAG');
+        expect(
+          tester.getCenter(riskDestination).dx,
+          lessThan(tester.getCenter(bmagDestination).dx),
+        );
+
+        await tester.tap(riskDestination);
+        await tester.pumpAndSettle();
+        expect(find.text('Screen 5'), findsOneWidget);
+        await tester.tap(bmagDestination);
+        await tester.pumpAndSettle();
+        expect(find.text('Screen 1'), findsOneWidget);
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        container.dispose();
+      }
+    },
+  );
+
   testWidgets('seventh destination opens the support and resistance screen', (
     tester,
   ) async {

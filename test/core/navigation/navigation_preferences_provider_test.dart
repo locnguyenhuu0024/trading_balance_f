@@ -93,6 +93,42 @@ void main() {
     expect(storage.savedPreferences?.buttonScale, 1.1);
   });
 
+  test('previews and persists a full destination order', () async {
+    final storage = _NavigationStorage();
+    final container = createContainer(storage);
+    final controller = container.read(navigationPreferencesProvider.notifier);
+    const order = [
+      'home',
+      'orders',
+      'market',
+      'settings',
+      'risk',
+      'bmag',
+      'support',
+    ];
+
+    final future = controller.setDestinationOrderIds(order);
+
+    expect(
+      container
+          .read(navigationPreferencesProvider)
+          .preferences
+          .destinationOrderIds,
+      order,
+    );
+    expect(container.read(navigationPreferencesProvider).isSaving, isTrue);
+
+    await future;
+
+    expect(storage.writeCount, 1);
+    expect(storage.savedPreferences?.destinationOrderIds, order);
+    expect(
+      storage.savedPreferences?.enabledDestinationIds,
+      NavigationPreferences.defaults.enabledDestinationIds,
+    );
+    expect(container.read(navigationPreferencesProvider).isSaving, isFalse);
+  });
+
   test('rolls the visible choice back after a failed save', () async {
     final storage = _NavigationStorage(failWrites: true);
     final container = createContainer(storage);
@@ -100,6 +136,29 @@ void main() {
     await container
         .read(navigationPreferencesProvider.notifier)
         .setDisplayMode(NavigationDisplayMode.floating);
+
+    final state = container.read(navigationPreferencesProvider);
+    expect(state.preferences, NavigationPreferences.defaults);
+    expect(state.confirmedPreferences, NavigationPreferences.defaults);
+    expect(state.errorMessage, isNotNull);
+  });
+
+  test('rolls destination order back after a failed save', () async {
+    final storage = _NavigationStorage(failWrites: true);
+    final container = createContainer(storage);
+    const nextOrder = [
+      'home',
+      'orders',
+      'market',
+      'settings',
+      'risk',
+      'bmag',
+      'support',
+    ];
+
+    await container
+        .read(navigationPreferencesProvider.notifier)
+        .setDestinationOrderIds(nextOrder);
 
     final state = container.read(navigationPreferencesProvider);
     expect(state.preferences, NavigationPreferences.defaults);
