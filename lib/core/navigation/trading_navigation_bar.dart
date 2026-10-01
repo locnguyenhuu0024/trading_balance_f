@@ -102,12 +102,16 @@ class _TradingNavigationBarState extends State<TradingNavigationBar>
             builder: (context, constraints) {
               const barTop = TradingNavigationBar.crestHeight;
               final buttonScale = _normalizeScale(widget.buttonScale);
-              final targetSize = math.max(48.0, 52.0 * buttonScale).toDouble();
-              final contentWidth = math.max(
-                constraints.maxWidth,
-                targetSize * widget.destinations.length,
-              );
+              final contentWidth = math
+                  .max(constraints.maxWidth, 48.0 * widget.destinations.length)
+                  .toDouble();
               final cellWidth = contentWidth / widget.destinations.length;
+              final targetSize = math
+                  .min(math.max(48.0, 52.0 * buttonScale).toDouble(), cellWidth)
+                  .toDouble();
+              final effectiveScale = math
+                  .min(buttonScale, targetSize / 52.0)
+                  .toDouble();
               final buttonOpacity = _normalizeOpacity(widget.buttonOpacity);
 
               final content = SizedBox(
@@ -130,7 +134,7 @@ class _TradingNavigationBarState extends State<TradingNavigationBar>
                                 selectedIndex: widget.selectedIndex,
                                 previousIndex: _previousIndex,
                                 destinationCount: widget.destinations.length,
-                                buttonScale: buttonScale,
+                                buttonScale: effectiveScale,
                                 progress: Curves.easeOutCubic.transform(
                                   disableAnimations
                                       ? 1
@@ -151,7 +155,7 @@ class _TradingNavigationBarState extends State<TradingNavigationBar>
                         clipper: _NavigationBarSurfaceClipper(
                           selectedIndex: widget.selectedIndex,
                           destinationCount: widget.destinations.length,
-                          buttonScale: buttonScale,
+                          buttonScale: effectiveScale,
                         ),
                         child: Material(
                           key: const Key('navigation-bar-surface'),
@@ -173,6 +177,7 @@ class _TradingNavigationBarState extends State<TradingNavigationBar>
                         isSelected: index == widget.selectedIndex,
                         cellLeft: cellWidth * index,
                         cellWidth: cellWidth,
+                        targetSize: targetSize,
                         surfaceColor: surfaceColor,
                         contentColor: contentColor,
                         buttonScale: buttonScale,
@@ -226,6 +231,7 @@ class _DestinationControl extends StatelessWidget {
     required this.isSelected,
     required this.cellLeft,
     required this.cellWidth,
+    required this.targetSize,
     required this.surfaceColor,
     required this.contentColor,
     required this.buttonScale,
@@ -234,7 +240,6 @@ class _DestinationControl extends StatelessWidget {
     required this.onTap,
   });
 
-  static const _targetSize = 52.0;
   static const _indicatorSize = 46.0;
 
   final int index;
@@ -242,6 +247,7 @@ class _DestinationControl extends StatelessWidget {
   final bool isSelected;
   final double cellLeft;
   final double cellWidth;
+  final double targetSize;
   final Color surfaceColor;
   final Color contentColor;
   final double buttonScale;
@@ -251,8 +257,10 @@ class _DestinationControl extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final targetSize = math.max(48.0, _targetSize * buttonScale).toDouble();
-    final indicatorSize = _indicatorSize * buttonScale;
+    final indicatorSize = math.min(
+      _indicatorSize * buttonScale,
+      targetSize - 2,
+    );
     final centeredLeft = cellLeft + (cellWidth - targetSize) / 2;
     final unselectedTop =
         TradingNavigationBar.crestHeight +

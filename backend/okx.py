@@ -93,8 +93,9 @@ class OKXClient:
         path: str,
         *,
         params: dict[str, str] | None = None,
-        body: dict[str, Any] | None = None,
+        body: dict[str, Any] | list[dict[str, Any]] | None = None,
         private: bool | None = None,
+        allow_nonzero_codes: frozenset[str] = frozenset(),
     ) -> dict[str, Any]:
         query = ""
         if params:
@@ -118,7 +119,8 @@ class OKXClient:
             raise OKXTransportError("exchange transport failed") from None
         if not isinstance(response, dict):
             raise OKXTransportError("exchange returned an unexpected response")
-        if str(response.get("code", "")) != "0":
+        code = str(response.get("code", ""))
+        if code != "0" and code not in allow_nonzero_codes:
             raise OKXError("exchange rejected the request")
         data = response.get("data")
         if data is not None and not isinstance(data, list):
@@ -144,6 +146,43 @@ class OKXClient:
         )
         return [item for item in response.get("data", []) if isinstance(item, dict)]
 
+    def ticker(self, instrument_id: str) -> dict[str, Any]:
+        response = self.request(
+            "GET", "/api/v5/market/ticker", params={"instId": instrument_id}, private=False
+        )
+        data = response.get("data", [])
+        if not data or not isinstance(data[0], dict):
+            raise OKXTransportError("exchange ticker is unavailable")
+        return data[0]
+
+    def pending_orders(self, instrument_id: str) -> list[dict[str, Any]]:
+        response = self.request(
+            "GET", "/api/v5/trade/orders-pending", params={"instType": "SWAP", "instId": instrument_id}
+        )
+        return [item for item in response.get("data", []) if isinstance(item, dict)]
+
+    def account_balance(self) -> list[dict[str, Any]]:
+        response = self.request("GET", "/api/v5/account/balance", params={"ccy": "USDT"})
+        return [item for item in response.get("data", []) if isinstance(item, dict)]
+
+    def trade_fee(self, instrument_family: str) -> dict[str, Any]:
+        response = self.request(
+            "GET", "/api/v5/account/trade-fee",
+            params={"instType": "SWAP", "instFamily": instrument_family},
+        )
+        data = response.get("data", [])
+        if not data or not isinstance(data[0], dict):
+            raise OKXTransportError("exchange fee metadata is unavailable")
+        return data[0]
+
+    def position_tiers(self, instrument_family: str) -> list[dict[str, Any]]:
+        response = self.request(
+            "GET", "/api/v5/public/position-tiers",
+            params={"instType": "SWAP", "tdMode": "isolated", "instFamily": instrument_family},
+            private=False,
+        )
+        return [item for item in response.get("data", []) if isinstance(item, dict)]
+
     def order_details(self, instrument_id: str, client_order_id: str) -> dict[str, Any] | None:
         response = self.request(
             "GET",
@@ -160,6 +199,18 @@ class OKXClient:
 
     def place_order(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self.request("POST", "/api/v5/trade/order", body=payload)
+
+    def set_leverage(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self.request("POST", "/api/v5/account/set-leverage", body=payload)
+
+    def place_batch_orders(self, payload: list[dict[str, Any]]) -> dict[str, Any]:
+        # Batch placement reports per-order outcomes even when the top-level
+        # response marks the batch partial. Preserve those rows for the strategy
+        # result parser instead of converting them into a blanket rejection.
+        return self.request(
+            "POST", "/api/v5/trade/batch-orders", body=payload,
+            allow_nonzero_codes=frozenset({"1", "2"}),
+        )
 
     def close_position(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self.request("POST", "/api/v5/trade/close-position", body=payload)

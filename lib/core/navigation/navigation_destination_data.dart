@@ -27,6 +27,7 @@ const navigationMarketId = 'market';
 const navigationSettingsId = 'settings';
 const navigationRiskId = 'risk';
 const navigationSupportId = 'support';
+const navigationStrategyId = 'strategy';
 
 /// Canonical preference ordering for the stable navigation identities.
 const navigationDestinationIds = <String>[
@@ -37,6 +38,7 @@ const navigationDestinationIds = <String>[
   navigationSettingsId,
   navigationRiskId,
   navigationSupportId,
+  navigationStrategyId,
 ];
 
 const navigationItems = <NavigationItemData>[
@@ -88,5 +90,12 @@ const navigationItems = <NavigationItemData>[
     label: 'Hỗ trợ',
     icon: Icons.stacked_line_chart_outlined,
     selectedIcon: Icons.stacked_line_chart,
+  ),
+  NavigationItemData(
+    id: navigationStrategyId,
+    screenIndex: 7,
+    label: 'Chiến Thuật',
+    icon: Icons.account_tree_outlined,
+    selectedIcon: Icons.account_tree,
   ),
 ];

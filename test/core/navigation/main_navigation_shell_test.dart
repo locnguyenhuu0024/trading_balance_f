@@ -97,9 +97,10 @@ void main() {
     expect(find.text('Lệnh'), findsNothing);
     expect(find.text('Thị trường'), findsNothing);
     expect(find.text('Cài đặt'), findsNothing);
-    expect(TradingNavigationBar.items, hasLength(7));
+    expect(TradingNavigationBar.items, hasLength(8));
     expect(find.byKey(const Key('navigation-destination-5')), findsOneWidget);
     expect(find.byKey(const Key('navigation-destination-6')), findsOneWidget);
+    expect(find.byTooltip('Chiến Thuật'), findsOneWidget);
     for (var index = 0; index < TradingNavigationBar.items.length; index++) {
       expect(find.byKey(Key('navigation-destination-$index')), findsOneWidget);
     }
@@ -128,10 +129,19 @@ void main() {
     expect(find.text('Hỗ trợ và kháng cự'), findsOneWidget);
     expect(find.text('Chọn coin để bắt đầu'), findsOneWidget);
 
+    await tester.tap(find.byKey(const Key('navigation-destination-7')));
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(
+      find.text(
+        'Đăng nhập phiên giao dịch hiện tại để xem chiến thuật đã lưu hoặc tạo chiến thuật mới.',
+      ),
+      findsOneWidget,
+    );
+
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('seventh destination stays reachable at narrow widths', (
+  testWidgets('eighth destination stays reachable at narrow widths', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(320, 800);
@@ -165,8 +175,8 @@ void main() {
           ? const Key('navigation-bar-horizontal-scroll')
           : const Key('floating-navigation-horizontal-scroll');
       final destinationKey = isFixed
-          ? const Key('navigation-destination-6')
-          : const Key('floating-navigation-destination-6');
+          ? const Key('navigation-destination-7')
+          : const Key('floating-navigation-destination-7');
 
       expect(find.byKey(scrollKey), findsOneWidget);
       await tester.drag(find.byKey(scrollKey), const Offset(-1000, 0));
@@ -177,7 +187,7 @@ void main() {
       );
       await tester.tap(find.byKey(destinationKey));
       await tester.pumpAndSettle();
-      expect(find.text('Destination 6'), findsOneWidget);
+      expect(find.text('Destination 7'), findsOneWidget);
 
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();

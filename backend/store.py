@@ -43,6 +43,35 @@ CREATE TABLE IF NOT EXISTS operations (
     updated_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS operations_status_expiry ON operations(status, expires_at);
+CREATE TABLE IF NOT EXISTS strategies (
+    strategy_id TEXT PRIMARY KEY,
+    account_fingerprint TEXT NOT NULL,
+    status TEXT NOT NULL,
+    contract_json TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    orders_json TEXT NOT NULL,
+    results_json TEXT NOT NULL,
+    preview_hash TEXT NOT NULL,
+    confirmation_hash TEXT,
+    prepared_expires_at REAL,
+    prepared_json TEXT,
+    attempt_started INTEGER NOT NULL DEFAULT 0,
+    batch_attempted INTEGER NOT NULL DEFAULT 0,
+    execution_id TEXT,
+    execution_lease_until REAL,
+    failure_reason TEXT,
+    leverage_results_json TEXT NOT NULL DEFAULT '[]',
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS strategies_account_updated ON strategies(account_fingerprint, updated_at);
+CREATE TABLE IF NOT EXISTS strategy_reservations (
+    account_fingerprint TEXT NOT NULL,
+    instrument_id TEXT NOT NULL,
+    strategy_id TEXT NOT NULL UNIQUE,
+    created_at REAL NOT NULL,
+    PRIMARY KEY (account_fingerprint, instrument_id)
+);
 """
 
 
@@ -74,6 +103,13 @@ class SQLiteStore:
                 connection.execute("PRAGMA journal_mode=DELETE")
                 connection.execute("PRAGMA synchronous=FULL")
                 connection.executescript(_SCHEMA)
+                strategy_columns = {
+                    row[1] for row in connection.execute("PRAGMA table_info(strategies)").fetchall()
+                }
+                if "execution_id" not in strategy_columns:
+                    connection.execute("ALTER TABLE strategies ADD COLUMN execution_id TEXT")
+                if "execution_lease_until" not in strategy_columns:
+                    connection.execute("ALTER TABLE strategies ADD COLUMN execution_lease_until REAL")
             finally:
                 connection.close()
             self._initialized = True
