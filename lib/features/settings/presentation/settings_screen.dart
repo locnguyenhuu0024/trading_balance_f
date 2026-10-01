@@ -16,6 +16,7 @@ import '../../../core/timezone/app_time_zone.dart';
 import '../../../core/typography/app_text_scale.dart';
 import '../../fractal_tracker/presentation/providers/fractal_provider.dart';
 import '../../portfolio/presentation/portfolio_screen.dart';
+import 'settings_trade_access_page.dart';
 
 // --- Các Provider quản lý cấu hình toàn cục ---
 final themeModeProvider = StateProvider<ThemeMode>((ref) => ThemeMode.system);
@@ -49,12 +50,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   static const _timeZoneDescription =
       'Áp dụng cho toàn bộ mốc thời gian trong ứng dụng.';
 
-  final _formKey = GlobalKey<FormState>();
-  final _apiKeyController = TextEditingController();
-  final _secretKeyController = TextEditingController();
-  final _passphraseController = TextEditingController();
-
-  bool _isLoading = false;
   bool _isSavingTimeZone = false;
   bool _isSavingAppTextScale = false;
   bool _hasUserChangedAppTextScale = false;
@@ -62,16 +57,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   @override
   void initState() {
     super.initState();
-    _loadSavedKeys();
+    _loadSavedPreferences();
   }
 
-  Future<void> _loadSavedKeys() async {
+  Future<void> _loadSavedPreferences() async {
     final storage = ref.read(secureStorageProvider);
-    final apiKey = await storage.getOkxApiKey();
-    final secretKey = await storage.getOkxSecretKey();
-    final passphrase = await storage.getOkxPassphrase();
-
-    // Tải cấu hình
     final hideBalance = await storage.getHideBalanceDefault();
     final bioAuth = await storage.getBiometricAuth();
     final themeModeStr = await storage.getThemeMode();
@@ -84,16 +74,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       // Keep the current/root scale when the optional setting cannot be read.
     }
 
-    // Kiểm tra xem Background Service có đang chạy không
-    final isServiceRunning = await FlutterBackgroundService().isRunning();
+    var isServiceRunning = false;
+    try {
+      isServiceRunning = await FlutterBackgroundService().isRunning();
+    } catch (_) {
+      // Keep the service toggle off when the platform service is unavailable.
+    }
 
     if (mounted) {
-      setState(() {
-        _apiKeyController.text = apiKey ?? '';
-        _secretKeyController.text = secretKey ?? '';
-        _passphraseController.text = passphrase ?? '';
-      });
-
       // Khôi phục trạng thái lên UI
       ref.read(defaultHideBalanceProvider.notifier).state = hideBalance;
       ref.read(biometricAuthProvider.notifier).state = bioAuth;
@@ -120,28 +108,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       themeMode: ref.read(themeModeProvider).name,
       currency: ref.read(currencyProvider),
     );
-  }
-
-  Future<void> _saveKeys() async {
-    if (!_formKey.currentState!.validate()) return;
-
-    setState(() => _isLoading = true);
-    final storage = ref.read(secureStorageProvider);
-    await storage.saveOkxCredentials(
-      apiKey: _apiKeyController.text.trim(),
-      secretKey: _secretKeyController.text.trim(),
-      passphrase: _passphraseController.text.trim(),
-    );
-
-    if (mounted) {
-      setState(() => _isLoading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Đã lưu cấu hình API thành công!'),
-          backgroundColor: Colors.green,
-        ),
-      );
-    }
   }
 
   Future<void> _saveTimeZone(String timeZoneId) async {
@@ -230,14 +196,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       context: context,
       builder: (_) => const _NavigationAppearanceDialog(),
     );
-  }
-
-  @override
-  void dispose() {
-    _apiKeyController.dispose();
-    _secretKeyController.dispose();
-    _passphraseController.dispose();
-    super.dispose();
   }
 
   @override
@@ -753,18 +711,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
               const SizedBox(height: 24),
 
-              // ================= SECTION 3: API KEY =================
-              Padding(
-                padding: const EdgeInsets.only(left: 8, bottom: 8),
-                child: Text(
-                  'CẤU HÌNH API (CHỈ ĐỌC)',
-                  style: TextStyle(
-                    color: sectionTitleColor,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
               Card(
                 elevation: 0,
                 color: cardColor,
@@ -774,155 +720,31 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     color: isDark ? Colors.grey.shade800 : Colors.grey.shade200,
                   ),
                 ),
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Form(
-                    key: _formKey,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Text(
-                          'Thông tin API được mã hoá cục bộ trên thiết bị của bạn, không gửi qua bất kỳ máy chủ trung gian nào.',
-                          style: TextStyle(
-                            color: isDark
-                                ? Colors.grey.shade500
-                                : Colors.grey.shade600,
-                            fontSize: 11,
-                          ),
-                        ),
-                        const SizedBox(height: 24),
-                        TextFormField(
-                          controller: _apiKeyController,
-                          style: TextStyle(color: textColor, fontSize: 13),
-                          decoration: InputDecoration(
-                            labelText: 'API Key',
-                            labelStyle: TextStyle(
-                              color: isDark
-                                  ? Colors.grey.shade400
-                                  : Colors.grey.shade700,
-                              fontSize: 13,
-                            ),
-                            border: const OutlineInputBorder(),
-                            enabledBorder: OutlineInputBorder(
-                              borderSide: BorderSide(
-                                color: isDark
-                                    ? Colors.grey.shade700
-                                    : Colors.grey.shade300,
-                              ),
-                            ),
-                            prefixIcon: Icon(
-                              Icons.key,
-                              color: isDark
-                                  ? Colors.grey.shade400
-                                  : Colors.grey.shade600,
-                              size: 20,
-                            ),
-                          ),
-                          validator: (value) => value == null || value.isEmpty
-                              ? 'Không được để trống'
-                              : null,
-                        ),
-                        const SizedBox(height: 16),
-                        TextFormField(
-                          controller: _secretKeyController,
-                          style: TextStyle(color: textColor, fontSize: 13),
-                          decoration: InputDecoration(
-                            labelText: 'Secret Key',
-                            labelStyle: TextStyle(
-                              color: isDark
-                                  ? Colors.grey.shade400
-                                  : Colors.grey.shade700,
-                              fontSize: 13,
-                            ),
-                            border: const OutlineInputBorder(),
-                            enabledBorder: OutlineInputBorder(
-                              borderSide: BorderSide(
-                                color: isDark
-                                    ? Colors.grey.shade700
-                                    : Colors.grey.shade300,
-                              ),
-                            ),
-                            prefixIcon: Icon(
-                              Icons.security,
-                              color: isDark
-                                  ? Colors.grey.shade400
-                                  : Colors.grey.shade600,
-                              size: 20,
-                            ),
-                          ),
-                          obscureText: true,
-                          validator: (value) => value == null || value.isEmpty
-                              ? 'Không được để trống'
-                              : null,
-                        ),
-                        const SizedBox(height: 16),
-                        TextFormField(
-                          controller: _passphraseController,
-                          style: TextStyle(color: textColor, fontSize: 13),
-                          decoration: InputDecoration(
-                            labelText: 'Passphrase',
-                            labelStyle: TextStyle(
-                              color: isDark
-                                  ? Colors.grey.shade400
-                                  : Colors.grey.shade700,
-                              fontSize: 13,
-                            ),
-                            border: const OutlineInputBorder(),
-                            enabledBorder: OutlineInputBorder(
-                              borderSide: BorderSide(
-                                color: isDark
-                                    ? Colors.grey.shade700
-                                    : Colors.grey.shade300,
-                              ),
-                            ),
-                            prefixIcon: Icon(
-                              Icons.lock,
-                              color: isDark
-                                  ? Colors.grey.shade400
-                                  : Colors.grey.shade600,
-                              size: 20,
-                            ),
-                          ),
-                          obscureText: true,
-                          validator: (value) => value == null || value.isEmpty
-                              ? 'Không được để trống'
-                              : null,
-                        ),
-                        const SizedBox(height: 24),
-                        ElevatedButton(
-                          onPressed: _isLoading ? null : _saveKeys,
-                          style: ElevatedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            backgroundColor: isDark
-                                ? Colors.white
-                                : Colors.black,
-                            foregroundColor: isDark
-                                ? Colors.black
-                                : Colors.white,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                          ),
-                          child: _isLoading
-                              ? const SizedBox(
-                                  height: 20,
-                                  width: 20,
-                                  child: CircularProgressIndicator(
-                                    color: Colors.white,
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Text(
-                                  'Lưu cấu hình',
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                        ),
-                      ],
+                child: ListTile(
+                  key: const Key('settings-trade-access-button'),
+                  leading: Icon(Icons.key_rounded, color: textColor),
+                  title: Text(
+                    'API và giao dịch',
+                    style: TextStyle(
+                      color: textColor,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
+                  subtitle: Text(
+                    'Cấu hình khóa OKX và quản lý phiên giao dịch',
+                    style: TextStyle(color: sectionTitleColor, fontSize: 12),
+                  ),
+                  trailing: Icon(
+                    Icons.chevron_right_rounded,
+                    color: sectionTitleColor,
+                  ),
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const SettingsTradeAccessPage(),
+                      ),
+                    );
+                  },
                 ),
               ),
             ],

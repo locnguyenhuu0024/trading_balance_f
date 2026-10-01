@@ -20,10 +20,25 @@ class _SettingsStorage extends SecureStorageHelper {
   NavigationPreferences? savedNavigationPreferences;
   double? savedAppTextScale;
 
-  // Keeping the initial legacy read pending isolates this test from platform
-  // background-service calls while leaving the seeded navigation state intact.
+  // Keep the initial legacy read pending so opening the access page does not
+  // depend on a platform secure-storage implementation in this widget test.
   @override
   Future<String?> getOkxApiKey() => Completer<String?>().future;
+
+  @override
+  Future<bool> getHideBalanceDefault() async => false;
+
+  @override
+  Future<bool> getBiometricAuth() async => true;
+
+  @override
+  Future<String> getThemeMode() async => 'system';
+
+  @override
+  Future<String> getCurrency() async => 'USD';
+
+  @override
+  Future<String> getTimeZoneId() async => 'Asia/Ho_Chi_Minh';
 
   @override
   Future<void> saveNavigationPreferences(
@@ -66,6 +81,30 @@ void main() {
       find.byKey(const Key('settings-navigation-visibility')),
       findsOneWidget,
     );
+  });
+
+  testWidgets('opens the API and trade access subpage from Settings', (
+    tester,
+  ) async {
+    await tester.pumpWidget(settingsApp(_SettingsStorage()));
+    await tester.pump();
+
+    expect(
+      find.byKey(const Key('settings-trade-access-button')),
+      findsOneWidget,
+    );
+    expect(find.text('API Key'), findsNothing);
+    final accessEntry = find.byKey(const Key('settings-trade-access-button'));
+    await tester.ensureVisible(accessEntry);
+    await tester.pumpAndSettle();
+    await tester.tap(accessEntry);
+    await tester.pumpAndSettle();
+
+    expect(find.text('API Key'), findsOneWidget);
+    expect(find.text('Secret Key'), findsOneWidget);
+    expect(find.text('Passphrase'), findsOneWidget);
+    expect(find.text('Giao dịch riêng tư'), findsOneWidget);
+    expect(find.byKey(const Key('settings-trade-access-button')), findsNothing);
   });
 
   testWidgets(

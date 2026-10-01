@@ -1,13 +1,20 @@
 import 'package:dio/dio.dart';
 
 import 'okx_position_model.dart';
+import 'trade_api_browser_adapter_stub.dart'
+    if (dart.library.html) 'trade_api_browser_adapter.dart'
+    as browser;
 
 const tradeApiBaseUrl = String.fromEnvironment('TRADE_API_BASE_URL');
 
 abstract class TradeApi {
   bool get isConfigured;
 
+  bool get supportsSessionRestoration;
+
   Future<TradeSession> login({required String password, required String totp});
+
+  Future<TradeSession> restoreSession();
 
   Future<void> logout(String bearerToken);
 
@@ -45,6 +52,10 @@ class TradeApiClient implements TradeApi {
   @override
   bool get isConfigured => _validatedBaseUrl != null;
 
+  @override
+  bool get supportsSessionRestoration =>
+      browser.supportsTradeSessionRestoration;
+
   String? get _validatedBaseUrl {
     if (_baseUrl.isEmpty) return null;
     try {
@@ -68,15 +79,20 @@ class TradeApiClient implements TradeApi {
   }
 
   Dio get _client {
-    final client = _dio ??= Dio(
-      BaseOptions(
-        baseUrl: _validatedBaseUrl!,
-        connectTimeout: const Duration(seconds: 10),
-        receiveTimeout: const Duration(seconds: 20),
-        sendTimeout: const Duration(seconds: 10),
-        headers: const {'Content-Type': 'application/json'},
-      ),
-    );
+    if (_dio == null) {
+      final client = Dio(
+        BaseOptions(
+          baseUrl: _validatedBaseUrl!,
+          connectTimeout: const Duration(seconds: 10),
+          receiveTimeout: const Duration(seconds: 20),
+          sendTimeout: const Duration(seconds: 10),
+          headers: const {'Content-Type': 'application/json'},
+        ),
+      );
+      browser.configureTradeApiBrowserClient(client);
+      _dio = client;
+    }
+    final client = _dio!;
     // A caller-supplied Dio is useful for adapters/interceptors, but it must
     // never override the validated endpoint with an insecure base URL.
     client.options.baseUrl = _validatedBaseUrl!;
@@ -93,12 +109,26 @@ class TradeApiClient implements TradeApi {
       'v1/login',
       body: {'password': password, 'totp': totp},
     );
+    return _parseSession(data, responseDescription: 'login');
+  }
+
+  @override
+  Future<TradeSession> restoreSession() async {
+    final data = await _request('GET', 'v1/session');
+    return _parseSession(data, responseDescription: 'session');
+  }
+
+  TradeSession _parseSession(
+    Map<String, dynamic> data, {
+    required String responseDescription,
+  }) {
     final token = _string(data['token']);
     final expiresAt = DateTime.tryParse(_string(data['expiresAt']));
     if (token.isEmpty || expiresAt == null) {
-      throw const TradeApiException(
+      throw TradeApiException(
         code: 'invalid_response',
-        message: 'The trade API returned an incomplete login response.',
+        message:
+            'The trade API returned an incomplete $responseDescription response.',
       );
     }
     return TradeSession(

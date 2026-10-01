@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/trade_api_client.dart';
@@ -6,7 +8,9 @@ final tradeApiProvider = Provider<TradeApi>((ref) => TradeApiClient());
 
 final tradeSessionProvider =
     StateNotifierProvider<TradeSessionController, TradeSessionState>((ref) {
-      return TradeSessionController(ref.watch(tradeApiProvider));
+      final controller = TradeSessionController(ref.watch(tradeApiProvider));
+      unawaited(controller.restore());
+      return controller;
     });
 
 final tradePositionsProvider =
@@ -53,7 +57,7 @@ class TradeSessionState {
   final List<PendingTradeOperation> pendingOperations;
   final String? operationAccountIdentifier;
 
-  bool get isAuthenticated => session?.isActive ?? false;
+  bool get isAuthenticated => !isLoading && (session?.isActive ?? false);
 }
 
 class PendingTradeOperation {
@@ -108,14 +112,19 @@ class TradeSessionController extends StateNotifier<TradeSessionState> {
   TradeSessionController(this._api) : super(const TradeSessionState());
 
   final TradeApi _api;
+  int _sessionOperationGeneration = 0;
+  int? _restoringGeneration;
+  TradeSession? _logoutInFlightSession;
 
-  Future<bool> login({required String password, required String totp}) async {
-    if (!_api.isConfigured) {
-      state = const TradeSessionState(
-        errorMessage: 'TRADE_API_BASE_URL is not configured.',
-      );
+  Future<bool> restore() async {
+    if (!_api.isConfigured ||
+        !_api.supportsSessionRestoration ||
+        _restoringGeneration != null) {
       return false;
     }
+
+    final generation = ++_sessionOperationGeneration;
+    _restoringGeneration = generation;
     final pendingOperations = state.pendingOperations;
     final operationAccountIdentifier = state.operationAccountIdentifier;
     state = TradeSessionState(
@@ -124,7 +133,17 @@ class TradeSessionController extends StateNotifier<TradeSessionState> {
       operationAccountIdentifier: operationAccountIdentifier,
     );
     try {
-      final session = await _api.login(password: password, totp: totp);
+      final session = await _api.restoreSession();
+      if (!mounted || generation != _sessionOperationGeneration) return false;
+      if (!session.isActive) {
+        state = TradeSessionState(
+          errorMessage:
+              'The trade API session expired. Sign in again to enable actions.',
+          pendingOperations: pendingOperations,
+          operationAccountIdentifier: operationAccountIdentifier,
+        );
+        return false;
+      }
       final sameAccount =
           operationAccountIdentifier == null ||
           operationAccountIdentifier == session.accountIdentifier;
@@ -135,6 +154,56 @@ class TradeSessionController extends StateNotifier<TradeSessionState> {
       );
       return true;
     } on TradeApiException catch (error) {
+      if (!mounted || generation != _sessionOperationGeneration) return false;
+      state = TradeSessionState(
+        errorMessage: error.isUnauthorized ? null : error.message,
+        pendingOperations: pendingOperations,
+        operationAccountIdentifier: operationAccountIdentifier,
+      );
+      return false;
+    } catch (_) {
+      if (!mounted || generation != _sessionOperationGeneration) return false;
+      state = TradeSessionState(
+        errorMessage: 'The trade API session could not be restored.',
+        pendingOperations: pendingOperations,
+        operationAccountIdentifier: operationAccountIdentifier,
+      );
+      return false;
+    } finally {
+      if (_restoringGeneration == generation) _restoringGeneration = null;
+    }
+  }
+
+  Future<bool> login({required String password, required String totp}) async {
+    if (!_api.isConfigured) {
+      state = const TradeSessionState(
+        errorMessage: 'TRADE_API_BASE_URL is not configured.',
+      );
+      return false;
+    }
+    final generation = ++_sessionOperationGeneration;
+    _restoringGeneration = null;
+    final pendingOperations = state.pendingOperations;
+    final operationAccountIdentifier = state.operationAccountIdentifier;
+    state = TradeSessionState(
+      isLoading: true,
+      pendingOperations: pendingOperations,
+      operationAccountIdentifier: operationAccountIdentifier,
+    );
+    try {
+      final session = await _api.login(password: password, totp: totp);
+      if (!mounted || generation != _sessionOperationGeneration) return false;
+      final sameAccount =
+          operationAccountIdentifier == null ||
+          operationAccountIdentifier == session.accountIdentifier;
+      state = TradeSessionState(
+        session: session,
+        pendingOperations: sameAccount ? pendingOperations : const [],
+        operationAccountIdentifier: session.accountIdentifier,
+      );
+      return true;
+    } on TradeApiException catch (error) {
+      if (!mounted || generation != _sessionOperationGeneration) return false;
       state = TradeSessionState(
         errorMessage: error.message,
         pendingOperations: pendingOperations,
@@ -142,6 +211,7 @@ class TradeSessionController extends StateNotifier<TradeSessionState> {
       );
       return false;
     } catch (_) {
+      if (!mounted || generation != _sessionOperationGeneration) return false;
       state = TradeSessionState(
         errorMessage: 'The trade API login could not be completed.',
         pendingOperations: pendingOperations,
@@ -151,19 +221,63 @@ class TradeSessionController extends StateNotifier<TradeSessionState> {
     }
   }
 
-  Future<void> logout() async {
+  Future<bool> logout() async {
+    if (_logoutInFlightSession != null) return false;
+    final generation = ++_sessionOperationGeneration;
+    _restoringGeneration = null;
     final session = state.session;
-    state = const TradeSessionState();
-    if (session == null) return;
+    final pendingOperations = state.pendingOperations;
+    final operationAccountIdentifier = state.operationAccountIdentifier;
+    if (session == null) {
+      state = TradeSessionState(
+        pendingOperations: pendingOperations,
+        operationAccountIdentifier: operationAccountIdentifier,
+      );
+      return true;
+    }
+    _logoutInFlightSession = session;
+    state = TradeSessionState(
+      isLoading: true,
+      pendingOperations: pendingOperations,
+      operationAccountIdentifier: operationAccountIdentifier,
+    );
     try {
       await _api.logout(session.bearerToken);
+      if (!mounted || generation != _sessionOperationGeneration) return false;
+      state = TradeSessionState(
+        pendingOperations: pendingOperations,
+        operationAccountIdentifier: operationAccountIdentifier,
+      );
+      return true;
+    } on TradeApiException catch (error) {
+      if (!mounted || generation != _sessionOperationGeneration) return false;
+      state = TradeSessionState(
+        session: session,
+        errorMessage: 'Could not end the trade session: ${error.message}',
+        pendingOperations: pendingOperations,
+        operationAccountIdentifier: operationAccountIdentifier,
+      );
+      return false;
     } catch (_) {
-      // The bearer is discarded from Flutter memory even if revocation cannot
-      // be confirmed; it expires on the server after ten minutes.
+      if (!mounted || generation != _sessionOperationGeneration) return false;
+      state = TradeSessionState(
+        session: session,
+        errorMessage:
+            'Could not confirm logout. Check the connection and retry.',
+        pendingOperations: pendingOperations,
+        operationAccountIdentifier: operationAccountIdentifier,
+      );
+      return false;
+    } finally {
+      if (identical(_logoutInFlightSession, session)) {
+        _logoutInFlightSession = null;
+      }
     }
   }
 
   void expire() {
+    _sessionOperationGeneration++;
+    _restoringGeneration = null;
     state = TradeSessionState(
       errorMessage: 'Phiên giao dịch đã hết hạn. Hãy đăng nhập lại.',
       pendingOperations: state.pendingOperations,

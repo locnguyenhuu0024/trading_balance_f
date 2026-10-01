@@ -52,21 +52,11 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
                     style: TextStyle(fontWeight: FontWeight.w700),
                   ),
                 ),
-                if (isAuthenticated)
-                  TextButton(
-                    onPressed: _busy ? null : _logout,
-                    child: const Text('Đăng xuất'),
-                  )
-                else if (api.isConfigured)
-                  FilledButton.tonal(
-                    onPressed: _busy || sessionState.isLoading ? null : _login,
-                    child: const Text('Đăng nhập'),
-                  ),
               ],
             ),
             if (!api.isConfigured)
               const Text(
-                'Chỉ xem vị thế. Hãy cấu hình TRADE_API_BASE_URL khi build để đăng nhập và bật thao tác.',
+                'Chỉ xem vị thế. Hãy cấu hình API khi build rồi đăng nhập trong Cài đặt để bật thao tác.',
                 style: TextStyle(fontSize: 11),
               )
             else if (isAuthenticated) ...[
@@ -92,14 +82,14 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
               ),
               if (_busy) const LinearProgressIndicator(minHeight: 2),
             ] else ...[
-              Text(
-                'Vị thế chỉ đọc vẫn được hiển thị; cần mật khẩu và mã TOTP để bật thao tác.',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
               if (sessionState.isLoading) ...[
                 const SizedBox(height: 8),
                 const LinearProgressIndicator(minHeight: 2),
               ],
+              Text(
+                'Vị thế chỉ đọc vẫn được hiển thị. Đăng nhập trong Cài đặt để bật thao tác.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
             ],
             if (sessionState.errorMessage != null && api.isConfigured) ...[
               const SizedBox(height: 4),
@@ -174,36 +164,6 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
         ),
       ),
     );
-  }
-
-  Future<void> _login() async {
-    final credentials = await showDialog<_TradeCredentials>(
-      context: context,
-      builder: (context) => const _TradeLoginDialog(),
-    );
-    if (credentials == null || !mounted) return;
-    setState(() {
-      _busy = true;
-      _statusMessage = null;
-    });
-    final loggedIn = await ref
-        .read(tradeSessionProvider.notifier)
-        .login(password: credentials.password, totp: credentials.totp);
-    if (mounted) {
-      setState(() => _busy = false);
-      if (loggedIn) ref.invalidate(tradePositionsProvider);
-    }
-  }
-
-  Future<void> _logout() async {
-    setState(() {
-      _busy = true;
-      _statusMessage = null;
-    });
-    await ref.read(tradeSessionProvider.notifier).logout();
-    if (!mounted) return;
-    ref.invalidate(tradePositionsProvider);
-    setState(() => _busy = false);
   }
 
   Future<void> _closeAll() async {
@@ -499,6 +459,147 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
         'EXPIRED' => 'Xác nhận đã hết hạn',
         _ => 'Trạng thái $status · $operationId',
       };
+}
+
+class TradeSessionControls extends ConsumerStatefulWidget {
+  const TradeSessionControls({super.key});
+
+  @override
+  ConsumerState<TradeSessionControls> createState() =>
+      _TradeSessionControlsState();
+}
+
+class _TradeSessionControlsState extends ConsumerState<TradeSessionControls> {
+  bool _busy = false;
+  bool _logoutPending = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final api = ref.watch(tradeApiProvider);
+    final sessionState = ref.watch(tradeSessionProvider);
+    final session = sessionState.session;
+    final isAuthenticated = sessionState.isAuthenticated;
+    final hasActiveSession = (session?.isActive ?? false) || _logoutPending;
+
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Giao dịch riêng tư',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+                if (hasActiveSession)
+                  TextButton(
+                    onPressed: _busy || sessionState.isLoading ? null : _logout,
+                    child: const Text('Đăng xuất'),
+                  )
+                else if (api.isConfigured)
+                  FilledButton.tonal(
+                    onPressed: _busy || sessionState.isLoading ? null : _login,
+                    child: const Text('Đăng nhập'),
+                  ),
+              ],
+            ),
+            if (!api.isConfigured)
+              const Text(
+                'Chưa cấu hình API giao dịch. Vị thế vẫn chỉ đọc; thao tác riêng tư đang tắt.',
+                style: TextStyle(fontSize: 12),
+              )
+            else if (session?.isActive ?? false) ...[
+              Text(
+                'Đã đăng nhập: ${session!.accountIdentifier.isNotEmpty ? session.accountIdentifier : '••••'}',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Phiên hết hạn: ${session.expiresAt.toLocal()}',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ] else ...[
+              Text(
+                _logoutPending
+                    ? 'Đang kết thúc phiên giao dịch…'
+                    : sessionState.isLoading
+                    ? 'Đang khôi phục phiên giao dịch…'
+                    : 'Đăng nhập bằng mật khẩu và mã TOTP để bật thao tác.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              if (sessionState.isLoading) ...[
+                const SizedBox(height: 8),
+                const LinearProgressIndicator(minHeight: 2),
+              ],
+            ],
+            if (sessionState.errorMessage != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                sessionState.errorMessage!,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.error,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+            if (api.supportsSessionRestoration &&
+                !isAuthenticated &&
+                !sessionState.isLoading &&
+                sessionState.errorMessage != null) ...[
+              const SizedBox(height: 8),
+              OutlinedButton(
+                onPressed: _busy ? null : _restore,
+                child: const Text('Thử khôi phục phiên'),
+              ),
+            ],
+            if (_busy) const LinearProgressIndicator(minHeight: 2),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _login() async {
+    final credentials = await showDialog<_TradeCredentials>(
+      context: context,
+      builder: (context) => const _TradeLoginDialog(),
+    );
+    if (credentials == null || !mounted) return;
+    setState(() => _busy = true);
+    final loggedIn = await ref
+        .read(tradeSessionProvider.notifier)
+        .login(password: credentials.password, totp: credentials.totp);
+    if (!mounted) return;
+    if (loggedIn) ref.invalidate(tradePositionsProvider);
+    setState(() => _busy = false);
+  }
+
+  Future<void> _logout() async {
+    setState(() {
+      _busy = true;
+      _logoutPending = true;
+    });
+    final loggedOut = await ref.read(tradeSessionProvider.notifier).logout();
+    if (!mounted) return;
+    if (loggedOut) ref.invalidate(tradePositionsProvider);
+    setState(() {
+      _busy = false;
+      _logoutPending = false;
+    });
+  }
+
+  Future<void> _restore() async {
+    setState(() => _busy = true);
+    final restored = await ref.read(tradeSessionProvider.notifier).restore();
+    if (!mounted) return;
+    if (restored) ref.invalidate(tradePositionsProvider);
+    setState(() => _busy = false);
+  }
 }
 
 class _TradeCredentials {
