@@ -1,10 +1,8 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'navigation_preferences.dart';
-import 'navigation_preferences_provider.dart';
+import 'trading_navigation_bar.dart';
 
 /// Marks the subtree rendered by [NavigationPresentationHost].
 ///
@@ -25,35 +23,30 @@ class NavigationPresentationScope extends InheritedWidget {
   bool updateShouldNotify(NavigationPresentationScope oldWidget) => false;
 }
 
-/// Reserves the content space needed by the fixed navigation bar.
-///
-/// Floating navigation is a true overlay, so it never changes the destination
-/// body's constraints or adds a layout lane around its edge.
-class NavigationContentFrame extends ConsumerWidget {
+/// Reserves the content space needed by the primary navigation bar.
+class NavigationContentFrame extends StatelessWidget {
   const NavigationContentFrame({super.key, required this.child});
 
   final Widget child;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     if (!NavigationPresentationScope.isActive(context)) return child;
 
-    final preferences = ref.watch(
-      navigationPreferencesProvider.select((state) => state.preferences),
-    );
     final mediaQuery = MediaQuery.of(context);
     final bottomInset = math.max(
       mediaQuery.viewPadding.bottom,
       mediaQuery.viewInsets.bottom,
     );
 
-    if (preferences.displayMode == NavigationDisplayMode.floating) {
-      return child;
-    }
-
     return Padding(
       key: const Key('navigation-content-frame'),
-      padding: EdgeInsets.only(bottom: 60 + bottomInset),
+      padding: EdgeInsets.only(
+        bottom:
+            TradingNavigationBar.crestHeight +
+            TradingNavigationBar.barHeight +
+            bottomInset,
+      ),
       child: child,
     );
   }

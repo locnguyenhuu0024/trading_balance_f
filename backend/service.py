@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hmac
+from http.cookies import CookieError, SimpleCookie
 import ipaddress
 import json
 import os
@@ -30,7 +31,8 @@ from .store import SQLiteStore, decode_json, encode_json
 
 SUPPORTED_TYPES = ("MARGIN", "SWAP", "FUTURES")
 ACTION_TTL_SECONDS = 120
-SESSION_TTL_SECONDS = 600
+SESSION_TTL_SECONDS = 28_800
+SESSION_COOKIE_NAME = "__Host-trade_session"
 LOGIN_WINDOW_SECONDS = 900
 LOGIN_FAILURE_LIMIT = 5
 BODY_LIMIT_BYTES = 64 * 1024
@@ -184,11 +186,14 @@ class TradeService:
     ) -> tuple[int, dict[str, Any], list[tuple[str, str]]]:
         source = self._source_key(self._source_address(environ))
         if method == "POST" and path == "/v1/login":
-            return 200, self._login(body, source), []
+            payload = self._login(body, source)
+            return 200, payload, [("Set-Cookie", self._session_cookie(payload["token"]))]
+        if method == "GET" and path == "/v1/session":
+            return 200, self._restore_session(environ), []
         if method == "POST" and path == "/v1/logout":
             self._require_session(environ)
             self._logout(environ)
-            return 200, {"status": "logged_out"}, []
+            return 200, {"status": "logged_out"}, [("Set-Cookie", self._cleared_session_cookie())]
         if method == "GET" and path == "/v1/positions":
             self._require_session(environ)
             return 200, self._positions_response(), []
@@ -338,7 +343,12 @@ class TradeService:
         scheme, separator, bearer = authorization.partition(" ")
         if not separator or scheme.lower() != "bearer" or not bearer or len(bearer) > 256:
             raise APIError(401, "authentication_required", "A valid session is required.")
-        digest = token_digest(bearer, self.settings.session_signing_key)
+        return self._validate_session_token(bearer)
+
+    def _validate_session_token(self, token: str) -> str:
+        if not token or len(token) > 256:
+            raise APIError(401, "authentication_required", "A valid session is required.")
+        digest = token_digest(token, self.settings.session_signing_key)
         now = self.clock()
         with self.store.transaction() as connection:
             row = connection.execute(
@@ -349,6 +359,49 @@ class TradeService:
                     connection.execute("DELETE FROM sessions WHERE token_hash=?", (digest,))
                 raise APIError(401, "authentication_required", "A valid session is required.")
         return digest
+
+    def _restore_session(self, environ: dict[str, Any]) -> dict[str, Any]:
+        raw_cookie = environ.get("HTTP_COOKIE", "")
+        if not isinstance(raw_cookie, str) or len(raw_cookie) > 4096:
+            raise APIError(401, "authentication_required", "A valid session is required.")
+        cookies = SimpleCookie()
+        try:
+            cookies.load(raw_cookie)
+        except CookieError:
+            raise APIError(401, "authentication_required", "A valid session is required.") from None
+        morsel = cookies.get(SESSION_COOKIE_NAME)
+        token = "" if morsel is None else morsel.value
+        if not token or len(token) > 256:
+            raise APIError(401, "authentication_required", "A valid session is required.")
+        digest = token_digest(token, self.settings.session_signing_key)
+        now = self.clock()
+        with self.store.connection() as connection:
+            row = connection.execute(
+                "SELECT expires_at FROM sessions WHERE token_hash=?", (digest,)
+            ).fetchone()
+        if row is None or row["expires_at"] <= now:
+            raise APIError(401, "authentication_required", "A valid session is required.")
+        try:
+            account = self.okx.account_config()
+            account_identifier = mask_identifier(account.get("uid"))
+        except OKXError:
+            account_identifier = "••••"
+        return {
+            "token": token,
+            "expiresAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(row["expires_at"])),
+            "accountIdentifier": account_identifier or "••••",
+        }
+
+    @staticmethod
+    def _session_cookie(token: str) -> str:
+        return (
+            f"{SESSION_COOKIE_NAME}={token}; Path=/; Max-Age={SESSION_TTL_SECONDS}; "
+            "Secure; HttpOnly; SameSite=Strict"
+        )
+
+    @staticmethod
+    def _cleared_session_cookie() -> str:
+        return f"{SESSION_COOKIE_NAME}=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Strict"
 
     def _logout(self, environ: dict[str, Any]) -> None:
         authorization = str(environ.get("HTTP_AUTHORIZATION", ""))

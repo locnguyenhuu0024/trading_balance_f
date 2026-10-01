@@ -281,6 +281,7 @@ class TradeApiTests(unittest.TestCase):
         body: dict | None = None,
         *,
         token: str | None = None,
+        cookie: str | None = None,
         origin: str = ORIGIN,
         raw_body: bytes | None = None,
     ) -> tuple[int, dict]:
@@ -292,12 +293,16 @@ class TradeApiTests(unittest.TestCase):
             headers["Content-Type"] = "application/json"
         if token:
             headers["Authorization"] = f"Bearer {token}"
+        if cookie:
+            headers["Cookie"] = f"__Host-trade_session={cookie}"
         request = urllib.request.Request(self.base_url + path, data=data, headers=headers, method=method)
         try:
             with urllib.request.urlopen(request, timeout=3) as response:
+                self.last_response_headers = response.headers
                 raw = response.read()
                 return response.status, json.loads(raw.decode("utf-8")) if raw else {}
         except urllib.error.HTTPError as error:
+            self.last_response_headers = error.headers
             raw = error.read()
             return error.code, json.loads(raw.decode("utf-8")) if raw else {}
 
@@ -357,10 +362,116 @@ class TradeApiTests(unittest.TestCase):
 
     def test_red_expired_session_is_rejected_without_exchange_write(self) -> None:
         token = self.login()
-        self.now += 601
+        self.now += 28_800
         status, _ = self.request("GET", "/v1/positions", token=token)
         self.assertEqual(status, 401)
         self.assertEqual(self.exchange.write_count, 0)
+
+    def test_red_login_cookie_restores_the_fixed_eight_hour_bearer_session(self) -> None:
+        code = _totp_at(TOTP_SECRET, int(self.now // 30))
+        status, login = self.request("POST", "/v1/login", {"password": PASSWORD, "totp": code})
+
+        self.assertEqual(status, 200)
+        set_cookie = self.last_response_headers.get("Set-Cookie")
+        self.assertIsNotNone(set_cookie)
+        cookie_parts = [part.strip() for part in set_cookie.split(";")]
+        self.assertEqual(cookie_parts[0], f"__Host-trade_session={login['token']}")
+        self.assertIn("Secure", cookie_parts)
+        self.assertIn("HttpOnly", cookie_parts)
+        self.assertIn("SameSite=Strict", cookie_parts)
+        self.assertIn("Path=/", cookie_parts)
+        self.assertIn("Max-Age=28800", cookie_parts)
+        self.assertFalse(any(part.lower().startswith("domain=") for part in cookie_parts))
+
+        with sqlite3.connect(self.settings.operation_db_path) as connection:
+            expires_at = connection.execute(
+                "SELECT expires_at FROM sessions WHERE token_hash=?",
+                (token_digest(login["token"], SIGNING_KEY),),
+            ).fetchone()[0]
+        self.assertEqual(expires_at, BASE_TIME + 28_800)
+
+        self.now += 60
+        status, restored = self.request("GET", "/v1/session", cookie=login["token"])
+
+        self.assertEqual(status, 200)
+        self.assertEqual(restored["token"], login["token"])
+        self.assertEqual(restored["expiresAt"], login["expiresAt"])
+        self.assertEqual(restored["accountIdentifier"], login["accountIdentifier"])
+        status, _ = self.request("GET", "/v1/positions", token=login["token"])
+        self.assertEqual(status, 200)
+        with sqlite3.connect(self.settings.operation_db_path) as connection:
+            unchanged_expiry = connection.execute(
+                "SELECT expires_at FROM sessions WHERE token_hash=?",
+                (token_digest(login["token"], SIGNING_KEY),),
+            ).fetchone()[0]
+        self.assertEqual(unchanged_expiry, BASE_TIME + 28_800)
+
+    def test_red_session_and_bearer_are_rejected_at_exact_expiry_without_write(self) -> None:
+        token = self.login()
+        self.now += 28_799
+
+        status, _ = self.request("GET", "/v1/positions", token=token)
+        self.assertEqual(status, 200)
+        self.now += 1
+
+        status, _ = self.request("GET", "/v1/session", cookie=token)
+        self.assertEqual(status, 401)
+        status, _ = self.request(
+            "POST", "/v1/actions/execute",
+            {"operationId": "deadbeef", "confirmationToken": "disposable"}, token=token,
+        )
+        self.assertEqual(status, 401)
+        self.assertEqual(self.exchange.write_count, 0)
+
+    def test_red_cookie_does_not_authorize_trade_writes(self) -> None:
+        token = self.login()
+
+        for method, path, body in (
+            ("GET", "/v1/positions", None),
+            ("POST", "/v1/actions/prepare", {"action": "close_all"}),
+            ("POST", "/v1/actions/execute", {"operationId": "deadbeef", "confirmationToken": "x"}),
+        ):
+            with self.subTest(method=method, path=path):
+                status, _ = self.request(method, path, body, cookie=token)
+                self.assertEqual(status, 401)
+        self.assertEqual(self.exchange.write_count, 0)
+
+    def test_red_logout_revokes_session_and_clears_cookie(self) -> None:
+        token = self.login()
+
+        status, result = self.request("POST", "/v1/logout", {}, token=token)
+
+        self.assertEqual(status, 200)
+        self.assertEqual(result, {"status": "logged_out"})
+        clear_cookie = self.last_response_headers.get("Set-Cookie")
+        self.assertIsNotNone(clear_cookie)
+        cookie_parts = [part.strip() for part in clear_cookie.split(";")]
+        self.assertEqual(cookie_parts[0], "__Host-trade_session=")
+        self.assertIn("Secure", cookie_parts)
+        self.assertIn("HttpOnly", cookie_parts)
+        self.assertIn("SameSite=Strict", cookie_parts)
+        self.assertIn("Path=/", cookie_parts)
+        self.assertIn("Max-Age=0", cookie_parts)
+        status, _ = self.request("GET", "/v1/session", cookie=token)
+        self.assertEqual(status, 401)
+        self.assertEqual(self.exchange.write_count, 0)
+
+    def test_red_allowed_origin_cors_includes_credentials_on_response_and_preflight(self) -> None:
+        status, _ = self.request("GET", "/v1/health")
+
+        self.assertEqual(status, 200)
+        self.assertEqual(self.last_response_headers.get("Access-Control-Allow-Origin"), ORIGIN)
+        self.assertEqual(self.last_response_headers.get("Access-Control-Allow-Credentials"), "true")
+        status, _ = self.request("OPTIONS", "/v1/positions")
+        self.assertEqual(status, 204)
+        self.assertEqual(self.last_response_headers.get("Access-Control-Allow-Origin"), ORIGIN)
+        self.assertEqual(self.last_response_headers.get("Access-Control-Allow-Credentials"), "true")
+        status, _ = self.request("GET", "/v1/health", origin="https://attacker.example")
+        self.assertEqual(status, 403)
+        self.assertIsNone(self.last_response_headers.get("Access-Control-Allow-Origin"))
+        status, _ = self.request("OPTIONS", "/v1/session", origin="https://attacker.example")
+        self.assertEqual(status, 403)
+        self.assertIsNone(self.last_response_headers.get("Access-Control-Allow-Credentials"))
 
     def test_green_authenticated_positions_include_normalized_okx_display_metrics(self) -> None:
         token = self.login()

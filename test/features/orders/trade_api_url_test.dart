@@ -55,6 +55,39 @@ void main() {
       expect(adapter.lastUri?.scheme, 'https');
     });
 
+    test('native transport does not bootstrap a browser cookie session', () {
+      final client = TradeApiClient(
+        baseUrl: 'https://trade.example.com',
+        dio: _dio(_RecordingAdapter()),
+      );
+
+      expect(client.supportsSessionRestoration, isFalse);
+    });
+
+    test(
+      'restores the session from the cookie without a bearer header',
+      () async {
+        final adapter = _RecordingAdapter();
+        final client = TradeApiClient(
+          baseUrl: 'https://trade.example.com',
+          dio: _dio(adapter),
+        );
+
+        final session = await client.restoreSession();
+
+        expect(session.bearerToken, 'test-token');
+        expect(session.accountIdentifier, 'test-account');
+        expect(adapter.requestedUris, [
+          Uri.parse('https://trade.example.com/v1/session'),
+        ]);
+        expect(adapter.requests.single.method, 'GET');
+        expect(
+          adapter.requests.single.headers.containsKey('Authorization'),
+          isFalse,
+        );
+      },
+    );
+
     test(
       'does not follow an HTTP redirect from a private HTTPS request',
       () async {

@@ -58,13 +58,23 @@ OkxPosition _position({
 }
 
 class _FakeTradeApi implements TradeApi {
-  _FakeTradeApi({this.configured = true});
+  _FakeTradeApi({
+    this.configured = true,
+    this.sessionRestorationSupported = false,
+    this.restoredSession,
+    this.restoreGate,
+    this.logoutFailure,
+  });
 
   final bool configured;
   @override
   bool get isConfigured => configured;
+  final bool sessionRestorationSupported;
+  @override
+  bool get supportsSessionRestoration => sessionRestorationSupported;
 
   int loginCalls = 0;
+  int restoreCalls = 0;
   int logoutCalls = 0;
   int prepareCalls = 0;
   int executeCalls = 0;
@@ -77,6 +87,9 @@ class _FakeTradeApi implements TradeApi {
   String? lastAmount;
   String? lastSize;
   String? lastPercentage;
+  final TradeSession? restoredSession;
+  final Completer<TradeSession>? restoreGate;
+  TradeApiException? logoutFailure;
   Map<String, dynamic>? preparedIdentityOverride;
   String executeStatus = 'SUCCEEDED';
   TradeApiException? prepareError;
@@ -101,8 +114,26 @@ class _FakeTradeApi implements TradeApi {
   }
 
   @override
+  Future<TradeSession> restoreSession() async {
+    restoreCalls++;
+    final gate = restoreGate;
+    if (gate != null) return gate.future;
+    final session = restoredSession;
+    if (session == null) {
+      throw const TradeApiException(
+        code: 'authentication_required',
+        message: 'No session cookie.',
+        statusCode: 401,
+      );
+    }
+    return session;
+  }
+
+  @override
   Future<void> logout(String bearerToken) async {
     logoutCalls++;
+    final failure = logoutFailure;
+    if (failure != null) throw failure;
   }
 
   @override
@@ -265,6 +296,7 @@ Widget _tradeApp({
   bool authenticated = true,
   bool showActions = true,
   bool showAccountControls = false,
+  bool showSessionControls = false,
 }) {
   return ProviderScope(
     overrides: [
@@ -293,6 +325,7 @@ Widget _tradeApp({
                 },
               ),
               if (showAccountControls) const TradeAccountControls(),
+              if (showSessionControls) const TradeSessionControls(),
               if (showActions)
                 for (final position in positions)
                   PositionActionControls(position: position),
@@ -841,7 +874,7 @@ void main() {
             api: api,
             authenticated: false,
             showActions: false,
-            showAccountControls: true,
+            showSessionControls: true,
           ),
         );
         await tester.pumpAndSettle();
@@ -861,6 +894,140 @@ void main() {
         expect(api.totpSeen, '123456');
         expect(find.textContaining('••••-42'), findsOneWidget);
         expect(find.text('in-memory-test-token'), findsNothing);
+      },
+    );
+
+    testWidgets('Positions directs signed-out users to Settings', (
+      tester,
+    ) async {
+      final api = _FakeTradeApi();
+      await tester.pumpWidget(
+        _tradeApp(
+          api: api,
+          authenticated: false,
+          showActions: false,
+          showAccountControls: true,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Đăng nhập'), findsNothing);
+      expect(find.text('Đăng xuất'), findsNothing);
+      expect(find.textContaining('Cài đặt'), findsOneWidget);
+    });
+
+    test('restores an active cookie session before enabling actions', () async {
+      final session = TradeSession(
+        bearerToken: 'restored-in-memory-token',
+        accountIdentifier: 'account-42',
+        expiresAt: DateTime.now().add(const Duration(hours: 8)),
+      );
+      final api = _FakeTradeApi(
+        sessionRestorationSupported: true,
+        restoredSession: session,
+      );
+      final controller = TradeSessionController(api);
+
+      final restore = controller.restore();
+
+      expect(controller.state.isLoading, isTrue);
+      expect(controller.state.isAuthenticated, isFalse);
+      expect(await restore, isTrue);
+      expect(api.restoreCalls, 1);
+      expect(controller.state.isAuthenticated, isTrue);
+      expect(controller.state.session?.bearerToken, 'restored-in-memory-token');
+    });
+
+    test('a missing or expired cookie leaves the session signed out', () async {
+      final api = _FakeTradeApi(sessionRestorationSupported: true);
+      final controller = TradeSessionController(api);
+
+      expect(await controller.restore(), isFalse);
+      expect(controller.state.isAuthenticated, isFalse);
+      expect(controller.state.session, isNull);
+      expect(controller.state.errorMessage, isNull);
+
+      final expiredController = TradeSessionController(
+        _FakeTradeApi(
+          sessionRestorationSupported: true,
+          restoredSession: TradeSession(
+            bearerToken: 'expired-token',
+            accountIdentifier: 'account-42',
+            expiresAt: DateTime.now().subtract(const Duration(seconds: 1)),
+          ),
+        ),
+      );
+      expect(await expiredController.restore(), isFalse);
+      expect(expiredController.state.isAuthenticated, isFalse);
+      expect(expiredController.state.session, isNull);
+      expect(expiredController.state.errorMessage, contains('expired'));
+    });
+
+    test(
+      'stale restoration cannot overwrite a later login or logout',
+      () async {
+        final restoredSession = TradeSession(
+          bearerToken: 'stale-cookie-token',
+          accountIdentifier: 'account-42',
+          expiresAt: DateTime.now().add(const Duration(hours: 8)),
+        );
+        final loginGate = Completer<TradeSession>();
+        final loginApi = _FakeTradeApi(
+          sessionRestorationSupported: true,
+          restoreGate: loginGate,
+        );
+        final loginController = TradeSessionController(loginApi);
+        final pendingLoginRestore = loginController.restore();
+        expect(
+          await loginController.login(password: 'password', totp: '123456'),
+          isTrue,
+        );
+        loginGate.complete(restoredSession);
+        expect(await pendingLoginRestore, isFalse);
+        expect(
+          loginController.state.session?.bearerToken,
+          'in-memory-test-token',
+        );
+
+        final logoutGate = Completer<TradeSession>();
+        final logoutApi = _FakeTradeApi(
+          sessionRestorationSupported: true,
+          restoreGate: logoutGate,
+        );
+        final logoutController = TradeSessionController(logoutApi);
+        final pendingLogoutRestore = logoutController.restore();
+        expect(await logoutController.logout(), isTrue);
+        logoutGate.complete(restoredSession);
+        expect(await pendingLogoutRestore, isFalse);
+        expect(logoutController.state.session, isNull);
+        expect(logoutController.state.isAuthenticated, isFalse);
+      },
+    );
+
+    test(
+      'failed logout keeps the session and exposes a retryable error',
+      () async {
+        final api = _FakeTradeApi(
+          logoutFailure: const TradeApiException(
+            code: 'network_error',
+            message: 'temporary connection failure',
+          ),
+        );
+        final controller = TradeSessionController(api);
+        expect(
+          await controller.login(password: 'password', totp: '123456'),
+          isTrue,
+        );
+
+        expect(await controller.logout(), isFalse);
+        expect(controller.state.session?.bearerToken, 'in-memory-test-token');
+        expect(controller.state.isAuthenticated, isTrue);
+        expect(controller.state.errorMessage, contains('temporary connection'));
+
+        api.logoutFailure = null;
+        expect(await controller.logout(), isTrue);
+        expect(controller.state.session, isNull);
+        expect(api.logoutCalls, 2);
       },
     );
 

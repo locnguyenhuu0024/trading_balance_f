@@ -24,6 +24,7 @@ class NavigationPreferences {
     this.buttonScale = _defaultButtonScale,
     this.buttonOpacity = _defaultButtonOpacity,
     this.enabledDestinationIds = navigationDestinationIds,
+    this.destinationOrderIds = navigationDestinationIds,
   });
 
   static const currentVersion = 1;
@@ -57,6 +58,7 @@ class NavigationPreferences {
   final double buttonScale;
   final double buttonOpacity;
   final List<String> enabledDestinationIds;
+  final List<String> destinationOrderIds;
 
   NavigationPreferences copyWith({
     NavigationDisplayMode? displayMode,
@@ -64,6 +66,7 @@ class NavigationPreferences {
     double? buttonScale,
     double? buttonOpacity,
     List<String>? enabledDestinationIds,
+    List<String>? destinationOrderIds,
   }) {
     return NavigationPreferences(
       displayMode: displayMode ?? this.displayMode,
@@ -73,6 +76,9 @@ class NavigationPreferences {
       enabledDestinationIds: enabledDestinationIds == null
           ? this.enabledDestinationIds
           : normalizeEnabledDestinationIds(enabledDestinationIds),
+      destinationOrderIds: destinationOrderIds == null
+          ? this.destinationOrderIds
+          : normalizeDestinationOrderIds(destinationOrderIds),
     );
   }
 
@@ -84,6 +90,7 @@ class NavigationPreferences {
       'buttonScale': buttonScale,
       'buttonOpacity': buttonOpacity,
       'enabledDestinationIds': enabledDestinationIds,
+      'destinationOrderIds': destinationOrderIds,
     });
   }
 
@@ -103,6 +110,9 @@ class NavigationPreferences {
         buttonOpacity: normalizeButtonOpacity(decoded['buttonOpacity']),
         enabledDestinationIds: decoded.containsKey('enabledDestinationIds')
             ? normalizeEnabledDestinationIds(decoded['enabledDestinationIds'])
+            : navigationDestinationIds,
+        destinationOrderIds: decoded.containsKey('destinationOrderIds')
+            ? normalizeDestinationOrderIds(decoded['destinationOrderIds'])
             : navigationDestinationIds,
       );
     } on FormatException {
@@ -167,6 +177,23 @@ class NavigationPreferences {
         .toList(growable: false);
   }
 
+  /// Keeps known IDs in their first-seen order, then appends missing IDs in
+  /// canonical order so every saved order remains a full permutation.
+  static List<String> normalizeDestinationOrderIds(Object? value) {
+    if (value is! List) return navigationDestinationIds;
+
+    final knownIds = navigationDestinationIds.toSet();
+    final seenIds = <String>{};
+    final normalizedIds = <String>[];
+    for (final id in value.whereType<String>()) {
+      if (knownIds.contains(id) && seenIds.add(id)) normalizedIds.add(id);
+    }
+    for (final id in navigationDestinationIds) {
+      if (seenIds.add(id)) normalizedIds.add(id);
+    }
+    return normalizedIds.toList(growable: false);
+  }
+
   static double? _numberFrom(Object? value) {
     if (value is num) return value.toDouble();
     if (value is String) return double.tryParse(value);
@@ -180,7 +207,8 @@ class NavigationPreferences {
         other.floatingEdge == floatingEdge &&
         other.buttonScale == buttonScale &&
         other.buttonOpacity == buttonOpacity &&
-        _sameDestinationIds(other.enabledDestinationIds);
+        _sameDestinationIds(other.enabledDestinationIds) &&
+        _sameOrderIds(other.destinationOrderIds);
   }
 
   @override
@@ -190,6 +218,7 @@ class NavigationPreferences {
     buttonScale,
     buttonOpacity,
     Object.hashAll(enabledDestinationIds),
+    Object.hashAll(destinationOrderIds),
   );
 
   bool _sameDestinationIds(List<String> otherIds) {
@@ -200,12 +229,21 @@ class NavigationPreferences {
     return true;
   }
 
+  bool _sameOrderIds(List<String> otherIds) {
+    if (destinationOrderIds.length != otherIds.length) return false;
+    for (var index = 0; index < destinationOrderIds.length; index++) {
+      if (destinationOrderIds[index] != otherIds[index]) return false;
+    }
+    return true;
+  }
+
   @override
   String toString() {
     return 'NavigationPreferences('
         'displayMode: $displayMode, floatingEdge: $floatingEdge, '
         'buttonScale: $buttonScale, buttonOpacity: $buttonOpacity, '
-        'enabledDestinationIds: $enabledDestinationIds)';
+        'enabledDestinationIds: $enabledDestinationIds, '
+        'destinationOrderIds: $destinationOrderIds)';
   }
 }
 

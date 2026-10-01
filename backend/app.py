@@ -141,6 +141,7 @@ class WSGIApplication:
     def _cors_headers(origin: str) -> list[tuple[str, str]]:
         return [
             ("Access-Control-Allow-Origin", origin),
+            ("Access-Control-Allow-Credentials", "true"),
             ("Access-Control-Allow-Methods", "GET, POST, OPTIONS"),
             ("Access-Control-Allow-Headers", "Authorization, Content-Type"),
             ("Access-Control-Max-Age", "600"),

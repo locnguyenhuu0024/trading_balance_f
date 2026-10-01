@@ -99,6 +99,12 @@ class NavigationPreferencesController
     );
   }
 
+  Future<void> setDestinationOrderIds(List<String> destinationIds) {
+    return update(
+      state.preferences.copyWith(destinationOrderIds: destinationIds),
+    );
+  }
+
   Future<void> update(NavigationPreferences nextPreferences) async {
     if (state.isSaving || nextPreferences == state.preferences) return;
 
