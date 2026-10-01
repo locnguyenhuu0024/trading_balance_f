@@ -362,6 +362,43 @@ class TradeApiTests(unittest.TestCase):
         self.assertEqual(status, 401)
         self.assertEqual(self.exchange.write_count, 0)
 
+    def test_green_authenticated_positions_include_normalized_okx_display_metrics(self) -> None:
+        token = self.login()
+        self.exchange.positions["SWAP"][0].update({
+            "avgPx": "61000.1000",
+            "markPx": "61111.20",
+            "liqPx": "40000",
+            "upl": "-12.500",
+            "uplRatio": "-0.0500",
+            "notionalUsd": "122222.400",
+            "lever": "10.0",
+        })
+
+        status, response = self.request("GET", "/v1/positions", token=token)
+
+        self.assertEqual(status, 200)
+        position = response["positions"][0]
+        self.assertEqual(position["avgPx"], "61000.1")
+        self.assertEqual(position["markPx"], "61111.2")
+        self.assertEqual(position["liqPx"], "40000")
+        self.assertEqual(position["upl"], "-12.5")
+        self.assertEqual(position["uplRatio"], "-0.05")
+        self.assertEqual(position["notionalUsd"], "122222.4")
+        self.assertEqual(position["lever"], "10")
+        self.assertEqual(position["size"], "2")
+        self.assertEqual(position["identity"], self.swap_identity())
+        self.assertTrue(position["eligibleActions"]["closePosition"]["eligible"])
+
+    def test_green_missing_okx_display_metrics_remain_absent(self) -> None:
+        token = self.login()
+
+        status, response = self.request("GET", "/v1/positions", token=token)
+
+        self.assertEqual(status, 200)
+        position = response["positions"][0]
+        for field in ("avgPx", "markPx", "liqPx", "upl", "uplRatio", "notionalUsd", "lever"):
+            self.assertIsNone(position[field], field)
+
     def test_red_stale_position_conflicts_before_any_write(self) -> None:
         token = self.login()
         prepared = self.prepare(token, "dca", targetIdentity=self.swap_identity(), size="1")
