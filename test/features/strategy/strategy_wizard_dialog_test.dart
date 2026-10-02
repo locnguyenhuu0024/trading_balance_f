@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/features/orders/data/trade_api_client.dart';
+import 'package:trading_balance_f/features/orders/presentation/providers/trade_session_provider.dart';
 import 'package:trading_balance_f/features/portfolio/data/risk/risk_request_coordinator.dart';
 import 'package:trading_balance_f/features/strategy/data/strategy_api_client.dart';
 import 'package:trading_balance_f/features/strategy/data/strategy_market_repository.dart';
@@ -11,6 +12,44 @@ import 'package:trading_balance_f/features/strategy/presentation/providers/strat
 import 'package:trading_balance_f/features/strategy/presentation/strategy_wizard_dialog.dart';
 
 void main() {
+  testWidgets('account switch while wizard open disables old session preview', (
+    tester,
+  ) async {
+    final market = _FakeStrategyMarketRepository();
+    final api = _FakeStrategyApi();
+    final dashboard = _dashboard(api, market);
+    final sessionController = _AuthenticatedSessionController('session-token');
+    addTearDown(dashboard.dispose);
+    await _pumpWizard(
+      tester,
+      market,
+      api,
+      dashboard,
+      sessionController: sessionController,
+    );
+
+    await tester.tap(find.byType(CheckboxListTile).first);
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('strategy-next-step-one')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('strategy-margin-input')),
+      '100',
+    );
+    sessionController.switchTo('session-b-token');
+    await tester.pumpAndSettle();
+
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.byKey(const Key('strategy-request-preview')),
+          )
+          .onPressed,
+      isNull,
+    );
+    expect(api.previewBodies, isEmpty);
+  });
+
   testWidgets(
     'replacement uses fresh levels and executes once after prepared confirmation',
     (tester) async {
@@ -51,6 +90,14 @@ void main() {
       expect(api.saveBodies.single['replacementSourceId'], 'never-sent-1');
       expect(api.prepareCalls, 1);
       expect(find.text('Xác nhận danh sách lệnh'), findsOneWidget);
+      expect(
+        find.text('Cơ chế gửi đã cố định: Hàng đợi tuần tự'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('không có nghĩa là lệnh đã khớp'),
+        findsOneWidget,
+      );
       expect(find.textContaining('LONG · entry · 90.0'), findsOneWidget);
       expect(api.executeCalls, 0);
 
@@ -544,6 +591,7 @@ Future<void> _pumpWizard(
   StrategyApi api,
   StrategyDashboardController dashboard, {
   String? replacementSourceId,
+  _AuthenticatedSessionController? sessionController,
 }) async {
   tester.view.physicalSize = const Size(1200, 1600);
   tester.view.devicePixelRatio = 1;
@@ -557,6 +605,11 @@ Future<void> _pumpWizard(
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
+        tradeSessionProvider.overrideWith(
+          (ref) =>
+              sessionController ??
+              _AuthenticatedSessionController(session.bearerToken),
+        ),
         strategyMarketRepositoryProvider.overrideWithValue(market),
         strategyApiProvider.overrideWithValue(api),
       ],
@@ -582,6 +635,29 @@ Future<void> _pumpWizard(
   );
   await tester.tap(find.text('Open wizard'));
   await tester.pumpAndSettle();
+}
+
+class _AuthenticatedSessionController extends TradeSessionController {
+  _AuthenticatedSessionController(String bearerToken)
+    : super(TradeApiClient(baseUrl: 'https://trade.example')) {
+    state = TradeSessionState(
+      session: TradeSession(
+        bearerToken: bearerToken,
+        accountIdentifier: 'test-account',
+        expiresAt: DateTime.now().add(const Duration(hours: 1)),
+      ),
+    );
+  }
+
+  void switchTo(String bearerToken) {
+    state = TradeSessionState(
+      session: TradeSession(
+        bearerToken: bearerToken,
+        accountIdentifier: 'other-account',
+        expiresAt: DateTime.now().add(const Duration(hours: 1)),
+      ),
+    );
+  }
 }
 
 class _FakeStrategyApi implements StrategyApi {
@@ -638,6 +714,7 @@ class _FakeStrategyApi implements StrategyApi {
     prepareCalls++;
     return {
       'confirmationToken': 'one-use-token',
+      'submissionMode': 'sequential',
       'estimatedOpeningFees': '0.03',
       'orders': [
         {
@@ -673,6 +750,16 @@ class _FakeStrategyApi implements StrategyApi {
   @override
   Future<Map<String, dynamic>> getQuote(String bearerToken, String id) async =>
       const {};
+
+  @override
+  Future<String> getLimitOrderSubmissionMode(String bearerToken) async =>
+      'sequential';
+
+  @override
+  Future<String> saveLimitOrderSubmissionMode(
+    String bearerToken,
+    String mode,
+  ) async => mode;
 
   @override
   Future<void> deleteDraft(String bearerToken, String id) async {

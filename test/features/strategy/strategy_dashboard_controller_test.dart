@@ -6,6 +6,34 @@ import 'package:trading_balance_f/features/strategy/domain/strategy_models.dart'
 import 'package:trading_balance_f/features/strategy/presentation/providers/strategy_dashboard_provider.dart';
 
 void main() {
+  test(
+    'logout during confirmation prevents execute and stale success',
+    () async {
+      var sessionIsCurrent = true;
+      final api = _FakeStrategyApi();
+      final controller = StrategyDashboardController(
+        api: api,
+        bearerToken: 'test-session-token',
+        clock: () => DateTime.utc(2026, 10, 1, 8),
+        sessionIsCurrent: () => sessionIsCurrent,
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+
+      final outcome = await controller.applyDraft(
+        'draft-1',
+        confirm: (_) async {
+          sessionIsCurrent = false;
+          return true;
+        },
+      );
+
+      expect(api.executeCalls, 0);
+      expect(outcome.kind, isNot(StrategyApplyOutcomeKind.applied));
+      expect(outcome.result, isNull);
+    },
+  );
+
   test('cancelling exact-order confirmation never executes', () async {
     final api = _FakeStrategyApi();
     final controller = _controller(api);
@@ -128,6 +156,24 @@ void main() {
       expect(outcome.result?['status'], 'UNKNOWN');
       expect(api.executeCalls, 1);
       expect(api.deleteCalls, 0);
+    },
+  );
+
+  test(
+    'APPLYING without frozen sequential queue evidence is not queued',
+    () async {
+      final api = _FakeStrategyApi()..executeStatus = 'APPLYING';
+      final controller = _controller(api);
+      addTearDown(controller.dispose);
+      await controller.load();
+
+      final outcome = await controller.applyDraft(
+        'draft-1',
+        confirm: (_) async => true,
+      );
+
+      expect(outcome.kind, StrategyApplyOutcomeKind.unknown);
+      expect(api.executeCalls, 1);
     },
   );
 
@@ -288,6 +334,8 @@ void main() {
       {'estimatedOpeningFees': 'NaN'},
       {'estimatedOpeningFees': '-0.01'},
       {'estimatedOpeningFees': null},
+      {'submissionMode': null},
+      {'submissionMode': 'parallel'},
     ]) {
       await _expectPreparedRejected(prepared);
     }
@@ -405,6 +453,7 @@ class _FakeStrategyApi implements StrategyApi {
   final List<String> statuses;
   final prepared = <String, dynamic>{
     'confirmationToken': 'one-use-token',
+    'submissionMode': 'sequential',
     'estimatedOpeningFees': '0.03',
     'orders': [_validOrder()],
   };
@@ -507,6 +556,16 @@ class _FakeStrategyApi implements StrategyApi {
     if (sequence != null && sequence.isNotEmpty) return sequence.removeAt(0);
     return _quoteResponse(quoteClock().toUtc());
   }
+
+  @override
+  Future<String> getLimitOrderSubmissionMode(String token) async =>
+      'sequential';
+
+  @override
+  Future<String> saveLimitOrderSubmissionMode(
+    String token,
+    String mode,
+  ) async => mode;
 
   @override
   Future<void> deleteDraft(String token, String id) async {

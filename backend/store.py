@@ -7,7 +7,7 @@ import os
 import sqlite3
 import threading
 from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 
 _SCHEMA = """
@@ -57,6 +57,9 @@ CREATE TABLE IF NOT EXISTS strategies (
     prepared_json TEXT,
     attempt_started INTEGER NOT NULL DEFAULT 0,
     batch_attempted INTEGER NOT NULL DEFAULT 0,
+    submission_mode TEXT DEFAULT 'batch',
+    order_placement_attempted INTEGER NOT NULL DEFAULT 0,
+    queue_json TEXT,
     execution_id TEXT,
     execution_lease_until REAL,
     replacement_source_id TEXT,
@@ -66,6 +69,11 @@ CREATE TABLE IF NOT EXISTS strategies (
     updated_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS strategies_account_updated ON strategies(account_fingerprint, updated_at);
+CREATE TABLE IF NOT EXISTS strategy_account_preferences (
+    account_fingerprint TEXT PRIMARY KEY,
+    limit_order_submission_mode TEXT NOT NULL,
+    updated_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS strategy_reservations (
     account_fingerprint TEXT NOT NULL,
     instrument_id TEXT NOT NULL,
@@ -130,6 +138,19 @@ class SQLiteStore:
                     connection.execute("ALTER TABLE strategies ADD COLUMN execution_lease_until REAL")
                 if "replacement_source_id" not in strategy_columns:
                     connection.execute("ALTER TABLE strategies ADD COLUMN replacement_source_id TEXT")
+                if "submission_mode" not in strategy_columns:
+                    connection.execute("ALTER TABLE strategies ADD COLUMN submission_mode TEXT DEFAULT 'batch'")
+                if "order_placement_attempted" not in strategy_columns:
+                    connection.execute(
+                        "ALTER TABLE strategies ADD COLUMN order_placement_attempted INTEGER NOT NULL DEFAULT 0"
+                    )
+                if "queue_json" not in strategy_columns:
+                    connection.execute("ALTER TABLE strategies ADD COLUMN queue_json TEXT")
+                if "batch_attempted" in strategy_columns:
+                    connection.execute(
+                        "UPDATE strategies SET order_placement_attempted=1 "
+                        "WHERE batch_attempted=1 AND order_placement_attempted=0"
+                    )
                 connection.execute(
                     "CREATE INDEX IF NOT EXISTS strategies_replacement_source "
                     "ON strategies(replacement_source_id, status)"
@@ -187,12 +208,19 @@ class SQLiteStore:
             return fence if changed == 1 else None
 
     def renew_strategy_monitor_lease(
-        self, owner_id: str, fence: int, now: float, lease_seconds: float
+        self,
+        owner_id: str,
+        fence: int,
+        now: float,
+        lease_seconds: float,
+        *,
+        clock: Callable[[], float] | None = None,
     ) -> bool:
         with self.transaction() as connection:
+            effective_now = now if clock is None else clock()
             changed = connection.execute(
                 "UPDATE strategy_monitor_lease SET lease_until=? WHERE singleton=1 "
                 "AND owner_id=? AND fence=? AND lease_until>?",
-                (now + lease_seconds, owner_id, fence, now),
+                (effective_now + lease_seconds, owner_id, fence, effective_now),
             ).rowcount
         return changed == 1

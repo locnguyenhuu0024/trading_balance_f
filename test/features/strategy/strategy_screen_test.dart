@@ -12,6 +12,115 @@ import 'package:trading_balance_f/features/strategy/presentation/strategy_screen
 import 'package:trading_balance_f/features/strategy/presentation/strategy_wizard_dialog.dart';
 
 void main() {
+  testWidgets('saved draft confirmation displays its frozen submission mode', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = _FakeStrategyApi()
+      ..prepared = {
+        'confirmationToken': 'one-use-token',
+        'submissionMode': 'batch',
+        'estimatedOpeningFees': '0.03',
+        'orders': [
+          {
+            'side': 'long',
+            'role': 'entry',
+            'limitPrice': '65000',
+            'contracts': '1',
+            'margin': '13',
+            'leverage': 5,
+            'openingFeeEstimate': '0.03',
+          },
+        ],
+      };
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          tradeSessionProvider.overrideWith(
+            (ref) => _AuthenticatedSessionController(),
+          ),
+          strategyApiProvider.overrideWithValue(api),
+          strategyMarketRepositoryProvider.overrideWithValue(
+            _FakeMarketRepository(),
+          ),
+        ],
+        child: const MaterialApp(home: StrategyScreen()),
+      ),
+    );
+    await _pumpFrames(tester);
+    await tester.tap(find.text('Áp dụng bản nháp'));
+    await _pumpFrames(tester);
+
+    expect(find.text('Cơ chế gửi đã cố định: Gửi theo lô'), findsOneWidget);
+    expect(
+      find.textContaining('gửi cùng nhau theo cơ chế gửi theo lô'),
+      findsOneWidget,
+    );
+    expect(api.executeCalls, 0);
+    await tester.tap(find.byKey(const Key('strategy-confirm-apply')));
+    await _pumpFrames(tester);
+
+    expect(api.executeCalls, 1);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('queue progress and stopped rows fit on a mobile screen', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(360, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = _FakeStrategyApi()..includeQueues = true;
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          tradeSessionProvider.overrideWith(
+            (ref) => _AuthenticatedSessionController(),
+          ),
+          strategyApiProvider.overrideWithValue(api),
+          strategyMarketRepositoryProvider.overrideWithValue(
+            _FakeMarketRepository(),
+          ),
+        ],
+        child: const MaterialApp(home: StrategyScreen()),
+      ),
+    );
+    await _pumpFrames(tester);
+    await tester.scrollUntilVisible(
+      find.text('Chưa rõ kết quả gửi'),
+      240,
+      scrollable: find.byType(Scrollable).first,
+    );
+
+    expect(find.text('Đang gửi'), findsWidgets);
+    expect(find.text('Đã được nhận'), findsWidgets);
+    expect(find.text('Chưa rõ kết quả gửi'), findsOneWidget);
+    expect(find.text('Chưa gửi'), findsWidgets);
+    expect(
+      find.textContaining('3 đã thử, 1 đã nhận, 1 đang chờ'),
+      findsOneWidget,
+    );
+    await tester.scrollUntilVisible(
+      find.text('Đã dừng'),
+      240,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('Đã dừng'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Tiến độ hàng đợi chưa khả dụng.'),
+      240,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('Tiến độ hàng đợi chưa khả dụng.'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('started cards use backend quotes and show order freshness', (
     tester,
   ) async {
@@ -109,6 +218,11 @@ void main() {
     for (var frame = 0; frame < 5; frame++) {
       await tester.pump(const Duration(milliseconds: 20));
     }
+    await tester.scrollUntilVisible(
+      find.text('Hoàn tất'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
 
     expect(find.text('Hoàn tất'), findsOneWidget);
     final completedCard = find.ancestor(
@@ -300,6 +414,12 @@ void main() {
   });
 }
 
+Future<void> _pumpFrames(WidgetTester tester, [int count = 5]) async {
+  for (var frame = 0; frame < count; frame++) {
+    await tester.pump(const Duration(milliseconds: 20));
+  }
+}
+
 class _AuthenticatedSessionController extends TradeSessionController {
   _AuthenticatedSessionController()
     : super(TradeApiClient(baseUrl: 'https://trade.example')) {
@@ -316,8 +436,11 @@ class _AuthenticatedSessionController extends TradeSessionController {
 class _FakeStrategyApi implements StrategyApi {
   int quoteCalls = 0;
   int deleteCalls = 0;
+  int executeCalls = 0;
   bool includeCompleted = false;
   bool includeNeverSent = false;
+  bool includeQueues = false;
+  Map<String, dynamic> prepared = const {};
 
   final strategies = <Map<String, dynamic>>[
     {
@@ -333,6 +456,15 @@ class _FakeStrategyApi implements StrategyApi {
       'instrumentId': 'BTC-USDT-SWAP',
       'interval': '6Hutc',
       'status': 'APPLIED',
+      'submissionMode': 'sequential',
+      'queueStatus': 'submitted',
+      'queueProgress': {
+        'totalCount': 4,
+        'attemptedCount': 4,
+        'acceptedCount': 4,
+        'pendingCount': 0,
+        'notSubmittedCount': 0,
+      },
       'orders': [
         {
           'side': 'long',
@@ -340,6 +472,7 @@ class _FakeStrategyApi implements StrategyApi {
           'limitPrice': '59000',
           'contracts': '5',
           'status': 'partially_filled',
+          'placementState': 'accepted',
           'filledContracts': '2',
           'averageFillPrice': '58990',
         },
@@ -349,6 +482,7 @@ class _FakeStrategyApi implements StrategyApi {
           'limitPrice': '58000',
           'contracts': '5',
           'status': 'filled',
+          'placementState': 'accepted',
           'filledContracts': '5',
           'averageFillPrice': '58010',
         },
@@ -388,14 +522,17 @@ class _FakeStrategyApi implements StrategyApi {
 
   @override
   Future<Map<String, dynamic>> prepareApply(String token, String id) async =>
-      {};
+      prepared;
 
   @override
   Future<Map<String, dynamic>> executeApply(
     String token,
     String id,
     String confirmationToken,
-  ) async => {};
+  ) async {
+    executeCalls++;
+    return {'status': 'APPLIED'};
+  }
 
   @override
   Future<Map<String, dynamic>> getResult(String token, String id) async => {};
@@ -409,6 +546,16 @@ class _FakeStrategyApi implements StrategyApi {
       'observedAt': DateTime.now().toUtc().toIso8601String(),
     };
   }
+
+  @override
+  Future<String> getLimitOrderSubmissionMode(String token) async =>
+      'sequential';
+
+  @override
+  Future<String> saveLimitOrderSubmissionMode(
+    String token,
+    String mode,
+  ) async => mode;
 
   @override
   Future<void> deleteDraft(String token, String id) async {
@@ -509,6 +656,113 @@ class _FakeStrategyApi implements StrategyApi {
               'filledContracts': '0',
             },
           ],
+        },
+      ]);
+    }
+    if (includeQueues) {
+      result.addAll([
+        {
+          'id': 'applying-queue-1',
+          'instrumentId': 'SOL-USDT-SWAP',
+          'status': 'APPLYING',
+          'submissionMode': 'sequential',
+          'queueStatus': 'sending',
+          'queueProgress': {
+            'totalCount': 5,
+            'attemptedCount': 3,
+            'acceptedCount': 1,
+            'pendingCount': 1,
+            'notSubmittedCount': 1,
+          },
+          'orders': [
+            {
+              'side': 'long',
+              'role': 'entry',
+              'limitPrice': '90',
+              'contracts': '1',
+              'status': 'live',
+              'placementState': 'accepted',
+              'filledContracts': '0',
+            },
+            {
+              'side': 'long',
+              'role': 'dca',
+              'limitPrice': '89',
+              'contracts': '1',
+              'status': 'sending',
+              'placementState': 'sending',
+            },
+            {
+              'side': 'short',
+              'role': 'entry',
+              'limitPrice': '91',
+              'contracts': '1',
+              'status': 'unknown',
+              'placementState': 'unknown',
+            },
+            {
+              'side': 'short',
+              'role': 'entry',
+              'limitPrice': '91.5',
+              'contracts': '1',
+              'status': 'queued',
+              'placementState': 'pending',
+            },
+            {
+              'side': 'short',
+              'role': 'dca',
+              'limitPrice': '92',
+              'contracts': '1',
+              'status': 'not_submitted',
+              'placementState': 'not_submitted',
+            },
+          ],
+        },
+        {
+          'id': 'stopped-queue-1',
+          'instrumentId': 'ETH-USDT-SWAP',
+          'status': 'PARTIAL',
+          'submissionMode': 'sequential',
+          'queueStatus': 'stopped',
+          'queueProgress': {
+            'totalCount': 2,
+            'attemptedCount': 1,
+            'acceptedCount': 0,
+            'pendingCount': 0,
+            'notSubmittedCount': 1,
+          },
+          'orders': [
+            {
+              'side': 'long',
+              'role': 'entry',
+              'limitPrice': '3000',
+              'contracts': '1',
+              'status': 'rejected',
+              'placementState': 'rejected',
+            },
+            {
+              'side': 'long',
+              'role': 'dca',
+              'limitPrice': '2990',
+              'contracts': '1',
+              'status': 'not_submitted',
+              'placementState': 'not_submitted',
+            },
+          ],
+        },
+        {
+          'id': 'malformed-queue-1',
+          'instrumentId': 'ADA-USDT-SWAP',
+          'status': 'APPLYING',
+          'submissionMode': 'sequential',
+          'queueStatus': 'sending',
+          'queueProgress': {
+            'totalCount': 3,
+            'attemptedCount': 1,
+            'acceptedCount': 2,
+            'pendingCount': 1,
+            'notSubmittedCount': 1,
+          },
         },
       ]);
     }

@@ -34,6 +34,8 @@ class FakeStrategyExchange:
         self.positions: list[dict[str, Any]] = []
         self.fail_position_reads = False
         self.pending: list[dict[str, Any]] = []
+        self.pending_reads = 0
+        self.position_reads = 0
         self.fee_data: list[dict[str, Any]] = [
             {
                 "instType": "SWAP", "instFamily": "BTC-USDT",
@@ -56,6 +58,7 @@ class FakeStrategyExchange:
         ]
         self.last = "60000"
         self.ticker_instrument_id = INSTRUMENT
+        self.use_requested_ticker = False
         self.ticker_timestamp_ms = str(int(NOW * 1000))
         self.calls: list[tuple[str, str, Any]] = []
         self.orders: dict[str, dict[str, Any]] = {}
@@ -67,7 +70,16 @@ class FakeStrategyExchange:
         self.pause_batch_response = False
         self.batch_started = threading.Event()
         self.batch_release = threading.Event()
+        self.single_order_attempts = 0
+        self.single_order_timeouts: set[int] = set()
+        self.single_order_acks: dict[int, Any] = {}
+        self.single_order_start_times: list[float] = []
+        self.lease_renewal_counter: Any = None
+        self.lease_renewal_counts: list[int] = []
+        self.after_single_order_write: Any = None
+        self.monotonic: Any = None
         self.order_detail_reads = 0
+        self.order_detail_client_ids: list[str] = []
         self.leverage_response: dict[str, Any] | None = None
         self.quote_account_barrier: threading.Barrier | None = None
         self.pause_ticker = False
@@ -86,6 +98,8 @@ class FakeStrategyExchange:
         parsed = urlsplit(path)
         params = {key: values[-1] for key, values in parse_qs(parsed.query).items()}
         payload = None if body is None else json.loads(body.decode("utf-8"))
+        if self.lease_renewal_counter is not None:
+            self.lease_renewal_counts.append(self.lease_renewal_counter())
         self.calls.append((method, path, payload))
 
         if method == "GET" and parsed.path == "/api/v5/account/config":
@@ -95,6 +109,7 @@ class FakeStrategyExchange:
         if method == "GET" and parsed.path == "/api/v5/account/balance":
             return {"code": "0", "data": [{"details": [{"ccy": "USDT", "availBal": "100000"}]}]}
         if method == "GET" and parsed.path == "/api/v5/account/positions":
+            self.position_reads += 1
             if self.fail_position_reads:
                 raise TimeoutError("simulated account position read failure")
             if self.position_read_barrier is not None and self.position_barrier_reads < 2:
@@ -102,28 +117,66 @@ class FakeStrategyExchange:
                 self.position_read_barrier.wait(timeout=3)
             return {"code": "0", "data": [dict(row) for row in self.positions]}
         if method == "GET" and parsed.path == "/api/v5/trade/orders-pending":
+            self.pending_reads += 1
             return {"code": "0", "data": [dict(row) for row in self.pending]}
         if method == "GET" and parsed.path == "/api/v5/account/trade-fee":
-            return {"code": "0", "data": [dict(row) for row in self.fee_data]}
+            family = params.get("instFamily")
+            matched = [row for row in self.fee_data if row.get("instFamily") == family]
+            rows = matched if matched else self.fee_data
+            return {"code": "0", "data": [dict(row) for row in rows]}
         if method == "GET" and parsed.path == "/api/v5/public/instruments":
             return {"code": "0", "data": [dict(row) for row in self.instrument_data]}
         if method == "GET" and parsed.path == "/api/v5/public/position-tiers":
-            return {"code": "0", "data": [dict(row) for row in self.tier_data]}
+            family = params.get("instFamily")
+            matched = [row for row in self.tier_data if row.get("instFamily") == family]
+            rows = matched if matched else self.tier_data
+            return {"code": "0", "data": [dict(row) for row in rows]}
         if method == "GET" and parsed.path == "/api/v5/market/ticker":
             if self.pause_ticker:
                 self.ticker_started.set()
                 if not self.ticker_release.wait(timeout=3):
                     raise TimeoutError("test ticker response release timed out")
-            return {"code": "0", "data": [{"instId": self.ticker_instrument_id, "last": self.last, "ts": self.ticker_timestamp_ms}]}
+            ticker_instrument = (
+                params.get("instId", INSTRUMENT)
+                if self.use_requested_ticker else self.ticker_instrument_id
+            )
+            return {"code": "0", "data": [{"instId": ticker_instrument, "last": self.last, "ts": self.ticker_timestamp_ms}]}
         if method == "GET" and parsed.path == "/api/v5/trade/order":
             self.order_detail_reads += 1
             client_id = params.get("clOrdId", "")
+            self.order_detail_client_ids.append(client_id)
             row = self.orders.get(client_id)
             return {"code": "0", "data": [] if row is None else [dict(row)]}
         if method == "POST" and parsed.path == "/api/v5/account/set-leverage":
             if self.leverage_response is not None:
                 return dict(self.leverage_response)
-            return {"code": "0", "data": [{"sCode": "0", "posSide": payload["posSide"]}]}
+            return {
+                "code": "0",
+                "data": [{
+                    "instId": payload["instId"], "mgnMode": payload["mgnMode"],
+                    "lever": payload["lever"], "posSide": payload["posSide"],
+                }],
+            }
+        if method == "POST" and parsed.path == "/api/v5/trade/order":
+            attempt = self.single_order_attempts
+            self.single_order_attempts += 1
+            if self.monotonic is not None:
+                self.single_order_start_times.append(self.monotonic())
+            if attempt in self.single_order_timeouts:
+                raise TimeoutError("simulated lost single-order response")
+            if attempt in self.single_order_acks:
+                return self.single_order_acks[attempt]
+            client_id = payload["clOrdId"]
+            exchange_id = f"single-exchange-{attempt + 1}"
+            self.orders[client_id] = {
+                **payload, "ordId": exchange_id, "state": "live", "accFillSz": "0"
+            }
+            if self.after_single_order_write is not None:
+                self.after_single_order_write(payload, exchange_id)
+            return {
+                "code": "0",
+                "data": [{"sCode": "0", "ordId": exchange_id, "clOrdId": client_id}],
+            }
         if method == "POST" and parsed.path == "/api/v5/trade/batch-orders":
             if self.batch_timeout:
                 raise TimeoutError("simulated lost batch response")
@@ -164,6 +217,11 @@ class StrategyApiTests(unittest.TestCase):
             connection.execute(
                 "INSERT INTO sessions(token_hash, expires_at, created_at) VALUES (?, ?, ?)",
                 (token_digest(TOKEN, SIGNING_KEY), self.now + 3600, self.now),
+            )
+            connection.execute(
+                "INSERT INTO strategy_account_preferences(account_fingerprint, limit_order_submission_mode, updated_at) "
+                "VALUES (?, 'batch', ?)",
+                (token_digest("okx-account-uid:v1:" + self.exchange.account_uid, SIGNING_KEY), self.now),
             )
 
     def tearDown(self) -> None:

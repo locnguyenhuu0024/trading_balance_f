@@ -61,6 +61,14 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
   StrategyMarketRepository get _market =>
       ref.read(strategyMarketRepositoryProvider);
 
+  bool get _isSessionCurrent {
+    if (!mounted) return false;
+    final state = ref.read(tradeSessionProvider);
+    return state.isAuthenticated &&
+        state.session?.bearerToken == widget.session.bearerToken &&
+        widget.dashboard.ownsSession;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -309,6 +317,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
   }
 
   Future<void> _requestPreview() async {
+    if (!_isSessionCurrent) return;
     final selection = _selectionOrNull();
     if (selection == null) {
       setState(
@@ -360,6 +369,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
             widget.session.bearerToken,
             Map<String, dynamic>.from(request),
           );
+      if (!mounted || !_isSessionCurrent) return;
       final hash = _text(preview['previewHash']);
       final orders = _list(preview['orders']);
       if (hash.isEmpty || orders.isEmpty) {
@@ -368,7 +378,6 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
           message: 'Máy chủ chưa trả về bản xem trước lệnh đầy đủ.',
         );
       }
-      if (!mounted) return;
       if (requestGeneration != _inputGeneration) {
         setState(() {
           _isRequestingPreview = false;
@@ -384,7 +393,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
         _step = 2;
       });
     } on StrategyApiException catch (error) {
-      if (!mounted) return;
+      if (!mounted || !_isSessionCurrent) return;
       if (error.isUnauthorized) {
         ref.read(tradeSessionProvider.notifier).expire();
       }
@@ -393,7 +402,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
         _workflowError = error.message;
       });
     } on Object catch (error) {
-      if (!mounted) return;
+      if (!mounted || !_isSessionCurrent) return;
       setState(() {
         _isRequestingPreview = false;
         _workflowError = _safeError(error);
@@ -448,6 +457,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
     final saved = await ref
         .read(strategyApiProvider)
         .saveDraft(widget.session.bearerToken, _saveBody());
+    if (!_isSessionCurrent) throw StateError('The trade session changed.');
     final id = _text(saved['id']);
     if (id.isEmpty) {
       throw const StrategyApiException(
@@ -457,6 +467,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
     }
     _savedDraftId = id;
     await widget.onSaved();
+    if (!_isSessionCurrent) throw StateError('The trade session changed.');
     return id;
   }
 
@@ -470,6 +481,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
       final saved = await ref
           .read(strategyApiProvider)
           .saveDraft(widget.session.bearerToken, _saveBody());
+      if (!mounted || !_isSessionCurrent) return;
       if (_text(saved['id']).isEmpty) {
         throw const StrategyApiException(
           code: 'invalid_response',
@@ -477,23 +489,27 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
         );
       }
       await widget.onSaved();
-      if (!mounted) return;
+      if (!mounted || !_isSessionCurrent) return;
       Navigator.of(context).pop();
       _message('Đã lưu bản nháp.');
     } on Object catch (error) {
+      if (!mounted || !_isSessionCurrent) return;
       _expireSessionIfUnauthorized(error);
-      if (mounted) {
-        setState(() {
-          _isSaving = false;
-          _workflowError = _safeError(error);
-        });
-      }
+      setState(() {
+        _isSaving = false;
+        _workflowError = _safeError(error);
+      });
     }
   }
 
   Future<bool> _confirmPrepared(Map<String, dynamic> prepared) async {
     final orders = _preparedOrders(prepared);
-    if (orders.isEmpty || !mounted) return false;
+    final mode = StrategyLimitOrderSubmissionMode.parse(
+      prepared['submissionMode'],
+    );
+    if (orders.isEmpty || mode == null || !mounted || !_isSessionCurrent) {
+      return false;
+    }
     final confirmed = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
@@ -506,8 +522,10 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'Đây là danh sách đã được máy chủ chuẩn hóa lại. Xác nhận sẽ gửi một lần.',
+                  'Đây là danh sách đã được máy chủ chuẩn hóa lại. Cơ chế gửi bên dưới đã được cố định cho danh sách này.',
                 ),
+                const SizedBox(height: 8),
+                _SubmissionModeSummary(mode: mode),
                 const SizedBox(height: 8),
                 _PreparedFinancialSummary(prepared: prepared),
                 const SizedBox(height: 12),
@@ -522,15 +540,26 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
             onPressed: () => Navigator.of(context).pop(false),
             child: const Text('Hủy'),
           ),
-          FilledButton(
-            key: const Key('strategy-confirm-apply'),
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Xác nhận gửi lệnh'),
+          Consumer(
+            builder: (context, ref, _) {
+              final state = ref.watch(tradeSessionProvider);
+              final ownsSession =
+                  state.isAuthenticated &&
+                  state.session?.bearerToken == widget.session.bearerToken &&
+                  widget.dashboard.ownsSession;
+              return FilledButton(
+                key: const Key('strategy-confirm-apply'),
+                onPressed: ownsSession
+                    ? () => Navigator.of(context).pop(true)
+                    : null,
+                child: const Text('Xác nhận gửi lệnh'),
+              );
+            },
           ),
         ],
       ),
     );
-    return confirmed == true;
+    return confirmed == true && mounted && _isSessionCurrent;
   }
 
   Future<void> _applyNow() async {
@@ -541,12 +570,14 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
     });
     try {
       final id = await _saveForApply();
+      if (!mounted || !_isSessionCurrent) return;
       final outcome = await widget.dashboard.applyDraft(
         id,
         confirm: _confirmPrepared,
       );
+      if (!mounted || !_isSessionCurrent) return;
       await widget.onSaved();
-      if (!mounted) return;
+      if (!mounted || !_isSessionCurrent) return;
       if (outcome.kind == StrategyApplyOutcomeKind.cancelled) {
         Navigator.of(context).pop();
         _message('Bản nháp đã lưu; chưa gửi lệnh.');
@@ -557,6 +588,13 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
         _message(
           outcome.message ??
               'Kết quả chưa rõ. Không gửi lại; làm mới trạng thái chiến thuật.',
+        );
+        return;
+      }
+      if (outcome.kind == StrategyApplyOutcomeKind.queued) {
+        Navigator.of(context).pop();
+        _message(
+          outcome.message ?? 'Các lệnh đã được đưa vào hàng đợi tuần tự.',
         );
         return;
       }
@@ -588,18 +626,20 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
         );
       }
     } on Object catch (error) {
+      if (!mounted || !_isSessionCurrent) return;
       _expireSessionIfUnauthorized(error);
-      if (mounted) {
-        setState(() {
-          _isSaving = false;
-          _workflowError = _safeError(error);
-        });
-      }
+      setState(() {
+        _isSaving = false;
+        _workflowError = _safeError(error);
+      });
     }
   }
 
   bool get _canActOnPreview =>
-      !_isSaving && !_isRequestingPreview && _preview != null;
+      _isSessionCurrent &&
+      !_isSaving &&
+      !_isRequestingPreview &&
+      _preview != null;
 
   void _message(String message) {
     ScaffoldMessenger.of(
@@ -609,6 +649,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
 
   @override
   Widget build(BuildContext context) {
+    ref.watch(tradeSessionProvider);
     final width = MediaQuery.sizeOf(context).width;
     return Dialog(
       insetPadding: EdgeInsets.symmetric(
@@ -1035,7 +1076,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
         if (_step == 0)
           FilledButton(
             key: const Key('strategy-next-step-one'),
-            onPressed: _selectionOrNull() == null
+            onPressed: !_isSessionCurrent || _selectionOrNull() == null
                 ? null
                 : () => setState(() {
                     _step = 1;
@@ -1046,7 +1087,9 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
         else if (_step == 1)
           FilledButton(
             key: const Key('strategy-request-preview'),
-            onPressed: _isRequestingPreview ? null : _requestPreview,
+            onPressed: !_isSessionCurrent || _isRequestingPreview
+                ? null
+                : _requestPreview,
             child: _isRequestingPreview
                 ? const SizedBox.square(
                     dimension: 18,
@@ -1346,6 +1389,27 @@ class _PreparedFinancialSummary extends StatelessWidget {
           Text(
             'Phí mở ước tính: ${_text(prepared['estimatedOpeningFees'])} USDT · tính riêng',
           ),
+        ],
+      ),
+    ),
+  );
+}
+
+class _SubmissionModeSummary extends StatelessWidget {
+  const _SubmissionModeSummary({required this.mode});
+
+  final StrategyLimitOrderSubmissionMode mode;
+
+  @override
+  Widget build(BuildContext context) => Card(
+    child: Padding(
+      padding: const EdgeInsets.all(10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Cơ chế gửi đã cố định: ${mode.label}'),
+          const SizedBox(height: 4),
+          Text(mode.explanation),
         ],
       ),
     ),

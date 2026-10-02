@@ -5,6 +5,7 @@ import '../../orders/data/trade_api_client.dart';
 import '../../orders/presentation/providers/trade_session_provider.dart';
 import '../domain/strategy_models.dart';
 import 'providers/strategy_dashboard_provider.dart';
+import 'strategy_settings_dialog.dart';
 import 'strategy_wizard_dialog.dart';
 
 class StrategyScreen extends ConsumerStatefulWidget {
@@ -70,6 +71,16 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
       appBar: AppBar(
         title: const Text('Chiến Thuật'),
         actions: [
+          IconButton(
+            key: const Key('strategy-settings-button'),
+            tooltip: 'Cài đặt',
+            onPressed: () => _openSettings(
+              context,
+              sessionState.isAuthenticated ? session?.bearerToken : null,
+              dashboard,
+            ),
+            icon: const Icon(Icons.settings_outlined),
+          ),
           if (dashboard != null)
             IconButton(
               tooltip: 'Làm mới danh sách',
@@ -235,6 +246,20 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
     );
   }
 
+  void _openSettings(
+    BuildContext context,
+    String? bearerToken,
+    StrategyDashboardController? dashboard,
+  ) {
+    showDialog<void>(
+      context: context,
+      builder: (context) => StrategySettingsDialog(
+        bearerToken: bearerToken,
+        dashboard: dashboard,
+      ),
+    );
+  }
+
   Future<void> _applySaved(
     BuildContext context,
     StrategyDashboardController dashboard,
@@ -244,10 +269,17 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
     if (id.isEmpty) return;
     final outcome = await dashboard.applyDraft(
       id,
-      confirm: (prepared) => _confirmOrders(context, prepared),
+      confirm: (prepared) => _confirmOrders(context, dashboard, prepared),
     );
-    if (!context.mounted) return;
+    if (!context.mounted || !dashboard.ownsSession) return;
     if (outcome.kind == StrategyApplyOutcomeKind.cancelled) return;
+    if (outcome.kind == StrategyApplyOutcomeKind.queued) {
+      _showMessage(
+        context,
+        outcome.message ?? 'Các lệnh đã được đưa vào hàng đợi tuần tự.',
+      );
+      return;
+    }
     if (outcome.kind == StrategyApplyOutcomeKind.unknown) {
       _showMessage(context, outcome.message ?? 'Kết quả đang được xác minh.');
     } else if (outcome.kind == StrategyApplyOutcomeKind.duplicate) {
@@ -274,11 +306,18 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
 
   Future<bool> _confirmOrders(
     BuildContext context,
+    StrategyDashboardController dashboard,
     Map<String, dynamic> prepared,
   ) async {
     final orders = _preparedOrders(prepared);
-    if (orders.isEmpty) return false;
-    return await showDialog<bool>(
+    final mode = StrategyLimitOrderSubmissionMode.parse(
+      prepared['submissionMode'],
+    );
+    if (orders.isEmpty || mode == null || !dashboard.ownsSession) return false;
+    final sessionState = ref.read(tradeSessionProvider);
+    final bearerToken = sessionState.session?.bearerToken;
+    final confirmed =
+        await showDialog<bool>(
           context: context,
           barrierDismissible: false,
           builder: (context) => AlertDialog(
@@ -290,8 +329,10 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
-                      'Máy chủ đã kiểm tra lại giá và thông tin hợp đồng. Xác nhận sẽ gửi tối đa một lô lệnh.',
+                      'Máy chủ đã kiểm tra lại giá và thông tin hợp đồng. Cơ chế dưới đây đã được cố định cho danh sách này.',
                     ),
+                    const SizedBox(height: 8),
+                    _SubmissionModeSummary(mode: mode),
                     const SizedBox(height: 8),
                     _PreparedFinancialSummary(prepared: prepared),
                     const SizedBox(height: 12),
@@ -306,15 +347,27 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
                 onPressed: () => Navigator.of(context).pop(false),
                 child: const Text('Hủy'),
               ),
-              FilledButton(
-                key: const Key('strategy-confirm-apply'),
-                onPressed: () => Navigator.of(context).pop(true),
-                child: const Text('Xác nhận gửi lệnh'),
+              Consumer(
+                builder: (context, ref, _) {
+                  final state = ref.watch(tradeSessionProvider);
+                  final ownsSession =
+                      state.isAuthenticated &&
+                      state.session?.bearerToken == bearerToken &&
+                      dashboard.ownsSession;
+                  return FilledButton(
+                    key: const Key('strategy-confirm-apply'),
+                    onPressed: ownsSession
+                        ? () => Navigator.of(context).pop(true)
+                        : null,
+                    child: const Text('Xác nhận gửi lệnh'),
+                  );
+                },
               ),
             ],
           ),
         ) ??
         false;
+    return confirmed && dashboard.ownsSession;
   }
 
   Future<void> _deleteStrategy(
@@ -408,7 +461,11 @@ class _StrategyCard extends StatelessWidget {
     final orderSyncState = _text(strategy['orderSyncState']).toLowerCase();
     final lastOrderScanAt = _text(strategy['lastOrderScanAt']);
     final orderRows = _mapList(strategy['orders']);
+    final submissionMode = StrategyLimitOrderSubmissionMode.parse(
+      strategy['submissionMode'],
+    );
     final showOrderOutcomes = const {
+      'APPLYING',
       'APPLIED',
       'PARTIAL',
       'UNKNOWN',
@@ -470,6 +527,25 @@ class _StrategyCard extends StatelessWidget {
                   'OKX đã chấp nhận đầy đủ lệnh thay thế, nhưng hệ thống chưa xóa được chiến thuật cũ.',
                 ),
               ),
+            if (status == 'DRAFT' && strategy['submissionMode'] == null)
+              const Padding(
+                padding: EdgeInsets.only(top: 6),
+                child: Text('Cơ chế gửi lệnh: chưa xác nhận.'),
+              )
+            else if (submissionMode != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text('Cơ chế gửi đã cố định: ${submissionMode.label}.'),
+              )
+            else if (strategy['submissionMode'] != null)
+              const Padding(
+                padding: EdgeInsets.only(top: 6),
+                child: Text('Cơ chế gửi lệnh chưa khả dụng.'),
+              ),
+            if (status == 'APPLYING' || strategy['queueStatus'] != null) ...[
+              const SizedBox(height: 4),
+              _QueueStatusSummary(strategy: strategy),
+            ],
             if (quote?.observedAt != null)
               Text('Giá được ghi nhận lúc ${_time(quote!.observedAt)}'),
             if (metricsAreStale)
@@ -621,19 +697,54 @@ class _AppliedOrderRow extends StatelessWidget {
     final side = _text(order['side']).toUpperCase();
     final role = _text(order['role']).toLowerCase();
     final status = _orderStatusLabel(_text(order['status']).toLowerCase());
+    final placementState = _text(order['placementState']).toLowerCase();
+    final placementLabel = strategyPlacementStateLabel(placementState);
     final averageFill = _text(order['averageFillPrice']);
     final fillSummary =
         'Khớp: ${_display(order['filledContracts'])} / ${_display(order['contracts'])} hợp đồng';
     final subtitle = averageFill.isEmpty
         ? fillSummary
         : '$fillSummary · Giá khớp TB: $averageFill';
-    return ListTile(
-      dense: true,
-      contentPadding: EdgeInsets.zero,
-      leading: CircleAvatar(radius: 14, child: Text('$index')),
-      title: Text('$side · $role · ${_text(order['limitPrice'])}'),
-      subtitle: Text(subtitle),
-      trailing: Chip(label: Text(status)),
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              CircleAvatar(radius: 14, child: Text('$index')),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text('$side · $role · ${_text(order['limitPrice'])}'),
+              ),
+            ],
+          ),
+          Padding(
+            padding: const EdgeInsets.only(left: 38, top: 3),
+            child: Text(subtitle),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(left: 38, top: 4),
+            child: Wrap(
+              spacing: 4,
+              runSpacing: 4,
+              children: [
+                if (placementState.isNotEmpty)
+                  Tooltip(
+                    message: 'Trạng thái gửi',
+                    child: Chip(
+                      label: Text(placementLabel ?? 'Gửi chưa khả dụng'),
+                    ),
+                  ),
+                Tooltip(
+                  message: 'Trạng thái lệnh và khớp trên OKX',
+                  child: Chip(label: Text(status)),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -679,6 +790,52 @@ class _PreparedFinancialSummary extends StatelessWidget {
       ),
     ),
   );
+}
+
+class _SubmissionModeSummary extends StatelessWidget {
+  const _SubmissionModeSummary({required this.mode});
+
+  final StrategyLimitOrderSubmissionMode mode;
+
+  @override
+  Widget build(BuildContext context) => Card(
+    child: Padding(
+      padding: const EdgeInsets.all(10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Cơ chế gửi đã cố định: ${mode.label}'),
+          const SizedBox(height: 4),
+          Text(mode.explanation),
+        ],
+      ),
+    ),
+  );
+}
+
+class _QueueStatusSummary extends StatelessWidget {
+  const _QueueStatusSummary({required this.strategy});
+
+  final Map<String, dynamic> strategy;
+
+  @override
+  Widget build(BuildContext context) {
+    final rawStatus = strategy['queueStatus'];
+    final statusLabel = strategyQueueStatusLabel(rawStatus);
+    final progress = validatedStrategyQueueProgress(strategy['queueProgress']);
+    final progressLabel = progress == null
+        ? 'Tiến độ hàng đợi chưa khả dụng.'
+        : 'Tiến độ hàng đợi: ${progress.attemptedCount} đã thử, ${progress.acceptedCount} đã nhận, ${progress.pendingCount} đang chờ, ${progress.notSubmittedCount} chưa gửi / ${progress.totalCount}.';
+    final queueDescription = statusLabel == null
+        ? 'Trạng thái hàng đợi chưa khả dụng.'
+        : rawStatus == 'submitted'
+        ? '$statusLabel; trạng thái này không xác nhận lệnh đã khớp.'
+        : statusLabel;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [Text(queueDescription), Text(progressLabel)],
+    );
+  }
 }
 
 class _SignedOutCard extends StatelessWidget {
@@ -794,6 +951,8 @@ String _statusLabel(String status) => switch (status) {
 };
 
 String _orderStatusLabel(String status) => switch (status) {
+  'queued' => 'Đang xếp hàng',
+  'sending' => 'Đang gửi',
   'accepted' => 'Đã nhận',
   'live' => 'Đang chờ',
   'partially_filled' => 'Khớp một phần',
@@ -801,6 +960,7 @@ String _orderStatusLabel(String status) => switch (status) {
   'canceled' => 'Đã hủy',
   'mmp_canceled' => 'Đã hủy MMP',
   'rejected' => 'Bị từ chối',
+  'unknown' => 'Chưa xác định',
   'not_submitted' => 'Chưa gửi',
   _ => 'Chưa xác định',
 };

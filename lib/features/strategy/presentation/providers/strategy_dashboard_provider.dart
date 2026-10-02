@@ -14,6 +14,7 @@ typedef StrategyConfirmation =
 enum StrategyApplyOutcomeKind {
   cancelled,
   applied,
+  queued,
   duplicate,
   unknown,
   rejected,
@@ -38,15 +39,18 @@ class StrategyDashboardController extends ChangeNotifier {
     required String bearerToken,
     DateTime Function()? clock,
     VoidCallback? onUnauthorized,
+    bool Function()? sessionIsCurrent,
   }) : _api = api,
        _bearerToken = bearerToken,
        _clock = clock ?? DateTime.now,
-       _onUnauthorized = onUnauthorized;
+       _onUnauthorized = onUnauthorized,
+       _sessionIsCurrent = sessionIsCurrent;
 
   final StrategyApi _api;
   final String _bearerToken;
   final DateTime Function() _clock;
   final VoidCallback? _onUnauthorized;
+  final bool Function()? _sessionIsCurrent;
   List<Map<String, dynamic>> _strategies = const [];
   final Map<String, StrategyTicker> _quotes = {};
   final Map<String, bool> _reportedQuoteFreshness = {};
@@ -68,12 +72,26 @@ class StrategyDashboardController extends ChangeNotifier {
   String? _loadError;
   String? _actionError;
   String? _deleteError;
+  String? _limitOrderSubmissionMode;
+  String? _settingsError;
+  bool _settingsIsLoading = false;
+  bool _settingsIsSaving = false;
+  bool _settingsLoaded = false;
+  Future<void>? _settingsLoadFuture;
+
+  bool get ownsSession => _ownsSession;
+
+  bool get _ownsSession => !_disposed && (_sessionIsCurrent?.call() ?? true);
 
   List<Map<String, dynamic>> get strategies => _strategies;
   bool get isLoading => _isLoading;
   String? get loadError => _loadError;
   String? get actionError => _actionError;
   String? get deleteError => _deleteError;
+  String? get limitOrderSubmissionMode => _limitOrderSubmissionMode;
+  String? get settingsError => _settingsError;
+  bool get settingsIsLoading => _settingsIsLoading;
+  bool get settingsIsSaving => _settingsIsSaving;
   bool get metricsAreStale => _metricsAreStale;
   DateTime? get metricsStaleAt => _metricsStaleAt;
   Map<String, dynamic>? strategyById(String id) {
@@ -89,7 +107,7 @@ class StrategyDashboardController extends ChangeNotifier {
       _quotes[instrumentId]?.isFreshAt(_clock().toUtc()) ?? false;
 
   Future<void> load() {
-    if (_disposed) return Future<void>.value();
+    if (!_ownsSession) return Future<void>.value();
     final current = _loadFuture;
     if (current != null) return current;
     final future = _performLoad();
@@ -104,7 +122,9 @@ class StrategyDashboardController extends ChangeNotifier {
     _loadError = null;
     _notify();
     try {
-      _strategies = await _api.listStrategies(_bearerToken);
+      final strategies = await _api.listStrategies(_bearerToken);
+      if (!_ownsSession) return;
+      _strategies = strategies;
       _loadError = null;
       _metricsAreStale = false;
       _metricsStaleAt = null;
@@ -112,15 +132,106 @@ class StrategyDashboardController extends ChangeNotifier {
       _startPolling();
       if (_pollingActive) unawaited(_pollQuotes());
     } on StrategyApiException catch (error) {
+      if (!_ownsSession) return;
       if (error.isUnauthorized) _onUnauthorized?.call();
       _loadError = error.message;
       _markMetricsStale();
     } on Object {
+      if (!_ownsSession) return;
       _loadError = 'Không thể tải danh sách chiến thuật. Hãy thử làm mới.';
       _markMetricsStale();
     } finally {
-      _isLoading = false;
+      if (_ownsSession) {
+        _isLoading = false;
+        _notify();
+      }
+    }
+  }
+
+  Future<void> loadStrategySettings({bool force = false}) {
+    if (!_ownsSession) return Future<void>.value();
+    final current = _settingsLoadFuture;
+    if (current != null) return current;
+    if (_settingsLoaded && !force) return Future<void>.value();
+    final future = _performSettingsLoad();
+    _settingsLoadFuture = future;
+    return future.whenComplete(() {
+      if (identical(_settingsLoadFuture, future)) _settingsLoadFuture = null;
+    });
+  }
+
+  Future<void> _performSettingsLoad() async {
+    _settingsIsLoading = true;
+    _settingsError = null;
+    _notify();
+    try {
+      final mode = await _api.getLimitOrderSubmissionMode(_bearerToken);
+      if (!_ownsSession) return;
+      if (StrategyLimitOrderSubmissionMode.parse(mode) == null) {
+        throw const StrategyApiException(
+          code: 'invalid_response',
+          message: 'Máy chủ trả về cơ chế gửi lệnh không hợp lệ.',
+        );
+      }
+      _limitOrderSubmissionMode = mode;
+      _settingsLoaded = true;
+      _settingsError = null;
+    } on StrategyApiException catch (error) {
+      if (!_ownsSession) return;
+      if (error.isUnauthorized) _onUnauthorized?.call();
+      _settingsError = error.message;
+    } on Object {
+      if (!_ownsSession) return;
+      _settingsError = 'Không thể tải cài đặt chiến thuật.';
+    } finally {
+      if (_ownsSession) {
+        _settingsIsLoading = false;
+        _notify();
+      }
+    }
+  }
+
+  Future<bool> saveLimitOrderSubmissionMode(String mode) async {
+    if (!_ownsSession || _settingsIsSaving) return false;
+    if (StrategyLimitOrderSubmissionMode.parse(mode) == null) {
+      _settingsError = 'Cơ chế gửi lệnh không hợp lệ.';
       _notify();
+      return false;
+    }
+    _settingsIsSaving = true;
+    _settingsError = null;
+    _notify();
+    try {
+      final acknowledged = await _api.saveLimitOrderSubmissionMode(
+        _bearerToken,
+        mode,
+      );
+      if (!_ownsSession) return false;
+      if (acknowledged != mode ||
+          StrategyLimitOrderSubmissionMode.parse(acknowledged) == null) {
+        throw const StrategyApiException(
+          code: 'invalid_response',
+          message: 'Máy chủ chưa xác nhận lựa chọn đã lưu.',
+        );
+      }
+      _limitOrderSubmissionMode = acknowledged;
+      _settingsLoaded = true;
+      _settingsError = null;
+      return true;
+    } on StrategyApiException catch (error) {
+      if (!_ownsSession) return false;
+      if (error.isUnauthorized) _onUnauthorized?.call();
+      _settingsError = error.message;
+      return false;
+    } on Object {
+      if (!_ownsSession) return false;
+      _settingsError = 'Không thể lưu cài đặt chiến thuật.';
+      return false;
+    } finally {
+      if (_ownsSession) {
+        _settingsIsSaving = false;
+        _notify();
+      }
     }
   }
 
@@ -130,7 +241,7 @@ class StrategyDashboardController extends ChangeNotifier {
     String id, {
     required StrategyConfirmation confirm,
   }) async {
-    if (_disposed || !_actionInFlight.add(id)) {
+    if (!_ownsSession || !_actionInFlight.add(id)) {
       return const StrategyApplyOutcome(StrategyApplyOutcomeKind.duplicate);
     }
     final existing = strategyById(id);
@@ -146,18 +257,23 @@ class StrategyDashboardController extends ChangeNotifier {
     _notify();
     try {
       final prepared = await _api.prepareApply(_bearerToken, id);
+      if (!_ownsSession) return _staleSessionOutcome();
       final confirmationToken = _text(prepared['confirmationToken']);
       if (confirmationToken.isEmpty ||
+          StrategyLimitOrderSubmissionMode.parse(prepared['submissionMode']) ==
+              null ||
           validatedStrategyOrders(prepared) == null) {
         const message =
-            'Máy chủ không trả về danh sách lệnh hợp lệ để xác nhận.';
+            'Máy chủ không trả về cơ chế gửi và danh sách lệnh hợp lệ để xác nhận.';
         _actionError = message;
         return const StrategyApplyOutcome(
           StrategyApplyOutcomeKind.rejected,
           message: message,
         );
       }
-      if (!await confirm(prepared)) {
+      final confirmed = await confirm(prepared);
+      if (!_ownsSession) return _staleSessionOutcome();
+      if (!confirmed) {
         return const StrategyApplyOutcome(StrategyApplyOutcomeKind.cancelled);
       }
       // This is the only execute call in this flow. An uncertain response is
@@ -167,9 +283,19 @@ class StrategyDashboardController extends ChangeNotifier {
         id,
         confirmationToken,
       );
+      if (!_ownsSession) return _staleSessionOutcome();
       await load();
+      if (!_ownsSession) return _staleSessionOutcome();
       _rememberReplacementCleanupConflict(id, result);
       final resultStatus = _text(result['status']).toUpperCase();
+      if (resultStatus == 'APPLYING' &&
+          _isAcknowledgedSequentialQueue(result)) {
+        return StrategyApplyOutcome(
+          StrategyApplyOutcomeKind.queued,
+          result: result,
+          message: 'Các lệnh đã được đưa vào hàng đợi tuần tự.',
+        );
+      }
       if (const {'PARTIAL', 'UNKNOWN', 'APPLYING'}.contains(resultStatus)) {
         return StrategyApplyOutcome(
           StrategyApplyOutcomeKind.unknown,
@@ -183,12 +309,14 @@ class StrategyDashboardController extends ChangeNotifier {
         result: result,
       );
     } on StrategyApiException catch (error) {
+      if (!_ownsSession) return _staleSessionOutcome();
       if (error.isUnauthorized) _onUnauthorized?.call();
       _actionError = error.message;
       if (error.statusCode == null || error.statusCode! >= 500) {
         // A status refresh is read-only; never repeat the execute write.
         await load();
-        return StrategyApplyOutcome(
+        if (!_ownsSession) return _staleSessionOutcome();
+        return const StrategyApplyOutcome(
           StrategyApplyOutcomeKind.unknown,
           message:
               'Kết quả gửi lệnh chưa rõ. Không tự gửi lại; hãy làm mới trạng thái.',
@@ -199,10 +327,12 @@ class StrategyDashboardController extends ChangeNotifier {
         message: error.message,
       );
     } on Object {
+      if (!_ownsSession) return _staleSessionOutcome();
       const message =
           'Kết quả gửi lệnh chưa rõ. Không tự gửi lại; hãy làm mới trạng thái.';
       _actionError = message;
       await load();
+      if (!_ownsSession) return _staleSessionOutcome();
       return const StrategyApplyOutcome(
         StrategyApplyOutcomeKind.unknown,
         message: message,
@@ -213,8 +343,21 @@ class StrategyDashboardController extends ChangeNotifier {
     }
   }
 
+  StrategyApplyOutcome _staleSessionOutcome() => const StrategyApplyOutcome(
+    StrategyApplyOutcomeKind.rejected,
+    message: 'Phiên giao dịch đã thay đổi. Hãy mở lại chiến thuật.',
+  );
+
+  bool _isAcknowledgedSequentialQueue(Map<String, dynamic> result) {
+    final mode = StrategyLimitOrderSubmissionMode.parse(
+      result['submissionMode'],
+    );
+    return mode == StrategyLimitOrderSubmissionMode.sequential &&
+        const {'pending', 'sending'}.contains(result['queueStatus']);
+  }
+
   Future<bool> deleteDraft(String id) async {
-    if (_disposed || !_deleteInFlight.add(id)) return false;
+    if (!_ownsSession || !_deleteInFlight.add(id)) return false;
     final existing = strategyById(id);
     if (existing == null || existing['canDelete'] != true) {
       _deleteInFlight.remove(id);
@@ -224,13 +367,16 @@ class StrategyDashboardController extends ChangeNotifier {
     _notify();
     try {
       await _api.deleteDraft(_bearerToken, id);
+      if (!_ownsSession) return false;
       await load();
-      return true;
+      return _ownsSession;
     } on StrategyApiException catch (error) {
+      if (!_ownsSession) return false;
       if (error.isUnauthorized) _onUnauthorized?.call();
       _deleteError = error.message;
       return false;
     } on Object {
+      if (!_ownsSession) return false;
       _deleteError = 'Không thể xóa chiến thuật.';
       return false;
     } finally {
@@ -240,13 +386,16 @@ class StrategyDashboardController extends ChangeNotifier {
   }
 
   Future<Map<String, dynamic>?> refreshResult(String id) async {
-    if (_disposed || !_actionInFlight.add('result:$id')) return null;
+    if (!_ownsSession || !_actionInFlight.add('result:$id')) return null;
     try {
       final result = await _api.getResult(_bearerToken, id);
+      if (!_ownsSession) return null;
       await load();
+      if (!_ownsSession) return null;
       _rememberReplacementCleanupConflict(id, result);
       return result;
     } on Object catch (error) {
+      if (!_ownsSession) return null;
       if (error is StrategyApiException && error.isUnauthorized) {
         _onUnauthorized?.call();
       }
@@ -280,7 +429,7 @@ class StrategyDashboardController extends ChangeNotifier {
   }
 
   void setVisibility({required bool pageVisible, required bool appVisible}) {
-    if (_disposed ||
+    if (!_ownsSession ||
         (_pageVisible == pageVisible && _appVisible == appVisible)) {
       return;
     }
@@ -351,6 +500,7 @@ class StrategyDashboardController extends ChangeNotifier {
       try {
         final strategyId = strategyByInstrument[id]!;
         final response = await _api.getQuote(_bearerToken, strategyId);
+        if (!_ownsSession) continue;
         final quote = _tickerFromResponse(id, response);
         final previous = _quotes[id];
         if (_pollingActive &&
@@ -367,10 +517,12 @@ class StrategyDashboardController extends ChangeNotifier {
           _scheduleQuoteRetry(id);
         }
       } on StrategyApiException catch (error) {
+        if (!_ownsSession) continue;
         if (error.isUnauthorized) _onUnauthorized?.call();
         _scheduleQuoteRetry(id);
         _notifyQuoteFreshnessIfChanged();
       } on Object {
+        if (!_ownsSession) continue;
         // Retain the last backend quote with its original timestamp.
         _scheduleQuoteRetry(id);
         _notifyQuoteFreshnessIfChanged();
@@ -468,9 +620,16 @@ class StrategyDashboardController extends ChangeNotifier {
 
 final strategyDashboardProvider = ChangeNotifierProvider.autoDispose
     .family<StrategyDashboardController, String>((ref, bearerToken) {
+      bool sessionIsCurrent() {
+        final state = ref.read(tradeSessionProvider);
+        return state.isAuthenticated &&
+            state.session?.bearerToken == bearerToken;
+      }
+
       final controller = StrategyDashboardController(
         api: ref.watch(strategyApiProvider),
         bearerToken: bearerToken,
+        sessionIsCurrent: sessionIsCurrent,
         onUnauthorized: () => ref.read(tradeSessionProvider.notifier).expire(),
       );
       unawaited(controller.load());

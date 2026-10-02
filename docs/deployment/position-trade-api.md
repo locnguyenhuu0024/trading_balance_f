@@ -15,6 +15,8 @@ The API is `backend.app:application`, uses Python's standard library, and is int
 | `POST /v1/actions/prepare` | Bearer session | Fetch current account state and create an expiring confirmation |
 | `POST /v1/actions/execute` | Bearer session | Consume a prepared confirmation once |
 | `GET /v1/actions/result/<operation-id>` | Bearer session | Read and reconcile a recorded operation |
+| `GET /v1/strategies/settings` | Bearer session | Read the current account's limit-order submission preference |
+| `POST /v1/strategies/settings` | Bearer session | Save the current account's limit-order submission preference |
 
 Requests and responses use JSON. The body limit is 64 KiB. Browser requests carrying an `Origin` must match `ALLOWED_WEB_ORIGIN` exactly. No `Origin` header is accepted for non-browser clients, but every account or action route still requires a bearer session where listed above. A successful login returns a random bearer token that expires after ten minutes; the API stores only its keyed hash. Keep that token in application memory and discard it on logout or expiry.
 
@@ -67,6 +69,14 @@ Execute exactly once with:
 The response reports `SUCCEEDED`, `PARTIAL`, `FAILED`, `UNKNOWN`, or `CONFLICT` with an outcome for each target. Repeating the request returns journaled state without another OKX write. A stale target returns `CONFLICT`. If a network timeout leaves an outcome `UNKNOWN`, use the result route to reconcile it; never prepare a replacement action or blindly repeat the write while that target remains unresolved.
 
 The server checks both top-level and item-level OKX response codes. Market orders are verified through order details and a refreshed position. Full closes are successful only after a fresh position query confirms that the target is gone. Close-all reports each target separately and does not report batch success while any position remains open or unknown.
+
+### Strategy limit-order queue
+
+The strategy settings endpoints use `limitOrderSubmissionMode`, with `sequential` and `batch` as the supported values. The default is `sequential`, and the preference is scoped to the authenticated OKX account. A prepared strategy freezes the selected mode; later preference changes apply only to strategies prepared afterward. Existing prepared records without a saved mode retain the legacy `batch` path.
+
+In sequential mode, `POST /v1/strategies/<id>/execute-apply` consumes the confirmation and durably queues the reviewed orders. The API response reports `submissionMode`, `queueStatus`, `queueProgress`, and `applyOutcome: "queued"`; the separate strategy worker performs the exchange writes. The worker sends the frozen limit-order payloads in reviewed order, spaces placements by at least 250 ms, and makes no more than 20 placement attempts per worker pass. A queue stops at its 120-second deadline or on a rejected, malformed, or ambiguous write result. It records each write marker and ACK before advancing the cursor. After a restart, it revalidates the account, mode, preview hash, and deadline before continuing an accepted prefix. An ambiguous write remains unknown and is never resent; the untouched tail stays unsent.
+
+With `batch`, the API keeps the existing batch submission path. Both modes use the same reservation and order-reconciliation records in the SQLite database.
 
 ## User-owned credentials
 
@@ -158,7 +168,7 @@ sudo docker restart trading-balance-trade-api
 
 ### Strategy order-monitor worker
 
-The strategy worker runs as a separate container from the same API image. It only reads OKX order details and positions; order placement remains in the API. Store its env file under the root-owned `/etc/trading-balance` directory because the `/home/deploy/trading_balance_f` parent is writable and causes `sudoedit` to reject that path. Use the same OKX account and session signing key as the API, and set `OPERATION_DB_PATH` to the API's absolute container path for the SQLite database on its persistent mount:
+The strategy worker runs as a separate container from the same API image. It submits durable sequential limit-order queues and monitors submitted orders through OKX order details and positions. Store its env file under the root-owned `/etc/trading-balance` directory because the `/home/deploy/trading_balance_f` parent is writable and causes `sudoedit` to reject that path. Use the same OKX account and session signing key as the API, and set `OPERATION_DB_PATH` to the API's absolute container path for the SQLite database on its persistent mount:
 
 ```sh
 if ! sudo test -e /etc/trading-balance/trade-api-worker.env && ! sudo test -L /etc/trading-balance/trade-api-worker.env; then
@@ -166,6 +176,10 @@ if ! sudo test -e /etc/trading-balance/trade-api-worker.env && ! sudo test -L /e
 fi
 sudoedit /etc/trading-balance/trade-api-worker.env
 ```
+
+For a release containing sequential queues, stop both the old API and worker, then back up the application SQLite database using the normal operator procedure. Install the same new image for the API and worker, start both services with the persistent database mounted, and verify both containers are running before releasing a compatible frontend that exposes the preference. The API and worker must share the same SQLite file so the lease fence, queue cursor, ACKs, and reservation state remain coordinated.
+
+For rollback, first roll back the frontend, then stop both the API and worker while preserving the SQLite database and all queue markers. After sequential queues have finished or stopped and ambiguous placements are resolved, prefer `batch` for new preparations. Do not erase markers or start older binaries while any sequential queue is `APPLYING` or has an unresolved placement. Let the matching API and worker reconcile those rows, or leave both services stopped and preserve the database for review. Once queue state is resolved, roll the API and worker back together to the same prior image. The additive database migration is retained across an application rollback.
 
 Add these five entries, replacing each placeholder privately on the host:
 
@@ -235,10 +249,10 @@ sudo docker ps --filter name=trading-balance-trade-api --format 'table {{.Names}
 
 Keep one WSGI worker until journal and write-lock behavior has been independently proven safe across workers. The container listens inside on port 8000; Docker publishes it only on host loopback. Configure the user's HTTPS reverse proxy to route `https://<USER_API_HOST>/v1/*` to `http://127.0.0.1:8000/v1/*`, preserve the browser `Origin` header, overwrite `X-Forwarded-For` with the connecting client address, and expose no plaintext public port. The API trusts that header only on loopback requests, so the proxy must not append a client-supplied value. The Flutter web origin remains `https://tradingbalancef.vercel.app`; the API host is a separate origin.
 
-Build the web client with the public API base URL:
+The public production API base URL is `https://api.tradingbalancef.com`. Build the release web client with it:
 
 ```sh
-flutter build web --no-pub --dart-define=TRADE_API_BASE_URL=https://<USER_API_HOST>
+flutter build web --no-pub --release --dart-define=TRADE_API_BASE_URL=https://api.tradingbalancef.com
 ```
 
 This URL is public. It is not a credential.

@@ -15,6 +15,13 @@ from .okx import OKXError, OKXTransportError, bounded_error_code
 from .security import new_confirmation_token, new_operation_id, token_digest
 from .service import APIError
 from .store import decode_json, encode_json
+from .strategy_queue import (
+    initial_results,
+    new_queue,
+    normalize_queue,
+    parse_leverage_ack,
+    progress as queue_progress,
+)
 
 
 _INTERVALS = {"6Hutc", "12Hutc", "1Dutc", "1Wutc"}
@@ -76,13 +83,16 @@ def _validated_order_update(
     if state not in ("live", "partially_filled", "filled", "canceled", "mmp_canceled"):
         return None
     average = _positive(details.get("avgPx"))
-    return {
+    updated = {
         **row,
         "status": state,
         "exchangeOrderId": details.get("ordId") or row.get("exchangeOrderId"),
         "filledContracts": _text(filled),
         "averageFillPrice": _text(average),
     }
+    if row.get("placementState") == "unknown":
+        updated["placementState"] = "accepted"
+    return updated
 
 
 def _read_order_rows(
@@ -100,6 +110,8 @@ def _read_order_rows(
     reads = 0
     for index, row in enumerate(results):
         state = row.get("status")
+        if row.get("placementState") in ("pending", "not_submitted"):
+            continue
         if state in _ORDER_TERMINAL_STATES and not (recovering and state == "not_submitted"):
             continue
         client_id = row.get("clientOrderId")
@@ -150,6 +162,11 @@ def _reconciled_strategy_state(
     states = {row.get("status") for row in results}
     new_status = strategy["status"]
     error: str | None = strategy["failureReason"]
+    queue = strategy.get("queue")
+    if isinstance(queue, dict) and queue.get("phase") == "stopped":
+        if "unknown" in states:
+            return "UNKNOWN", strategy.get("failureReason") or queue.get("stopReason")
+        return "PARTIAL", strategy.get("failureReason") or queue.get("stopReason")
     if recovering:
         if "unknown" in states or "not_submitted" in states:
             return "UNKNOWN", "batch_reconciliation_incomplete"
@@ -189,6 +206,12 @@ class StrategyService:
         self._quote_instrument_locks: dict[str, threading.Lock] = {}
 
     def dispatch(self, method: str, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        if path == "/v1/strategies/settings":
+            if method == "GET":
+                return self._get_settings()
+            if method == "POST":
+                return self._save_settings(body)
+            raise APIError(405, "method_not_allowed", "The requested method is not allowed.")
         if method == "POST" and path == "/v1/strategies/preview":
             return self._preview(body)
         if method == "POST" and path == "/v1/strategies":
@@ -287,6 +310,44 @@ class StrategyService:
             )
         return account, fingerprint
 
+    def _get_settings(self) -> dict[str, Any]:
+        _, fingerprint = self._account()
+        return {"limitOrderSubmissionMode": self._limit_order_submission_mode(fingerprint)}
+
+    def _save_settings(self, body: dict[str, Any]) -> dict[str, Any]:
+        mode = body.get("limitOrderSubmissionMode")
+        if mode not in ("sequential", "batch"):
+            raise APIError(
+                400, "invalid_submission_mode",
+                "limitOrderSubmissionMode must be sequential or batch.",
+            )
+        _, fingerprint = self._account()
+        with self.store.transaction() as connection:
+            connection.execute(
+                "INSERT INTO strategy_account_preferences(account_fingerprint, limit_order_submission_mode, updated_at) "
+                "VALUES (?, ?, ?) ON CONFLICT(account_fingerprint) DO UPDATE SET "
+                "limit_order_submission_mode=excluded.limit_order_submission_mode, updated_at=excluded.updated_at",
+                (fingerprint, mode, self.clock()),
+            )
+        return {"limitOrderSubmissionMode": mode}
+
+    def _limit_order_submission_mode(self, fingerprint: str) -> str:
+        with self.store.connection() as connection:
+            row = connection.execute(
+                "SELECT limit_order_submission_mode FROM strategy_account_preferences "
+                "WHERE account_fingerprint=?",
+                (fingerprint,),
+            ).fetchone()
+        if row is None:
+            return "sequential"
+        mode = row["limit_order_submission_mode"]
+        if mode not in ("sequential", "batch"):
+            raise APIError(
+                500, "strategy_settings_unavailable",
+                "The saved strategy submission preference is invalid.",
+            )
+        return mode
+
     def _current_strategy(self, strategy_id: str) -> tuple[dict[str, Any], dict[str, Any], str]:
         if not _STRATEGY_ID.fullmatch(strategy_id):
             raise APIError(404, "strategy_not_found", "The strategy was not found.")
@@ -305,6 +366,30 @@ class StrategyService:
 
     @staticmethod
     def _decode_row(row: Any) -> dict[str, Any]:
+        prepared = None if row["prepared_json"] is None else decode_json(row["prepared_json"])
+        raw_queue = row["queue_json"]
+        queue = None
+        queue_corrupt = False
+        if raw_queue is not None:
+            try:
+                queue = normalize_queue(decode_json(raw_queue))
+            except (TypeError, ValueError):
+                queue = None
+            queue_corrupt = queue is None
+        batch_attempted = bool(row["batch_attempted"])
+        raw_submission_mode = row["submission_mode"] or "batch"
+        prepared_mode = prepared.get("submissionMode") if isinstance(prepared, dict) else None
+        submission_mode_invalid = prepared_mode is not None and (
+            prepared_mode not in ("sequential", "batch")
+            or raw_submission_mode not in ("sequential", "batch")
+            or raw_submission_mode != prepared_mode
+        )
+        if prepared is None and row["status"] == "DRAFT" and not bool(row["attempt_started"]):
+            submission_mode = None
+        elif prepared_mode in ("sequential", "batch"):
+            submission_mode = prepared_mode
+        else:
+            submission_mode = raw_submission_mode if raw_submission_mode in ("sequential", "batch") else "batch"
         return {
             "id": row["strategy_id"],
             "accountFingerprint": row["account_fingerprint"],
@@ -316,9 +401,15 @@ class StrategyService:
             "previewHash": row["preview_hash"],
             "confirmationHash": row["confirmation_hash"],
             "preparedExpiresAt": row["prepared_expires_at"],
-            "prepared": None if row["prepared_json"] is None else decode_json(row["prepared_json"]),
+            "prepared": prepared,
             "attemptStarted": bool(row["attempt_started"]),
-            "batchAttempted": bool(row["batch_attempted"]),
+            "batchAttempted": batch_attempted,
+            "submissionMode": submission_mode,
+            "submissionModeInvalid": submission_mode_invalid,
+            "orderPlacementAttempted": batch_attempted or bool(row["order_placement_attempted"]),
+            "queue": queue,
+            "queueCorrupt": queue_corrupt,
+            "queueJsonRaw": raw_queue,
             "executionId": row["execution_id"],
             "executionLeaseUntil": row["execution_lease_until"],
             "replacementSourceId": row["replacement_source_id"],
@@ -340,19 +431,19 @@ class StrategyService:
     def _legacy_never_sent(cls, strategy: dict[str, Any]) -> bool:
         return (
             strategy["status"] == "COMPLETED"
-            and not strategy["batchAttempted"]
+            and not strategy["orderPlacementAttempted"]
             and cls._all_not_submitted(strategy["results"])
         )
 
     @staticmethod
     def _replacement_fully_accepted(
-        status: str, results: Any, batch_attempted: bool
+        status: str, results: Any, order_placement_attempted: bool
     ) -> bool:
         accepted_states = {
             "accepted", "live", "partially_filled", "filled", "canceled", "mmp_canceled"
         }
         return (
-            batch_attempted
+            order_placement_attempted
             and status in {"APPLIED", "COMPLETED"}
             and isinstance(results, list)
             and bool(results)
@@ -373,7 +464,7 @@ class StrategyService:
         return (
             isinstance(strategy["accountFingerprint"], str)
             and hmac.compare_digest(strategy["accountFingerprint"], fingerprint)
-            and not strategy["batchAttempted"]
+            and not strategy["orderPlacementAttempted"]
             and cls._all_not_submitted(strategy["results"])
             and strategy["status"] != "APPLYING"
             and strategy["executionId"] is None
@@ -417,7 +508,7 @@ class StrategyService:
         if (
             not isinstance(source_id, str)
             or not cls._replacement_fully_accepted(
-                replacement["status"], replacement["results"], replacement["batchAttempted"]
+                replacement["status"], replacement["results"], replacement["orderPlacementAttempted"]
             )
         ):
             return False
@@ -1021,8 +1112,9 @@ class StrategyService:
                     )
             connection.execute(
                 "INSERT INTO strategies(strategy_id, account_fingerprint, status, contract_json, snapshot_json, "
-                "orders_json, results_json, preview_hash, replacement_source_id, created_at, updated_at) "
-                "VALUES (?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, ?, ?)",
+                "orders_json, results_json, preview_hash, replacement_source_id, submission_mode, "
+                "created_at, updated_at) "
+                "VALUES (?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
                 (
                     strategy_id, account_fingerprint, encode_json(contract), encode_json(snapshot),
                     encode_json(orders), encode_json([{**row, "status": "not_submitted", "filledContracts": "0"} for row in orders]),
@@ -1032,6 +1124,10 @@ class StrategyService:
         return {
             "id": strategy_id,
             "status": "DRAFT",
+            "submissionMode": None,
+            "orderPlacementAttempted": False,
+            "queueStatus": None,
+            "queueProgress": None,
             "instrumentId": contract["instrumentId"],
             "interval": contract["interval"],
             "createdAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
@@ -1040,7 +1136,7 @@ class StrategyService:
         }
 
     def _preflight(
-        self, contract: dict[str, Any], expected_fingerprint: str
+        self, contract: dict[str, Any], expected_fingerprint: str, *, resume: bool = False
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         account, fingerprint = self._account()
         if not hmac.compare_digest(expected_fingerprint, fingerprint):
@@ -1055,43 +1151,45 @@ class StrategyService:
         if mode not in ("net_mode", "long_short_mode"):
             raise APIError(409, "account_mode_unsupported", "The current OKX position mode is unsupported.")
         instrument_id = contract["instrumentId"]
-        try:
-            positions = self.okx.positions("SWAP")
-            pending = self.okx.pending_orders(instrument_id)
-        except OKXError:
-            raise APIError(502, "account_preflight_unavailable", "Current positions or pending orders are unavailable.") from None
-        for row in positions:
-            if row.get("instId") != instrument_id:
-                continue
-            size = _decimal(row.get("pos"))
-            if size is None or size != 0:
-                raise APIError(409, "instrument_position_exists", "Close the existing position for this SWAP before applying.")
-        if any(row.get("instId") == instrument_id for row in pending):
-            raise APIError(409, "pending_order_exists", "Cancel existing pending orders for this SWAP before applying.")
+        if not resume:
+            try:
+                positions = self.okx.positions("SWAP")
+                pending = self.okx.pending_orders(instrument_id)
+            except OKXError:
+                raise APIError(502, "account_preflight_unavailable", "Current positions or pending orders are unavailable.") from None
+            for row in positions:
+                if row.get("instId") != instrument_id:
+                    continue
+                size = _decimal(row.get("pos"))
+                if size is None or size != 0:
+                    raise APIError(409, "instrument_position_exists", "Close the existing position for this SWAP before applying.")
+            if any(row.get("instId") == instrument_id for row in pending):
+                raise APIError(409, "pending_order_exists", "Cancel existing pending orders for this SWAP before applying.")
         preview = self._preview_contract(contract)
         if not hmac.compare_digest(expected_fingerprint, preview["_internal"]["accountFingerprint"]):
             raise APIError(409, "account_changed", "The active OKX account changed; no strategy order was sent.")
-        try:
-            balance_rows = self.okx.account_balance()
-        except OKXError:
-            raise APIError(502, "account_preflight_unavailable", "Available USDT balance is unavailable.") from None
-        available: Decimal | None = None
-        for row in balance_rows:
-            details = row.get("details", [])
-            if not isinstance(details, list):
-                continue
-            for detail in details:
-                if isinstance(detail, dict) and detail.get("ccy") == "USDT":
-                    available = _decimal(detail.get("availBal"))
+        if not resume:
+            try:
+                balance_rows = self.okx.account_balance()
+            except OKXError:
+                raise APIError(502, "account_preflight_unavailable", "Available USDT balance is unavailable.") from None
+            available: Decimal | None = None
+            for row in balance_rows:
+                details = row.get("details", [])
+                if not isinstance(details, list):
+                    continue
+                for detail in details:
+                    if isinstance(detail, dict) and detail.get("ccy") == "USDT":
+                        available = _decimal(detail.get("availBal"))
+                        break
+                if available is not None:
                     break
-            if available is not None:
-                break
-        required = Decimal(contract["totalMargin"]) + Decimal(preview["estimatedOpeningFees"] or "0")
-        if available is None or available < required:
-            raise APIError(
-                422, "insufficient_balance", "Available USDT does not cover the margin budget and estimated fees.",
-                details={"required": _text(required), "available": _text(available)},
-            )
+            required = Decimal(contract["totalMargin"]) + Decimal(preview["estimatedOpeningFees"] or "0")
+            if available is None or available < required:
+                raise APIError(
+                    422, "insufficient_balance", "Available USDT does not cover the margin budget and estimated fees.",
+                    details={"required": _text(required), "available": _text(available)},
+                )
         return account, preview
 
     def _prepare(self, strategy_id: str) -> dict[str, Any]:
@@ -1112,12 +1210,25 @@ class StrategyService:
         prepared["orders"] = prepared_orders
         prepared["_positionMode"] = preview["_internal"]["positionMode"]
         with self.store.transaction() as connection:
+            preference = connection.execute(
+                "SELECT limit_order_submission_mode FROM strategy_account_preferences "
+                "WHERE account_fingerprint=?",
+                (fingerprint,),
+            ).fetchone()
+            submission_mode = "sequential" if preference is None else preference["limit_order_submission_mode"]
+            if submission_mode not in ("sequential", "batch"):
+                raise APIError(
+                    500, "strategy_settings_unavailable",
+                    "The saved strategy submission preference is invalid.",
+                )
+            prepared["submissionMode"] = submission_mode
             changed = connection.execute(
                 "UPDATE strategies SET status='PREPARED', confirmation_hash=?, prepared_expires_at=?, "
-                "prepared_json=?, updated_at=? WHERE strategy_id=? AND status='DRAFT' AND attempt_started=0",
+                "prepared_json=?, submission_mode=?, queue_json=NULL, updated_at=? "
+                "WHERE strategy_id=? AND status='DRAFT' AND attempt_started=0",
                 (
                     token_digest(confirmation, self.owner.settings.session_signing_key),
-                    expires_at, encode_json(prepared), self.clock(), strategy_id,
+                    expires_at, encode_json(prepared), submission_mode, self.clock(), strategy_id,
                 ),
             ).rowcount
         if changed != 1:
@@ -1132,6 +1243,10 @@ class StrategyService:
             "unallocatedMargin": prepared["unallocatedMargin"],
             "estimatedOpeningFees": prepared["estimatedOpeningFees"],
             "quoteTimestamp": prepared["quoteTimestamp"],
+            "submissionMode": submission_mode,
+            "orderPlacementAttempted": False,
+            "queueStatus": None,
+            "queueProgress": None,
         }
 
     def _claim_execution(self, strategy_id: str, strategy: dict[str, Any], token: str) -> str | None:
@@ -1186,6 +1301,66 @@ class StrategyService:
             ) from None
         return execution_id
 
+    def _claim_queue(self, strategy_id: str, strategy: dict[str, Any], token: str) -> bool:
+        presented = token_digest(token, self.owner.settings.session_signing_key)
+        if not isinstance(strategy["confirmationHash"], str) or not hmac.compare_digest(strategy["confirmationHash"], presented):
+            raise APIError(403, "invalid_confirmation", "The confirmation token is invalid.")
+        prepared = strategy["prepared"]
+        orders = prepared.get("orders") if isinstance(prepared, dict) else None
+        preview_hash = prepared.get("previewHash") if isinstance(prepared, dict) else None
+        if (
+            not isinstance(orders, list) or not orders or len(orders) > _MAX_ORDERS
+            or not isinstance(preview_hash, str) or not preview_hash
+            or any(not isinstance(row, dict) for row in orders)
+        ):
+            raise APIError(409, "prepared_strategy_invalid", "The prepared strategy cannot be queued safely.")
+        now = self.clock()
+        queue = new_queue(enqueued_at=now, total_count=len(orders), preview_hash=preview_hash)
+        queued_results = initial_results(orders)
+        try:
+            with self.store.transaction() as connection:
+                replacement_source_id = strategy["replacementSourceId"]
+                if replacement_source_id is not None:
+                    source_row = connection.execute(
+                        "SELECT * FROM strategies WHERE strategy_id=? AND account_fingerprint=?",
+                        (replacement_source_id, strategy["accountFingerprint"]),
+                    ).fetchone()
+                    if source_row is None or not self._eligible_never_sent_record(
+                        connection, self._decode_row(source_row), strategy["accountFingerprint"], now
+                    ):
+                        raise APIError(
+                            409,
+                            "replacement_source_unavailable",
+                            "The never-sent source is no longer eligible for replacement.",
+                        )
+                changed = connection.execute(
+                    "UPDATE strategies SET status='APPLYING', attempt_started=1, confirmation_hash=NULL, "
+                    "submission_mode='sequential', order_placement_attempted=0, queue_json=?, results_json=?, "
+                    "execution_id=NULL, execution_lease_until=NULL, updated_at=? "
+                    "WHERE strategy_id=? AND status='PREPARED' AND attempt_started=0 "
+                    "AND submission_mode='sequential' AND confirmation_hash=? AND prepared_expires_at>?",
+                    (
+                        encode_json(queue), encode_json(queued_results), now,
+                        strategy_id, presented, now,
+                    ),
+                ).rowcount
+                if changed != 1:
+                    return False
+                connection.execute(
+                    "INSERT INTO strategy_reservations(account_fingerprint, instrument_id, strategy_id, created_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    (
+                        strategy["accountFingerprint"], strategy["contract"]["instrumentId"],
+                        strategy_id, now,
+                    ),
+                )
+        except sqlite3.IntegrityError:
+            raise APIError(
+                409, "instrument_apply_in_progress",
+                "Another strategy is applying or reconciling this account and instrument.",
+            ) from None
+        return True
+
     def _renew_execution(self, strategy_id: str, execution_id: str) -> bool:
         now = self.clock()
         with self.store.transaction() as connection:
@@ -1210,8 +1385,20 @@ class StrategyService:
         presented = token_digest(token, self.owner.settings.session_signing_key)
         if not isinstance(strategy["confirmationHash"], str) or not hmac.compare_digest(strategy["confirmationHash"], presented):
             raise APIError(403, "invalid_confirmation", "The confirmation token is invalid.")
-        _, live_preview = self._preflight(strategy["contract"], fingerprint)
+        if strategy["submissionModeInvalid"]:
+            raise APIError(409, "prepared_strategy_invalid", "The prepared submission mode is inconsistent.")
         prepared = strategy["prepared"] or {}
+        submission_mode = strategy["submissionMode"] or "batch"
+        prepared_mode = prepared.get("submissionMode")
+        if prepared_mode is not None and prepared_mode != submission_mode:
+            raise APIError(409, "prepared_strategy_invalid", "The prepared submission mode is inconsistent.")
+        if submission_mode == "sequential":
+            if prepared_mode != "sequential":
+                raise APIError(409, "prepared_strategy_invalid", "The prepared submission mode is missing.")
+            if not self._claim_queue(strategy_id, strategy, token):
+                return self._basic_result(self._load_row(strategy_id))
+            return self._basic_result(self._load_row(strategy_id))
+        _, live_preview = self._preflight(strategy["contract"], fingerprint)
         if not hmac.compare_digest(live_preview["previewHash"], str(prepared.get("previewHash", ""))):
             self._reset_to_draft(strategy_id)
             raise APIError(
@@ -1256,19 +1443,21 @@ class StrategyService:
                 not_submitted = [{**row, "status": "not_submitted"} for row in orders]
                 self._finish(strategy_id, execution_id, "PARTIAL", not_submitted, "leverage_rejected", leverage_results)
                 return self._result(strategy_id)
-            data = response.get("data", [])
-            if (
-                not isinstance(data, list) or len(data) != 1 or not isinstance(data[0], dict)
-                or str(data[0].get("sCode", "")) != "0"
-            ):
-                leverage_result = {"side": side, "status": "rejected"}
-                if isinstance(data, list) and len(data) == 1 and isinstance(data[0], dict):
-                    error_code = bounded_error_code(data[0].get("sCode"))
-                    if error_code is not None:
-                        leverage_result["errorCode"] = error_code
+            leverage_outcome, error_code = parse_leverage_ack(
+                response,
+                expected_pos_side=pos_side,
+                expected_instrument_id=strategy["contract"]["instrumentId"],
+                expected_leverage=side_order["leverage"],
+            )
+            if leverage_outcome != "applied":
+                leverage_result = {"side": side, "status": leverage_outcome}
+                if error_code is not None:
+                    leverage_result["errorCode"] = error_code
                 leverage_results.append(leverage_result)
                 not_submitted = [{**row, "status": "not_submitted"} for row in orders]
-                self._finish(strategy_id, execution_id, "PARTIAL", not_submitted, "leverage_rejected", leverage_results)
+                next_status = "PARTIAL" if leverage_outcome == "rejected" else "UNKNOWN"
+                failure_reason = "leverage_rejected" if leverage_outcome == "rejected" else "leverage_unknown"
+                self._finish(strategy_id, execution_id, next_status, not_submitted, failure_reason, leverage_results)
                 return self._result(strategy_id)
             leverage_results.append({"side": side, "status": "applied"})
 
@@ -1354,7 +1543,8 @@ class StrategyService:
         now = self.clock()
         with self.store.transaction() as connection:
             changed = connection.execute(
-                "UPDATE strategies SET batch_attempted=1, execution_lease_until=?, updated_at=? "
+                "UPDATE strategies SET batch_attempted=1, order_placement_attempted=1, "
+                "execution_lease_until=?, updated_at=? "
                 "WHERE strategy_id=? AND status='APPLYING' AND execution_id=? "
                 "AND execution_lease_until>? AND batch_attempted=0",
                 (now + _EXECUTION_LEASE_SECONDS, now, strategy_id, execution_id, now),
@@ -1372,7 +1562,8 @@ class StrategyService:
     ) -> None:
         with self.store.transaction() as connection:
             current = connection.execute(
-                "SELECT batch_attempted FROM strategies WHERE strategy_id=? AND status='APPLYING' "
+                "SELECT batch_attempted, order_placement_attempted FROM strategies "
+                "WHERE strategy_id=? AND status='APPLYING' "
                 "AND execution_id=?",
                 (strategy_id, execution_id),
             ).fetchone()
@@ -1387,7 +1578,10 @@ class StrategyService:
             ).rowcount
             if (
                 changed == 1 and current is not None
-                and self._can_release_reservation(status, orders, bool(current["batch_attempted"]))
+                and self._can_release_reservation(
+                    status, orders,
+                    bool(current["batch_attempted"]) or bool(current["order_placement_attempted"]),
+                )
             ):
                 connection.execute(
                     "DELETE FROM strategy_reservations WHERE strategy_id=?", (strategy_id,)
@@ -1397,10 +1591,10 @@ class StrategyService:
 
     @staticmethod
     def _can_release_reservation(
-        status: str, orders: list[dict[str, Any]], batch_attempted: bool
+        status: str, orders: list[dict[str, Any]], order_placement_attempted: bool
     ) -> bool:
         if status == "UNKNOWN":
-            return not batch_attempted
+            return not order_placement_attempted
         terminal = _ORDER_TERMINAL_STATES
         return status in ("APPLIED", "PARTIAL", "UNKNOWN", "COMPLETED") and all(
             row.get("status") in terminal for row in orders
@@ -1434,7 +1628,7 @@ class StrategyService:
 
     def _replacement_cleanup_conflict(self, strategy: dict[str, Any]) -> bool:
         if not self._replacement_fully_accepted(
-            strategy["status"], strategy["results"], strategy["batchAttempted"]
+            strategy["status"], strategy["results"], strategy["orderPlacementAttempted"]
         ):
             return False
         source_id = strategy["replacementSourceId"]
@@ -1463,6 +1657,18 @@ class StrategyService:
             )
             status = "PARTIAL"
             failure_reason = "leverage_rejected" if rejected_leverage else "never_sent"
+        queue = strategy.get("queue")
+        queue_status = None if queue is None else queue.get("phase")
+        queue_counts = queue_progress(queue, strategy["results"]) if queue is not None else None
+        if strategy.get("queueCorrupt") and strategy["submissionMode"] == "sequential":
+            queue_status = "stopped"
+        apply_outcome = (
+            "queued"
+            if strategy["submissionMode"] == "sequential"
+            and status == "APPLYING"
+            and queue_status in ("pending", "sending")
+            else None
+        )
         return {
             "id": strategy["id"],
             "status": status,
@@ -1478,6 +1684,11 @@ class StrategyService:
             "failureReason": failure_reason,
             "leverageResults": strategy["leverageResults"],
             "batchAttempted": strategy["batchAttempted"],
+            "submissionMode": strategy["submissionMode"],
+            "orderPlacementAttempted": strategy["orderPlacementAttempted"],
+            "queueStatus": queue_status,
+            "queueProgress": queue_counts,
+            "applyOutcome": apply_outcome,
             "canDelete": self._can_delete_hint(strategy),
             "replacementCleanupConflict": self._replacement_cleanup_conflict(strategy),
             "createdAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(strategy["createdAt"])),
@@ -1489,13 +1700,21 @@ class StrategyService:
         return self._result_for(strategy, fingerprint)
 
     def _result_for(self, strategy: dict[str, Any], fingerprint: str) -> dict[str, Any]:
-        if strategy["replacementSourceId"] is not None:
+        active_queue = (
+            strategy["submissionMode"] == "sequential"
+            and strategy["status"] == "APPLYING"
+            and (strategy.get("queueCorrupt") or (
+                isinstance(strategy.get("queue"), dict)
+                and strategy["queue"].get("phase") in ("pending", "sending")
+            ))
+        )
+        if strategy["replacementSourceId"] is not None and not active_queue:
             self._try_cleanup_replacement_source(strategy["id"])
-        if strategy["status"] == "APPLYING":
+        if strategy["status"] == "APPLYING" and not active_queue:
             lease_until = strategy["executionLeaseUntil"]
             if lease_until is None or lease_until <= self.clock():
                 strategy = self._recover_interrupted_apply(strategy)
-        elif strategy["status"] in ("UNKNOWN", "APPLIED", "PARTIAL"):
+        elif not active_queue and strategy["status"] in ("UNKNOWN", "APPLIED", "PARTIAL"):
             if self._order_scan_due(strategy["id"]):
                 strategy, scan_error = self._reconcile_orders_with_outcome(strategy)
                 self._record_api_order_scan(strategy["id"], scan_error)
@@ -1674,7 +1893,9 @@ class StrategyService:
                 "AND execution_id IS ? AND (execution_lease_until IS NULL OR execution_lease_until<=?)",
                 (status, encode_json(results), error, now, strategy["id"], strategy["executionId"], now),
             ).rowcount
-            if changed == 1 and self._can_release_reservation(status, results, strategy["batchAttempted"]):
+            if changed == 1 and self._can_release_reservation(
+                status, results, strategy["orderPlacementAttempted"]
+            ):
                 connection.execute(
                     "DELETE FROM strategy_reservations WHERE strategy_id=?", (strategy["id"],)
                 )
@@ -1685,7 +1906,7 @@ class StrategyService:
     def _reconcile_orders_with_outcome(
         self, strategy: dict[str, Any], *, recovering: bool = False
     ) -> tuple[dict[str, Any], str | None]:
-        if not strategy["batchAttempted"]:
+        if not strategy["orderPlacementAttempted"]:
             return strategy, None
         if strategy["status"] == "APPLYING" and not recovering:
             return strategy, None
@@ -1715,7 +1936,7 @@ class StrategyService:
                         ),
                     ).rowcount
                 if saved == 1 and self._can_release_reservation(
-                    new_status, results, strategy["batchAttempted"]
+                    new_status, results, strategy["orderPlacementAttempted"]
                 ):
                     connection.execute(
                         "DELETE FROM strategy_reservations WHERE strategy_id=?", (strategy["id"],)
@@ -1768,7 +1989,7 @@ class StrategyService:
                 raise APIError(
                     409,
                     "strategy_immutable",
-                    "Only a strategy proven never batched can be deleted.",
+                    "Only a strategy with no order placement attempt can be deleted.",
                 )
             self._delete_strategy_with_dependents(connection, strategy_id)
         return {"id": strategy_id, "status": "DELETED"}

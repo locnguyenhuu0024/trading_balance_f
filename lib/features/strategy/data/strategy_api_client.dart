@@ -31,6 +31,10 @@ abstract class StrategyApi {
 
   Future<Map<String, dynamic>> getQuote(String bearerToken, String id);
 
+  Future<String> getLimitOrderSubmissionMode(String bearerToken);
+
+  Future<String> saveLimitOrderSubmissionMode(String bearerToken, String mode);
+
   Future<void> deleteDraft(String bearerToken, String id);
 }
 
@@ -158,6 +162,45 @@ class StrategyApiClient implements StrategyApi {
       );
 
   @override
+  Future<String> getLimitOrderSubmissionMode(String bearerToken) async {
+    final response = await _request(
+      'GET',
+      'v1/strategies/settings',
+      bearerToken: bearerToken,
+    );
+    return _validatedSubmissionMode(response['limitOrderSubmissionMode']);
+  }
+
+  @override
+  Future<String> saveLimitOrderSubmissionMode(
+    String bearerToken,
+    String mode,
+  ) async {
+    if (!_isSubmissionMode(mode)) {
+      throw const StrategyApiException(
+        code: 'invalid_request',
+        message: 'The limit order submission mode is invalid.',
+      );
+    }
+    final response = await _request(
+      'POST',
+      'v1/strategies/settings',
+      bearerToken: bearerToken,
+      body: {'limitOrderSubmissionMode': mode},
+    );
+    final acknowledged = _validatedSubmissionMode(
+      response['limitOrderSubmissionMode'],
+    );
+    if (acknowledged != mode) {
+      throw const StrategyApiException(
+        code: 'invalid_response',
+        message: 'The trade API did not acknowledge the selected setting.',
+      );
+    }
+    return acknowledged;
+  }
+
+  @override
   Future<void> deleteDraft(String bearerToken, String id) async {
     await _request(
       'POST',
@@ -267,5 +310,16 @@ class StrategyApiException implements Exception {
 }
 
 String _text(Object? value) => value == null ? '' : value.toString();
+
+bool _isSubmissionMode(String value) =>
+    value == 'sequential' || value == 'batch';
+
+String _validatedSubmissionMode(Object? value) {
+  if (value is String && _isSubmissionMode(value)) return value;
+  throw const StrategyApiException(
+    code: 'invalid_response',
+    message: 'The trade API returned an invalid strategy setting.',
+  );
+}
 
 final strategyApiProvider = Provider<StrategyApi>((ref) => StrategyApiClient());

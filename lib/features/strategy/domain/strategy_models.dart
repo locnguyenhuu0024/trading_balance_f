@@ -145,6 +145,105 @@ enum StrategySide {
 
 enum StrategyAllocation { equal, increasing, decreasing }
 
+enum StrategyLimitOrderSubmissionMode {
+  sequential(
+    'sequential',
+    'Hàng đợi tuần tự',
+    'Lệnh tiếp theo chỉ được gửi sau khi máy chủ xác nhận lệnh trước đã được nhận; xác nhận nhận lệnh không có nghĩa là lệnh đã khớp.',
+  ),
+  batch(
+    'batch',
+    'Gửi theo lô',
+    'Các lệnh đã duyệt được gửi cùng nhau theo cơ chế gửi theo lô.',
+  );
+
+  const StrategyLimitOrderSubmissionMode(
+    this.wireValue,
+    this.label,
+    this.explanation,
+  );
+
+  final String wireValue;
+  final String label;
+  final String explanation;
+
+  static StrategyLimitOrderSubmissionMode? parse(Object? value) =>
+      switch (value) {
+        'sequential' => StrategyLimitOrderSubmissionMode.sequential,
+        'batch' => StrategyLimitOrderSubmissionMode.batch,
+        _ => null,
+      };
+}
+
+class StrategyQueueProgress {
+  const StrategyQueueProgress({
+    required this.totalCount,
+    required this.attemptedCount,
+    required this.acceptedCount,
+    required this.pendingCount,
+    required this.notSubmittedCount,
+  });
+
+  final int totalCount;
+  final int attemptedCount;
+  final int acceptedCount;
+  final int pendingCount;
+  final int notSubmittedCount;
+}
+
+StrategyQueueProgress? validatedStrategyQueueProgress(Object? value) {
+  if (value is! Map || value.keys.any((key) => key is! String)) return null;
+  final total = value['totalCount'];
+  final attempted = value['attemptedCount'];
+  final accepted = value['acceptedCount'];
+  final pending = value['pendingCount'];
+  final notSubmitted = value['notSubmittedCount'];
+  if (total is! int ||
+      attempted is! int ||
+      accepted is! int ||
+      pending is! int ||
+      notSubmitted is! int ||
+      total < 0 ||
+      attempted < 0 ||
+      accepted < 0 ||
+      pending < 0 ||
+      notSubmitted < 0 ||
+      total > 20 ||
+      attempted > total ||
+      accepted > total ||
+      accepted > attempted ||
+      pending > total ||
+      notSubmitted > total ||
+      attempted + pending + notSubmitted != total) {
+    return null;
+  }
+  return StrategyQueueProgress(
+    totalCount: total,
+    attemptedCount: attempted,
+    acceptedCount: accepted,
+    pendingCount: pending,
+    notSubmittedCount: notSubmitted,
+  );
+}
+
+String? strategyQueueStatusLabel(Object? value) => switch (value) {
+  'pending' => 'Đang chờ gửi',
+  'sending' => 'Đang gửi',
+  'stopped' => 'Đã dừng',
+  'submitted' => 'Đã gửi hết lệnh',
+  _ => null,
+};
+
+String? strategyPlacementStateLabel(Object? value) => switch (value) {
+  'pending' || 'queued' => 'Đang xếp hàng',
+  'sending' => 'Đang gửi',
+  'accepted' => 'Đã được nhận',
+  'rejected' => 'Bị từ chối',
+  'unknown' => 'Chưa rõ kết quả gửi',
+  'not_submitted' => 'Chưa gửi',
+  _ => null,
+};
+
 class StrategyInstrument {
   const StrategyInstrument({
     required this.instrumentId,

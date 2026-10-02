@@ -150,6 +150,11 @@ void main() {
       );
       await client.getResult(token, 'draft-123');
       final quote = await client.getQuote(token, 'draft-123');
+      final preference = await client.getLimitOrderSubmissionMode(token);
+      final savedPreference = await client.saveLimitOrderSubmissionMode(
+        token,
+        'batch',
+      );
       await client.deleteDraft(token, 'draft-123');
 
       expect(preview['previewHash'], 'hash');
@@ -158,6 +163,8 @@ void main() {
       expect(prepared['confirmationToken'], 'confirm-once');
       expect(executed['status'], 'UNKNOWN');
       expect(quote['lastPrice'], '65000.125');
+      expect(preference, 'sequential');
+      expect(savedPreference, 'batch');
       expect(adapter.requests.map((request) => request.uri.path), [
         '/v1/strategies/preview',
         '/v1/strategies',
@@ -166,6 +173,8 @@ void main() {
         '/v1/strategies/draft-123/execute-apply',
         '/v1/strategies/draft-123/result',
         '/v1/strategies/draft-123/quote',
+        '/v1/strategies/settings',
+        '/v1/strategies/settings',
         '/v1/strategies/draft-123/delete',
       ]);
       expect(
@@ -184,7 +193,27 @@ void main() {
       });
       expect(adapter.requests[2].method, 'GET');
       expect(adapter.requests[6].method, 'GET');
-      expect(adapter.requests[7].data, const {});
+      expect(adapter.requests[7].method, 'GET');
+      expect(adapter.requests[8].method, 'POST');
+      expect(adapter.requests[8].data, {'limitOrderSubmissionMode': 'batch'});
+      expect(adapter.requests[9].data, const {});
+    },
+  );
+
+  test(
+    'settings responses require a known mode and exact save acknowledgment',
+    () async {
+      final invalidGet = await _captureSettingsFailure(
+        _TradeAdapter(getSettingsMode: 'parallel'),
+        save: false,
+      );
+      final invalidAck = await _captureSettingsFailure(
+        _TradeAdapter(postSettingsMode: 'sequential'),
+        save: true,
+      );
+
+      expect(invalidGet.code, 'invalid_response');
+      expect(invalidAck.code, 'invalid_response');
     },
   );
 }
@@ -206,7 +235,31 @@ Future<StrategyApiException> _capturePreviewFailure(
   fail('Expected strategy preview to fail.');
 }
 
+Future<StrategyApiException> _captureSettingsFailure(
+  _TradeAdapter adapter, {
+  required bool save,
+}) async {
+  final client = StrategyApiClient(
+    baseUrl: 'https://trade.example.com',
+    dio: Dio(BaseOptions())..httpClientAdapter = adapter,
+  );
+  try {
+    if (save) {
+      await client.saveLimitOrderSubmissionMode('session-token', 'batch');
+    } else {
+      await client.getLimitOrderSubmissionMode('session-token');
+    }
+  } on StrategyApiException catch (error) {
+    return error;
+  }
+  fail('Expected strategy settings request to fail.');
+}
+
 class _TradeAdapter implements HttpClientAdapter {
+  _TradeAdapter({this.getSettingsMode = 'sequential', this.postSettingsMode});
+
+  final String getSettingsMode;
+  final String? postSettingsMode;
   final List<RequestOptions> requests = [];
 
   @override
@@ -238,6 +291,14 @@ class _TradeAdapter implements HttpClientAdapter {
         'instrumentId': 'BTC-USDT-SWAP',
         'lastPrice': '65000.125',
         'observedAt': '2026-10-02T00:00:00.000Z',
+      },
+      '/v1/strategies/settings' when options.method == 'GET' => {
+        'limitOrderSubmissionMode': getSettingsMode,
+      },
+      '/v1/strategies/settings' => {
+        'limitOrderSubmissionMode':
+            postSettingsMode ??
+            (options.data as Map)['limitOrderSubmissionMode'],
       },
       _ => {'status': 'DELETED'},
     };

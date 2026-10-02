@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from .okx import OKXClient, OKXError, Transport
+from .okx import OKXClient, OKXError, OKXTransportError, Transport
 from .security import token_digest
 from .store import SQLiteStore, encode_json
 from .strategy import (
@@ -21,6 +21,17 @@ from .strategy import (
     _reconciled_strategy_state,
     StrategyService,
 )
+from .strategy_queue import (
+    MAX_PLACEMENTS_PER_PASS,
+    MIN_PLACEMENT_SPACING_SECONDS,
+    StrategyQueueLedger,
+    new_queue,
+    normalize_queue,
+    parse_leverage_ack,
+    parse_order_ack,
+    stop_queue,
+)
+from .service import APIError
 
 
 _REQUIRED_ENV = (
@@ -37,6 +48,29 @@ _MAX_BACKOFF_SECONDS = 300
 
 class _MonitorLeaseLost(Exception):
     pass
+
+
+class _QueueDeadline(Exception):
+    pass
+
+
+class _LeaseAwareExchange:
+    """Renew the worker fence immediately before each queue preflight call."""
+
+    def __init__(self, exchange: Any, before_call: Callable[[str], None]):
+        self._exchange = exchange
+        self._before_call = before_call
+
+    def __getattr__(self, name: str) -> Any:
+        target = getattr(self._exchange, name)
+        if not callable(target):
+            return target
+
+        def fenced_call(*args: Any, **kwargs: Any) -> Any:
+            self._before_call(name)
+            return target(*args, **kwargs)
+
+        return fenced_call
 
 
 @dataclass(frozen=True)
@@ -94,6 +128,7 @@ class StrategyOrderWorker:
         order_interval_seconds: float = 5,
         call_spacing_seconds: float = 0.1,
         sleep: Callable[[float], None] = time.sleep,
+        monotonic: Callable[[], float] = time.monotonic,
     ):
         if lease_seconds <= 0 or order_interval_seconds <= 0 or call_spacing_seconds < 0:
             raise ValueError("worker timing is invalid")
@@ -106,6 +141,7 @@ class StrategyOrderWorker:
         self.order_interval_seconds = order_interval_seconds
         self.call_spacing_seconds = call_spacing_seconds
         self.sleep = sleep
+        self.monotonic = monotonic
         self.okx = okx or OKXClient(
             settings.okx_api_key,
             settings.okx_api_secret,
@@ -115,7 +151,9 @@ class StrategyOrderWorker:
         )
         # StrategyService supplies the shared row decoder and reconciliation contract.
         self.strategy = StrategyService(self)
+        self._queue_placements_this_pass = 0
         self._last_call_monotonic: float | None = None
+        self._last_placement_monotonic: float | None = None
 
     def _account_fingerprint(self, uid: Any) -> str | None:
         if isinstance(uid, bool) or not isinstance(uid, (str, int)):
@@ -125,13 +163,19 @@ class StrategyOrderWorker:
             return None
         return token_digest("okx-account-uid:v1:" + normalized, self.settings.session_signing_key)
 
+    @staticmethod
+    def _valid_account_fingerprint(value: Any) -> bool:
+        return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+
     def run_once(self) -> bool:
         """Run one bounded pass. False means another live worker owns the lease."""
         now = self.clock()
+        self._queue_placements_this_pass = 0
         fence = self.store.acquire_strategy_monitor_lease(self.owner_id, now, self.lease_seconds)
         if fence is None:
             return False
         try:
+            self._ensure_lease(fence)
             account = self.okx.account_config()
         except OKXError:
             return True
@@ -159,7 +203,10 @@ class StrategyOrderWorker:
                 "LEFT JOIN strategy_sync_state AS sync ON sync.strategy_id=s.strategy_id "
                 "WHERE s.account_fingerprint=? AND s.attempt_started=1 AND s.status IN "
                 "('APPLYING', 'UNKNOWN', 'APPLIED', 'PARTIAL') "
-                "AND (s.status!='APPLYING' OR s.execution_lease_until IS NULL OR s.execution_lease_until<=?) "
+                "AND ((s.status='APPLYING' AND s.submission_mode='sequential' AND s.queue_json IS NOT NULL) "
+                "OR (s.status='APPLYING' AND (s.submission_mode!='sequential' OR s.queue_json IS NULL) "
+                "AND (s.execution_lease_until IS NULL OR s.execution_lease_until<=?)) "
+                "OR (s.status!='APPLYING' AND (s.batch_attempted=1 OR s.order_placement_attempted=1))) "
                 "AND COALESCE(sync.next_scan_at, 0)<=? "
                 "ORDER BY COALESCE(sync.next_scan_at, 0), COALESCE(sync.last_attempt_at, 0), "
                 "s.created_at, s.strategy_id LIMIT 1",
@@ -177,7 +224,7 @@ class StrategyOrderWorker:
 
     def _ensure_lease(self, fence: int) -> None:
         if not self.store.renew_strategy_monitor_lease(
-            self.owner_id, fence, self.clock(), self.lease_seconds
+            self.owner_id, fence, self.clock(), self.lease_seconds, clock=self.clock
         ):
             raise _MonitorLeaseLost
 
@@ -244,6 +291,9 @@ class StrategyOrderWorker:
         return True, None
 
     def _process_strategy(self, strategy: dict[str, Any], fence: int) -> None:
+        if strategy["submissionMode"] == "sequential" and strategy["status"] == "APPLYING":
+            self._process_queue(strategy, fence)
+            return
         strategy_id = strategy["id"]
         attempt = self._write_attempt(strategy_id, fence)
         if attempt is None:
@@ -279,7 +329,7 @@ class StrategyOrderWorker:
 
         scan_error = order_error
         complete = False
-        if scan_error is None and strategy["batchAttempted"] and self._all_orders_terminal(results):
+        if scan_error is None and strategy["orderPlacementAttempted"] and self._all_orders_terminal(results):
             complete, position_error = self._position_proves_zero(
                 strategy["contract"]["instrumentId"], fence
             )
@@ -311,6 +361,549 @@ class StrategyOrderWorker:
             scan_started_at=scan_started_at,
         )
 
+    def _queue_service(self, fence: int, deadline: float) -> StrategyService:
+        service = StrategyService(self)
+        service.okx = _LeaseAwareExchange(
+            self.okx,
+            lambda name: self._before_queue_exchange(name, fence, deadline),
+        )
+        return service
+
+    def _before_queue_exchange(self, method_name: str, fence: int, deadline: float) -> None:
+        self._ensure_lease(fence)
+        if method_name in {"set_leverage", "place_order", "place_batch_orders", "close_position", "add_margin"}:
+            if self.clock() >= deadline:
+                raise _QueueDeadline
+            if method_name == "place_order":
+                current = self.monotonic()
+                if self._last_placement_monotonic is not None:
+                    remaining = MIN_PLACEMENT_SPACING_SECONDS - (
+                        current - self._last_placement_monotonic
+                    )
+                    if remaining > 0:
+                        self.sleep(remaining + 1e-9)
+                        self._ensure_lease(fence)
+                        if self.clock() >= deadline:
+                            raise _QueueDeadline
+                # Record after the last ownership check, immediately before the
+                # wrapped exchange method starts. Lease renewal time counts toward
+                # the spacing interval.
+                self._last_placement_monotonic = self.monotonic()
+                self._queue_placements_this_pass += 1
+
+    def _pace_queue_placement(self, fence: int, deadline: float, *, resumed_prefix: bool) -> None:
+        if resumed_prefix and self._last_placement_monotonic is None:
+            # The prior call belongs to an earlier worker process. Waiting from
+            # takeover is conservative and guarantees a full interval before the
+            # first resumed placement without persisting a process-local clock.
+            self._last_placement_monotonic = self.monotonic()
+        current = self.monotonic()
+        if self._last_placement_monotonic is not None:
+            remaining = MIN_PLACEMENT_SPACING_SECONDS - (current - self._last_placement_monotonic)
+            if remaining > 0:
+                self.sleep(remaining + 1e-9)
+        self._ensure_lease(fence)
+        if self.clock() >= deadline:
+            raise _QueueDeadline
+
+    def _queue_ledger(self, fence: int) -> StrategyQueueLedger:
+        return StrategyQueueLedger(
+            self.store,
+            owner_id=self.owner_id,
+            fence=fence,
+            lease_seconds=self.lease_seconds,
+            clock=self.clock,
+        )
+
+    def _persist_queue_transition(
+        self,
+        strategy: dict[str, Any],
+        fence: int,
+        *,
+        queue: dict[str, Any],
+        results: list[dict[str, Any]],
+        status: str,
+        failure_reason: str | None,
+        leverage_results: list[dict[str, Any]] | None = None,
+        mark_placement_attempted: bool = False,
+    ) -> dict[str, Any] | None:
+        persisted = self._queue_ledger(fence).persist_transition(
+            strategy,
+            queue=queue,
+            results=results,
+            status=status,
+            failure_reason=failure_reason,
+            leverage_results=strategy["leverageResults"] if leverage_results is None else leverage_results,
+            mark_placement_attempted=mark_placement_attempted,
+        )
+        if not persisted:
+            return None
+        latest = self.strategy._load_row(strategy["id"])
+        if latest["status"] != "APPLYING" and latest["replacementSourceId"] is not None:
+            self.strategy._try_cleanup_replacement_source(latest["id"])
+            latest = self.strategy._load_row(strategy["id"])
+        return latest
+
+    @staticmethod
+    def _queue_validation_reason(error: APIError, *, resume: bool) -> str:
+        return {
+            "account_changed": "account_changed",
+            "account_identity_unavailable": "account_changed",
+            "account_mode_unsupported": "account_mode_unsupported",
+            "instrument_position_exists": "position_exists",
+            "pending_order_exists": "pending_order_exists",
+            "insufficient_balance": "insufficient_balance",
+            "quote_stale": "preview_changed",
+            "preview_inputs_unavailable": "preflight_unavailable",
+            "account_preflight_unavailable": "preflight_unavailable",
+        }.get(error.code, "resume_validation_failed" if resume else "preflight_unavailable")
+
+    def _stop_queue_without_marker(
+        self,
+        strategy: dict[str, Any],
+        fence: int,
+        reason: str,
+        *,
+        unknown_index: int | None = None,
+    ) -> None:
+        queue = strategy.get("queue")
+        if not isinstance(queue, dict):
+            return
+        results = [dict(row) for row in strategy["results"]]
+        suspected = [
+            index for index, row in enumerate(results)
+            if row.get("placementState") == "sending"
+        ]
+        effective_unknown = unknown_index
+        if effective_unknown is None and suspected:
+            effective_unknown = suspected[0]
+        stopped, results = stop_queue(queue, results, reason, unknown_index=effective_unknown)
+        for index in suspected:
+            if index != effective_unknown:
+                results[index] = {**results[index], "status": "unknown", "placementState": "unknown"}
+        unknown = effective_unknown is not None or any(row.get("status") == "unknown" for row in results)
+        self._persist_queue_transition(
+            strategy,
+            fence,
+            queue=stopped,
+            results=results,
+            status="UNKNOWN" if unknown else "PARTIAL",
+            failure_reason=reason,
+        )
+
+    def _stop_interrupted_queue(self, strategy: dict[str, Any], fence: int) -> None:
+        queue = strategy["queue"]
+        marker = queue["inFlight"]
+        results = [dict(row) for row in strategy["results"]]
+        leverage_results = list(strategy["leverageResults"])
+        queue_without_marker = {**queue, "inFlight": None}
+        unknown_index: int | None = None
+        if marker["kind"] == "placement":
+            unknown_index = marker["index"]
+            reason = "interrupted_order_attempt"
+        else:
+            side = marker["side"]
+            if not any(row.get("side") == side for row in leverage_results):
+                leverage_results.append({"side": side, "status": "unknown"})
+            reason = "interrupted_leverage_attempt"
+        stopped, results = stop_queue(
+            queue_without_marker, results, reason, unknown_index=unknown_index
+        )
+        self._persist_queue_transition(
+            strategy,
+            fence,
+            queue=stopped,
+            results=results,
+            status="UNKNOWN",
+            failure_reason=reason,
+            leverage_results=leverage_results,
+        )
+
+    def _stop_after_marker_deadline(
+        self,
+        strategy: dict[str, Any],
+        fence: int,
+        *,
+        unknown_index: int | None,
+        leverage_side: str | None = None,
+    ) -> None:
+        queue = strategy["queue"]
+        results = [dict(row) for row in strategy["results"]]
+        leverage_results = list(strategy["leverageResults"])
+        if leverage_side is not None and not any(row.get("side") == leverage_side for row in leverage_results):
+            leverage_results.append({"side": leverage_side, "status": "unknown"})
+        stopped, results = stop_queue(
+            queue, results, "deadline_before_write", unknown_index=unknown_index
+        )
+        self._persist_queue_transition(
+            strategy,
+            fence,
+            queue=stopped,
+            results=results,
+            status="UNKNOWN",
+            failure_reason="deadline_before_write",
+            leverage_results=leverage_results,
+        )
+
+    def _mark_queue_write(
+        self,
+        strategy: dict[str, Any],
+        fence: int,
+        marker: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        queue = strategy["queue"]
+        next_queue = {**queue, "phase": "sending", "inFlight": marker}
+        results = [dict(row) for row in strategy["results"]]
+        mark_placement = marker["kind"] == "placement"
+        if mark_placement:
+            index = marker["index"]
+            results[index] = {**results[index], "status": "sending", "placementState": "sending"}
+        return self._persist_queue_transition(
+            strategy,
+            fence,
+            queue=next_queue,
+            results=results,
+            status="APPLYING",
+            failure_reason=None,
+            mark_placement_attempted=mark_placement,
+        )
+
+    @staticmethod
+    def _leverage_outcome(
+        response: Any,
+        expected_pos_side: str,
+        expected_instrument_id: str,
+        expected_leverage: Any,
+    ) -> tuple[str, str | None]:
+        return parse_leverage_ack(
+            response,
+            expected_pos_side=expected_pos_side,
+            expected_instrument_id=expected_instrument_id,
+            expected_leverage=expected_leverage,
+        )
+
+    def _commit_leverage_outcome(
+        self,
+        strategy: dict[str, Any],
+        fence: int,
+        side: str,
+        outcome: str,
+        error_code: str | None,
+    ) -> dict[str, Any] | None:
+        queue = strategy["queue"]
+        leverage_results = list(strategy["leverageResults"])
+        value: dict[str, Any] = {"side": side, "status": outcome}
+        if error_code is not None:
+            value["errorCode"] = error_code
+        leverage_results = [row for row in leverage_results if row.get("side") != side]
+        leverage_results.append(value)
+        if outcome == "applied":
+            next_queue = {**queue, "phase": "sending", "inFlight": None}
+            results = strategy["results"]
+            status, reason = "APPLYING", None
+        else:
+            clear_marker = {**queue, "inFlight": None}
+            stopped, results = stop_queue(clear_marker, strategy["results"], f"leverage_{outcome}")
+            next_queue = stopped
+            status = "PARTIAL" if outcome == "rejected" else "UNKNOWN"
+            reason = f"leverage_{outcome}"
+        return self._persist_queue_transition(
+            strategy,
+            fence,
+            queue=next_queue,
+            results=results,
+            status=status,
+            failure_reason=reason,
+            leverage_results=leverage_results,
+        )
+
+    def _commit_order_outcome(
+        self,
+        strategy: dict[str, Any],
+        fence: int,
+        index: int,
+        outcome: str,
+        exchange_order_id: str | None,
+        error_code: str | None,
+        reason: str,
+    ) -> dict[str, Any] | None:
+        queue = strategy["queue"]
+        results = [dict(row) for row in strategy["results"]]
+        row = results[index]
+        updated = {**row, "status": outcome, "placementState": outcome}
+        if exchange_order_id is not None:
+            updated["exchangeOrderId"] = exchange_order_id
+        if error_code is not None:
+            updated["errorCode"] = error_code
+        results[index] = updated
+        if outcome == "accepted":
+            cursor = index + 1
+            phase = "submitted" if cursor >= queue["totalCount"] else "sending"
+            next_queue = {**queue, "phase": phase, "cursor": cursor, "inFlight": None, "stopReason": None}
+            status = "APPLIED" if phase == "submitted" else "APPLYING"
+            failure_reason = None
+        else:
+            clear_marker = {**queue, "inFlight": None}
+            next_queue, results = stop_queue(clear_marker, results, reason)
+            status = "PARTIAL" if outcome == "rejected" else "UNKNOWN"
+            failure_reason = reason
+        return self._persist_queue_transition(
+            strategy,
+            fence,
+            queue=next_queue,
+            results=results,
+            status=status,
+            failure_reason=failure_reason,
+        )
+
+    def _process_queue(self, strategy: dict[str, Any], fence: int) -> None:
+        if strategy.get("submissionModeInvalid"):
+            self._stop_queue_without_marker(strategy, fence, "resume_validation_failed")
+            return
+        if strategy.get("queueCorrupt"):
+            self._stop_corrupt_queue(strategy, fence)
+            return
+        queue = normalize_queue(strategy.get("queue"))
+        if queue is None:
+            self._stop_corrupt_queue(strategy, fence)
+            return
+        if queue["inFlight"] is not None:
+            self._stop_interrupted_queue(strategy, fence)
+            return
+        if queue["phase"] not in ("pending", "sending"):
+            return
+        if self.clock() >= queue["deadlineAt"]:
+            self._stop_queue_without_marker(strategy, fence, "queue_expired")
+            return
+        if self._queue_placements_this_pass >= MAX_PLACEMENTS_PER_PASS:
+            return
+
+        prepared = strategy.get("prepared")
+        orders = prepared.get("orders") if isinstance(prepared, dict) else None
+        if (
+            not isinstance(orders, list) or len(orders) != queue["totalCount"]
+            or not orders or len(orders) > 20
+            or prepared.get("submissionMode") != "sequential"
+            or strategy["submissionMode"] != "sequential"
+        ):
+            self._stop_queue_without_marker(strategy, fence, "resume_validation_failed")
+            return
+        cursor = queue["cursor"]
+        resume = cursor > 0
+        if resume and any(
+            row.get("placementState") != "accepted" for row in strategy["results"][:cursor]
+        ):
+            self._stop_queue_without_marker(strategy, fence, "resume_validation_failed")
+            return
+        if resume and any(
+            row.get("placementState") != "pending" for row in strategy["results"][cursor:]
+        ):
+            self._stop_queue_without_marker(strategy, fence, "resume_validation_failed")
+            return
+
+        service = self._queue_service(fence, queue["deadlineAt"])
+        try:
+            account, preview = service._preflight(
+                strategy["contract"], strategy["accountFingerprint"], resume=resume
+            )
+        except APIError as exc:
+            reason = self._queue_validation_reason(exc, resume=resume)
+            self._stop_queue_without_marker(strategy, fence, reason)
+            return
+        expected_mode = prepared.get("_positionMode")
+        if (
+            expected_mode not in ("net_mode", "long_short_mode")
+            or account.get("posMode") != expected_mode
+            or preview.get("_internal", {}).get("positionMode") != expected_mode
+        ):
+            self._stop_queue_without_marker(strategy, fence, "position_mode_changed")
+            return
+        if (
+            not isinstance(preview.get("previewHash"), str)
+            or preview["previewHash"] != queue["previewHash"]
+            or preview["previewHash"] != prepared.get("previewHash")
+        ):
+            self._stop_queue_without_marker(
+                strategy, fence, "resume_validation_failed" if resume else "preview_changed"
+            )
+            return
+
+        if not resume:
+            sides = sorted({row["side"] for row in orders}, key=lambda value: (value != "long", value))
+            for side in sides:
+                existing = next((row for row in strategy["leverageResults"] if row.get("side") == side), None)
+                if existing is not None:
+                    if existing.get("status") == "applied":
+                        continue
+                    self._stop_queue_without_marker(strategy, fence, "leverage_unknown")
+                    return
+                if self.clock() >= queue["deadlineAt"]:
+                    self._stop_queue_without_marker(strategy, fence, "queue_expired")
+                    return
+                self._ensure_lease(fence)
+                if self.clock() >= queue["deadlineAt"]:
+                    self._stop_queue_without_marker(strategy, fence, "queue_expired")
+                    return
+                strategy = self._mark_queue_write(
+                    strategy, fence, {"kind": "leverage", "side": side}
+                )
+                if strategy is None:
+                    return
+                order = next(row for row in orders if row["side"] == side)
+                pos_side = side if expected_mode == "long_short_mode" else "net"
+                try:
+                    response = service.okx.set_leverage({
+                        "instId": strategy["contract"]["instrumentId"],
+                        "lever": str(order["leverage"]),
+                        "mgnMode": "isolated",
+                        "posSide": pos_side,
+                    })
+                except _QueueDeadline:
+                    self._stop_after_marker_deadline(
+                        strategy, fence, unknown_index=None, leverage_side=side
+                    )
+                    return
+                except _MonitorLeaseLost:
+                    raise
+                except OKXTransportError:
+                    outcome, error_code = "unknown", None
+                except OKXError as exc:
+                    outcome, error_code = (
+                        ("unknown", None) if exc.error_code is None else ("rejected", exc.error_code)
+                    )
+                else:
+                    outcome, error_code = self._leverage_outcome(
+                        response,
+                        pos_side,
+                        strategy["contract"]["instrumentId"],
+                        order["leverage"],
+                    )
+                strategy = self._commit_leverage_outcome(
+                    strategy, fence, side, outcome, error_code
+                )
+                if strategy is None or outcome != "applied":
+                    return
+
+            try:
+                account, preview = service._preflight(
+                    strategy["contract"], strategy["accountFingerprint"], resume=False
+                )
+            except APIError as exc:
+                self._stop_queue_without_marker(
+                    strategy, fence, self._queue_validation_reason(exc, resume=False)
+                )
+                return
+            if (
+                account.get("posMode") != expected_mode
+                or preview.get("_internal", {}).get("positionMode") != expected_mode
+            ):
+                self._stop_queue_without_marker(strategy, fence, "position_mode_changed")
+                return
+            if preview.get("previewHash") != queue["previewHash"]:
+                self._stop_queue_without_marker(strategy, fence, "preview_changed")
+                return
+
+        while queue["cursor"] < queue["totalCount"]:
+            if self._queue_placements_this_pass >= MAX_PLACEMENTS_PER_PASS:
+                return
+            index = queue["cursor"]
+            if self.clock() >= queue["deadlineAt"]:
+                self._stop_queue_without_marker(strategy, fence, "queue_expired")
+                return
+            try:
+                self._pace_queue_placement(
+                    fence,
+                    queue["deadlineAt"],
+                    resumed_prefix=resume and self._queue_placements_this_pass == 0,
+                )
+            except _QueueDeadline:
+                self._stop_queue_without_marker(strategy, fence, "queue_expired")
+                return
+            self._ensure_lease(fence)
+            if self.clock() >= queue["deadlineAt"]:
+                self._stop_queue_without_marker(strategy, fence, "queue_expired")
+                return
+            strategy = self._mark_queue_write(
+                strategy, fence, {"kind": "placement", "index": index}
+            )
+            if strategy is None:
+                return
+            try:
+                response = service.okx.place_order(
+                    self.strategy._okx_order(strategy["contract"], orders[index], expected_mode)
+                )
+            except _QueueDeadline:
+                self._stop_after_marker_deadline(
+                    strategy, fence, unknown_index=index
+                )
+                return
+            except _MonitorLeaseLost:
+                raise
+            except OKXTransportError:
+                outcome, exchange_order_id, error_code, reason = (
+                    "unknown", None, None, "order_unknown"
+                )
+            except OKXError as exc:
+                if exc.error_code is None:
+                    outcome, exchange_order_id, error_code, reason = (
+                        "unknown", None, None, "order_ack_malformed"
+                    )
+                else:
+                    outcome, exchange_order_id, error_code, reason = (
+                        "rejected", None, exc.error_code, "order_rejected"
+                    )
+            else:
+                outcome, exchange_order_id, error_code, reason = parse_order_ack(
+                    response, orders[index].get("clientOrderId", "")
+                )
+            strategy = self._commit_order_outcome(
+                strategy,
+                fence,
+                index,
+                outcome,
+                exchange_order_id,
+                error_code,
+                reason or "order_ack_malformed",
+            )
+            if strategy is None or outcome != "accepted":
+                return
+            queue = strategy["queue"]
+            if queue["phase"] == "submitted":
+                return
+
+    def _stop_corrupt_queue(self, strategy: dict[str, Any], fence: int) -> None:
+        prepared = strategy.get("prepared")
+        orders = prepared.get("orders") if isinstance(prepared, dict) else []
+        orders = orders if isinstance(orders, list) else []
+        preview_hash = prepared.get("previewHash") if isinstance(prepared, dict) else "corrupt"
+        queue = new_queue(
+            enqueued_at=self.clock(),
+            total_count=min(len(orders), 20),
+            preview_hash=preview_hash if isinstance(preview_hash, str) and preview_hash else "corrupt",
+        )
+        queue["phase"] = "stopped"
+        queue["stopReason"] = "interrupted_order_attempt"
+        results = [dict(row) for row in strategy["results"]]
+        has_unknown = False
+        for index, row in enumerate(results):
+            if row.get("placementState") == "sending":
+                results[index] = {**row, "status": "unknown", "placementState": "unknown"}
+                has_unknown = True
+            elif row.get("placementState", "pending") == "pending":
+                results[index] = {**row, "status": "not_submitted", "placementState": "not_submitted"}
+        status = "UNKNOWN" if has_unknown or strategy["orderPlacementAttempted"] else "PARTIAL"
+        reason = "interrupted_order_attempt" if status == "UNKNOWN" else "resume_validation_failed"
+        queue["stopReason"] = reason
+        self._persist_queue_transition(
+            strategy,
+            fence,
+            queue=queue,
+            results=results,
+            status=status,
+            failure_reason=reason,
+            mark_placement_attempted=has_unknown,
+        )
+
     def _persist_success(
         self,
         strategy: dict[str, Any],
@@ -328,7 +921,7 @@ class StrategyOrderWorker:
             if not self._lease_is_current(connection, fence, now):
                 return False
             current = connection.execute(
-                "SELECT status, results_json, updated_at, batch_attempted FROM strategies "
+                "SELECT status, results_json, updated_at, batch_attempted, order_placement_attempted FROM strategies "
                 "WHERE strategy_id=? AND account_fingerprint=?",
                 (strategy_id, strategy["accountFingerprint"]),
             ).fetchone()
@@ -360,7 +953,10 @@ class StrategyOrderWorker:
                 ).rowcount
                 if updated != 1:
                     return False
-                if StrategyService._can_release_reservation(status, results, bool(current["batch_attempted"])):
+                if StrategyService._can_release_reservation(
+                    status, results,
+                    bool(current["batch_attempted"]) or bool(current["order_placement_attempted"]),
+                ):
                     connection.execute(
                         "DELETE FROM strategy_reservations WHERE strategy_id=?", (strategy_id,)
                     )
@@ -394,7 +990,7 @@ class StrategyOrderWorker:
             if not self._lease_is_current(connection, fence, now):
                 return False
             current = connection.execute(
-                "SELECT status, results_json, updated_at, batch_attempted FROM strategies "
+                "SELECT status, results_json, updated_at, batch_attempted, order_placement_attempted FROM strategies "
                 "WHERE strategy_id=? AND account_fingerprint=?",
                 (strategy_id, strategy["accountFingerprint"]),
             ).fetchone()
@@ -427,7 +1023,8 @@ class StrategyOrderWorker:
                     ),
                 ).rowcount
                 if updated == 1 and StrategyService._can_release_reservation(
-                    status, results, bool(current["batch_attempted"])
+                    status, results,
+                    bool(current["batch_attempted"]) or bool(current["order_placement_attempted"]),
                 ):
                     connection.execute(
                         "DELETE FROM strategy_reservations WHERE strategy_id=?", (strategy_id,)
