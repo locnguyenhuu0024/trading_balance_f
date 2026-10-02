@@ -25,7 +25,7 @@ Exact allowed writer paths are repeated in task files. No protected env/Docker/d
 
 ## 3. User-owned External Configuration Action
 
-Target file: `/home/deploy/trading_balance_f/trade-api-worker.env` (new, on Docker host). Location: five top-level `KEY=value` entries, exactly:
+Target file: `/etc/trading-balance/trade-api-worker.env` (new, on Docker host, in the root-owned API env directory). This supersedes the original home-directory target after `sudoedit` refused to edit there. Location: five top-level `KEY=value` entries, exactly:
 
 ```dotenv
 OKX_API_KEY=<SET_BY_USER_SAME_AS_API>
@@ -38,7 +38,7 @@ OPERATION_DB_PATH=<SET_BY_USER_SAME_ABSOLUTE_CONTAINER_PATH_AS_API>
 Scope: production worker container only. The user creates the file privately with restrictive permissions and confirms `OPERATION_DB_PATH` is on the API's persistent mounted database directory. No secret values are requested or stored in repository artifacts. The worker image is the rebuilt `trading-balance-trade-api`, with API container mounts shared via `--volumes-from trading-balance-trade-api` and a separate process command `python3 -m backend.strategy_worker`. Example host launch, after the updated API container is running:
 
 ```sh
-docker run --detach --name trading-balance-strategy-worker --restart unless-stopped --env-file /home/deploy/trading_balance_f/trade-api-worker.env --volumes-from trading-balance-trade-api --entrypoint python3 trading-balance-trade-api -m backend.strategy_worker
+docker run --detach --name trading-balance-strategy-worker --restart unless-stopped --env-file /etc/trading-balance/trade-api-worker.env --volumes-from trading-balance-trade-api --entrypoint python3 trading-balance-trade-api -m backend.strategy_worker
 ```
 
 The user owns file creation and Docker launch/recreation; agents do not run deployment. Validate with `docker inspect --format '{{.State.Running}}' trading-balance-strategy-worker` plus a safe UI status check after 5–10 seconds. Stop/recreate the worker when replacing its image. Production verification is blocked until the user applies this action; offline code/task verification is not blocked.

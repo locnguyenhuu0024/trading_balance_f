@@ -19,3 +19,4 @@ Verdict: PASS for offline implementation; production rollout pending user-owned 
 ## Rollout Boundary
 
 - The user must privately create `/home/deploy/trading_balance_f/trade-api-worker.env` with the five approved keys and launch the separate worker container as specified in `docs/agents/plans/2026-10-02-strategy-background-order-monitor.md`. Confirm the container is running and check UI order scan freshness after 5–10 seconds. Production operation remains unverified until this rollout.
+- Rollout correction after this audit: `sudoedit` refused the original home-directory path. The current guide uses the root-owned `/etc/trading-balance/trade-api-worker.env` target and matching Docker `--env-file`. Production verification remains pending.

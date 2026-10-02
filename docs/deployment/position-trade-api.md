@@ -97,6 +97,8 @@ Use a Trade-enabled OKX API key with **no Withdraw permission**. Restrict it to 
 
 Install and maintain Docker on the Ubuntu 24.04 LTS host using the host owner's approved process. Create the persistent SQLite directory and allow container UID 10001 to write it, including SQLite journal side files:
 
+For a first deployment, create the API env file and persistent directory below, then create the user-owned Dockerfile, build and start the API container. After the API is running, create the worker env file and start the worker using the instructions in the strategy worker section.
+
 ```sh
 sudo install -d -o root -g root -m 0700 /etc/trading-balance
 sudo install -d -o 10001 -g 10001 -m 0750 /var/lib/trading-balance
@@ -118,13 +120,13 @@ CMD ["gunicorn", "--workers", "1", "--bind", "0.0.0.0:8000", "backend.app:applic
 Build from the repository root:
 
 ```sh
-docker build -f backend/Dockerfile -t trading-balance-trade-api .
+sudo docker build -f backend/Dockerfile -t trading-balance-trade-api .
 ```
 
-Run one worker with a read-only application filesystem, a writable temporary directory, dropped capabilities, and the persistent operation journal:
+Run the API with one WSGI worker, a read-only application filesystem, a writable temporary directory, dropped capabilities, and the persistent operation journal:
 
 ```sh
-docker run -d --name trading-balance-trade-api --restart unless-stopped \
+sudo docker run -d --name trading-balance-trade-api --restart unless-stopped \
   --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m \
   --cap-drop=ALL --security-opt=no-new-privileges --pids-limit=128 \
   --user 10001:10001 --env-file /etc/trading-balance/trade-api.env \
@@ -134,13 +136,13 @@ docker run -d --name trading-balance-trade-api --restart unless-stopped \
 
 ### Rebuild and recreate after an application change
 
-Run these commands from the repository root. Rebuilding the image does not update a running container; stop and remove the existing container, then create it again from the rebuilt image. The bind-mounted operation journal remains in `/var/lib/trading-balance` across container replacement.
+For deployments without the strategy worker, run these API-only commands from the repository root. Rebuilding the image does not update a running container; stop and remove the existing container, then create it again from the rebuilt image. The bind-mounted operation journal remains in `/var/lib/trading-balance` across container replacement.
 
 ```sh
-docker build -f backend/Dockerfile -t trading-balance-trade-api .
-docker stop trading-balance-trade-api
-docker rm trading-balance-trade-api
-docker run -d --name trading-balance-trade-api --restart unless-stopped \
+sudo docker build -f backend/Dockerfile -t trading-balance-trade-api .
+sudo docker stop trading-balance-trade-api
+sudo docker rm trading-balance-trade-api
+sudo docker run -d --name trading-balance-trade-api --restart unless-stopped \
   --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m \
   --cap-drop=ALL --security-opt=no-new-privileges --pids-limit=128 \
   --user 10001:10001 --env-file /etc/trading-balance/trade-api.env \
@@ -148,16 +150,87 @@ docker run -d --name trading-balance-trade-api --restart unless-stopped \
   -p 127.0.0.1:8000:8000 trading-balance-trade-api
 ```
 
-To restart the existing container without rebuilding or replacing it, run:
+To restart the existing API container without rebuilding or replacing it, run:
 
 ```sh
-docker restart trading-balance-trade-api
+sudo docker restart trading-balance-trade-api
 ```
+
+### Strategy order-monitor worker
+
+The strategy worker runs as a separate container from the same API image. It only reads OKX order details and positions; order placement remains in the API. Store its env file under the root-owned `/etc/trading-balance` directory because the `/home/deploy/trading_balance_f` parent is writable and causes `sudoedit` to reject that path. Use the same OKX account and session signing key as the API, and set `OPERATION_DB_PATH` to the API's absolute container path for the SQLite database on its persistent mount:
+
+```sh
+if ! sudo test -e /etc/trading-balance/trade-api-worker.env && ! sudo test -L /etc/trading-balance/trade-api-worker.env; then
+  sudo install -o root -g root -m 0600 /dev/null /etc/trading-balance/trade-api-worker.env
+fi
+sudoedit /etc/trading-balance/trade-api-worker.env
+```
+
+Add these five entries, replacing each placeholder privately on the host:
+
+```dotenv
+OKX_API_KEY=<SET_BY_USER_SAME_AS_API>
+OKX_API_SECRET=<SET_BY_USER_SAME_AS_API>
+OKX_API_PASSPHRASE=<SET_BY_USER_SAME_AS_API>
+SESSION_SIGNING_KEY=<SET_BY_USER_SAME_AS_API>
+OPERATION_DB_PATH=<SET_BY_USER_SAME_ABSOLUTE_CONTAINER_PATH_AS_API>
+```
+
+After the updated API container is running, start the worker from the Docker host. It uses the rebuilt API image, shares the API container's persistent volumes, runs as UID 10001 with a read-only filesystem and the same container hardening, and publishes no port:
+
+```sh
+sudo docker run --detach --name trading-balance-strategy-worker --restart unless-stopped \
+  --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+  --cap-drop=ALL --security-opt=no-new-privileges --pids-limit=128 \
+  --user 10001:10001 --env-file /etc/trading-balance/trade-api-worker.env \
+  --volumes-from trading-balance-trade-api --entrypoint python3 \
+  trading-balance-trade-api -m backend.strategy_worker
+```
+
+To restart the worker without changing its image, run:
+
+```sh
+sudo docker restart trading-balance-strategy-worker
+```
+
+To replace the API and worker images together, run this sequence from the repository root. It conditionally removes an existing worker, rebuilds the image, then recreates the API before the worker so the worker shares the API container's volumes:
+
+```sh
+sudo docker build -f backend/Dockerfile -t trading-balance-trade-api .
+if sudo docker inspect trading-balance-strategy-worker >/dev/null 2>&1; then
+  sudo docker stop trading-balance-strategy-worker
+  sudo docker rm trading-balance-strategy-worker
+fi
+sudo docker stop trading-balance-trade-api
+sudo docker rm trading-balance-trade-api
+sudo docker run -d --name trading-balance-trade-api --restart unless-stopped \
+  --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+  --cap-drop=ALL --security-opt=no-new-privileges --pids-limit=128 \
+  --user 10001:10001 --env-file /etc/trading-balance/trade-api.env \
+  --mount type=bind,source=/var/lib/trading-balance,target=/var/lib/trading-balance \
+  -p 127.0.0.1:8000:8000 trading-balance-trade-api
+sudo docker run --detach --name trading-balance-strategy-worker --restart unless-stopped \
+  --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+  --cap-drop=ALL --security-opt=no-new-privileges --pids-limit=128 \
+  --user 10001:10001 --env-file /etc/trading-balance/trade-api-worker.env \
+  --volumes-from trading-balance-trade-api --entrypoint python3 \
+  trading-balance-trade-api -m backend.strategy_worker
+```
+
+Check that Docker reports both containers running with these read-only commands:
+
+```sh
+sudo docker inspect --format '{{.State.Running}}' trading-balance-trade-api
+sudo docker inspect --format '{{.State.Running}}' trading-balance-strategy-worker
+```
+
+After 5–10 seconds, open an applied, noncompleted strategy with outstanding submitted orders in the UI and confirm its order status and last successful scan freshness update, since draft or completed strategies receive no new worker scans. Container status and `/v1/health` only show process/API health; they do not prove that the worker synchronized with OKX.
 
 Check container status and its published loopback port with this read-only command:
 
 ```sh
-docker ps --filter name=trading-balance-trade-api --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+sudo docker ps --filter name=trading-balance-trade-api --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
 ```
 
 Keep one WSGI worker until journal and write-lock behavior has been independently proven safe across workers. The container listens inside on port 8000; Docker publishes it only on host loopback. Configure the user's HTTPS reverse proxy to route `https://<USER_API_HOST>/v1/*` to `http://127.0.0.1:8000/v1/*`, preserve the browser `Origin` header, overwrite `X-Forwarded-For` with the connecting client address, and expose no plaintext public port. The API trusts that header only on loopback requests, so the proxy must not append a client-supplied value. The Flutter web origin remains `https://tradingbalancef.vercel.app`; the API host is a separate origin.
@@ -175,7 +248,7 @@ This URL is public. It is not a credential.
 1. Check `GET https://<USER_API_HOST>/v1/health` returns `{"status":"ok"}`. This confirms only the static health route.
 2. Send a browser-style request with `Origin: https://tradingbalancef.vercel.app`; it should receive the matching `Access-Control-Allow-Origin`. Repeat with a different origin; the API should return `403` and no allow-origin header.
 3. Log in with the generated password and current authenticator code. Confirm that the response contains only a masked account identifier, then call `GET /v1/positions` and confirm that the positions belong to the Trade-key account.
-4. Prepare an eligible action but do not execute it. Record its operation ID, restart the container with `docker restart trading-balance-trade-api`, then retrieve `GET /v1/actions/result/<operation-id>` using the same session if still valid. The prepared journal entry should remain available on the mounted database.
+4. Prepare an eligible action but do not execute it. Record its operation ID, restart the container with `sudo docker restart trading-balance-trade-api`, then retrieve `GET /v1/actions/result/<operation-id>` using the same session if still valid. The prepared journal entry should remain available on the mounted database.
 5. Within the same 30-second TOTP window, retry login with the same code after the restart. It must be rejected as a replay. Wait for the next authenticator code before logging in again.
 6. Before any trade, verify the API host, account identifier, product, position side, margin mode, amount/size unit, and target list. For a first live action, choose the smallest eligible amount supported by the instrument, prepare it, review the exact server-returned summary, and explicitly confirm once. Check the returned result and refreshed positions in OKX before regular use. Do not use close-all as the first live verification.
 

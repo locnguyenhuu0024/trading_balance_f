@@ -33,7 +33,7 @@ In scope: applied strategy order-state monitoring, durable freshness/error metad
 - D-003: Partial fill counts as activated and displays filled quantity separately.
 - D-004: Stop scanning a strategy and mark it COMPLETED after every submitted order is terminal and OKX has no position for that instrument. Querying position only for this completion decision is permitted; continuous background price/PnL sampling is not.
 - D-005: For applied strategies only, browser quote requests go to backend. Backend reads OKX when the page is visible; PnL/position are obtained via existing backend list/result reads. The wizard remains unchanged. Preserve the existing one-second visible quote refresh and stale-price display.
-- D-006: Run one separately supervised Docker worker using the existing backend image and shared SQLite data. The user approved a new user-owned env file at `/home/deploy/trading_balance_f/trade-api-worker.env` and will provide its secret values privately on the server.
+- D-006: Run one separately supervised Docker worker using the existing backend image and shared SQLite data. The user provides the worker env values privately on the server. The original `/home/deploy/trading_balance_f/trade-api-worker.env` location was superseded after `sudoedit` refused to edit a file under that writable directory; use the root-owned `/etc/trading-balance/trade-api-worker.env` location instead.
 
 ## 4. Requirements
 

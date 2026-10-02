@@ -9,6 +9,7 @@ Verdict: PASS
 - `git status --short` and `git diff --name-only` checked before content inspection. Product/test writes were limited to the five T53 paths. Pre-existing `macos/Flutter/GeneratedPluginRegistrant.swift` and protected `pubspec.lock` were preserved; their contents were not inspected.
 - Read `backend/store.py`, `backend/strategy.py`, `backend/strategy_worker.py`, and both focused test files. The worker uses a SQLite singleton lease/fence, per-strategy scan metadata, account fingerprint filtering, validated order details, CAS persistence, and read-only OKX calls. API GET remains a stale-scan fallback.
 - External action: user-owned `/home/deploy/trading_balance_f/trade-api-worker.env` and worker container launch are specified in the plan; production operation remains unverified.
+- Rollout correction after this audit: the user observed `sudoedit` reject the original home-directory path. The current user-owned worker env target is `/etc/trading-balance/trade-api-worker.env`; see the revised deployment guide. This does not change T53 backend verification.
 
 ## Contract Mapping
 

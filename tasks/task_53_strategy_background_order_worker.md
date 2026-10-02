@@ -40,7 +40,7 @@ RED-001/002/003: fake OKX fill with no browser GET does not update DB; duplicate
 
 GREEN-001/002/003: partial/full statuses persist, only active owner writes, errors remain stale, restart resumes, and completion requires terminal orders plus fresh zero-position proof. GREEN-006: existing fake OKX Apply still sends all reviewed Long/Short entry and DCA rows once as `ordType=limit`; worker makes zero trade writes. Run focused tests then `python3.12 -m unittest backend.tests.test_strategy_api backend.tests.test_strategy_worker -v` as V2. Escalate only for concrete related regressions.
 
-Task buildability: REQUIRED, affected canonical unit Python backend, exact command `python3.12 -m compileall -q backend` after final code/test edit. Record exit and whether the build actually executed. No external verification for offline acceptance. External configuration action: user creates `/home/deploy/trading_balance_f/trade-api-worker.env` with the five approved keys privately; no executor write. Production operation remains unverified until user deploys.
+Task buildability: REQUIRED, affected canonical unit Python backend, exact command `python3.12 -m compileall -q backend` after final code/test edit. Record exit and whether the build actually executed. No external verification for offline acceptance. External configuration action: user creates `/etc/trading-balance/trade-api-worker.env` with the five approved keys privately; no executor write. The original home-directory target was superseded after the observed `sudoedit` refusal. Production operation remains unverified until user deploys.
 
 ## 5. Coordinator audit
 
