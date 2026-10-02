@@ -78,6 +78,33 @@ In sequential mode, `POST /v1/strategies/<id>/execute-apply` consumes the confir
 
 With `batch`, the API keeps the existing batch submission path. Both modes use the same reservation and order-reconciliation records in the SQLite database.
 
+### Strategy submission diagnostics
+
+The API and strategy worker emit best-effort, bounded JSON lines to their container stderr. Read the recent logs with:
+
+```sh
+sudo docker logs --since 10m trading-balance-trade-api
+sudo docker logs --since 10m trading-balance-strategy-worker
+```
+
+Each event uses fixed stage, outcome, endpoint, and reason labels. `strategy_ref` (`s_…`) and `order_ref` (`o_…`) are separate SHA-256 references; match the same reference across the API and worker logs. Events never include request bodies, credentials, account identifiers, raw exchange IDs, prices, sizes, or exception text. `top_code` and `item_code` appear only when they pass numeric validation.
+
+For a sequential queue, `enqueue_result` with `persisted: true` means the API durably queued the frozen strategy. Worker `worker_startup`, `heartbeat`, `selection`, and `preflight` events show whether a worker pass is running, whether due strategies match its current account, and where selection stopped. For example, no `worker_startup` or heartbeat in the selected log window means those logs contain no evidence of a worker pass; it does not establish why. A `selection` event with `outcome: "no_due"`, `eligible_count: 4`, and `matching_eligible_count: 0` means four due rows were visible, but none matched this worker's active account. The counts are bounded diagnostics and may be absent if the read-only count query fails.
+
+`write_attempt` follows a committed write marker. `ack_observed` records the exchange response separately from the following `commit`: only `commit` with `persisted: true` confirms the outcome was stored. If an ACK is observed with `persisted: false`, followed by a commit with `persisted: false` and `reason: "fence_or_cas_loss"`, the ACK was not durably applied to strategy state. Preserve the unresolved in-flight marker and do not resend; this refusal does not prove that a later conservative stop has already been persisted. A later worker pass that acquires the lease will inspect the durable marker and apply interrupted-attempt recovery; until that recovery event appears, its persistence is unconfirmed. Batch logs use the same distinction and include a bounded `batch_summary`.
+
+Fictional references below are illustrative. If an enqueue has no `worker_startup` or heartbeat in the selected time window, there is no worker-pass evidence in that window. A no-due event can still show that due rows belong to another account. An incomplete ACK remains unknown until reconciled:
+
+```jsonl
+{"event":"enqueue_result","component":"api","stage":"enqueue","outcome":"queued","persisted":true,"strategy_ref":"s_0123456789abcdef","submission_mode":"sequential"}
+{"event":"worker_startup","component":"worker","stage":"startup","outcome":"success"}
+{"event":"selection","component":"worker","stage":"selection","outcome":"no_due","reason":"no_due","eligible_count":4,"matching_eligible_count":0,"selected_count":0,"pass_count":1}
+{"event":"ack_observed","component":"worker","stage":"order","outcome":"unknown","reason":"ack_unknown","ack_shape":"missing_order_id","persisted":false,"order_ref":"o_fedcba9876543210"}
+{"event":"commit","component":"worker","stage":"commit","outcome":"refused","reason":"fence_or_cas_loss","persisted":false,"order_ref":"o_fedcba9876543210"}
+```
+
+An incomplete ACK such as `missing_order_id` is evidence that the response did not meet the expected shape, not evidence that the exchange did or did not place the order. Reconcile an unknown result before any new submission. The sink is local and nonblocking. A full queue, a stalled stderr reader, or a sink error can drop diagnostic events, so missing log lines do not prove that no exchange write occurred. Logs provide evidence for investigation; they do not establish that an order filled, identify a production root cause, or prove that a production failure was resolved.
+
 ## User-owned credentials
 
 On a trusted local machine, run the helper from the repository root:

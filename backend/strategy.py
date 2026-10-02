@@ -12,6 +12,7 @@ from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_DOWN, ROUND_
 from typing import Any, Callable
 
 from .okx import OKXError, OKXTransportError, bounded_error_code
+from . import diagnostics
 from .security import new_confirmation_token, new_operation_id, token_digest
 from .service import APIError
 from .store import decode_json, encode_json
@@ -223,9 +224,11 @@ class StrategyService:
             raise APIError(404, "not_found", "The requested endpoint was not found.")
         strategy_id, action = match.groups()
         if action == "prepare-apply" and method == "POST":
-            return self._prepare(strategy_id)
+            with diagnostics.strategy_context(strategy_id, component="api"):
+                return self._prepare(strategy_id)
         if action == "execute-apply" and method == "POST":
-            return self._execute(strategy_id, body)
+            with diagnostics.strategy_context(strategy_id, component="api"):
+                return self._execute(strategy_id, body)
         if action == "result" and method == "GET":
             return self._result(strategy_id)
         if action == "delete" and method == "POST":
@@ -1197,7 +1200,23 @@ class StrategyService:
         if strategy["attemptStarted"] or strategy["status"] not in ("DRAFT",):
             raise APIError(409, "strategy_immutable", "This strategy has already entered an application attempt.")
         self._require_eligible_replacement_source(strategy["replacementSourceId"], fingerprint)
-        _, preview = self._preflight(strategy["contract"], fingerprint)
+        try:
+            _, preview = self._preflight(strategy["contract"], fingerprint)
+        except APIError as exc:
+            diagnostics.emit_event(
+                "preflight", component="api", stage="preflight_initial", outcome="failure",
+                reason=self._preflight_diagnostic_reason(exc),
+            )
+            raise
+        except Exception:
+            diagnostics.emit_event(
+                "preflight", component="api", stage="preflight_initial", outcome="failure",
+                reason="preflight_unavailable",
+            )
+            raise
+        diagnostics.emit_event(
+            "preflight", component="api", stage="preflight_initial", outcome="success",
+        )
         if not hmac.compare_digest(preview["previewHash"], strategy["previewHash"]):
             raise APIError(
                 409, "strategy_stale", "Contract, fee, or tier data changed; recreate and review a fresh draft.",
@@ -1233,6 +1252,11 @@ class StrategyService:
             ).rowcount
         if changed != 1:
             raise APIError(409, "strategy_state_changed", "The strategy changed; reload it and prepare again.")
+        diagnostics.set_submission_mode(submission_mode)
+        diagnostics.emit_event(
+            "prepare_result", component="api", stage="prepare", outcome="success",
+            status="PREPARED", submission_mode=submission_mode, order_count=len(prepared_orders),
+        )
         return {
             "id": strategy_id,
             "status": "PREPARED",
@@ -1378,9 +1402,19 @@ class StrategyService:
             raise APIError(400, "invalid_request", "A confirmation token is required.")
         strategy, _, fingerprint = self._current_strategy(strategy_id)
         if strategy["status"] != "PREPARED":
+            diagnostics.emit_event(
+                "execute_noop", component="api", stage="execute", outcome="noop",
+                status=strategy["status"] if strategy["status"] in {
+                    "DRAFT", "APPLYING", "APPLIED", "PARTIAL", "UNKNOWN", "COMPLETED"
+                } else None,
+            )
             return self._basic_result(strategy)
         if strategy["preparedExpiresAt"] is None or strategy["preparedExpiresAt"] <= self.clock():
             self._expire_prepare(strategy)
+            diagnostics.emit_event(
+                "execute_noop", component="api", stage="execute", outcome="expired",
+                reason="queue_expired", status="DRAFT",
+            )
             return {**self._basic_result(strategy), "prepareExpired": True}
         presented = token_digest(token, self.owner.settings.session_signing_key)
         if not isinstance(strategy["confirmationHash"], str) or not hmac.compare_digest(strategy["confirmationHash"], presented):
@@ -1389,6 +1423,7 @@ class StrategyService:
             raise APIError(409, "prepared_strategy_invalid", "The prepared submission mode is inconsistent.")
         prepared = strategy["prepared"] or {}
         submission_mode = strategy["submissionMode"] or "batch"
+        diagnostics.set_submission_mode(submission_mode)
         prepared_mode = prepared.get("submissionMode")
         if prepared_mode is not None and prepared_mode != submission_mode:
             raise APIError(409, "prepared_strategy_invalid", "The prepared submission mode is inconsistent.")
@@ -1396,9 +1431,35 @@ class StrategyService:
             if prepared_mode != "sequential":
                 raise APIError(409, "prepared_strategy_invalid", "The prepared submission mode is missing.")
             if not self._claim_queue(strategy_id, strategy, token):
+                diagnostics.emit_event(
+                    "execute_noop", component="api", stage="execute", outcome="noop",
+                    status="APPLYING",
+                )
                 return self._basic_result(self._load_row(strategy_id))
+            diagnostics.emit_event(
+                "enqueue_result", component="api", stage="enqueue", outcome="queued",
+                status="APPLYING", submission_mode="sequential",
+                order_count=len(prepared.get("orders", [])), persisted=True,
+            )
             return self._basic_result(self._load_row(strategy_id))
-        _, live_preview = self._preflight(strategy["contract"], fingerprint)
+        try:
+            _, live_preview = self._preflight(strategy["contract"], fingerprint)
+        except APIError as exc:
+            diagnostics.emit_event(
+                "preflight", component="api", stage="preflight_initial", outcome="failure",
+                reason=self._preflight_diagnostic_reason(exc), submission_mode="batch",
+            )
+            raise
+        except Exception:
+            diagnostics.emit_event(
+                "preflight", component="api", stage="preflight_initial", outcome="failure",
+                reason="preflight_unavailable", submission_mode="batch",
+            )
+            raise
+        diagnostics.emit_event(
+            "preflight", component="api", stage="preflight_initial", outcome="success",
+            submission_mode="batch",
+        )
         if not hmac.compare_digest(live_preview["previewHash"], str(prepared.get("previewHash", ""))):
             self._reset_to_draft(strategy_id)
             raise APIError(
@@ -1408,6 +1469,12 @@ class StrategyService:
         execution_id = self._claim_execution(strategy_id, strategy, token)
         if execution_id is None:
             latest = self._load_row(strategy_id)
+            diagnostics.emit_event(
+                "execute_noop", component="api", stage="execute", outcome="noop",
+                status=latest["status"] if latest["status"] in {
+                    "DRAFT", "APPLYING", "APPLIED", "PARTIAL", "UNKNOWN", "COMPLETED"
+                } else None,
+            )
             return self._basic_result(latest)
 
         orders = prepared.get("orders", [])
@@ -1419,6 +1486,10 @@ class StrategyService:
             return self._result(strategy_id)
         for side in sorted({row["side"] for row in orders}, key=lambda value: (value != "long", value)):
             if not self._renew_execution(strategy_id, execution_id):
+                diagnostics.emit_event(
+                    "commit", component="api", stage="commit", outcome="refused",
+                    reason="lease_lost", persisted=False,
+                )
                 return self._result(strategy_id)
             side_order = next(row for row in orders if row["side"] == side)
             pos_side = side if mode == "long_short_mode" else "net"
@@ -1428,14 +1499,32 @@ class StrategyService:
                 "mgnMode": "isolated",
                 "posSide": pos_side,
             }
+            diagnostics.emit_event(
+                "write_attempt", component="api", stage="leverage", outcome="attempted",
+                side=side, submission_mode=submission_mode, client_order_id=side_order.get("clientOrderId"),
+            )
             try:
                 response = self.okx.set_leverage(request)
             except OKXTransportError:
+                diagnostics.emit_event(
+                    "ack_observed", component="api", stage="leverage", outcome="unknown",
+                    reason="leverage_unknown", side=side,
+                    client_order_id=side_order.get("clientOrderId"),
+                    persisted=False,
+                )
                 leverage_results.append({"side": side, "status": "unknown"})
                 not_submitted = [{**row, "status": "not_submitted"} for row in orders]
                 self._finish(strategy_id, execution_id, "UNKNOWN", not_submitted, "leverage_unknown", leverage_results)
                 return self._result(strategy_id)
             except OKXError as exc:
+                diagnostics.emit_event(
+                    "ack_observed", component="api", stage="leverage",
+                    outcome="rejected" if exc.error_code is not None else "unknown",
+                    reason="leverage_rejected" if exc.error_code is not None else "leverage_unknown",
+                    side=side, client_order_id=side_order.get("clientOrderId"),
+                    item_code=exc.error_code,
+                    persisted=False,
+                )
                 leverage_result = {"side": side, "status": "rejected"}
                 if exc.error_code is not None:
                     leverage_result["errorCode"] = exc.error_code
@@ -1448,6 +1537,16 @@ class StrategyService:
                 expected_pos_side=pos_side,
                 expected_instrument_id=strategy["contract"]["instrumentId"],
                 expected_leverage=side_order["leverage"],
+            )
+            diagnostics.emit_event(
+                "ack_observed", component="api", stage="leverage",
+                outcome=leverage_outcome, reason=diagnostics.safe_reason(
+                    "leverage_rejected" if leverage_outcome == "rejected" else
+                    "leverage_unknown" if leverage_outcome == "unknown" else "other"
+                ),
+                side=side, client_order_id=side_order.get("clientOrderId"), item_code=error_code,
+                ack_shape="valid" if leverage_outcome == "applied" else "malformed",
+                persisted=False,
             )
             if leverage_outcome != "applied":
                 leverage_result = {"side": side, "status": leverage_outcome}
@@ -1462,9 +1561,30 @@ class StrategyService:
             leverage_results.append({"side": side, "status": "applied"})
 
         if not self._renew_execution(strategy_id, execution_id):
+            diagnostics.emit_event(
+                "commit", component="api", stage="commit", outcome="refused",
+                reason="lease_lost", persisted=False,
+            )
             return self._result(strategy_id)
         try:
-            _, latest_preview = self._preflight(strategy["contract"], fingerprint)
+            try:
+                _, latest_preview = self._preflight(strategy["contract"], fingerprint)
+            except APIError as exc:
+                diagnostics.emit_event(
+                    "preflight", component="api", stage="preflight_post_leverage", outcome="failure",
+                    reason=self._preflight_diagnostic_reason(exc), submission_mode=submission_mode,
+                )
+                raise
+            except Exception:
+                diagnostics.emit_event(
+                    "preflight", component="api", stage="preflight_post_leverage", outcome="failure",
+                    reason="preflight_unavailable", submission_mode=submission_mode,
+                )
+                raise
+            diagnostics.emit_event(
+                "preflight", component="api", stage="preflight_post_leverage", outcome="success",
+                submission_mode=submission_mode,
+            )
             if not hmac.compare_digest(latest_preview["previewHash"], str(prepared.get("previewHash", ""))):
                 not_submitted = [{**row, "status": "not_submitted"} for row in orders]
                 self._finish(strategy_id, execution_id, "PARTIAL", not_submitted, "preflight_changed_after_leverage", leverage_results)
@@ -1476,20 +1596,116 @@ class StrategyService:
 
         payload = [self._okx_order(strategy["contract"], row, mode) for row in orders]
         if not self._mark_batch_attempted(strategy_id, execution_id):
+            diagnostics.emit_event(
+                "commit", component="api", stage="commit", outcome="refused",
+                reason="marker_refused", persisted=False,
+            )
             return self._result(strategy_id)
+        diagnostics.emit_event(
+            "write_attempt", component="api", stage="batch", outcome="attempted",
+            submission_mode=submission_mode, order_count=len(orders),
+        )
         try:
             response = self.okx.place_batch_orders(payload)
         except OKXTransportError:
+            diagnostics.emit_event(
+                "ack_observed", component="api", stage="batch", outcome="unknown",
+                reason="batch_unknown", order_count=len(orders), persisted=False,
+            )
             unknown = [{**row, "status": "unknown"} for row in orders]
             self._finish(strategy_id, execution_id, "UNKNOWN", unknown, "batch_unknown", leverage_results)
             return self._result(strategy_id)
         except OKXError:
+            diagnostics.emit_event(
+                "ack_observed", component="api", stage="batch", outcome="unknown",
+                reason="batch_unknown", order_count=len(orders), persisted=False,
+            )
             unknown = [{**row, "status": "unknown"} for row in orders]
             self._finish(strategy_id, execution_id, "UNKNOWN", unknown, "batch_response_unavailable", leverage_results)
             return self._result(strategy_id)
         outcomes, state, error = self._parse_batch_ack(response, orders)
+        shape = self._batch_ack_shape(response, orders)
+        for index, row in enumerate(outcomes):
+            diagnostics.emit_event(
+                "ack_observed", component="api", stage="order", outcome=row["status"],
+                reason=diagnostics.safe_reason(
+                    "order_rejected" if row["status"] == "rejected" else
+                    "ack_unknown" if row["status"] == "unknown" else "other"
+                ),
+                client_order_id=row.get("clientOrderId"), order_index=index,
+                item_code=row.get("errorCode"), ack_shape=shape, persisted=False,
+            )
+        diagnostics.emit_event(
+            "batch_summary", component="api", stage="batch",
+            outcome="success" if state == "APPLIED" else "failure", status=state,
+            submission_mode=submission_mode, order_count=len(outcomes),
+            accepted_count=sum(row["status"] == "accepted" for row in outcomes),
+            pending_count=sum(row["status"] in {"unknown", "sending"} for row in outcomes),
+            not_submitted_count=sum(row["status"] == "not_submitted" for row in outcomes),
+            top_code=response.get("code") if isinstance(response, dict) else None,
+            reason=diagnostics.safe_reason(error), ack_shape=shape,
+        )
         self._finish(strategy_id, execution_id, state, outcomes, error, leverage_results)
         return self._result(strategy_id)
+
+    @staticmethod
+    def _preflight_diagnostic_reason(error: APIError) -> str:
+        return {
+            "account_changed": "account_changed",
+            "account_identity_unavailable": "account_changed",
+            "account_mode_unsupported": "account_mode_unsupported",
+            "instrument_position_exists": "position_exists",
+            "pending_order_exists": "pending_order_exists",
+            "insufficient_balance": "insufficient_balance",
+            "quote_stale": "preview_changed",
+        }.get(error.code, "preflight_unavailable")
+
+    @staticmethod
+    def _batch_ack_shape(response: Any, orders: list[dict[str, Any]]) -> str:
+        if not isinstance(response, dict):
+            return "nonobject_data"
+        top_code = str(response.get("code", ""))
+        if top_code not in ("0", "1", "2"):
+            return "missing_code" if "code" not in response else "invalid_code"
+        data = response.get("data")
+        if not isinstance(data, list):
+            return "invalid_data_type"
+        if len(data) != len(orders):
+            return "data_cardinality"
+        clients: list[str] = []
+        items: list[dict[str, Any]] = []
+        for item in data:
+            if not isinstance(item, dict):
+                return "invalid_row"
+            client_id = item.get("clOrdId")
+            if not isinstance(client_id, str):
+                return "invalid_row"
+            if client_id in clients:
+                return "duplicate_client_id"
+            clients.append(client_id)
+            items.append(item)
+        expected_clients: set[str] = set()
+        for row in orders:
+            if not isinstance(row, dict) or not isinstance(row.get("clientOrderId"), str):
+                return "invalid_row"
+            expected_clients.add(row["clientOrderId"])
+        if set(clients) != expected_clients:
+            return "client_identity_mismatch"
+        all_accepted = True
+        for item in items:
+            if "sCode" not in item or item.get("sCode") in (None, ""):
+                return "missing_code"
+            raw_code = item.get("sCode")
+            if isinstance(raw_code, bool) or not re.fullmatch(r"[0-9]{1,12}", str(raw_code)):
+                return "invalid_code"
+            if str(raw_code) == "0":
+                if not (isinstance(item.get("ordId"), str) and item.get("ordId")):
+                    return "missing_order_id"
+            else:
+                all_accepted = False
+        if top_code in ("1", "2") and all_accepted:
+            return "top_level_conflict"
+        return "valid"
 
     @staticmethod
     def _okx_order(contract: dict[str, Any], row: dict[str, Any], mode: Any) -> dict[str, Any]:
@@ -1588,6 +1804,16 @@ class StrategyService:
                 )
             if changed == 1:
                 self._cleanup_replacement_in_connection(connection, strategy_id, self.clock())
+        diagnostics.emit_event(
+            "commit", component="api", stage="commit",
+            outcome="committed" if changed == 1 else "refused",
+            reason=None if changed == 1 else "fence_or_cas_loss",
+            status=status, persisted=changed == 1,
+            order_count=len(orders),
+            accepted_count=sum(row.get("status") == "accepted" for row in orders),
+            pending_count=sum(row.get("status") == "unknown" for row in orders),
+            not_submitted_count=sum(row.get("status") == "not_submitted" for row in orders),
+        )
 
     @staticmethod
     def _can_release_reservation(

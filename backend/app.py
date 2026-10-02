@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 from .service import APIError, BODY_LIMIT_BYTES, RuntimeSettings, TradeService
 from .okx import Transport
+from . import diagnostics
 
 
 class WSGIApplication:
@@ -67,6 +68,44 @@ class WSGIApplication:
         return [body]
 
     def __call__(self, environ: dict[str, Any], start_response: Callable[..., Any]) -> list[bytes]:
+        method = environ.get("REQUEST_METHOD", "GET")
+        path = environ.get("PATH_INFO", "/")
+        classified = diagnostics.classified_strategy_route(method, path)
+        if classified is None:
+            return self._handle_request(environ, start_response)
+        strategy_id, stage = classified
+        with diagnostics.strategy_context(strategy_id, component="api"):
+            diagnostics.emit_event(
+                "request_start", stage=stage, outcome="started", method="POST"
+            )
+            observed_status: list[int] = []
+
+            def record_start(status: str, headers: list[tuple[str, str]], exc_info: Any = None) -> Any:
+                try:
+                    observed_status.append(int(status.split(" ", 1)[0]))
+                except (ValueError, AttributeError):
+                    pass
+                if exc_info is None:
+                    return start_response(status, headers)
+                return start_response(status, headers, exc_info)
+
+            try:
+                response = self._handle_request(environ, record_start)
+            except Exception:
+                diagnostics.emit_event(
+                    "request_failure", stage="request", outcome="failure",
+                    reason="internal_error", api_code="internal_error", method="POST",
+                )
+                raise
+            if observed_status and observed_status[-1] < 400:
+                diagnostics.emit_event(
+                    "request_end", stage=stage, outcome="success", method="POST"
+                )
+            return response
+
+    def _handle_request(
+        self, environ: dict[str, Any], start_response: Callable[..., Any]
+    ) -> list[bytes]:
         method = str(environ.get("REQUEST_METHOD", "GET")).upper()
         path = str(environ.get("PATH_INFO", "/"))
         origin = str(environ.get("HTTP_ORIGIN", ""))
@@ -99,10 +138,40 @@ class WSGIApplication:
             status, payload, extra_headers = service.dispatch(method, path, body, environ)
             return self._response(start_response, status, payload, [*cors_headers, *extra_headers])
         except APIError as error:
+            if diagnostics.current_context() is not None:
+                reason = {
+                    "origin_denied": "origin_denied",
+                    "unauthorized": "authentication_failed",
+                    "authentication_required": "authentication_failed",
+                    "invalid_request": "invalid_request",
+                    "invalid_json": "body_invalid",
+                    "json_required": "body_invalid",
+                    "service_not_configured": "service_unavailable",
+                    "internal_error": "internal_error",
+                    "strategy_stale": "strategy_stale",
+                    "account_changed": "account_changed",
+                    "account_mode_unsupported": "account_mode_unsupported",
+                    "instrument_position_exists": "position_exists",
+                    "pending_order_exists": "pending_order_exists",
+                    "insufficient_balance": "insufficient_balance",
+                    "invalid_confirmation": "confirmation_invalid",
+                    "strategy_immutable": "strategy_immutable",
+                    "strategy_state_changed": "strategy_state_changed",
+                    "prepared_strategy_invalid": "prepared_invalid",
+                }.get(error.code, "other")
+                diagnostics.emit_event(
+                    "request_failure", stage="request", outcome="failure", reason=reason,
+                    api_code=error.code, method="POST",
+                )
             return self._response(start_response, error.status, error.response(), [*cors_headers, *error.headers])
         except Exception:
             # Never serialize exception text: it can contain request or
             # transport details that do not belong in the API response.
+            if diagnostics.current_context() is not None:
+                diagnostics.emit_event(
+                    "request_failure", stage="request", outcome="failure",
+                    reason="internal_error", api_code="internal_error", method="POST",
+                )
             return self._response(
                 start_response,
                 500,

@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from .okx import OKXClient, OKXError, OKXTransportError, Transport
+from .okx import OKXClient, OKXError, OKXTransportError, Transport, bounded_error_code
 from .security import token_digest
 from .store import SQLiteStore, encode_json
 from .strategy import (
@@ -30,8 +30,10 @@ from .strategy_queue import (
     parse_leverage_ack,
     parse_order_ack,
     stop_queue,
+    _ack_decimal,
 )
 from .service import APIError
+from . import diagnostics
 
 
 _REQUIRED_ENV = (
@@ -168,33 +170,119 @@ class StrategyOrderWorker:
         return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
 
     def run_once(self) -> bool:
+        now = self.clock()
+        if diagnostics.should_emit_heartbeat(now):
+            diagnostics.emit_event(
+                "heartbeat", component="worker", stage="heartbeat", outcome="success",
+                pass_count=1,
+            )
+        try:
+            return self._run_once()
+        except Exception:
+            diagnostics.emit_event(
+                "worker_fatal", component="worker", stage="fatal", outcome="failure",
+                reason="other",
+            )
+            raise
+
+    def _run_once(self) -> bool:
         """Run one bounded pass. False means another live worker owns the lease."""
         now = self.clock()
         self._queue_placements_this_pass = 0
         fence = self.store.acquire_strategy_monitor_lease(self.owner_id, now, self.lease_seconds)
         if fence is None:
+            diagnostics.emit_event(
+                "selection", component="worker", stage="selection", outcome="lease_busy",
+                reason="lease_busy", pass_count=1,
+            )
             return False
         try:
             self._ensure_lease(fence)
             account = self.okx.account_config()
         except OKXError:
+            diagnostics.emit_event(
+                "selection", component="worker", stage="selection", outcome="account_read_failed",
+                reason="account_read_failed", pass_count=1,
+            )
             return True
         fingerprint = self._account_fingerprint(account.get("uid"))
         if fingerprint is None:
+            diagnostics.emit_event(
+                "selection", component="worker", stage="selection", outcome="invalid_account",
+                reason="account_identity_invalid", pass_count=1,
+            )
             return True
+        eligible_count, matching_count = self._eligible_counts(fingerprint, now)
+        selected_count = 0
+        pass_count = 0
         for _ in range(_MAX_STRATEGIES_PER_PASS):
+            pass_count += 1
             try:
                 self._ensure_lease(fence)
             except _MonitorLeaseLost:
+                diagnostics.emit_event(
+                    "selection", component="worker", stage="selection", outcome="failure",
+                    reason="lease_lost", eligible_count=eligible_count,
+                    matching_eligible_count=matching_count, selected_count=selected_count,
+                    pass_count=pass_count,
+                )
                 break
             strategy = self._next_due_strategy(fingerprint, self.clock())
             if strategy is None:
+                diagnostics.emit_event(
+                    "selection", component="worker", stage="selection", outcome="no_due",
+                    reason="no_due", eligible_count=eligible_count,
+                    matching_eligible_count=matching_count, selected_count=selected_count,
+                    pass_count=pass_count,
+                )
                 break
+            selected_count += 1
+            diagnostics.emit_event(
+                "selection", component="worker", stage="selection", outcome="selected",
+                strategy_id=strategy.get("id"), status=strategy.get("status"),
+                submission_mode=strategy.get("submissionMode") if strategy.get("submissionMode") in {
+                    "sequential", "batch", "legacy"
+                } else None,
+                eligible_count=eligible_count, matching_eligible_count=matching_count,
+                selected_count=selected_count, pass_count=pass_count,
+            )
             try:
                 self._process_strategy(strategy, fence)
             except _MonitorLeaseLost:
+                diagnostics.emit_event(
+                    "selection", component="worker", stage="selection", outcome="failure",
+                    reason="lease_lost", strategy_id=strategy.get("id"),
+                    eligible_count=eligible_count, matching_eligible_count=matching_count,
+                    selected_count=selected_count, pass_count=pass_count,
+                )
                 break
         return True
+
+    def _eligible_counts(self, fingerprint: str, now: float) -> tuple[int | None, int | None]:
+        """Count due reconciliation candidates across accounts and for this account."""
+        try:
+            with self.store.connection() as connection:
+                rows = connection.execute(
+                    "SELECT s.account_fingerprint, COUNT(*) AS candidate_count FROM strategies AS s "
+                    "LEFT JOIN strategy_sync_state AS sync ON sync.strategy_id=s.strategy_id "
+                    "WHERE s.attempt_started=1 AND s.status IN ('APPLYING', 'UNKNOWN', 'APPLIED', 'PARTIAL') "
+                    "AND ((s.status='APPLYING' AND s.submission_mode='sequential' AND s.queue_json IS NOT NULL) "
+                    "OR (s.status='APPLYING' AND (s.submission_mode!='sequential' OR s.queue_json IS NULL) "
+                    "AND (s.execution_lease_until IS NULL OR s.execution_lease_until<=?)) "
+                    "OR (s.status!='APPLYING' AND (s.batch_attempted=1 OR s.order_placement_attempted=1))) "
+                    "AND COALESCE(sync.next_scan_at, 0)<=? GROUP BY s.account_fingerprint",
+                    (now, now),
+                ).fetchall()
+        except Exception:
+            return None, None
+        try:
+            eligible = sum(row["candidate_count"] for row in rows)
+            matching = sum(
+                row["candidate_count"] for row in rows if row["account_fingerprint"] == fingerprint
+            )
+            return min(int(eligible), 1_000_000), min(int(matching), 1_000_000)
+        except Exception:
+            return None, None
 
     def _next_due_strategy(self, fingerprint: str, now: float) -> dict[str, Any] | None:
         with self.store.connection() as connection:
@@ -292,7 +380,10 @@ class StrategyOrderWorker:
 
     def _process_strategy(self, strategy: dict[str, Any], fence: int) -> None:
         if strategy["submissionMode"] == "sequential" and strategy["status"] == "APPLYING":
-            self._process_queue(strategy, fence)
+            with diagnostics.strategy_context(
+                strategy.get("id"), component="worker", submission_mode="sequential"
+            ):
+                self._process_queue(strategy, fence)
             return
         strategy_id = strategy["id"]
         attempt = self._write_attempt(strategy_id, fence)
@@ -427,6 +518,30 @@ class StrategyOrderWorker:
         leverage_results: list[dict[str, Any]] | None = None,
         mark_placement_attempted: bool = False,
     ) -> dict[str, Any] | None:
+        marker = strategy.get("queue", {}).get("inFlight") if isinstance(strategy.get("queue"), dict) else None
+        commit_order_id = None
+        commit_order_index = None
+        commit_side = None
+        if isinstance(marker, dict):
+            if marker.get("kind") == "placement":
+                commit_order_index = marker.get("index")
+                prepared = strategy.get("prepared")
+                orders = prepared.get("orders") if isinstance(prepared, dict) else None
+                if (
+                    isinstance(orders, list) and type(commit_order_index) is int
+                    and 0 <= commit_order_index < len(orders)
+                    and isinstance(orders[commit_order_index], dict)
+                ):
+                    commit_order_id = orders[commit_order_index].get("clientOrderId")
+                    commit_side = orders[commit_order_index].get("side")
+            elif marker.get("kind") == "leverage":
+                commit_side = marker.get("side")
+                prepared = strategy.get("prepared")
+                orders = prepared.get("orders") if isinstance(prepared, dict) else None
+                if isinstance(orders, list):
+                    row = next((item for item in orders if isinstance(item, dict) and item.get("side") == commit_side), None)
+                    if isinstance(row, dict):
+                        commit_order_id = row.get("clientOrderId")
         persisted = self._queue_ledger(fence).persist_transition(
             strategy,
             queue=queue,
@@ -436,6 +551,27 @@ class StrategyOrderWorker:
             leverage_results=strategy["leverageResults"] if leverage_results is None else leverage_results,
             mark_placement_attempted=mark_placement_attempted,
         )
+        diagnostics.emit_event(
+            "commit", component="worker", stage="commit",
+            outcome="committed" if persisted else "refused",
+            reason=None if persisted else "fence_or_cas_loss",
+            status=status, persisted=persisted,
+            client_order_id=commit_order_id, order_index=commit_order_index, side=commit_side,
+            order_count=len(results),
+            accepted_count=sum(row.get("status") == "accepted" for row in results),
+            pending_count=sum(row.get("status") == "unknown" for row in results),
+            not_submitted_count=sum(row.get("status") == "not_submitted" for row in results),
+        )
+        if queue.get("phase") == "stopped":
+            diagnostics.emit_event(
+                    "queue_stop", component="worker", stage="queue", outcome="stopped",
+                    reason=diagnostics.safe_reason(queue.get("stopReason")), status=status,
+                    submission_mode="sequential", order_count=len(results),
+                    accepted_count=sum(row.get("status") == "accepted" for row in results),
+                    pending_count=sum(row.get("status") == "unknown" for row in results),
+                    not_submitted_count=sum(row.get("status") == "not_submitted" for row in results),
+                    persisted=persisted,
+                )
         if not persisted:
             return None
         latest = self.strategy._load_row(strategy["id"])
@@ -708,8 +844,27 @@ class StrategyOrderWorker:
             )
         except APIError as exc:
             reason = self._queue_validation_reason(exc, resume=resume)
+            diagnostics.emit_event(
+                "preflight", component="worker",
+                stage="preflight_resume" if resume else "preflight_initial", outcome="failure",
+                reason=diagnostics.safe_reason(reason), status=strategy.get("status"),
+                submission_mode="sequential",
+            )
             self._stop_queue_without_marker(strategy, fence, reason)
             return
+        except Exception:
+            diagnostics.emit_event(
+                "preflight", component="worker",
+                stage="preflight_resume" if resume else "preflight_initial", outcome="failure",
+                reason="preflight_unavailable", status=strategy.get("status"),
+                submission_mode="sequential",
+            )
+            raise
+        diagnostics.emit_event(
+            "preflight", component="worker",
+            stage="preflight_resume" if resume else "preflight_initial", outcome="success",
+            status=strategy.get("status"), submission_mode="sequential",
+        )
         expected_mode = prepared.get("_positionMode")
         if (
             expected_mode not in ("net_mode", "long_short_mode")
@@ -751,6 +906,12 @@ class StrategyOrderWorker:
                     return
                 order = next(row for row in orders if row["side"] == side)
                 pos_side = side if expected_mode == "long_short_mode" else "net"
+                diagnostics.emit_event(
+                    "write_attempt", component="worker", stage="leverage", outcome="attempted",
+                    side=side, submission_mode="sequential",
+                    client_order_id=order.get("clientOrderId"),
+                )
+                response = None
                 try:
                     response = service.okx.set_leverage({
                         "instId": strategy["contract"]["instrumentId"],
@@ -778,6 +939,21 @@ class StrategyOrderWorker:
                         strategy["contract"]["instrumentId"],
                         order["leverage"],
                     )
+                diagnostics.emit_event(
+                    "ack_observed", component="worker", stage="leverage", outcome=outcome,
+                    reason=diagnostics.safe_reason(
+                        "leverage_rejected" if outcome == "rejected" else
+                        "leverage_unknown" if outcome == "unknown" else "other"
+                    ),
+                    side=side, client_order_id=order.get("clientOrderId"),
+                    item_code=error_code, persisted=False,
+                    ack_shape=self._leverage_ack_shape(
+                        response,
+                        expected_pos_side=pos_side,
+                        expected_instrument_id=strategy["contract"]["instrumentId"],
+                        expected_leverage=order["leverage"],
+                    ),
+                )
                 strategy = self._commit_leverage_outcome(
                     strategy, fence, side, outcome, error_code
                 )
@@ -789,10 +965,27 @@ class StrategyOrderWorker:
                     strategy["contract"], strategy["accountFingerprint"], resume=False
                 )
             except APIError as exc:
+                reason = self._queue_validation_reason(exc, resume=False)
+                diagnostics.emit_event(
+                    "preflight", component="worker", stage="preflight_post_leverage", outcome="failure",
+                    reason=diagnostics.safe_reason(reason), status=strategy.get("status"),
+                    submission_mode="sequential",
+                )
                 self._stop_queue_without_marker(
-                    strategy, fence, self._queue_validation_reason(exc, resume=False)
+                    strategy, fence, reason
                 )
                 return
+            except Exception:
+                diagnostics.emit_event(
+                    "preflight", component="worker", stage="preflight_post_leverage", outcome="failure",
+                    reason="preflight_unavailable", status=strategy.get("status"),
+                    submission_mode="sequential",
+                )
+                raise
+            diagnostics.emit_event(
+                "preflight", component="worker", stage="preflight_post_leverage", outcome="success",
+                status=strategy.get("status"), submission_mode="sequential",
+            )
             if (
                 account.get("posMode") != expected_mode
                 or preview.get("_internal", {}).get("positionMode") != expected_mode
@@ -828,6 +1021,12 @@ class StrategyOrderWorker:
             )
             if strategy is None:
                 return
+            diagnostics.emit_event(
+                "write_attempt", component="worker", stage="order", outcome="attempted",
+                submission_mode="sequential", client_order_id=orders[index].get("clientOrderId"),
+                order_index=index, order_count=queue["totalCount"],
+            )
+            response = None
             try:
                 response = service.okx.place_order(
                     self.strategy._okx_order(strategy["contract"], orders[index], expected_mode)
@@ -856,6 +1055,18 @@ class StrategyOrderWorker:
                 outcome, exchange_order_id, error_code, reason = parse_order_ack(
                     response, orders[index].get("clientOrderId", "")
                 )
+            diagnostics.emit_event(
+                "ack_observed", component="worker", stage="order", outcome=outcome,
+                reason=diagnostics.safe_reason(
+                    "order_rejected" if outcome == "rejected" else
+                    "ack_unknown" if outcome == "unknown" else "other"
+                ),
+                client_order_id=orders[index].get("clientOrderId"), order_index=index,
+                item_code=error_code, persisted=False,
+                ack_shape=self._order_ack_shape(
+                    response, orders[index].get("clientOrderId"), outcome, reason
+                ),
+            )
             strategy = self._commit_order_outcome(
                 strategy,
                 fence,
@@ -870,6 +1081,77 @@ class StrategyOrderWorker:
             queue = strategy["queue"]
             if queue["phase"] == "submitted":
                 return
+
+    @staticmethod
+    def _leverage_ack_shape(
+        response: Any,
+        *,
+        expected_pos_side: str,
+        expected_instrument_id: str,
+        expected_leverage: Any,
+    ) -> str:
+        if not isinstance(response, dict):
+            return "nonobject_data"
+        if "code" not in response:
+            return "missing_code"
+        code = response.get("code")
+        safe_code = bounded_error_code(code)
+        if safe_code is None:
+            return "invalid_code"
+        if safe_code != "0":
+            return "valid"
+        data = response.get("data")
+        if not isinstance(data, list) or len(data) != 1:
+            return "data_cardinality"
+        item = data[0]
+        if not isinstance(item, dict):
+            return "invalid_row"
+        if "sCode" in item:
+            sub_code = item.get("sCode")
+            if bounded_error_code(sub_code) is None:
+                return "invalid_code"
+        actual = item.get("lever")
+        if (
+            item.get("instId") != expected_instrument_id
+            or item.get("mgnMode") != "isolated"
+            or item.get("posSide") != expected_pos_side
+            or _ack_decimal(actual) is None
+            or _ack_decimal(expected_leverage) is None
+            or _ack_decimal(actual) != _ack_decimal(expected_leverage)
+        ):
+            return "leverage_identity_mismatch"
+        return "valid"
+
+    @staticmethod
+    def _order_ack_shape(response: Any, client_order_id: Any, outcome: str, reason: Any) -> str:
+        if not isinstance(response, dict):
+            return "nonobject_data"
+        if "code" not in response:
+            return "missing_code"
+        top_code = bounded_error_code(response.get("code"))
+        if top_code is None:
+            return "invalid_code"
+        if top_code != "0":
+            return "valid"
+        data = response.get("data")
+        if not isinstance(data, list) or len(data) != 1:
+            return "data_cardinality"
+        item = data[0]
+        if not isinstance(item, dict):
+            return "invalid_row"
+        if item.get("clOrdId") != client_order_id:
+            return "client_identity_mismatch"
+        if "sCode" not in item or item.get("sCode") in (None, ""):
+            return "missing_code"
+        item_code = bounded_error_code(item.get("sCode"))
+        if item_code is None:
+            return "invalid_code"
+        if item_code != "0":
+            return "valid"
+        order_id = item.get("ordId")
+        if not isinstance(order_id, str) or not order_id.strip():
+            return "missing_order_id"
+        return "valid"
 
     def _stop_corrupt_queue(self, strategy: dict[str, Any], fence: int) -> None:
         prepared = strategy.get("prepared")
@@ -1044,12 +1326,21 @@ class StrategyOrderWorker:
     def run_forever(self, stop_event: threading.Event | None = None) -> None:
         stopping = stop_event or threading.Event()
         interval = self.order_interval_seconds
-        while not stopping.is_set():
-            started = time.monotonic()
-            self.run_once()
-            remaining = interval - (time.monotonic() - started)
-            if remaining > 0:
-                stopping.wait(remaining)
+        diagnostics.emit_event(
+            "worker_startup", component="worker", stage="startup", outcome="success"
+        )
+        try:
+            while not stopping.is_set():
+                started = time.monotonic()
+                self.run_once()
+                remaining = interval - (time.monotonic() - started)
+                if remaining > 0:
+                    stopping.wait(remaining)
+        finally:
+            diagnostics.emit_event(
+                "worker_shutdown", component="worker", stage="shutdown", outcome="success"
+            )
+            diagnostics.shutdown()
 
 
 def main() -> None:
