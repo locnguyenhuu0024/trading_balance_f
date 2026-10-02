@@ -59,6 +59,8 @@ The new strategy MUST carry an internal reference to the old eligible never-sent
 
 `POST /v1/strategies` may accept `replacementSourceId` only when the source satisfies REQ-001. Existing preview, prepare, execute and delete routes remain the flow. The server validates the source again before order placement and during cleanup. If stale, return a safe conflict before sending; if it changes after placement, preserve both records and report the cleanup conflict without changing the batch outcome.
 
+Legacy `COMPLETED` rows that meet never-sent eligibility project as public `PARTIAL`, with `failureReason` `leverage_rejected` when persisted leverage results show rejection and `never_sent` otherwise; the stored row is unchanged. Strategy results expose `replacementCleanupConflict: bool`, true only when a replacement batch is fully accepted but the referenced source still exists after guarded cleanup. The client uses that flag for the cleanup warning.
+
 ## 6. Invariants and edge cases
 
 - INV-001: `batch_attempted=0` is the only authoritative proof that the batch request was never initiated; UI labels and order statuses alone are insufficient.

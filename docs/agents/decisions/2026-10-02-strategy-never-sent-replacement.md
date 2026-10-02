@@ -14,3 +14,9 @@ Plan: `docs/agents/plans/2026-10-02-strategy-never-sent-replacement.md`
 | D-004 | Delete the old strategy automatically only after OKX accepts every new order. | REQ-004 |
 
 Source: user answers in the 2026-10-02 production incident conversation. No configuration values or credentials were requested.
+
+## Coordinator interface resolution
+
+| ID | Decision | Affected requirements |
+|---|---|---|
+| D-005 | Project eligible legacy `COMPLETED` as public `PARTIAL` with `leverage_rejected` or `never_sent` reason; expose `replacementCleanupConflict` for the accepted-batch cleanup warning. | REQ-002, REQ-004 |

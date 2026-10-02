@@ -149,13 +149,24 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
                           actionBusy: dashboard.isActionInFlight(
                             _text(strategy['id']),
                           ),
+                          onReplace: strategy['canDelete'] == true
+                              ? () => _openWizard(
+                                  context,
+                                  session,
+                                  dashboard,
+                                  replacementSourceId: _text(strategy['id']),
+                                )
+                              : null,
                           onApply:
                               _text(strategy['status']).toUpperCase() == 'DRAFT'
                               ? () => _applySaved(context, dashboard, strategy)
                               : null,
-                          onDelete:
-                              _text(strategy['status']).toUpperCase() == 'DRAFT'
-                              ? () => _deleteDraft(context, dashboard, strategy)
+                          onDelete: strategy['canDelete'] == true
+                              ? () => _deleteStrategy(
+                                  context,
+                                  dashboard,
+                                  strategy,
+                                )
                               : null,
                           onRefresh:
                               _text(strategy['status']).toUpperCase() == 'DRAFT'
@@ -209,8 +220,9 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
   void _openWizard(
     BuildContext context,
     TradeSession session,
-    StrategyDashboardController dashboard,
-  ) {
+    StrategyDashboardController dashboard, {
+    String? replacementSourceId,
+  }) {
     showDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -218,6 +230,7 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
         session: session,
         dashboard: dashboard,
         onSaved: dashboard.refresh,
+        replacementSourceId: replacementSourceId,
       ),
     );
   }
@@ -242,13 +255,20 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
     } else if (outcome.kind == StrategyApplyOutcomeKind.rejected) {
       _showMessage(context, outcome.message ?? 'Máy chủ từ chối áp dụng.');
     } else {
-      final status = _text(outcome.result?['status']).toUpperCase();
-      _showMessage(
-        context,
-        status == 'APPLIED'
-            ? 'Máy chủ đã chấp nhận lệnh chiến thuật.'
-            : 'Trạng thái chiến thuật: ${status.isEmpty ? 'đang cập nhật' : status}.',
-      );
+      if (outcome.result?['replacementCleanupConflict'] == true) {
+        _showMessage(
+          context,
+          'OKX đã chấp nhận đầy đủ lệnh thay thế, nhưng hệ thống chưa xóa được chiến thuật cũ.',
+        );
+      } else {
+        final status = _text(outcome.result?['status']).toUpperCase();
+        _showMessage(
+          context,
+          status == 'APPLIED'
+              ? 'Máy chủ đã chấp nhận lệnh chiến thuật.'
+              : 'Trạng thái chiến thuật: ${status.isEmpty ? 'đang cập nhật' : status}.',
+        );
+      }
     }
   }
 
@@ -297,19 +317,20 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
         false;
   }
 
-  Future<void> _deleteDraft(
+  Future<void> _deleteStrategy(
     BuildContext context,
     StrategyDashboardController dashboard,
     Map<String, dynamic> strategy,
   ) async {
     final id = _text(strategy['id']);
-    if (id.isEmpty || _text(strategy['status']).toUpperCase() != 'DRAFT')
-      return;
+    if (id.isEmpty || strategy['canDelete'] != true) return;
     final accepted = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Xóa bản nháp?'),
-        content: const Text('Bản nháp sẽ bị xóa khỏi danh sách chiến thuật.'),
+        title: const Text('Xóa chiến thuật?'),
+        content: const Text(
+          'Chỉ xóa bản ghi chiến thuật trong ứng dụng; lệnh trên OKX không bị hủy hoặc thay đổi.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -317,7 +338,7 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Xóa bản nháp'),
+            child: const Text('Xóa chiến thuật'),
           ),
         ],
       ),
@@ -327,7 +348,7 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
     if (context.mounted) {
       _showMessage(
         context,
-        deleted ? 'Đã xóa bản nháp.' : 'Không thể xóa bản nháp.',
+        deleted ? 'Đã xóa chiến thuật.' : 'Không thể xóa chiến thuật.',
       );
     }
   }
@@ -347,6 +368,7 @@ class _StrategyCard extends StatelessWidget {
     required this.metricsAreStale,
     required this.metricsStaleAt,
     required this.actionBusy,
+    required this.onReplace,
     required this.onApply,
     required this.onDelete,
     required this.onRefresh,
@@ -358,6 +380,7 @@ class _StrategyCard extends StatelessWidget {
   final bool metricsAreStale;
   final DateTime? metricsStaleAt;
   final bool actionBusy;
+  final VoidCallback? onReplace;
   final VoidCallback? onApply;
   final VoidCallback? onDelete;
   final VoidCallback? onRefresh;
@@ -365,6 +388,7 @@ class _StrategyCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final status = _text(strategy['status']).toUpperCase();
+    final neverSent = _isNeverSentStrategy(strategy);
     final instrument = _text(strategy['instrumentId']);
     final positions = _mapList(strategy['positions']);
     final position = positions.isEmpty
@@ -401,6 +425,10 @@ class _StrategyCard extends StatelessWidget {
     final orderScanNoticeText = orderScanNotice == null
         ? null
         : '$orderScanNotice · $lastSuccessfulOrderScan';
+    final failureReason = _text(strategy['failureReason']);
+    final leverageErrorCode = _safeLeverageErrorCode(
+      _mapList(strategy['leverageResults']),
+    );
 
     return Card(
       child: Padding(
@@ -417,12 +445,31 @@ class _StrategyCard extends StatelessWidget {
                   instrument,
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
-                Chip(label: Text(_statusLabel(status))),
+                Chip(
+                  label: Text(neverSent ? 'Chưa gửi' : _statusLabel(status)),
+                ),
                 if (_text(strategy['interval']).isNotEmpty)
                   Chip(label: Text(_text(strategy['interval']))),
               ],
             ),
             Text(quoteLabel, style: quoteStyle),
+            if (neverSent) ...[
+              const SizedBox(height: 6),
+              const Text('Không có lệnh nào được gửi lên OKX.'),
+              if (failureReason == 'leverage_rejected')
+                Text(
+                  leverageErrorCode == null
+                      ? 'OKX từ chối thiết lập đòn bẩy.'
+                      : 'OKX từ chối thiết lập đòn bẩy (mã: $leverageErrorCode).',
+                ),
+            ],
+            if (strategy['replacementCleanupConflict'] == true)
+              const Padding(
+                padding: EdgeInsets.only(top: 6),
+                child: Text(
+                  'OKX đã chấp nhận đầy đủ lệnh thay thế, nhưng hệ thống chưa xóa được chiến thuật cũ.',
+                ),
+              ),
             if (quote?.observedAt != null)
               Text('Giá được ghi nhận lúc ${_time(quote!.observedAt)}'),
             if (metricsAreStale)
@@ -476,7 +523,7 @@ class _StrategyCard extends StatelessWidget {
                 'Trạng thái từng lệnh',
                 style: Theme.of(context).textTheme.titleSmall,
               ),
-              if (orderScanNoticeText != null)
+              if (!neverSent && orderScanNoticeText != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 4),
                   child: Text(
@@ -486,7 +533,7 @@ class _StrategyCard extends StatelessWidget {
                     ),
                   ),
                 )
-              else if (lastOrderScanAt.isNotEmpty)
+              else if (!neverSent && lastOrderScanAt.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.only(top: 4),
                   child: Text(
@@ -502,6 +549,12 @@ class _StrategyCard extends StatelessWidget {
               spacing: 8,
               runSpacing: 8,
               children: [
+                if (onReplace != null)
+                  FilledButton.tonalIcon(
+                    onPressed: actionBusy ? null : onReplace,
+                    icon: const Icon(Icons.replay),
+                    label: const Text('Tạo lại'),
+                  ),
                 if (onApply != null)
                   FilledButton.tonalIcon(
                     onPressed: actionBusy ? null : onApply,
@@ -517,7 +570,7 @@ class _StrategyCard extends StatelessWidget {
                   OutlinedButton.icon(
                     onPressed: actionBusy ? null : onDelete,
                     icon: const Icon(Icons.delete_outline),
-                    label: const Text('Xóa bản nháp'),
+                    label: const Text('Xóa chiến thuật'),
                   ),
                 if (onRefresh != null)
                   OutlinedButton.icon(
@@ -694,6 +747,19 @@ Object? _first(Map<String, dynamic> values, List<String> keys) {
 }
 
 String _text(Object? value) => value == null ? '' : value.toString();
+
+bool _isNeverSentStrategy(Map<String, dynamic> strategy) =>
+    _text(strategy['status']).toUpperCase() != 'DRAFT' &&
+    strategy['canDelete'] == true &&
+    strategy['batchAttempted'] == false;
+
+String? _safeLeverageErrorCode(List<Map<String, dynamic>> results) {
+  for (final result in results) {
+    final code = _text(result['errorCode']).trim().toUpperCase();
+    if (RegExp(r'^[A-Z0-9_-]{1,32}$').hasMatch(code)) return code;
+  }
+  return null;
+}
 
 bool _hasStartedStatus(Object? status) => const {
   'APPLIED',

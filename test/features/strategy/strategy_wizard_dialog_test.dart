@@ -11,6 +11,61 @@ import 'package:trading_balance_f/features/strategy/presentation/providers/strat
 import 'package:trading_balance_f/features/strategy/presentation/strategy_wizard_dialog.dart';
 
 void main() {
+  testWidgets(
+    'replacement uses fresh levels and executes once after prepared confirmation',
+    (tester) async {
+      final market = _FakeStrategyMarketRepository();
+      final api = _FakeStrategyApi()..reportCleanupConflict = true;
+      final dashboard = _dashboard(api, market);
+      addTearDown(dashboard.dispose);
+      await _pumpWizard(
+        tester,
+        market,
+        api,
+        dashboard,
+        replacementSourceId: 'never-sent-1',
+      );
+
+      expect(market.loadCalls, ['BTC-USDT-SWAP']);
+      expect(
+        tester
+            .widgetList<CheckboxListTile>(find.byType(CheckboxListTile))
+            .every((checkbox) => checkbox.value == false),
+        isTrue,
+      );
+
+      await tester.tap(find.byType(CheckboxListTile).first);
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('strategy-next-step-one')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('strategy-margin-input')),
+        '100',
+      );
+      await tester.tap(find.byKey(const Key('strategy-request-preview')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('strategy-apply-now')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(api.saveBodies.single['replacementSourceId'], 'never-sent-1');
+      expect(api.prepareCalls, 1);
+      expect(find.text('Xác nhận danh sách lệnh'), findsOneWidget);
+      expect(find.textContaining('LONG · entry · 90.0'), findsOneWidget);
+      expect(api.executeCalls, 0);
+
+      await tester.tap(find.byKey(const Key('strategy-confirm-apply')));
+      await tester.pumpAndSettle();
+
+      expect(api.executeCalls, 1);
+      expect(api.deleteCalls, 0);
+      expect(
+        find.textContaining('OKX đã chấp nhận đầy đủ lệnh thay thế'),
+        findsOneWidget,
+      );
+    },
+  );
+
   testWidgets('shows why step one cannot continue without a selection', (
     tester,
   ) async {
@@ -487,8 +542,9 @@ Future<void> _pumpWizard(
   WidgetTester tester,
   StrategyMarketRepository market,
   StrategyApi api,
-  StrategyDashboardController dashboard,
-) async {
+  StrategyDashboardController dashboard, {
+  String? replacementSourceId,
+}) async {
   tester.view.physicalSize = const Size(1200, 1600);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
@@ -514,6 +570,7 @@ Future<void> _pumpWizard(
                   session: session,
                   dashboard: dashboard,
                   onSaved: () async {},
+                  replacementSourceId: replacementSourceId,
                 ),
               ),
               child: const Text('Open wizard'),
@@ -531,6 +588,10 @@ class _FakeStrategyApi implements StrategyApi {
   final previewBodies = <Map<String, dynamic>>[];
   final saveBodies = <Map<String, dynamic>>[];
   StrategyApiException? nextPreviewError;
+  int prepareCalls = 0;
+  int executeCalls = 0;
+  int deleteCalls = 0;
+  bool reportCleanupConflict = false;
 
   @override
   Future<Map<String, dynamic>> preview(
@@ -573,14 +634,37 @@ class _FakeStrategyApi implements StrategyApi {
   Future<Map<String, dynamic>> prepareApply(
     String bearerToken,
     String id,
-  ) async => const {};
+  ) async {
+    prepareCalls++;
+    return {
+      'confirmationToken': 'one-use-token',
+      'estimatedOpeningFees': '0.03',
+      'orders': [
+        {
+          'side': 'long',
+          'role': 'entry',
+          'limitPrice': '90.0',
+          'contracts': '1',
+          'margin': '100.0',
+          'leverage': 5,
+          'openingFeeEstimate': '0.03',
+        },
+      ],
+    };
+  }
 
   @override
   Future<Map<String, dynamic>> executeApply(
     String bearerToken,
     String id,
     String confirmationToken,
-  ) async => const {};
+  ) async {
+    executeCalls++;
+    return {
+      'status': 'APPLIED',
+      'replacementCleanupConflict': reportCleanupConflict,
+    };
+  }
 
   @override
   Future<Map<String, dynamic>> getResult(String bearerToken, String id) async =>
@@ -591,7 +675,9 @@ class _FakeStrategyApi implements StrategyApi {
       const {};
 
   @override
-  Future<void> deleteDraft(String bearerToken, String id) async {}
+  Future<void> deleteDraft(String bearerToken, String id) async {
+    deleteCalls++;
+  }
 }
 
 class _FakeStrategyMarketRepository extends StrategyMarketRepository {

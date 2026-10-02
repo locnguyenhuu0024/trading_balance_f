@@ -279,7 +279,7 @@ class StrategyOrderWorker:
 
         scan_error = order_error
         complete = False
-        if scan_error is None and self._all_orders_terminal(results):
+        if scan_error is None and strategy["batchAttempted"] and self._all_orders_terminal(results):
             complete, position_error = self._position_proves_zero(
                 strategy["contract"]["instrumentId"], fence
             )
@@ -364,6 +364,7 @@ class StrategyOrderWorker:
                     connection.execute(
                         "DELETE FROM strategy_reservations WHERE strategy_id=?", (strategy_id,)
                     )
+            StrategyService._cleanup_replacement_in_connection(connection, strategy_id, now)
             connection.execute(
                 "INSERT INTO strategy_sync_state(strategy_id, last_attempt_at, last_success_at, last_error, "
                 "next_scan_at, consecutive_errors) VALUES (?, ?, ?, NULL, ?, 0) "
@@ -431,6 +432,8 @@ class StrategyOrderWorker:
                     connection.execute(
                         "DELETE FROM strategy_reservations WHERE strategy_id=?", (strategy_id,)
                     )
+            if unchanged:
+                StrategyService._cleanup_replacement_in_connection(connection, strategy_id, now)
             connection.execute(
                 "INSERT INTO strategy_sync_state(strategy_id, last_attempt_at, last_success_at, last_error, "
                 "next_scan_at, consecutive_errors) VALUES (?, ?, NULL, ?, ?, 1) "

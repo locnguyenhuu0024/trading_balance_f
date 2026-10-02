@@ -139,6 +139,7 @@ void main() {
       });
       final saved = await client.saveDraft(token, const {
         'previewHash': 'hash',
+        'replacementSourceId': 'never-sent-1',
       });
       final strategies = await client.listStrategies(token);
       final prepared = await client.prepareApply(token, 'draft-123');
@@ -177,7 +178,10 @@ void main() {
         isTrue,
       );
       expect(adapter.requests[0].method, 'POST');
-      expect(adapter.requests[1].data, {'previewHash': 'hash'});
+      expect(adapter.requests[1].data, {
+        'previewHash': 'hash',
+        'replacementSourceId': 'never-sent-1',
+      });
       expect(adapter.requests[2].method, 'GET');
       expect(adapter.requests[6].method, 'GET');
       expect(adapter.requests[7].data, const {});

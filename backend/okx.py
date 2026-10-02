@@ -8,13 +8,29 @@ import hashlib
 import hmac
 import http.client
 import json
+import re
 import time
 from typing import Any, Callable, Optional
 from urllib.parse import urlencode
 
 
+_OKX_ERROR_CODE = re.compile(r"[0-9]{1,12}\Z")
+
+
+def bounded_error_code(value: Any) -> str | None:
+    """Return a short numeric exchange error code without exposing response text."""
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        return None
+    token = str(value)
+    return token if _OKX_ERROR_CODE.fullmatch(token) else None
+
+
 class OKXError(RuntimeError):
     """Safe, content-free error raised for a rejected or malformed response."""
+
+    def __init__(self, message: str, *, error_code: str | None = None):
+        super().__init__(message)
+        self.error_code = bounded_error_code(error_code)
 
 
 class OKXTransportError(OKXError):
@@ -121,7 +137,7 @@ class OKXClient:
             raise OKXTransportError("exchange returned an unexpected response")
         code = str(response.get("code", ""))
         if code != "0" and code not in allow_nonzero_codes:
-            raise OKXError("exchange rejected the request")
+            raise OKXError("exchange rejected the request", error_code=code)
         data = response.get("data")
         if data is not None and not isinstance(data, list):
             raise OKXTransportError("exchange returned an unexpected response")

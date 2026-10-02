@@ -11,7 +11,7 @@ import time
 from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_DOWN, ROUND_FLOOR
 from typing import Any, Callable
 
-from .okx import OKXError, OKXTransportError
+from .okx import OKXError, OKXTransportError, bounded_error_code
 from .security import new_confirmation_token, new_operation_id, token_digest
 from .service import APIError
 from .store import decode_json, encode_json
@@ -321,11 +321,139 @@ class StrategyService:
             "batchAttempted": bool(row["batch_attempted"]),
             "executionId": row["execution_id"],
             "executionLeaseUntil": row["execution_lease_until"],
+            "replacementSourceId": row["replacement_source_id"],
             "leverageResults": decode_json(row["leverage_results_json"]),
             "failureReason": row["failure_reason"],
             "createdAt": row["created_at"],
             "updatedAt": row["updated_at"],
         }
+
+    @staticmethod
+    def _all_not_submitted(results: Any) -> bool:
+        return (
+            isinstance(results, list)
+            and bool(results)
+            and all(isinstance(row, dict) and row.get("status") == "not_submitted" for row in results)
+        )
+
+    @classmethod
+    def _legacy_never_sent(cls, strategy: dict[str, Any]) -> bool:
+        return (
+            strategy["status"] == "COMPLETED"
+            and not strategy["batchAttempted"]
+            and cls._all_not_submitted(strategy["results"])
+        )
+
+    @staticmethod
+    def _replacement_fully_accepted(
+        status: str, results: Any, batch_attempted: bool
+    ) -> bool:
+        accepted_states = {
+            "accepted", "live", "partially_filled", "filled", "canceled", "mmp_canceled"
+        }
+        return (
+            batch_attempted
+            and status in {"APPLIED", "COMPLETED"}
+            and isinstance(results, list)
+            and bool(results)
+            and all(
+                isinstance(row, dict)
+                and row.get("status") in accepted_states
+                and isinstance(row.get("exchangeOrderId"), str)
+                and bool(row["exchangeOrderId"])
+                for row in results
+            )
+        )
+
+    @classmethod
+    def _is_never_sent_record(
+        cls, strategy: dict[str, Any], fingerprint: str, now: float
+    ) -> bool:
+        lease_until = strategy["executionLeaseUntil"]
+        return (
+            isinstance(strategy["accountFingerprint"], str)
+            and hmac.compare_digest(strategy["accountFingerprint"], fingerprint)
+            and not strategy["batchAttempted"]
+            and cls._all_not_submitted(strategy["results"])
+            and strategy["status"] != "APPLYING"
+            and strategy["executionId"] is None
+            and (lease_until is None or lease_until <= now)
+        )
+
+    @classmethod
+    def _eligible_never_sent_record(
+        cls,
+        connection: Any,
+        strategy: dict[str, Any],
+        fingerprint: str,
+        now: float,
+    ) -> bool:
+        if not cls._is_never_sent_record(strategy, fingerprint, now):
+            return False
+        active_replacement = connection.execute(
+            "SELECT 1 FROM strategies WHERE replacement_source_id=? AND account_fingerprint=? "
+            "AND status='APPLYING' LIMIT 1",
+            (strategy["id"], fingerprint),
+        ).fetchone()
+        return active_replacement is None
+
+    @staticmethod
+    def _delete_strategy_with_dependents(connection: Any, strategy_id: str) -> None:
+        connection.execute("DELETE FROM strategy_reservations WHERE strategy_id=?", (strategy_id,))
+        connection.execute("DELETE FROM strategy_sync_state WHERE strategy_id=?", (strategy_id,))
+        connection.execute("DELETE FROM strategies WHERE strategy_id=?", (strategy_id,))
+
+    @classmethod
+    def _cleanup_replacement_in_connection(
+        cls, connection: Any, replacement_id: str, now: float
+    ) -> bool:
+        replacement_row = connection.execute(
+            "SELECT * FROM strategies WHERE strategy_id=?", (replacement_id,)
+        ).fetchone()
+        if replacement_row is None:
+            return False
+        replacement = cls._decode_row(replacement_row)
+        source_id = replacement["replacementSourceId"]
+        if (
+            not isinstance(source_id, str)
+            or not cls._replacement_fully_accepted(
+                replacement["status"], replacement["results"], replacement["batchAttempted"]
+            )
+        ):
+            return False
+        source_row = connection.execute(
+            "SELECT * FROM strategies WHERE strategy_id=? AND account_fingerprint=?",
+            (source_id, replacement["accountFingerprint"]),
+        ).fetchone()
+        if source_row is None:
+            return False
+        source = cls._decode_row(source_row)
+        if not cls._eligible_never_sent_record(
+            connection, source, replacement["accountFingerprint"], now
+        ):
+            return False
+        cls._delete_strategy_with_dependents(connection, source_id)
+        return True
+
+    def _require_eligible_replacement_source(
+        self, replacement_source_id: str | None, fingerprint: str
+    ) -> None:
+        if replacement_source_id is None:
+            return
+        now = self.clock()
+        with self.store.connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM strategies WHERE strategy_id=? AND account_fingerprint=?",
+                (replacement_source_id, fingerprint),
+            ).fetchone()
+            if row is None or not self._eligible_never_sent_record(
+                connection, self._decode_row(row), fingerprint, now
+            ):
+                raise APIError(
+                    409,
+                    "replacement_source_unavailable",
+                    "The never-sent source is no longer eligible for replacement.",
+                )
 
     def _expire_prepare(self, strategy: dict[str, Any]) -> None:
         if strategy["status"] != "PREPARED" or strategy["preparedExpiresAt"] is None:
@@ -854,6 +982,12 @@ class StrategyService:
 
     def _save(self, body: dict[str, Any]) -> dict[str, Any]:
         contract = self._normalize_contract(body)
+        replacement_source_id = body.get("replacementSourceId")
+        if replacement_source_id is not None and (
+            not isinstance(replacement_source_id, str)
+            or not _STRATEGY_ID.fullmatch(replacement_source_id)
+        ):
+            raise self._invalid("replacement_source_id")
         expected = body.get("previewHash")
         if not isinstance(expected, str):
             raise APIError(400, "preview_required", "Submit the preview hash before saving a draft.")
@@ -872,14 +1006,27 @@ class StrategyService:
         now = self.clock()
         strategy_id = new_operation_id()
         with self.store.transaction() as connection:
+            if replacement_source_id is not None:
+                source_row = connection.execute(
+                    "SELECT * FROM strategies WHERE strategy_id=? AND account_fingerprint=?",
+                    (replacement_source_id, account_fingerprint),
+                ).fetchone()
+                if source_row is None or not self._eligible_never_sent_record(
+                    connection, self._decode_row(source_row), account_fingerprint, now
+                ):
+                    raise APIError(
+                        409,
+                        "replacement_source_unavailable",
+                        "The never-sent source is no longer eligible for replacement.",
+                    )
             connection.execute(
                 "INSERT INTO strategies(strategy_id, account_fingerprint, status, contract_json, snapshot_json, "
-                "orders_json, results_json, preview_hash, created_at, updated_at) "
-                "VALUES (?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, ?)",
+                "orders_json, results_json, preview_hash, replacement_source_id, created_at, updated_at) "
+                "VALUES (?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     strategy_id, account_fingerprint, encode_json(contract), encode_json(snapshot),
                     encode_json(orders), encode_json([{**row, "status": "not_submitted", "filledContracts": "0"} for row in orders]),
-                    preview["previewHash"], now, now,
+                    preview["previewHash"], replacement_source_id, now, now,
                 ),
             )
         return {
@@ -951,6 +1098,7 @@ class StrategyService:
         strategy, _, fingerprint = self._current_strategy(strategy_id)
         if strategy["attemptStarted"] or strategy["status"] not in ("DRAFT",):
             raise APIError(409, "strategy_immutable", "This strategy has already entered an application attempt.")
+        self._require_eligible_replacement_source(strategy["replacementSourceId"], fingerprint)
         _, preview = self._preflight(strategy["contract"], fingerprint)
         if not hmac.compare_digest(preview["previewHash"], strategy["previewHash"]):
             raise APIError(
@@ -994,6 +1142,23 @@ class StrategyService:
         now = self.clock()
         try:
             with self.store.transaction() as connection:
+                replacement_source_id = strategy["replacementSourceId"]
+                if replacement_source_id is not None:
+                    source_row = connection.execute(
+                        "SELECT * FROM strategies WHERE strategy_id=? AND account_fingerprint=?",
+                        (replacement_source_id, strategy["accountFingerprint"]),
+                    ).fetchone()
+                    if source_row is None or not self._eligible_never_sent_record(
+                        connection,
+                        self._decode_row(source_row),
+                        strategy["accountFingerprint"],
+                        now,
+                    ):
+                        raise APIError(
+                            409,
+                            "replacement_source_unavailable",
+                            "The never-sent source is no longer eligible for replacement.",
+                        )
                 changed = connection.execute(
                     "UPDATE strategies SET status='APPLYING', attempt_started=1, confirmation_hash=NULL, "
                     "execution_id=?, execution_lease_until=?, updated_at=? "
@@ -1083,8 +1248,11 @@ class StrategyService:
                 not_submitted = [{**row, "status": "not_submitted"} for row in orders]
                 self._finish(strategy_id, execution_id, "UNKNOWN", not_submitted, "leverage_unknown", leverage_results)
                 return self._result(strategy_id)
-            except OKXError:
-                leverage_results.append({"side": side, "status": "rejected"})
+            except OKXError as exc:
+                leverage_result = {"side": side, "status": "rejected"}
+                if exc.error_code is not None:
+                    leverage_result["errorCode"] = exc.error_code
+                leverage_results.append(leverage_result)
                 not_submitted = [{**row, "status": "not_submitted"} for row in orders]
                 self._finish(strategy_id, execution_id, "PARTIAL", not_submitted, "leverage_rejected", leverage_results)
                 return self._result(strategy_id)
@@ -1093,7 +1261,12 @@ class StrategyService:
                 not isinstance(data, list) or len(data) != 1 or not isinstance(data[0], dict)
                 or str(data[0].get("sCode", "")) != "0"
             ):
-                leverage_results.append({"side": side, "status": "rejected"})
+                leverage_result = {"side": side, "status": "rejected"}
+                if isinstance(data, list) and len(data) == 1 and isinstance(data[0], dict):
+                    error_code = bounded_error_code(data[0].get("sCode"))
+                    if error_code is not None:
+                        leverage_result["errorCode"] = error_code
+                leverage_results.append(leverage_result)
                 not_submitted = [{**row, "status": "not_submitted"} for row in orders]
                 self._finish(strategy_id, execution_id, "PARTIAL", not_submitted, "leverage_rejected", leverage_results)
                 return self._result(strategy_id)
@@ -1219,6 +1392,8 @@ class StrategyService:
                 connection.execute(
                     "DELETE FROM strategy_reservations WHERE strategy_id=?", (strategy_id,)
                 )
+            if changed == 1:
+                self._cleanup_replacement_in_connection(connection, strategy_id, self.clock())
 
     @staticmethod
     def _can_release_reservation(
@@ -1246,10 +1421,51 @@ class StrategyService:
             raise APIError(404, "strategy_not_found", "The strategy was not found.")
         return self._decode_row(row)
 
+    def _can_delete_hint(self, strategy: dict[str, Any]) -> bool:
+        fingerprint = strategy["accountFingerprint"]
+        with self.store.connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM strategies WHERE strategy_id=? AND account_fingerprint=?",
+                (strategy["id"], fingerprint),
+            ).fetchone()
+            return row is not None and self._eligible_never_sent_record(
+                connection, self._decode_row(row), fingerprint, self.clock()
+            )
+
+    def _replacement_cleanup_conflict(self, strategy: dict[str, Any]) -> bool:
+        if not self._replacement_fully_accepted(
+            strategy["status"], strategy["results"], strategy["batchAttempted"]
+        ):
+            return False
+        source_id = strategy["replacementSourceId"]
+        if not isinstance(source_id, str):
+            return False
+        with self.store.connection() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM strategies WHERE strategy_id=? AND account_fingerprint=?",
+                (source_id, strategy["accountFingerprint"]),
+            ).fetchone()
+        return row is not None
+
+    def _try_cleanup_replacement_source(self, replacement_id: str) -> bool:
+        with self.store.transaction() as connection:
+            return self._cleanup_replacement_in_connection(
+                connection, replacement_id, self.clock()
+            )
+
     def _basic_result(self, strategy: dict[str, Any]) -> dict[str, Any]:
+        status = strategy["status"]
+        failure_reason = strategy["failureReason"]
+        if self._legacy_never_sent(strategy):
+            rejected_leverage = any(
+                isinstance(row, dict) and row.get("status") == "rejected"
+                for row in strategy["leverageResults"]
+            )
+            status = "PARTIAL"
+            failure_reason = "leverage_rejected" if rejected_leverage else "never_sent"
         return {
             "id": strategy["id"],
-            "status": strategy["status"],
+            "status": status,
             "instrumentId": strategy["contract"]["instrumentId"],
             "interval": strategy["contract"]["interval"],
             "sides": strategy["snapshot"].get("sides", []),
@@ -1259,8 +1475,11 @@ class StrategyService:
             "estimatedOpeningFees": strategy["snapshot"].get("estimatedOpeningFees"),
             "sidePercent": strategy["snapshot"].get("sidePercent", {}),
             "orders": strategy["results"] if strategy["results"] else strategy["orders"],
-            "failureReason": strategy["failureReason"],
+            "failureReason": failure_reason,
             "leverageResults": strategy["leverageResults"],
+            "batchAttempted": strategy["batchAttempted"],
+            "canDelete": self._can_delete_hint(strategy),
+            "replacementCleanupConflict": self._replacement_cleanup_conflict(strategy),
             "createdAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(strategy["createdAt"])),
             "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(strategy["updatedAt"])),
         }
@@ -1270,6 +1489,8 @@ class StrategyService:
         return self._result_for(strategy, fingerprint)
 
     def _result_for(self, strategy: dict[str, Any], fingerprint: str) -> dict[str, Any]:
+        if strategy["replacementSourceId"] is not None:
+            self._try_cleanup_replacement_source(strategy["id"])
         if strategy["status"] == "APPLYING":
             lease_until = strategy["executionLeaseUntil"]
             if lease_until is None or lease_until <= self.clock():
@@ -1500,6 +1721,8 @@ class StrategyService:
                         "DELETE FROM strategy_reservations WHERE strategy_id=?", (strategy["id"],)
                     )
             strategy = self._load_row(strategy["id"])
+        if strategy["replacementSourceId"] is not None:
+            self._try_cleanup_replacement_source(strategy["id"])
         return strategy, scan_error
 
     def _list(self) -> dict[str, Any]:
@@ -1511,20 +1734,41 @@ class StrategyService:
             ).fetchall()
         strategies: list[dict[str, Any]] = []
         for row in rows:
-            strategy = self._decode_row(row)
+            with self.store.connection() as connection:
+                current = connection.execute(
+                    "SELECT * FROM strategies WHERE strategy_id=? AND account_fingerprint=?",
+                    (row["strategy_id"], fingerprint),
+                ).fetchone()
+            if current is None:
+                continue
+            strategy = self._decode_row(current)
             self._expire_prepare(strategy)
             strategies.append(self._result_for(strategy, fingerprint))
-        return {"strategies": strategies}
+        with self.store.connection() as connection:
+            remaining_ids = {
+                row["strategy_id"]
+                for row in connection.execute(
+                    "SELECT strategy_id FROM strategies WHERE account_fingerprint=?", (fingerprint,)
+                ).fetchall()
+            }
+        return {"strategies": [row for row in strategies if row["id"] in remaining_ids]}
 
     def _delete(self, strategy_id: str) -> dict[str, Any]:
-        strategy, _, _ = self._current_strategy(strategy_id)
-        if strategy["attemptStarted"] or strategy["status"] != "DRAFT":
-            raise APIError(409, "strategy_immutable", "Only a never-attempted draft can be deleted.")
+        strategy, _, fingerprint = self._current_strategy(strategy_id)
         with self.store.transaction() as connection:
-            deleted = connection.execute(
-                "DELETE FROM strategies WHERE strategy_id=? AND status='DRAFT' AND attempt_started=0",
-                (strategy_id,),
-            ).rowcount
-        if deleted != 1:
-            raise APIError(409, "strategy_state_changed", "The strategy changed; reload it before deleting.")
+            current_row = connection.execute(
+                "SELECT * FROM strategies WHERE strategy_id=?", (strategy_id,)
+            ).fetchone()
+            if current_row is None:
+                raise APIError(404, "strategy_not_found", "The strategy was not found.")
+            current = self._decode_row(current_row)
+            if not hmac.compare_digest(current["accountFingerprint"], fingerprint):
+                raise APIError(409, "account_changed", "This strategy belongs to a different OKX account.")
+            if not self._eligible_never_sent_record(connection, current, fingerprint, self.clock()):
+                raise APIError(
+                    409,
+                    "strategy_immutable",
+                    "Only a strategy proven never batched can be deleted.",
+                )
+            self._delete_strategy_with_dependents(connection, strategy_id)
         return {"id": strategy_id, "status": "DELETED"}

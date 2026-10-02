@@ -168,6 +168,7 @@ class StrategyDashboardController extends ChangeNotifier {
         confirmationToken,
       );
       await load();
+      _rememberReplacementCleanupConflict(id, result);
       final resultStatus = _text(result['status']).toUpperCase();
       if (const {'PARTIAL', 'UNKNOWN', 'APPLYING'}.contains(resultStatus)) {
         return StrategyApplyOutcome(
@@ -215,8 +216,7 @@ class StrategyDashboardController extends ChangeNotifier {
   Future<bool> deleteDraft(String id) async {
     if (_disposed || !_deleteInFlight.add(id)) return false;
     final existing = strategyById(id);
-    if (existing == null ||
-        _text(existing['status']).toUpperCase() != 'DRAFT') {
+    if (existing == null || existing['canDelete'] != true) {
       _deleteInFlight.remove(id);
       return false;
     }
@@ -231,7 +231,7 @@ class StrategyDashboardController extends ChangeNotifier {
       _deleteError = error.message;
       return false;
     } on Object {
-      _deleteError = 'Không thể xóa bản nháp.';
+      _deleteError = 'Không thể xóa chiến thuật.';
       return false;
     } finally {
       _deleteInFlight.remove(id);
@@ -244,6 +244,7 @@ class StrategyDashboardController extends ChangeNotifier {
     try {
       final result = await _api.getResult(_bearerToken, id);
       await load();
+      _rememberReplacementCleanupConflict(id, result);
       return result;
     } on Object catch (error) {
       if (error is StrategyApiException && error.isUnauthorized) {
@@ -260,7 +261,23 @@ class StrategyDashboardController extends ChangeNotifier {
     }
   }
 
-  bool isActionInFlight(String id) => _actionInFlight.contains(id);
+  bool isActionInFlight(String id) =>
+      _actionInFlight.contains(id) || _deleteInFlight.contains(id);
+
+  void _rememberReplacementCleanupConflict(
+    String id,
+    Map<String, dynamic> result,
+  ) {
+    if (result['replacementCleanupConflict'] != true) return;
+    final index = _strategies.indexWhere(
+      (strategy) => _text(strategy['id']) == id,
+    );
+    if (index < 0) return;
+    final updated = List<Map<String, dynamic>>.of(_strategies);
+    updated[index] = {...updated[index], 'replacementCleanupConflict': true};
+    _strategies = updated;
+    _notify();
+  }
 
   void setVisibility({required bool pageVisible, required bool appVisible}) {
     if (_disposed ||

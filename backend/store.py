@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS strategies (
     batch_attempted INTEGER NOT NULL DEFAULT 0,
     execution_id TEXT,
     execution_lease_until REAL,
+    replacement_source_id TEXT,
     failure_reason TEXT,
     leverage_results_json TEXT NOT NULL DEFAULT '[]',
     created_at REAL NOT NULL,
@@ -127,6 +128,12 @@ class SQLiteStore:
                     connection.execute("ALTER TABLE strategies ADD COLUMN execution_id TEXT")
                 if "execution_lease_until" not in strategy_columns:
                     connection.execute("ALTER TABLE strategies ADD COLUMN execution_lease_until REAL")
+                if "replacement_source_id" not in strategy_columns:
+                    connection.execute("ALTER TABLE strategies ADD COLUMN replacement_source_id TEXT")
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS strategies_replacement_source "
+                    "ON strategies(replacement_source_id, status)"
+                )
             finally:
                 connection.close()
             self._initialized = True

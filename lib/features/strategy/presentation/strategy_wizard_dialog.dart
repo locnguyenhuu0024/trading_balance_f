@@ -19,11 +19,13 @@ class StrategyWizardDialog extends ConsumerStatefulWidget {
     required this.session,
     required this.dashboard,
     required this.onSaved,
+    this.replacementSourceId,
   });
 
   final TradeSession session;
   final StrategyDashboardController dashboard;
   final Future<void> Function() onSaved;
+  final String? replacementSourceId;
 
   @override
   ConsumerState<StrategyWizardDialog> createState() =>
@@ -424,7 +426,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
       sidePercent[StrategySide.long] = normalizedLongPercent;
       sidePercent[StrategySide.short] = (100 - long).toString();
     }
-    return {
+    final body = <String, dynamic>{
       ...selection.toRequestJson(
         totalMargin: _normalizeStrategyDecimalInput(_marginController.text)!,
         leverage: leverage,
@@ -433,6 +435,11 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
       ),
       'previewHash': _previewHash!,
     };
+    final sourceId = widget.replacementSourceId?.trim();
+    if (sourceId != null && sourceId.isNotEmpty) {
+      body['replacementSourceId'] = sourceId;
+    }
+    return body;
   }
 
   Future<String> _saveForApply() async {
@@ -569,11 +576,17 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
       }
       Navigator.of(context).pop();
       final status = _text(outcome.result?['status']).toUpperCase();
-      _message(
-        status == 'APPLIED'
-            ? 'Máy chủ đã chấp nhận lệnh chiến thuật.'
-            : 'Trạng thái chiến thuật: ${status.isEmpty ? 'đang cập nhật' : status}.',
-      );
+      if (outcome.result?['replacementCleanupConflict'] == true) {
+        _message(
+          'OKX đã chấp nhận đầy đủ lệnh thay thế, nhưng hệ thống chưa xóa được chiến thuật cũ.',
+        );
+      } else {
+        _message(
+          status == 'APPLIED'
+              ? 'Máy chủ đã chấp nhận lệnh chiến thuật.'
+              : 'Trạng thái chiến thuật: ${status.isEmpty ? 'đang cập nhật' : status}.',
+        );
+      }
     } on Object catch (error) {
       _expireSessionIfUnauthorized(error);
       if (mounted) {

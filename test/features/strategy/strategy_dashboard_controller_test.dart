@@ -20,6 +20,7 @@ void main() {
     expect(outcome.kind, StrategyApplyOutcomeKind.cancelled);
     expect(api.prepareCalls, 1);
     expect(api.executeCalls, 0);
+    expect(api.deleteCalls, 0);
   });
 
   test(
@@ -37,6 +38,7 @@ void main() {
         ),
       ];
       api.prepared['estimatedOpeningFees'] = '0.3';
+      api.replacementCleanupConflict = true;
       final controller = _controller(api);
       addTearDown(controller.dispose);
       await controller.load();
@@ -53,6 +55,11 @@ void main() {
       expect(outcome.kind, StrategyApplyOutcomeKind.applied);
       expect(confirmedRows, equals(api.prepared['orders']));
       expect(api.executeCalls, 1);
+      expect(outcome.result?['replacementCleanupConflict'], isTrue);
+      expect(
+        controller.strategyById('draft-1')?['replacementCleanupConflict'],
+        isTrue,
+      );
     },
   );
 
@@ -76,6 +83,7 @@ void main() {
     expect(completed.kind, StrategyApplyOutcomeKind.applied);
     expect(api.prepareCalls, 1);
     expect(api.executeCalls, 1);
+    expect(api.deleteCalls, 0);
   });
 
   test('an attempted strategy is not sent to draft deletion', () async {
@@ -88,6 +96,19 @@ void main() {
 
     expect(deleted, isFalse);
     expect(api.deleteCalls, 0);
+  });
+
+  test('deletion follows only the server canDelete hint', () async {
+    final api = _FakeStrategyApi(statuses: ['PARTIAL', 'PARTIAL']);
+    api.canDeleteIds.add('draft-1');
+    final controller = _controller(api);
+    addTearDown(controller.dispose);
+    await controller.load();
+
+    expect(await controller.deleteDraft('draft-1'), isTrue);
+    expect(api.deleteCalls, 1);
+    expect(await controller.deleteDraft('strategy-1'), isFalse);
+    expect(api.deleteCalls, 1);
   });
 
   test(
@@ -106,31 +127,29 @@ void main() {
       expect(outcome.kind, StrategyApplyOutcomeKind.unknown);
       expect(outcome.result?['status'], 'UNKNOWN');
       expect(api.executeCalls, 1);
+      expect(api.deleteCalls, 0);
     },
   );
 
-  test(
-    'a backend quote becomes visibly stale after a failed poll',
-    () async {
-      var now = DateTime.utc(2026, 10, 1, 8);
-      final api = _FakeStrategyApi(status: 'APPLIED', clock: () => now);
-      final controller = _controller(api, clock: () => now);
-      addTearDown(controller.dispose);
-      await controller.load();
-      controller.setVisibility(pageVisible: true, appVisible: true);
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-      expect(controller.quoteIsFresh('BTC-USDT-SWAP'), isTrue);
+  test('a backend quote becomes visibly stale after a failed poll', () async {
+    var now = DateTime.utc(2026, 10, 1, 8);
+    final api = _FakeStrategyApi(status: 'APPLIED', clock: () => now);
+    final controller = _controller(api, clock: () => now);
+    addTearDown(controller.dispose);
+    await controller.load();
+    controller.setVisibility(pageVisible: true, appVisible: true);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(controller.quoteIsFresh('BTC-USDT-SWAP'), isTrue);
 
-      var notificationsAfterAge = 0;
-      controller.addListener(() => notificationsAfterAge++);
-      api.failQuotes = true;
-      now = now.add(const Duration(seconds: 5));
-      await Future<void>.delayed(const Duration(milliseconds: 1100));
+    var notificationsAfterAge = 0;
+    controller.addListener(() => notificationsAfterAge++);
+    api.failQuotes = true;
+    now = now.add(const Duration(seconds: 5));
+    await Future<void>.delayed(const Duration(milliseconds: 1100));
 
-      expect(controller.quoteIsFresh('BTC-USDT-SWAP'), isFalse);
-      expect(notificationsAfterAge, greaterThan(0));
-    },
-  );
+    expect(controller.quoteIsFresh('BTC-USDT-SWAP'), isFalse);
+    expect(notificationsAfterAge, greaterThan(0));
+  });
 
   test('backs off repeated backend quote failures', () async {
     final api = _FakeStrategyApi(status: 'APPLIED')..failQuotes = true;
@@ -187,9 +206,7 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 1100));
 
     expect(api.quoteCalls, 1);
-    api.quoteCompleter!.complete(
-      _quoteResponse(DateTime.utc(2026, 10, 1, 8)),
-    );
+    api.quoteCompleter!.complete(_quoteResponse(DateTime.utc(2026, 10, 1, 8)));
   });
 
   test(
@@ -199,7 +216,10 @@ void main() {
       final api = _FakeStrategyApi(status: 'APPLIED', clock: () => now)
         ..quoteSequence = [
           _quoteResponse(now, price: '65000'),
-          _quoteResponse(now.subtract(const Duration(seconds: 1)), price: '66000'),
+          _quoteResponse(
+            now.subtract(const Duration(seconds: 1)),
+            price: '66000',
+          ),
         ];
       final controller = _controller(api, clock: () => now);
       addTearDown(controller.dispose);
@@ -395,7 +415,9 @@ class _FakeStrategyApi implements StrategyApi {
   int deleteCalls = 0;
   int listCalls = 0;
   int quoteCalls = 0;
+  final canDeleteIds = <String>{};
   String executeStatus = 'APPLIED';
+  bool replacementCleanupConflict = false;
   StrategyApiException? listError;
   bool failQuotes = false;
   Completer<Map<String, dynamic>>? quoteCompleter;
@@ -409,6 +431,9 @@ class _FakeStrategyApi implements StrategyApi {
       'instrumentId': 'BTC-USDT-SWAP',
       'interval': '6Hutc',
       'status': statuses[index],
+      'canDelete': canDeleteIds.contains(
+        index == 0 ? 'draft-1' : 'strategy-$index',
+      ),
       'unrealizedPnl': '12',
       'filledMargin': '50',
       'pnlPercent': '24',
@@ -456,7 +481,10 @@ class _FakeStrategyApi implements StrategyApi {
     String confirmationToken,
   ) async {
     executeCalls++;
-    return {'status': executeStatus};
+    return {
+      'status': executeStatus,
+      'replacementCleanupConflict': replacementCleanupConflict,
+    };
   }
 
   @override

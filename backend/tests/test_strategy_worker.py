@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 import unittest
 import os
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -94,6 +95,7 @@ class StrategyWorkerTests(unittest.TestCase):
         status: str = "APPLIED",
         order_status: str = "accepted",
         batch_attempted: int = 1,
+        replacement_source_id: str | None = None,
     ) -> str:
         order = {
             "clientOrderId": CLIENT_ORDER_ID,
@@ -111,17 +113,19 @@ class StrategyWorkerTests(unittest.TestCase):
                 "INSERT INTO strategies(strategy_id, account_fingerprint, status, contract_json, "
                 "snapshot_json, orders_json, results_json, preview_hash, confirmation_hash, "
                 "prepared_expires_at, prepared_json, attempt_started, batch_attempted, execution_id, "
-                "execution_lease_until, failure_reason, leverage_results_json, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, '', NULL, NULL, NULL, 1, ?, NULL, NULL, NULL, '[]', ?, ?)",
+                "execution_lease_until, replacement_source_id, failure_reason, leverage_results_json, "
+                "created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, '', NULL, NULL, NULL, 1, ?, NULL, NULL, ?, NULL, '[]', ?, ?)",
                 (
                     strategy_id,
                     ACCOUNT_FINGERPRINT,
                     status,
-                    encode_json({"instrumentId": INSTRUMENT}),
+                    encode_json({"instrumentId": INSTRUMENT, "interval": "12Hutc"}),
                     encode_json({}),
                     encode_json([order]),
                     encode_json([order]),
                     batch_attempted,
+                    replacement_source_id,
                     self.now,
                     self.now,
                 ),
@@ -328,6 +332,117 @@ class StrategyWorkerTests(unittest.TestCase):
         strategy, _ = self._strategy("strategy-worker-03")
         self.assertNotEqual(strategy["status"], "COMPLETED")
 
+    def test_red_never_batched_not_submitted_rows_keep_failure_state(self) -> None:
+        strategy_id = self._insert_strategy(
+            strategy_id="strategy-worker-never-sent",
+            status="PARTIAL",
+            order_status="not_submitted",
+            batch_attempted=0,
+        )
+        with self.store.transaction() as connection:
+            connection.execute(
+                "DELETE FROM strategies WHERE strategy_id='strategy-worker-01'"
+            )
+            connection.execute(
+                "UPDATE strategies SET failure_reason='leverage_rejected', "
+                "leverage_results_json=? WHERE strategy_id=?",
+                (encode_json([{"side": "long", "status": "rejected", "errorCode": "51000"}]), strategy_id),
+            )
+
+        worker = self._worker(owner_id="worker-never-sent")
+        self.assertTrue(worker.run_once())
+        strategy, _ = self._strategy(strategy_id)
+        with self.store.connection() as connection:
+            failure_reason = connection.execute(
+                "SELECT failure_reason FROM strategies WHERE strategy_id=?", (strategy_id,)
+            ).fetchone()["failure_reason"]
+
+        self.assertEqual(strategy["status"], "PARTIAL")
+        self.assertEqual(failure_reason, "leverage_rejected")
+        self.assertEqual(self.exchange.order_detail_reads, 0)
+        self.assertEqual(self.exchange.write_calls, [])
+
+    def test_green_worker_recovery_cleans_fully_accepted_replacement_source(self) -> None:
+        with self.store.transaction() as connection:
+            connection.execute(
+                "DELETE FROM strategies WHERE strategy_id='strategy-worker-01'"
+            )
+        source_id = self._insert_strategy(
+            strategy_id="strategy-worker-source",
+            status="PARTIAL",
+            order_status="not_submitted",
+            batch_attempted=0,
+        )
+        with self.store.transaction() as connection:
+            connection.execute(
+                "INSERT INTO strategy_sync_state(strategy_id, next_scan_at) VALUES (?, ?)",
+                (source_id, self.now + 30),
+            )
+        replacement_id = self._insert_strategy(
+            strategy_id="strategy-worker-replacement",
+            status="APPLYING",
+            order_status="not_submitted",
+            batch_attempted=1,
+            replacement_source_id=source_id,
+        )
+
+        worker = self._worker(owner_id="worker-replacement-recovery")
+        self.assertTrue(worker.run_once())
+
+        replacement, _ = self._strategy(replacement_id)
+        self.assertEqual(replacement["status"], "APPLIED")
+        self.assertEqual(decode_json(replacement["results_json"])[0]["status"], "live")
+        self.assertEqual(self.exchange.order_detail_reads, 1)
+        self.assertEqual(self.exchange.write_calls, [])
+        with self.store.connection() as connection:
+            self.assertIsNone(connection.execute(
+                "SELECT 1 FROM strategies WHERE strategy_id=?", (source_id,)
+            ).fetchone())
+            self.assertIsNone(connection.execute(
+                "SELECT 1 FROM strategy_sync_state WHERE strategy_id=?", (source_id,)
+            ).fetchone())
+
+    def test_green_worker_completion_preserves_replacement_cleanup_conflict(self) -> None:
+        with self.store.transaction() as connection:
+            connection.execute(
+                "DELETE FROM strategies WHERE strategy_id='strategy-worker-01'"
+            )
+        source_id = self._insert_strategy(
+            strategy_id="strategy-worker-conflict-source",
+            status="PARTIAL",
+            order_status="not_submitted",
+            batch_attempted=0,
+        )
+        with self.store.transaction() as connection:
+            connection.execute(
+                "UPDATE strategies SET batch_attempted=1 WHERE strategy_id=?", (source_id,)
+            )
+        replacement_id = self._insert_strategy(
+            strategy_id="strategy-worker-conflict-replacement",
+            status="APPLYING",
+            order_status="not_submitted",
+            batch_attempted=1,
+            replacement_source_id=source_id,
+        )
+        self.exchange.orders[CLIENT_ORDER_ID].update(
+            state="filled", accFillSz="2", avgPx="59000"
+        )
+
+        worker = self._worker(owner_id="worker-replacement-conflict")
+        self.assertTrue(worker.run_once())
+
+        replacement, _ = self._strategy(replacement_id)
+        self.assertEqual(replacement["status"], "COMPLETED")
+        self.assertEqual(decode_json(replacement["results_json"])[0]["status"], "filled")
+        public_result = worker.strategy._basic_result(worker.strategy._load_row(replacement_id))
+        self.assertTrue(public_result["replacementCleanupConflict"])
+        self.assertEqual(self.exchange.order_detail_reads, 1)
+        with self.store.connection() as connection:
+            self.assertIsNotNone(connection.execute(
+                "SELECT 1 FROM strategies WHERE strategy_id=?", (source_id,)
+            ).fetchone())
+        self.assertEqual(self.exchange.write_calls, [])
+
     def test_red_account_mismatch_and_invalid_details_preserve_last_known_order(self) -> None:
         worker = self._worker(owner_id="worker-one")
         self.exchange.orders[CLIENT_ORDER_ID].update(
@@ -397,6 +512,38 @@ class StrategyWorkerTests(unittest.TestCase):
         self.assertEqual(tuple(strategy), ("strategy-worker-01", "APPLIED"))
         self.assertEqual(tuple(lease), (None, 0, 0.0))
         self.assertIsNotNone(sync_table)
+
+    def test_green_strategy_schema_upgrade_adds_replacement_link_without_losing_rows(self) -> None:
+        legacy_path = self.db_path.with_name(self.db_path.stem + "-legacy.sqlite3")
+        connection = sqlite3.connect(legacy_path)
+        try:
+            connection.execute(
+                "CREATE TABLE strategies (strategy_id TEXT PRIMARY KEY, "
+                "account_fingerprint TEXT NOT NULL, status TEXT NOT NULL, updated_at REAL NOT NULL)"
+            )
+            connection.execute(
+                "INSERT INTO strategies(strategy_id, account_fingerprint, status, updated_at) "
+                "VALUES (?, ?, ?, ?)",
+                ("legacy-row", ACCOUNT_FINGERPRINT, "COMPLETED", self.now),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        try:
+            SQLiteStore(str(legacy_path)).initialize()
+            with SQLiteStore(str(legacy_path)).connection() as migrated:
+                columns = {
+                    row[1] for row in migrated.execute("PRAGMA table_info(strategies)").fetchall()
+                }
+                row = migrated.execute(
+                    "SELECT strategy_id, replacement_source_id FROM strategies WHERE strategy_id=?",
+                    ("legacy-row",),
+                ).fetchone()
+        finally:
+            legacy_path.unlink(missing_ok=True)
+        self.assertIn("replacement_source_id", columns)
+        self.assertEqual(tuple(row), ("legacy-row", None))
 
 
 if __name__ == "__main__":

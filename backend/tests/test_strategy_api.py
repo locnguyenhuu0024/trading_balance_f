@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, urlsplit
 from backend.app import create_application
 from backend.security import token_digest
 from backend.service import RuntimeSettings, TradeService
+from backend.store import encode_json
 
 
 NOW = 1_798_848_000.0
@@ -67,6 +68,7 @@ class FakeStrategyExchange:
         self.batch_started = threading.Event()
         self.batch_release = threading.Event()
         self.order_detail_reads = 0
+        self.leverage_response: dict[str, Any] | None = None
         self.quote_account_barrier: threading.Barrier | None = None
         self.pause_ticker = False
         self.ticker_started = threading.Event()
@@ -119,6 +121,8 @@ class FakeStrategyExchange:
             row = self.orders.get(client_id)
             return {"code": "0", "data": [] if row is None else [dict(row)]}
         if method == "POST" and parsed.path == "/api/v5/account/set-leverage":
+            if self.leverage_response is not None:
+                return dict(self.leverage_response)
             return {"code": "0", "data": [{"sCode": "0", "posSide": payload["posSide"]}]}
         if method == "POST" and parsed.path == "/api/v5/trade/batch-orders":
             if self.batch_timeout:
@@ -242,12 +246,20 @@ class StrategyApiTests(unittest.TestCase):
             }
         return contract
 
-    def save_draft(self, contract: dict[str, Any] | None = None) -> tuple[str, dict[str, Any]]:
+    def save_draft(
+        self,
+        contract: dict[str, Any] | None = None,
+        *,
+        replacement_source_id: str | None = None,
+    ) -> tuple[str, dict[str, Any]]:
         source = self.one_sided_contract() if contract is None else contract
         status, preview = self.request("POST", "/v1/strategies/preview", source)
         self.assertEqual(status, 200, preview)
+        draft_body = {**source, "previewHash": preview["previewHash"]}
+        if replacement_source_id is not None:
+            draft_body["replacementSourceId"] = replacement_source_id
         status, saved = self.request(
-            "POST", "/v1/strategies", {**source, "previewHash": preview["previewHash"]}
+            "POST", "/v1/strategies", draft_body
         )
         self.assertEqual(status, 200, saved)
         return saved["id"], preview
@@ -1252,6 +1264,336 @@ class StrategyApiTests(unittest.TestCase):
         self.assertIsNone(unavailable["unrealizedPnl"])
         self.assertIsNone(unavailable["attributionChanged"])
         self.assertEqual(len(self.exchange.batch_writes), 1)
+
+    def test_red_legacy_never_sent_result_is_projected_as_failure_and_deletable(self) -> None:
+        strategy_id, _ = self.save_draft()
+        leverage_results = [{"side": "long", "status": "rejected", "errorCode": "51000"}]
+        with self.service.store.transaction() as connection:
+            connection.execute(
+                "UPDATE strategies SET status='COMPLETED', attempt_started=1, failure_reason=NULL, "
+                "leverage_results_json=? WHERE strategy_id=?",
+                (encode_json(leverage_results), strategy_id),
+            )
+
+        status, result = self.request("GET", f"/v1/strategies/{strategy_id}/result")
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["status"], "PARTIAL")
+        self.assertEqual(result["failureReason"], "leverage_rejected")
+        self.assertFalse(result["batchAttempted"])
+        self.assertTrue(result["canDelete"])
+        self.assertFalse(result["replacementCleanupConflict"])
+        with self.service.store.connection() as connection:
+            persisted = connection.execute(
+                "SELECT status, failure_reason FROM strategies WHERE strategy_id=?", (strategy_id,)
+            ).fetchone()
+        self.assertEqual(tuple(persisted), ("COMPLETED", None))
+
+    def test_green_guarded_delete_rechecks_eligibility_and_removes_dependent_rows(self) -> None:
+        strategy_id, _ = self.save_draft()
+        with self.service.store.transaction() as connection:
+            row = connection.execute(
+                "SELECT account_fingerprint FROM strategies WHERE strategy_id=?", (strategy_id,)
+            ).fetchone()
+            connection.execute(
+                "UPDATE strategies SET status='PARTIAL', attempt_started=1, failure_reason='leverage_rejected' "
+                "WHERE strategy_id=?",
+                (strategy_id,),
+            )
+            connection.execute(
+                "INSERT INTO strategy_reservations(account_fingerprint, instrument_id, strategy_id, created_at) "
+                "VALUES (?, ?, ?, ?)",
+                (row["account_fingerprint"], INSTRUMENT, strategy_id, self.now),
+            )
+            connection.execute(
+                "INSERT INTO strategy_sync_state(strategy_id, next_scan_at) VALUES (?, ?)",
+                (strategy_id, self.now + 30),
+            )
+
+        status, deleted = self.request("POST", f"/v1/strategies/{strategy_id}/delete", {})
+        self.assertEqual(status, 200, deleted)
+        with self.service.store.connection() as connection:
+            self.assertIsNone(connection.execute(
+                "SELECT 1 FROM strategies WHERE strategy_id=?", (strategy_id,)
+            ).fetchone())
+            self.assertIsNone(connection.execute(
+                "SELECT 1 FROM strategy_reservations WHERE strategy_id=?", (strategy_id,)
+            ).fetchone())
+            self.assertIsNone(connection.execute(
+                "SELECT 1 FROM strategy_sync_state WHERE strategy_id=?", (strategy_id,)
+            ).fetchone())
+
+        applying_id, _ = self.save_draft()
+        with self.service.store.transaction() as connection:
+            connection.execute(
+                "UPDATE strategies SET status='APPLYING', attempt_started=1, execution_id='active-run', "
+                "execution_lease_until=? WHERE strategy_id=?",
+                (self.now + 30, applying_id),
+            )
+        status, listing = self.request("GET", "/v1/strategies")
+        self.assertEqual(status, 200, listing)
+        applying = next(row for row in listing["strategies"] if row["id"] == applying_id)
+        self.assertFalse(applying["canDelete"])
+        status, conflict = self.request("POST", f"/v1/strategies/{applying_id}/delete", {})
+        self.assertEqual(status, 409, conflict)
+
+    def test_red_replacement_source_must_be_eligible_when_saved_and_before_execute(self) -> None:
+        source_id, _ = self.save_draft()
+        with self.service.store.transaction() as connection:
+            connection.execute(
+                "UPDATE strategies SET status='APPLYING', attempt_started=1, execution_id='active-run', "
+                "execution_lease_until=? WHERE strategy_id=?",
+                (self.now + 30, source_id),
+            )
+        contract = self.one_sided_contract()
+        status, preview = self.request("POST", "/v1/strategies/preview", contract)
+        self.assertEqual(status, 200, preview)
+        status, conflict = self.request(
+            "POST",
+            "/v1/strategies",
+            {**contract, "previewHash": preview["previewHash"], "replacementSourceId": source_id},
+        )
+        self.assertEqual(status, 409, conflict)
+        self.assertEqual(conflict["error"], "replacement_source_unavailable")
+
+        with self.service.store.transaction() as connection:
+            connection.execute(
+                "UPDATE strategies SET status='PARTIAL', execution_id=NULL, execution_lease_until=NULL "
+                "WHERE strategy_id=?",
+                (source_id,),
+            )
+        replacement_id, _ = self.save_draft(replacement_source_id=source_id)
+        status, prepared = self.request(
+            "POST", f"/v1/strategies/{replacement_id}/prepare-apply", {}
+        )
+        self.assertEqual(status, 200, prepared)
+        with self.service.store.transaction() as connection:
+            connection.execute(
+                "UPDATE strategies SET batch_attempted=1 WHERE strategy_id=?", (source_id,)
+            )
+        status, conflict = self.request(
+            "POST",
+            f"/v1/strategies/{replacement_id}/execute-apply",
+            {"confirmationToken": prepared["confirmationToken"]},
+        )
+        self.assertEqual(status, 409, conflict)
+        self.assertEqual(conflict["error"], "replacement_source_unavailable")
+        self.assertEqual(self.exchange.trade_writes, [])
+        self.assertEqual(self.exchange.batch_writes, [])
+
+    def test_green_replacement_full_acceptance_removes_source_and_sync_rows(self) -> None:
+        source_id, _ = self.save_draft()
+        with self.service.store.transaction() as connection:
+            connection.execute(
+                "UPDATE strategies SET status='COMPLETED', attempt_started=1, "
+                "leverage_results_json=? WHERE strategy_id=?",
+                (encode_json([{"side": "long", "status": "rejected", "errorCode": "51000"}]), source_id),
+            )
+            connection.execute(
+                "INSERT INTO strategy_sync_state(strategy_id, next_scan_at) VALUES (?, ?)",
+                (source_id, self.now + 30),
+            )
+
+        replacement_id, _ = self.save_draft(replacement_source_id=source_id)
+        with self.service.store.connection() as connection:
+            source_orders = json.loads(connection.execute(
+                "SELECT orders_json FROM strategies WHERE strategy_id=?", (source_id,)
+            ).fetchone()["orders_json"])
+            replacement_orders = json.loads(connection.execute(
+                "SELECT orders_json FROM strategies WHERE strategy_id=?", (replacement_id,)
+            ).fetchone()["orders_json"])
+        self.assertTrue(
+            {row["clientOrderId"] for row in source_orders}.isdisjoint(
+                {row["clientOrderId"] for row in replacement_orders}
+            )
+        )
+
+        status, prepared = self.request(
+            "POST", f"/v1/strategies/{replacement_id}/prepare-apply", {}
+        )
+        self.assertEqual(status, 200, prepared)
+        status, result = self.request(
+            "POST",
+            f"/v1/strategies/{replacement_id}/execute-apply",
+            {"confirmationToken": prepared["confirmationToken"]},
+        )
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["status"], "APPLIED")
+        self.assertFalse(result["replacementCleanupConflict"])
+        self.assertEqual(len(self.exchange.batch_writes), 1)
+        with self.service.store.connection() as connection:
+            self.assertIsNone(connection.execute(
+                "SELECT 1 FROM strategies WHERE strategy_id=?", (source_id,)
+            ).fetchone())
+            self.assertIsNone(connection.execute(
+                "SELECT 1 FROM strategy_sync_state WHERE strategy_id=?", (source_id,)
+            ).fetchone())
+
+    def test_red_active_replacement_blocks_source_delete_until_full_acceptance(self) -> None:
+        source_id, _ = self.save_draft()
+        replacement_id, _ = self.save_draft(replacement_source_id=source_id)
+        status, prepared = self.request(
+            "POST", f"/v1/strategies/{replacement_id}/prepare-apply", {}
+        )
+        self.assertEqual(status, 200, prepared)
+        self.exchange.pause_batch_response = True
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(
+                self.request,
+                "POST",
+                f"/v1/strategies/{replacement_id}/execute-apply",
+                {"confirmationToken": prepared["confirmationToken"]},
+            )
+            self.assertTrue(self.exchange.batch_started.wait(timeout=5))
+            status, listing = self.request("GET", "/v1/strategies")
+            self.assertEqual(status, 200, listing)
+            source = next(row for row in listing["strategies"] if row["id"] == source_id)
+            self.assertFalse(source["canDelete"])
+            status, conflict = self.request("POST", f"/v1/strategies/{source_id}/delete", {})
+            self.assertEqual(status, 409, conflict)
+            with self.service.store.connection() as connection:
+                self.assertIsNotNone(connection.execute(
+                    "SELECT 1 FROM strategies WHERE strategy_id=?", (source_id,)
+                ).fetchone())
+            self.exchange.batch_release.set()
+            status, result = future.result(timeout=8)
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["status"], "APPLIED")
+        self.assertFalse(result["replacementCleanupConflict"])
+        with self.service.store.connection() as connection:
+            self.assertIsNone(connection.execute(
+                "SELECT 1 FROM strategies WHERE strategy_id=?", (source_id,)
+            ).fetchone())
+        self.assertEqual(len(self.exchange.batch_writes), 1)
+
+    def test_red_partial_or_unknown_replacement_keeps_source_and_never_resends(self) -> None:
+        for outcome in ("PARTIAL", "UNKNOWN"):
+            with self.subTest(outcome=outcome):
+                source_id, _ = self.save_draft()
+                replacement_id, _ = self.save_draft(replacement_source_id=source_id)
+                status, prepared = self.request(
+                    "POST", f"/v1/strategies/{replacement_id}/prepare-apply", {}
+                )
+                self.assertEqual(status, 200, prepared)
+                command = {"confirmationToken": prepared["confirmationToken"]}
+                if outcome == "PARTIAL":
+                    self.exchange.batch_ack = [{
+                        "sCode": "51000",
+                        "sMsg": "do not expose this exchange message",
+                        "clOrdId": prepared["orders"][0]["clientOrderId"],
+                    }]
+                else:
+                    self.exchange.batch_timeout = True
+                status, result = self.request(
+                    "POST", f"/v1/strategies/{replacement_id}/execute-apply", command
+                )
+                self.assertEqual(status, 200, result)
+                self.assertEqual(result["status"], outcome)
+                self.assertFalse(result["replacementCleanupConflict"])
+                batch_count = len(self.exchange.batch_writes)
+                status, duplicate = self.request(
+                    "POST", f"/v1/strategies/{replacement_id}/execute-apply", command
+                )
+                self.assertEqual(status, 200, duplicate)
+                self.assertEqual(len(self.exchange.batch_writes), batch_count)
+                with self.service.store.connection() as connection:
+                    self.assertIsNotNone(connection.execute(
+                        "SELECT 1 FROM strategies WHERE strategy_id=?", (source_id,)
+                    ).fetchone())
+                self.exchange.batch_ack = None
+                self.exchange.batch_timeout = False
+
+    def test_green_fully_accepted_replacement_reports_guarded_cleanup_conflict(self) -> None:
+        source_id, _ = self.save_draft()
+        replacement_id, _ = self.save_draft(replacement_source_id=source_id)
+        status, prepared = self.request(
+            "POST", f"/v1/strategies/{replacement_id}/prepare-apply", {}
+        )
+        self.assertEqual(status, 200, prepared)
+        self.exchange.pause_batch_response = True
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(
+                self.request,
+                "POST",
+                f"/v1/strategies/{replacement_id}/execute-apply",
+                {"confirmationToken": prepared["confirmationToken"]},
+            )
+            self.assertTrue(self.exchange.batch_started.wait(timeout=5))
+            with self.service.store.transaction() as connection:
+                connection.execute(
+                    "UPDATE strategies SET batch_attempted=1, status='PARTIAL' WHERE strategy_id=?",
+                    (source_id,),
+                )
+            self.exchange.batch_release.set()
+            status, result = future.result(timeout=8)
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["status"], "APPLIED")
+        self.assertTrue(result["replacementCleanupConflict"])
+        self.assertEqual(len(self.exchange.batch_writes), 1)
+        completed_results = [
+            {**row, "status": "filled", "filledContracts": row["contracts"]}
+            for row in result["orders"]
+        ]
+        with self.service.store.transaction() as connection:
+            connection.execute(
+                "UPDATE strategies SET status='COMPLETED', results_json=? WHERE strategy_id=?",
+                (encode_json(completed_results), replacement_id),
+            )
+        status, completed = self.request("GET", f"/v1/strategies/{replacement_id}/result")
+        self.assertEqual(status, 200, completed)
+        self.assertEqual(completed["status"], "COMPLETED")
+        self.assertTrue(completed["replacementCleanupConflict"])
+        with self.service.store.connection() as connection:
+            self.assertIsNotNone(connection.execute(
+                "SELECT 1 FROM strategies WHERE strategy_id=?", (source_id,)
+            ).fetchone())
+
+    def test_red_canceled_rows_without_exchange_identity_do_not_prove_full_acceptance(self) -> None:
+        source_id, _ = self.save_draft()
+        replacement_id, _ = self.save_draft(replacement_source_id=source_id)
+        with self.service.store.transaction() as connection:
+            replacement_orders = json.loads(connection.execute(
+                "SELECT orders_json FROM strategies WHERE strategy_id=?", (replacement_id,)
+            ).fetchone()["orders_json"])
+            canceled = [{**row, "status": "canceled"} for row in replacement_orders]
+            connection.execute(
+                "UPDATE strategies SET status='COMPLETED', attempt_started=1, batch_attempted=1, "
+                "results_json=? WHERE strategy_id=?",
+                (encode_json(canceled), replacement_id),
+            )
+
+        status, result = self.request("GET", f"/v1/strategies/{replacement_id}/result")
+        self.assertEqual(status, 200, result)
+        self.assertFalse(result["replacementCleanupConflict"])
+        with self.service.store.connection() as connection:
+            self.assertIsNotNone(connection.execute(
+                "SELECT 1 FROM strategies WHERE strategy_id=?", (source_id,)
+            ).fetchone())
+
+    def test_red_leverage_rejections_retain_only_bounded_error_code(self) -> None:
+        cases = (
+            ({"code": "0", "data": [{"sCode": "51000", "sMsg": "private exchange message"}]}, "51000"),
+            ({"code": "51001", "data": [{"sMsg": "private exchange message"}]}, "51001"),
+        )
+        for response, expected_code in cases:
+            with self.subTest(code=expected_code):
+                strategy_id, _ = self.save_draft()
+                status, prepared = self.request(
+                    "POST", f"/v1/strategies/{strategy_id}/prepare-apply", {}
+                )
+                self.assertEqual(status, 200, prepared)
+                self.exchange.leverage_response = response
+                status, result = self.request(
+                    "POST",
+                    f"/v1/strategies/{strategy_id}/execute-apply",
+                    {"confirmationToken": prepared["confirmationToken"]},
+                )
+                self.assertEqual(status, 200, result)
+                self.assertEqual(result["status"], "PARTIAL")
+                self.assertEqual(result["leverageResults"][0]["errorCode"], expected_code)
+                self.assertNotIn("sMsg", json.dumps(result))
+                self.assertNotIn("private exchange message", json.dumps(result))
+                self.assertEqual(self.exchange.batch_writes, [])
+                self.exchange.leverage_response = None
 
 
 if __name__ == "__main__":
