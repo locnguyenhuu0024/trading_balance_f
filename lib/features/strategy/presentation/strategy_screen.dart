@@ -134,12 +134,16 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
                         padding: const EdgeInsets.only(bottom: 12),
                         child: _StrategyCard(
                           strategy: strategy,
-                          quote: dashboard.quoteFor(
-                            _text(strategy['instrumentId']).toUpperCase(),
-                          ),
-                          quoteIsFresh: dashboard.quoteIsFresh(
-                            _text(strategy['instrumentId']).toUpperCase(),
-                          ),
+                          quote: _hasStartedStatus(strategy['status'])
+                              ? dashboard.quoteFor(
+                                  _text(strategy['instrumentId']).toUpperCase(),
+                                )
+                              : null,
+                          quoteIsFresh:
+                              _hasStartedStatus(strategy['status']) &&
+                              dashboard.quoteIsFresh(
+                                _text(strategy['instrumentId']).toUpperCase(),
+                              ),
                           metricsAreStale: dashboard.metricsAreStale,
                           metricsStaleAt: dashboard.metricsStaleAt,
                           actionBusy: dashboard.isActionInFlight(
@@ -615,6 +619,12 @@ Object? _first(Map<String, dynamic> values, List<String> keys) {
 }
 
 String _text(Object? value) => value == null ? '' : value.toString();
+
+bool _hasStartedStatus(Object? status) => const {
+  'APPLIED',
+  'PARTIAL',
+  'UNKNOWN',
+}.contains(_text(status).toUpperCase());
 
 String _display(Object? value) => value == null || value.toString().isEmpty
     ? 'Chưa có dữ liệu'

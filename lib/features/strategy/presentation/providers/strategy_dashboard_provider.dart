@@ -29,6 +29,7 @@ class StrategyApplyOutcome {
 
 class StrategyDashboardController extends ChangeNotifier {
   static const _maximumStatusAge = Duration(seconds: 20);
+  static const _quotePollingStatuses = {'APPLIED', 'PARTIAL', 'UNKNOWN'};
 
   StrategyDashboardController({
     required StrategyApi api,
@@ -312,6 +313,11 @@ class StrategyDashboardController extends ChangeNotifier {
     _notifyQuoteFreshnessIfChanged();
     final instruments =
         _strategies
+            .where(
+              (item) => _quotePollingStatuses.contains(
+                _text(item['status']).toUpperCase(),
+              ),
+            )
             .map((item) => _text(item['instrumentId']).toUpperCase())
             .where((id) => RegExp(r'^[A-Z0-9]+-USDT-SWAP$').hasMatch(id))
             .toSet()

@@ -4,14 +4,25 @@ class StrategyLevelCalculator {
   const StrategyLevelCalculator();
 
   static const maximumCandles = 500;
-  static const maximumClusterSpan = 0.005;
 
   StrategyAnalysis calculate({
     required List<StrategyCandle> candles,
     required double referencePrice,
+    String? referencePriceText,
+    String tickSizeText = '1',
   }) {
     if (!referencePrice.isFinite || referencePrice <= 0) {
       throw ArgumentError.value(referencePrice, 'referencePrice');
+    }
+    final reference = StrategyDecimal.tryParse(
+      referencePriceText ?? referencePrice.toString(),
+    );
+    final tick = StrategyDecimal.tryParse(tickSizeText);
+    if (reference == null || !reference.isPositive) {
+      throw ArgumentError.value(referencePriceText, 'referencePriceText');
+    }
+    if (tick == null || !tick.isPositive) {
+      throw ArgumentError.value(tickSizeText, 'tickSizeText');
     }
 
     final ordered = <StrategyCandle>[];
@@ -41,26 +52,42 @@ class StrategyLevelCalculator {
     final candidates = <_Candidate>[];
     for (var index = 2; index < window.length - 2; index++) {
       final current = window[index];
+      final currentHigh = StrategyDecimal.tryParse(current.highText)!;
+      final currentLow = StrategyDecimal.tryParse(current.lowText)!;
       var isSwingHigh = true;
       var isSwingLow = true;
       for (var offset = 1; offset <= 2; offset++) {
         final left = window[index - offset];
         final right = window[index + offset];
-        if (current.high <= left.high || current.high <= right.high) {
+        final leftHigh = StrategyDecimal.tryParse(left.highText)!;
+        final rightHigh = StrategyDecimal.tryParse(right.highText)!;
+        final leftLow = StrategyDecimal.tryParse(left.lowText)!;
+        final rightLow = StrategyDecimal.tryParse(right.lowText)!;
+        if (currentHigh.compareTo(leftHigh) <= 0 ||
+            currentHigh.compareTo(rightHigh) <= 0) {
           isSwingHigh = false;
         }
-        if (current.low >= left.low || current.low >= right.low) {
+        if (currentLow.compareTo(leftLow) >= 0 ||
+            currentLow.compareTo(rightLow) >= 0) {
           isSwingLow = false;
         }
       }
       if (isSwingHigh) {
         candidates.add(
-          _Candidate(current.high, current.timestamp, StrategySide.short),
+          _Candidate(
+            currentHigh,
+            current.timestamp,
+            _sourceLevelId('high', current.timestamp),
+          ),
         );
       }
       if (isSwingLow) {
         candidates.add(
-          _Candidate(current.low, current.timestamp, StrategySide.long),
+          _Candidate(
+            currentLow,
+            current.timestamp,
+            _sourceLevelId('low', current.timestamp),
+          ),
         );
       }
     }
@@ -69,7 +96,7 @@ class StrategyLevelCalculator {
       if (price != 0) return price;
       final timestamp = left.timestamp.compareTo(right.timestamp);
       if (timestamp != 0) return timestamp;
-      return left.side.index.compareTo(right.side.index);
+      return left.sourceLevelId.compareTo(right.sourceLevelId);
     });
 
     final clusters = <List<_Candidate>>[];
@@ -80,7 +107,8 @@ class StrategyLevelCalculator {
       }
       final cluster = clusters.last;
       final minimum = cluster.first.price;
-      if ((candidate.price - minimum) / minimum <= maximumClusterSpan) {
+      final distance = candidate.price - minimum;
+      if (distance.multipliedBy(200).compareTo(minimum) <= 0) {
         cluster.add(candidate);
       } else {
         clusters.add([candidate]);
@@ -90,14 +118,29 @@ class StrategyLevelCalculator {
     final supports = <StrategyLevel>[];
     final resistances = <StrategyLevel>[];
     for (final cluster in clusters) {
-      final price = _median(cluster);
-      if (price == referencePrice) continue;
-      final side = price < referencePrice
-          ? StrategySide.long
-          : StrategySide.short;
+      final median = _median(cluster);
+      final comparison = median.compareTo(reference);
+      if (comparison == 0) continue;
+      final side = comparison < 0 ? StrategySide.long : StrategySide.short;
+      final quantized = side == StrategySide.long
+          ? median.quantizedDownTo(tick)
+          : median.quantizedUpTo(tick);
+      if ((side == StrategySide.long && quantized.compareTo(reference) >= 0) ||
+          (side == StrategySide.short && quantized.compareTo(reference) <= 0)) {
+        continue;
+      }
+      final orderedCluster = cluster.toList()
+        ..sort((left, right) {
+          final timestamp = left.timestamp.compareTo(right.timestamp);
+          return timestamp != 0
+              ? timestamp
+              : left.sourceLevelId.compareTo(right.sourceLevelId);
+        });
       final times = cluster.map((item) => item.timestamp).toList()..sort();
       final level = StrategyLevel(
-        price: price,
+        price: quantized.toDouble(),
+        exactPriceText: quantized.toString(),
+        levelId: orderedCluster.first.sourceLevelId,
         firstTouchAt: times.first,
         lastTouchAt: times.last,
         touchCount: cluster.length,
@@ -105,28 +148,43 @@ class StrategyLevelCalculator {
       );
       (side == StrategySide.long ? supports : resistances).add(level);
     }
-    supports.sort((left, right) => right.price.compareTo(left.price));
-    resistances.sort((left, right) => left.price.compareTo(right.price));
+    int compareLevels(StrategyLevel left, StrategyLevel right) {
+      final price = StrategyDecimal.tryParse(
+        left.priceText,
+      )!.compareTo(StrategyDecimal.tryParse(right.priceText)!);
+      if (price != 0) {
+        return left.side == StrategySide.long ? -price : price;
+      }
+      return left.id.compareTo(right.id);
+    }
+
+    supports.sort(compareLevels);
+    resistances.sort(compareLevels);
     return StrategyAnalysis(
       referencePrice: referencePrice,
+      exactReferencePriceText: reference.toString(),
       supports: List.unmodifiable(supports),
       resistances: List.unmodifiable(resistances),
     );
   }
 
-  double _median(List<_Candidate> cluster) {
-    final prices = cluster.map((item) => item.price).toList()..sort();
+  StrategyDecimal _median(List<_Candidate> cluster) {
+    final prices = cluster.map((item) => item.price).toList()
+      ..sort((left, right) => left.compareTo(right));
     final middle = prices.length ~/ 2;
     return prices.length.isOdd
         ? prices[middle]
-        : prices[middle - 1] / 2 + prices[middle] / 2;
+        : (prices[middle - 1] + prices[middle]).dividedByTwo();
   }
+
+  String _sourceLevelId(String type, DateTime timestamp) =>
+      '${type}_${timestamp.millisecondsSinceEpoch}';
 }
 
 class _Candidate {
-  const _Candidate(this.price, this.timestamp, this.side);
+  const _Candidate(this.price, this.timestamp, this.sourceLevelId);
 
-  final double price;
+  final StrategyDecimal price;
   final DateTime timestamp;
-  final StrategySide side;
+  final String sourceLevelId;
 }

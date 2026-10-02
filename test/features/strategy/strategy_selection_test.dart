@@ -1,41 +1,16 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:trading_balance_f/features/strategy/domain/strategy_calculator.dart';
 import 'package:trading_balance_f/features/strategy/domain/strategy_models.dart';
 import 'package:trading_balance_f/features/strategy/domain/strategy_selection.dart';
 
 void main() {
-  group('StrategyLevelCalculator', () {
-    test('uses the newest 500 H12 candles for strict swing levels', () {
-      final candles = List.generate(501, (index) {
-        final timestamp = DateTime.utc(2024).add(Duration(hours: index * 12));
-        final isSupportSwing = index == 3;
-        return StrategyCandle(
-          timestamp: timestamp,
-          open: 100,
-          high: 110,
-          low: isSupportSwing ? 80 : 90,
-          close: 100,
-          interval: StrategyInterval.h12,
-        );
-      });
-
-      final analysis = const StrategyLevelCalculator().calculate(
-        candles: candles,
-        referencePrice: 100,
-      );
-
-      expect(analysis.supports.map((level) => level.price), contains(80));
-      expect(analysis.referencePrice, 100);
-    });
-  });
-
   group('StrategySelection', () {
-    test('rejects more than 20 selected levels', () {
+    test('rejects more than 20 selected rows', () {
       final levels = List.generate(
         21,
         (index) => StrategySelectedLevel(
           side: StrategySide.long,
           price: 99 - index.toDouble(),
+          levelId: 'long_$index',
         ),
       );
 
@@ -44,8 +19,9 @@ void main() {
           instrumentId: 'BTC-USDT-SWAP',
           interval: StrategyInterval.h6,
           referencePrice: 100,
+          direction: StrategyDirection.long,
           selectedLevels: levels,
-          entryBySide: {StrategySide.long: 99},
+          entryLevelIdBySide: const {StrategySide.long: 'long_0'},
         ),
         throwsA(isA<StrategySelectionException>()),
       );
@@ -57,11 +33,40 @@ void main() {
           instrumentId: 'BTC-USDT-SWAP',
           interval: StrategyInterval.h6,
           referencePrice: 100,
+          direction: StrategyDirection.long,
           selectedLevels: const [
-            StrategySelectedLevel(side: StrategySide.long, price: 99),
-            StrategySelectedLevel(side: StrategySide.long, price: 80),
+            StrategySelectedLevel(
+              side: StrategySide.long,
+              price: 99,
+              levelId: 'long_near',
+            ),
+            StrategySelectedLevel(
+              side: StrategySide.long,
+              price: 80,
+              levelId: 'long_far',
+            ),
           ],
-          entryBySide: {StrategySide.long: 80},
+          entryLevelIdBySide: const {StrategySide.long: 'long_far'},
+        ),
+        throwsA(isA<StrategySelectionException>()),
+      );
+    });
+
+    test('Both requires at least one selected level on each side', () {
+      expect(
+        () => StrategySelection.validate(
+          instrumentId: 'BTC-USDT-SWAP',
+          interval: StrategyInterval.h6,
+          referencePrice: 100,
+          direction: StrategyDirection.both,
+          selectedLevels: const [
+            StrategySelectedLevel(
+              side: StrategySide.long,
+              price: 99,
+              levelId: 'long_1',
+            ),
+          ],
+          entryLevelIdBySide: const {StrategySide.long: 'long_1'},
         ),
         throwsA(isA<StrategySelectionException>()),
       );
@@ -74,38 +79,103 @@ void main() {
             instrumentId: instrument,
             interval: StrategyInterval.h6,
             referencePrice: 100,
+            direction: StrategyDirection.long,
             selectedLevels: const [
-              StrategySelectedLevel(side: StrategySide.long, price: 99),
+              StrategySelectedLevel(
+                side: StrategySide.long,
+                price: 99,
+                levelId: 'long_1',
+              ),
             ],
-            entryBySide: {StrategySide.long: 99},
+            entryLevelIdBySide: const {StrategySide.long: 'long_1'},
           ),
           throwsA(isA<StrategySelectionException>()),
         );
       }
     });
 
-    test('serializes selected and entry prices as decimal strings', () {
+    test('serializes the canonical exact price and v2 IDs', () {
       final selection = StrategySelection.validate(
         instrumentId: 'BTC-USDT-SWAP',
         interval: StrategyInterval.h6,
         referencePrice: 100,
+        referencePriceText: '100.0000',
+        direction: StrategyDirection.long,
         selectedLevels: const [
-          StrategySelectedLevel(side: StrategySide.long, price: 99.25),
+          StrategySelectedLevel(
+            side: StrategySide.long,
+            price: 99.25,
+            exactPriceText: '99.2500',
+            levelId: 'low_1728000000',
+          ),
         ],
-        entryBySide: {StrategySide.long: 99.25},
+        entryLevelIdBySide: const {StrategySide.long: 'low_1728000000'},
       );
 
       final request = selection.toRequestJson(
         totalMargin: '100.0',
-        leverage: {StrategySide.long: 5},
+        leverage: const {StrategySide.long: 5},
         sidePercent: const {},
         allocation: StrategyAllocation.equal,
       );
 
+      expect(request['direction'], 'long');
       expect(request['selectedLevels'], [
-        {'side': 'long', 'price': '99.25'},
+        {'side': 'long', 'price': '99.25', 'levelId': 'low_1728000000'},
       ]);
       expect(request['entryBySide'], {'long': '99.25'});
+      expect(request['entryLevelIdBySide'], {'long': 'low_1728000000'});
+    });
+
+    test('retains equal-price selected rows and explicitly selects by ID', () {
+      final selection = StrategySelection.validate(
+        instrumentId: 'BTC-USDT-SWAP',
+        interval: StrategyInterval.h6,
+        referencePrice: 100,
+        direction: StrategyDirection.both,
+        selectedLevels: const [
+          StrategySelectedLevel(
+            side: StrategySide.long,
+            price: 90,
+            exactPriceText: '90',
+            levelId: 'low_1',
+          ),
+          StrategySelectedLevel(
+            side: StrategySide.long,
+            price: 90,
+            exactPriceText: '90.0',
+            levelId: 'low_2',
+          ),
+          StrategySelectedLevel(
+            side: StrategySide.short,
+            price: 110,
+            exactPriceText: '110.00',
+            levelId: 'high_1',
+          ),
+        ],
+        entryLevelIdBySide: const {
+          StrategySide.long: 'low_2',
+          StrategySide.short: 'high_1',
+        },
+      );
+
+      final request = selection.toRequestJson(
+        totalMargin: '100',
+        leverage: const {StrategySide.long: 5, StrategySide.short: 5},
+        sidePercent: const {StrategySide.long: '50', StrategySide.short: '50'},
+        allocation: StrategyAllocation.equal,
+      );
+
+      expect(request['direction'], 'both');
+      expect(request['selectedLevels'], [
+        {'side': 'long', 'price': '90', 'levelId': 'low_1'},
+        {'side': 'long', 'price': '90', 'levelId': 'low_2'},
+        {'side': 'short', 'price': '110', 'levelId': 'high_1'},
+      ]);
+      expect(request['entryLevelIdBySide'], {
+        'long': 'low_2',
+        'short': 'high_1',
+      });
     });
   });
 

@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -36,45 +34,90 @@ void main() {
     );
   });
 
-  testWidgets('stale quote does not block navigation but blocks preview', (
+  testWidgets('Both cannot continue until each side has a selected entry', (
     tester,
   ) async {
-    final market = _FakeStrategyMarketRepository()
-      ..tickerAge = const Duration(seconds: 16);
+    final market = _FakeStrategyMarketRepository();
     final api = _FakeStrategyApi();
     final dashboard = _dashboard(api, market);
     addTearDown(dashboard.dispose);
     await _pumpWizard(tester, market, api, dashboard);
 
+    await tester.tap(find.byKey(const Key('strategy-direction-select')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Long và Short'));
+    await tester.pumpAndSettle();
     await tester.tap(find.byType(CheckboxListTile).first);
     await tester.pump();
-    expect(find.textContaining('đã cũ'), findsOneWidget);
+
     expect(
       tester
           .widget<FilledButton>(find.byKey(const Key('strategy-next-step-one')))
           .onPressed,
-      isNotNull,
+      isNull,
     );
-    expect(find.byTooltip('Làm mới báo giá'), findsOneWidget);
-    await tester.tap(find.byKey(const Key('strategy-next-step-one')));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Bước 2 / 3 · Ký quỹ và đòn bẩy'), findsOneWidget);
-    await tester.enterText(
-      find.byKey(const Key('strategy-margin-input')),
-      '100',
-    );
-    await tester.tap(find.byKey(const Key('strategy-request-preview')));
-    await tester.pump();
-
-    expect(api.previewBodies, isEmpty);
     expect(
       find.text(
-        'Giá SWAP đã cũ. Quay lại bước chọn vùng và nhấn làm mới trước khi xem lại.',
+        'Chọn ít nhất một mức Long và một mức Short, cùng điểm vào gần nhất cho mỗi phía.',
       ),
       findsOneWidget,
     );
   });
+
+  testWidgets(
+    'initial quote is one-time reference and its age does not block preview or save',
+    (tester) async {
+      final market = _FakeStrategyMarketRepository()
+        ..tickerAge = const Duration(seconds: 16);
+      final api = _FakeStrategyApi();
+      final dashboard = _dashboard(api, market);
+      addTearDown(dashboard.dispose);
+      await _pumpWizard(tester, market, api, dashboard);
+
+      expect(market.tickerRequests, 1);
+      expect(find.textContaining('Giá tham chiếu'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 20));
+      expect(market.tickerRequests, 1);
+
+      await tester.tap(find.byType(CheckboxListTile).first);
+      await tester.pump();
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.byKey(const Key('strategy-next-step-one')),
+            )
+            .onPressed,
+        isNotNull,
+      );
+      await tester.tap(find.byKey(const Key('strategy-next-step-one')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Bước 2 / 3 · Ký quỹ và đòn bẩy'), findsOneWidget);
+      await tester.enterText(
+        find.byKey(const Key('strategy-margin-input')),
+        '100',
+      );
+      await tester.tap(find.byKey(const Key('strategy-request-preview')));
+      await tester.pumpAndSettle();
+
+      expect(api.previewBodies, hasLength(1));
+      expect(find.text('Bước 3 / 3 · Xem lại và xác nhận'), findsOneWidget);
+      expect(
+        tester
+            .widget<OutlinedButton>(
+              find.byKey(const Key('strategy-save-draft')),
+            )
+            .onPressed,
+        isNotNull,
+      );
+      expect(
+        tester
+            .widget<FilledButton>(find.byKey(const Key('strategy-apply-now')))
+            .onPressed,
+        isNotNull,
+      );
+    },
+  );
 
   testWidgets('preview failure can be retried without losing inputs', (
     tester,
@@ -122,37 +165,6 @@ void main() {
     expect(api.previewBodies[1], api.previewBodies[0]);
   });
 
-  testWidgets(
-    'manual quote retry bypasses backoff without overlapping a request',
-    (tester) async {
-      final market = _FakeStrategyMarketRepository()
-        ..tickerAge = const Duration(seconds: 16)
-        ..pendingAutomaticRefresh = Completer<StrategyTicker>();
-      final api = _FakeStrategyApi();
-      final dashboard = _dashboard(api, market);
-      addTearDown(dashboard.dispose);
-      await _pumpWizard(tester, market, api, dashboard);
-
-      expect(market.tickerRequests, 2);
-      await tester.tap(find.byTooltip('Làm mới báo giá'));
-      await tester.pump();
-      expect(market.tickerRequests, 2);
-
-      market.pendingAutomaticRefresh!.completeError(
-        const StrategyMarketException('Temporary ticker failure.'),
-      );
-      await tester.pump();
-      await tester.pump();
-      expect(find.textContaining('đã cũ'), findsOneWidget);
-
-      await tester.tap(find.byTooltip('Làm mới báo giá'));
-      await tester.pumpAndSettle();
-
-      expect(market.tickerRequests, 3);
-      expect(find.textContaining('đã cũ'), findsNothing);
-    },
-  );
-
   testWidgets('quote between five and fifteen seconds remains usable', (
     tester,
   ) async {
@@ -179,7 +191,7 @@ void main() {
     expect(api.previewBodies, hasLength(1));
   });
 
-  testWidgets('price crossing removes invalid choice and retains valid one', (
+  testWidgets('wizard reference does not poll when the market moves', (
     tester,
   ) async {
     final market = _FakeStrategyMarketRepository();
@@ -207,22 +219,71 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
     await tester.pump();
 
-    expect(
-      find.text(
-        'Giá đã di chuyển; mức không còn hợp lệ đã được bỏ chọn. Vui lòng kiểm tra lựa chọn.',
-      ),
-      findsOneWidget,
-    );
+    expect(market.tickerRequests, 1);
+    expect(find.textContaining('Giá đã di chuyển'), findsNothing);
     final checkboxes = tester
         .widgetList<CheckboxListTile>(find.byType(CheckboxListTile))
         .toList();
-    expect(checkboxes.map((item) => item.value), [false, true]);
+    expect(checkboxes.map((item) => item.value), [true, true]);
     expect(
       tester
           .widget<FilledButton>(find.byKey(const Key('strategy-next-step-one')))
           .onPressed,
       isNotNull,
     );
+  });
+
+  testWidgets('rounded equal-price rows stay selected by distinct IDs', (
+    tester,
+  ) async {
+    final market = _FakeStrategyMarketRepository()
+      ..supportLevels = [
+        StrategyLevel(
+          price: 90,
+          exactPriceText: '90.00',
+          levelId: 'low_source_one',
+          firstTouchAt: DateTime.utc(2030, 1, 1),
+          lastTouchAt: DateTime.utc(2030, 1, 1),
+          touchCount: 1,
+          side: StrategySide.long,
+        ),
+        StrategyLevel(
+          price: 90,
+          exactPriceText: '90.0',
+          levelId: 'low_source_two',
+          firstTouchAt: DateTime.utc(2030, 1, 2),
+          lastTouchAt: DateTime.utc(2030, 1, 2),
+          touchCount: 1,
+          side: StrategySide.long,
+        ),
+      ];
+    final api = _FakeStrategyApi();
+    final dashboard = _dashboard(api, market);
+    addTearDown(dashboard.dispose);
+    await _pumpWizard(tester, market, api, dashboard);
+
+    final checkboxes = find.byType(CheckboxListTile);
+    await tester.tap(checkboxes.first);
+    await tester.pump();
+    await tester.tap(checkboxes.last);
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('strategy-next-step-one')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('strategy-margin-input')),
+      '100',
+    );
+    await tester.tap(find.byKey(const Key('strategy-request-preview')));
+    await tester.pumpAndSettle();
+
+    final requestLevels = api.previewBodies.single['selectedLevels'] as List;
+    expect(requestLevels, [
+      {'side': 'long', 'price': '90', 'levelId': 'low_source_one'},
+      {'side': 'long', 'price': '90', 'levelId': 'low_source_two'},
+    ]);
+    expect(api.previewBodies.single['entryLevelIdBySide'], {
+      'long': 'low_source_one',
+    });
   });
 
   testWidgets('search filters locally and only selection changes instrument', (
@@ -323,10 +384,18 @@ void main() {
       expect(api.previewBodies, hasLength(caseIndex + 1));
       final request = api.previewBodies.last;
       expect(request['totalMargin'], entry.value);
-      expect(request['selectedLevels'], [
-        {'side': 'long', 'price': '90.0'},
-      ]);
-      expect(request['entryBySide'], {'long': '90.0'});
+      final selectedLevels = request['selectedLevels'] as List;
+      expect(selectedLevels, hasLength(1));
+      final levelId = (selectedLevels.single as Map)['levelId'];
+      expect(levelId, matches(RegExp(r'^[A-Za-z0-9_-]{1,128}$')));
+      expect(request['direction'], 'long');
+      expect(selectedLevels.single, {
+        'side': 'long',
+        'price': '90',
+        'levelId': levelId,
+      });
+      expect(request['entryBySide'], {'long': '90'});
+      expect(request['entryLevelIdBySide'], {'long': levelId});
       expect(find.text('Nhập ngân sách ký quỹ USDT lớn hơn 0.'), findsNothing);
       caseIndex++;
     }
@@ -335,10 +404,15 @@ void main() {
     await tester.pumpAndSettle();
     expect(api.saveBodies, hasLength(1));
     expect(api.saveBodies.single['totalMargin'], '100.0');
-    expect(api.saveBodies.single['selectedLevels'], [
-      {'side': 'long', 'price': '90.0'},
-    ]);
-    expect(api.saveBodies.single['entryBySide'], {'long': '90.0'});
+    final savedLevels = api.saveBodies.single['selectedLevels'] as List;
+    final savedLevelId = (savedLevels.single as Map)['levelId'];
+    expect(savedLevels.single, {
+      'side': 'long',
+      'price': '90',
+      'levelId': savedLevelId,
+    });
+    expect(api.saveBodies.single['entryBySide'], {'long': '90'});
+    expect(api.saveBodies.single['entryLevelIdBySide'], {'long': savedLevelId});
   });
 
   testWidgets('normalizes Long percentage comma and rejects malformed margin', (
@@ -530,12 +604,24 @@ class _FakeStrategyMarketRepository extends StrategyMarketRepository {
   int tickerRequests = 0;
   double tickerPrice = 100;
   Duration tickerAge = Duration.zero;
-  Completer<StrategyTicker>? pendingAutomaticRefresh;
   final loadCalls = <String>[];
+  List<StrategyLevel>? supportLevels;
   final instruments = const [
-    StrategyInstrument(instrumentId: 'BTC-USDT-SWAP', base: 'BTC'),
-    StrategyInstrument(instrumentId: 'ETH-USDT-SWAP', base: 'ETH'),
-    StrategyInstrument(instrumentId: 'SOL-USDT-SWAP', base: 'SOL'),
+    StrategyInstrument(
+      instrumentId: 'BTC-USDT-SWAP',
+      base: 'BTC',
+      tickSizeText: '0.01',
+    ),
+    StrategyInstrument(
+      instrumentId: 'ETH-USDT-SWAP',
+      base: 'ETH',
+      tickSizeText: '0.01',
+    ),
+    StrategyInstrument(
+      instrumentId: 'SOL-USDT-SWAP',
+      base: 'SOL',
+      tickSizeText: '0.01',
+    ),
   ];
 
   @override
@@ -548,6 +634,7 @@ class _FakeStrategyMarketRepository extends StrategyMarketRepository {
   Future<StrategyMarketSnapshot> loadLevels({
     required String instrumentId,
     required StrategyInterval interval,
+    required String tickSizeText,
   }) async {
     loadCalls.add(instrumentId);
     final candles = List.generate(5, (index) {
@@ -566,28 +653,31 @@ class _FakeStrategyMarketRepository extends StrategyMarketRepository {
       );
     });
     final ticker = await getTicker(instrumentId: instrumentId);
+    final calculated = calculator.calculate(
+      candles: candles,
+      referencePrice: 100,
+      tickSizeText: tickSizeText,
+    );
     return StrategyMarketSnapshot(
       instrumentId: instrumentId,
       interval: interval,
       ticker: ticker,
       candles: candles,
-      analysis: calculator.calculate(candles: candles, referencePrice: 100),
+      analysis: StrategyAnalysis(
+        referencePrice: 100,
+        supports: supportLevels ?? calculated.supports,
+        resistances: calculated.resistances,
+      ),
     );
   }
 
   @override
   Future<StrategyTicker> getTicker({required String instrumentId}) async {
     tickerRequests++;
-    if (tickerRequests == 2 && pendingAutomaticRefresh != null) {
-      return pendingAutomaticRefresh!.future;
-    }
-    final age = pendingAutomaticRefresh != null && tickerRequests > 2
-        ? Duration.zero
-        : tickerAge;
     return StrategyTicker(
       instrumentId: instrumentId,
       lastPrice: tickerPrice,
-      observedAt: DateTime.now().toUtc().subtract(age),
+      observedAt: DateTime.now().toUtc().subtract(tickerAge),
     );
   }
 }

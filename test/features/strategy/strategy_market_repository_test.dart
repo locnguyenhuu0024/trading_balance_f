@@ -14,10 +14,10 @@ void main() {
     final base = DateTime.utc(2030, 1, 1);
     final candle = (int index, {String confirm = '1'}) => [
       (base.add(Duration(hours: index * 12))).millisecondsSinceEpoch.toString(),
-      '100',
-      '110',
-      '90',
-      '100',
+      '100.000',
+      '110.0100',
+      '90.0000',
+      '100.00',
       '0',
       '0',
       '0',
@@ -31,10 +31,10 @@ void main() {
           {
             'instId': 'ETH-USDT-SWAP',
             'ts': candle(7).first,
-            'o': '100',
-            'h': '110',
-            'l': '90',
-            'c': '100',
+            'o': '100.000',
+            'h': '110.0100',
+            'l': '90.0000',
+            'c': '100.00',
             'confirm': '1',
           },
           candle(6),
@@ -64,6 +64,10 @@ void main() {
         base.add(const Duration(hours: 72)),
       ]),
     );
+    expect(candles.first.openText, '100.000');
+    expect(candles.first.highText, '110.0100');
+    expect(candles.first.lowText, '90.0000');
+    expect(candles.first.closeText, '100.00');
   });
 
   test('requests only live linear USDT swaps from the catalog', () async {
@@ -76,6 +80,7 @@ void main() {
           'ctType': 'linear',
           'instId': 'BTC-USDT-SWAP',
           'baseCcy': 'BTC',
+          'tickSz': '0.0100',
         },
         {
           'instType': 'SWAP',
@@ -84,6 +89,7 @@ void main() {
           'ctType': 'linear',
           'instId': 'ETH-USDT-SWAP',
           'baseCcy': '',
+          'tickSz': '0.01',
         },
         {
           'instType': 'SWAP',
@@ -91,6 +97,7 @@ void main() {
           'settleCcy': 'USDT',
           'ctType': 'linear',
           'instId': 'SOL-USDT-SWAP',
+          'tickSz': '0.0001',
         },
         {
           'instType': 'SWAP',
@@ -129,11 +136,17 @@ void main() {
 
     final instruments = await repository.getInstruments();
 
-    expect(
-      instruments.map((item) => item.instrumentId),
-      ['BTC-USDT-SWAP', 'ETH-USDT-SWAP', 'SOL-USDT-SWAP'],
-    );
+    expect(instruments.map((item) => item.instrumentId), [
+      'BTC-USDT-SWAP',
+      'ETH-USDT-SWAP',
+      'SOL-USDT-SWAP',
+    ]);
     expect(instruments.map((item) => item.base), ['BTC', 'ETH', 'SOL']);
+    expect(instruments.map((item) => item.tickSizeText), [
+      '0.0100',
+      '0.01',
+      '0.0001',
+    ]);
     expect(adapter.requests.single.uri.queryParameters['instType'], 'SWAP');
   });
 
@@ -143,7 +156,7 @@ void main() {
       (_) => [
         {
           'instId': 'BTC-USDT-SWAP',
-          'last': '65000',
+          'last': '65000.00001000',
           'ts': exchangeTimestamp.millisecondsSinceEpoch.toString(),
         },
       ],
@@ -153,6 +166,7 @@ void main() {
     final ticker = await repository.getTicker(instrumentId: 'BTC-USDT-SWAP');
 
     expect(ticker.observedAt, exchangeTimestamp);
+    expect(ticker.priceText, '65000.00001000');
     expect(
       ticker.isFreshAt(now, maximumAge: const Duration(seconds: 15)),
       isTrue,

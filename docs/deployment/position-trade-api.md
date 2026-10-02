@@ -132,6 +132,34 @@ docker run -d --name trading-balance-trade-api --restart unless-stopped \
   -p 127.0.0.1:8000:8000 trading-balance-trade-api
 ```
 
+### Rebuild and recreate after an application change
+
+Run these commands from the repository root. Rebuilding the image does not update a running container; stop and remove the existing container, then create it again from the rebuilt image. The bind-mounted operation journal remains in `/var/lib/trading-balance` across container replacement.
+
+```sh
+docker build -f backend/Dockerfile -t trading-balance-trade-api .
+docker stop trading-balance-trade-api
+docker rm trading-balance-trade-api
+docker run -d --name trading-balance-trade-api --restart unless-stopped \
+  --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+  --cap-drop=ALL --security-opt=no-new-privileges --pids-limit=128 \
+  --user 10001:10001 --env-file /etc/trading-balance/trade-api.env \
+  --mount type=bind,source=/var/lib/trading-balance,target=/var/lib/trading-balance \
+  -p 127.0.0.1:8000:8000 trading-balance-trade-api
+```
+
+To restart the existing container without rebuilding or replacing it, run:
+
+```sh
+docker restart trading-balance-trade-api
+```
+
+Check container status and its published loopback port with this read-only command:
+
+```sh
+docker ps --filter name=trading-balance-trade-api --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+```
+
 Keep one WSGI worker until journal and write-lock behavior has been independently proven safe across workers. The container listens inside on port 8000; Docker publishes it only on host loopback. Configure the user's HTTPS reverse proxy to route `https://<USER_API_HOST>/v1/*` to `http://127.0.0.1:8000/v1/*`, preserve the browser `Origin` header, overwrite `X-Forwarded-For` with the connecting client address, and expose no plaintext public port. The API trusts that header only on loopback requests, so the proxy must not append a client-supplied value. The Flutter web origin remains `https://tradingbalancef.vercel.app`; the API host is a separate origin.
 
 Build the web client with the public API base URL:

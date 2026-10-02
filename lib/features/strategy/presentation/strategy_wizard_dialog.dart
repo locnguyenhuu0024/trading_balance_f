@@ -30,14 +30,13 @@ class StrategyWizardDialog extends ConsumerStatefulWidget {
       _StrategyWizardDialogState();
 }
 
-class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
-    with WidgetsBindingObserver {
+class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
   final _marginController = TextEditingController();
   final _longLeverageController = TextEditingController(text: '5');
   final _shortLeverageController = TextEditingController(text: '5');
   final _longPercentController = TextEditingController(text: '50');
   final Map<String, StrategySelectedLevel> _selected = {};
-  final Map<StrategySide, double> _entries = {};
+  final Map<StrategySide, String> _entries = {};
   List<StrategyInstrument> _instruments = const [];
   StrategyMarketSnapshot? _snapshot;
   StrategyInterval _interval = StrategyInterval.h6;
@@ -54,15 +53,8 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
   bool _isLoadingLevels = false;
   bool _isRequestingPreview = false;
   bool _isSaving = false;
-  bool _isTickerInFlight = false;
-  bool _appVisible = true;
-  bool? _reportedTickerFreshness;
-  int _tickerFailureCount = 0;
-  DateTime? _tickerRetryAt;
   int _marketGeneration = 0;
   int _inputGeneration = 0;
-  Timer? _tickerTimer;
-  Timer? _tickerFreshnessTimer;
 
   StrategyMarketRepository get _market =>
       ref.read(strategyMarketRepositoryProvider);
@@ -70,24 +62,11 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    _appVisible =
-        WidgetsBinding.instance.lifecycleState == null ||
-        WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
     unawaited(_loadInstruments());
   }
 
   @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    _appVisible = state == AppLifecycleState.resumed;
-    _updateTickerPolling();
-  }
-
-  @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _tickerTimer?.cancel();
-    _tickerFreshnessTimer?.cancel();
     _marginController.dispose();
     _longLeverageController.dispose();
     _shortLeverageController.dispose();
@@ -134,8 +113,6 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
     setState(() {
       _instrumentId = instrumentId;
       _interval = interval;
-      _tickerFailureCount = 0;
-      _tickerRetryAt = null;
       _isLoadingLevels = true;
       _marketError = null;
       _snapshot = null;
@@ -145,82 +122,36 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
       _invalidatePreview();
     });
     try {
+      final matchingInstrument = _instruments.where(
+        (instrument) => instrument.instrumentId == instrumentId,
+      );
+      final tickSizeText = matchingInstrument.isEmpty
+          ? null
+          : matchingInstrument.first.tickSizeText;
+      if (tickSizeText == null) {
+        if (!mounted || generation != _marketGeneration) return;
+        setState(() {
+          _isLoadingLevels = false;
+          _marketError = 'The selected swap tick size is unavailable.';
+        });
+        return;
+      }
       final snapshot = await _market.loadLevels(
         instrumentId: instrumentId,
         interval: interval,
+        tickSizeText: tickSizeText,
       );
       if (!mounted || generation != _marketGeneration) return;
       setState(() {
         _snapshot = snapshot;
         _isLoadingLevels = false;
       });
-      _reportedTickerFreshness = _tickerIsFresh(snapshot.ticker);
-      _updateTickerPolling();
     } on Object catch (error) {
       if (!mounted || generation != _marketGeneration) return;
       setState(() {
         _isLoadingLevels = false;
         _marketError = _safeError(error);
       });
-    }
-  }
-
-  Future<void> _refreshTicker({bool manualRetry = false}) async {
-    final id = _instrumentId;
-    if (!mounted || id == null || _isTickerInFlight) return;
-    final retryAt = _tickerRetryAt;
-    if (!manualRetry &&
-        retryAt != null &&
-        DateTime.now().toUtc().isBefore(retryAt)) {
-      return;
-    }
-    _isTickerInFlight = true;
-    final generation = _marketGeneration;
-    try {
-      final ticker = await _market.getTicker(instrumentId: id);
-      if (!mounted ||
-          !_appVisible ||
-          generation != _marketGeneration ||
-          _snapshot == null)
-        return;
-      _tickerFailureCount = 0;
-      _tickerRetryAt = null;
-      final prior = _snapshot!;
-      final priorEntries = Map<StrategySide, double>.of(_entries);
-      final analysis = _market.calculator.calculate(
-        candles: prior.candles,
-        referencePrice: ticker.lastPrice,
-      );
-      setState(() {
-        _snapshot = StrategyMarketSnapshot(
-          instrumentId: prior.instrumentId,
-          interval: prior.interval,
-          ticker: ticker,
-          candles: prior.candles,
-          analysis: analysis,
-        );
-        _reportedTickerFreshness = _tickerIsFresh(ticker);
-        final removedSelection = _reconcileSelectedLevels(analysis);
-        _moveEntriesToNearest();
-        if (removedSelection || !_sameEntries(priorEntries, _entries)) {
-          _invalidatePreview();
-        }
-      });
-    } on Object {
-      _tickerFailureCount++;
-      final retrySeconds = 1 << _tickerFailureCount.clamp(1, 5).toInt();
-      _tickerRetryAt = DateTime.now().toUtc().add(
-        Duration(seconds: retrySeconds > 30 ? 30 : retrySeconds),
-      );
-      if (mounted && generation == _marketGeneration) {
-        setState(() {
-          if (!_quoteIsFresh) {
-            _invalidatePreview();
-          }
-        });
-      }
-    } finally {
-      _isTickerInFlight = false;
     }
   }
 
@@ -243,7 +174,12 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
   };
 
   void _toggleLevel(StrategySide side, StrategyLevel level, bool selected) {
-    final item = StrategySelectedLevel(side: side, price: level.price);
+    final item = StrategySelectedLevel(
+      side: side,
+      price: level.price,
+      exactPriceText: level.priceText,
+      levelId: level.id,
+    );
     setState(() {
       if (selected) {
         if (_selected.length >= 20) {
@@ -251,11 +187,11 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
           return;
         }
         _selected[item.id] = item;
-        _entries.putIfAbsent(side, () => item.price);
+        _entries.putIfAbsent(side, () => item.id);
         _moveEntriesToNearest();
       } else {
         _selected.remove(item.id);
-        if (_entries[side] == item.price) _entries.remove(side);
+        if (_entries[side] == item.id) _entries.remove(side);
         _moveEntriesToNearest();
       }
       _selectionNotice = null;
@@ -264,14 +200,14 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
     });
   }
 
-  void _chooseEntry(StrategySide side, double price) {
+  void _chooseEntry(StrategySide side, String levelId) {
     if (!_selected.values.any(
-      (item) => item.side == side && item.price == price,
+      (item) => item.side == side && item.id == levelId,
     )) {
       return;
     }
     setState(() {
-      _entries[side] = price;
+      _entries[side] = levelId;
       _selectionNotice = null;
       _workflowError = null;
       _invalidatePreview();
@@ -279,8 +215,9 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
   }
 
   void _moveEntriesToNearest() {
-    final reference = _snapshot?.ticker.lastPrice;
-    if (reference == null || !reference.isFinite || reference <= 0) return;
+    final referenceText = _snapshot?.ticker.priceText;
+    final reference = StrategyDecimal.tryParse(referenceText);
+    if (reference == null || !reference.isPositive) return;
     for (final side in _allowedSides) {
       final choices = _selected.values
           .where((item) => item.side == side)
@@ -289,31 +226,30 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
         _entries.remove(side);
         continue;
       }
-      choices.sort(
-        (a, b) =>
-            (a.price - reference).abs().compareTo((b.price - reference).abs()),
-      );
-      if (!choices.any((item) => item.price == _entries[side])) {
-        _entries[side] = choices.first.price;
-      } else if ((choices.first.price - reference).abs() <
-          ((_entries[side]! - reference).abs())) {
-        _entries[side] = choices.first.price;
+      choices.sort((left, right) {
+        final leftPrice = StrategyDecimal.tryParse(left.priceText)!;
+        final rightPrice = StrategyDecimal.tryParse(right.priceText)!;
+        final leftDistance = (leftPrice - reference).abs();
+        final rightDistance = (rightPrice - reference).abs();
+        final distance = leftDistance.compareTo(rightDistance);
+        return distance != 0 ? distance : left.id.compareTo(right.id);
+      });
+      final currentEntry = choices.where((item) => item.id == _entries[side]);
+      if (currentEntry.isEmpty) {
+        _entries[side] = choices.first.id;
+      } else {
+        final currentPrice = StrategyDecimal.tryParse(
+          currentEntry.first.priceText,
+        )!;
+        if ((currentPrice - reference).abs().compareTo(
+              (StrategyDecimal.tryParse(choices.first.priceText)! - reference)
+                  .abs(),
+            ) >
+            0) {
+          _entries[side] = choices.first.id;
+        }
       }
     }
-  }
-
-  bool _reconcileSelectedLevels(StrategyAnalysis analysis) {
-    final selectedCount = _selected.length;
-    _selected.removeWhere((_, item) {
-      final currentLevels = item.side == StrategySide.long
-          ? analysis.supports
-          : analysis.resistances;
-      return !currentLevels.any((level) => level.price == item.price);
-    });
-    if (_selected.length == selectedCount) return false;
-    _selectionNotice =
-        'Giá đã di chuyển; mức không còn hợp lệ đã được bỏ chọn. Vui lòng kiểm tra lựa chọn.';
-    return true;
   }
 
   StrategySelection? _selectionOrNull() {
@@ -325,55 +261,19 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
         instrumentId: instrumentId,
         interval: _interval,
         referencePrice: snapshot.ticker.lastPrice,
+        referencePriceText: snapshot.ticker.priceText,
+        direction: switch (_direction) {
+          _StrategyDirection.long => StrategyDirection.long,
+          _StrategyDirection.short => StrategyDirection.short,
+          _StrategyDirection.both => StrategyDirection.both,
+        },
         selectedLevels: _selected.values.toList(growable: false),
-        entryBySide: Map.of(_entries),
+        entryLevelIdBySide: Map.of(_entries),
       );
-      if (!_allowedSides.containsAll(selection.entryBySide.keys) ||
-          !_allowedSides.every(
-            (side) =>
-                !_selected.values.any((item) => item.side == side) ||
-                selection.entryBySide.containsKey(side),
-          )) {
-        return null;
-      }
       return selection;
     } on StrategySelectionException {
       return null;
     }
-  }
-
-  bool get _quoteIsFresh =>
-      _snapshot == null ? false : _tickerIsFresh(_snapshot!.ticker);
-
-  bool _tickerIsFresh(StrategyTicker ticker) => ticker.isFreshAt(
-    DateTime.now().toUtc(),
-    maximumAge: StrategyMarketRepository.maximumPublicTickerAge,
-  );
-
-  void _updateTickerPolling() {
-    final shouldPoll = mounted && _appVisible && _snapshot != null;
-    if (!shouldPoll) {
-      _tickerTimer?.cancel();
-      _tickerFreshnessTimer?.cancel();
-      _tickerTimer = null;
-      _tickerFreshnessTimer = null;
-      return;
-    }
-    _tickerTimer ??= Timer.periodic(
-      const Duration(seconds: 1),
-      (_) => unawaited(_refreshTicker()),
-    );
-    _tickerFreshnessTimer ??= Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!mounted || _snapshot == null) return;
-      final fresh = _quoteIsFresh;
-      if (_reportedTickerFreshness != fresh) {
-        setState(() {
-          _reportedTickerFreshness = fresh;
-          if (!fresh) _invalidatePreview();
-        });
-      }
-    });
-    unawaited(_refreshTicker());
   }
 
   void _invalidatePreview() {
@@ -381,14 +281,6 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
     _preview = null;
     _previewHash = null;
     _savedDraftId = null;
-  }
-
-  bool _sameEntries(
-    Map<StrategySide, double> left,
-    Map<StrategySide, double> right,
-  ) {
-    if (left.length != right.length) return false;
-    return left.entries.every((entry) => right[entry.key] == entry.value);
   }
 
   String? _validateBudget() {
@@ -420,13 +312,6 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
       setState(
         () => _workflowError =
             'Chọn ít nhất một mức và một điểm vào gần giá nhất cho mỗi phía.',
-      );
-      return;
-    }
-    if (!_quoteIsFresh) {
-      setState(
-        () => _workflowError =
-            'Giá SWAP đã cũ. Quay lại bước chọn vùng và nhấn làm mới trước khi xem lại.',
       );
       return;
     }
@@ -701,7 +586,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
   }
 
   bool get _canActOnPreview =>
-      !_isSaving && !_isRequestingPreview && _preview != null && _quoteIsFresh;
+      !_isSaving && !_isRequestingPreview && _preview != null;
 
   void _message(String message) {
     ScaffoldMessenger.of(
@@ -881,9 +766,10 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
               snapshot.analysis.resistances,
             ),
           if (!_isLoadingLevels && _selectionOrNull() == null)
-            const _WizardNotice(
-              message:
-                  'Chọn ít nhất một mức hợp lệ và điểm vào gần giá nhất cho mỗi phía.',
+            _WizardNotice(
+              message: _direction == _StrategyDirection.both
+                  ? 'Chọn ít nhất một mức Long và một mức Short, cùng điểm vào gần nhất cho mỗi phía.'
+                  : 'Chọn ít nhất một mức hợp lệ và điểm vào gần giá nhất cho mỗi phía.',
               error: true,
             ),
           if (_selectionNotice != null)
@@ -896,27 +782,14 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
   }
 
   Widget _quoteBanner(StrategyTicker ticker) {
-    final fresh = _tickerIsFresh(ticker);
     return Card(
-      color: fresh ? null : Theme.of(context).colorScheme.errorContainer,
       child: ListTile(
         dense: true,
-        leading: Icon(fresh ? Icons.bolt : Icons.schedule),
-        title: Text(
-          'Giá ${_price(ticker.lastPrice)}${fresh ? '' : ' · đã cũ'}',
-        ),
+        leading: const Icon(Icons.schedule),
+        title: Text('Giá tham chiếu ${ticker.priceText} USDT'),
         subtitle: Text(
-          fresh
-              ? 'Cập nhật ${_dateTime(ticker.observedAt)}'
-              : 'Cập nhật ${_dateTime(ticker.observedAt)} · Quá 15 giây; nhấn làm mới để thử lại.',
+          'Báo giá tham chiếu lúc ${_dateTime(ticker.observedAt)}',
         ),
-        trailing: fresh
-            ? null
-            : IconButton(
-                tooltip: 'Làm mới báo giá',
-                onPressed: () => unawaited(_refreshTicker(manualRetry: true)),
-                icon: const Icon(Icons.refresh),
-              ),
       ),
     );
   }
@@ -926,19 +799,25 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
     StrategySide side,
     List<StrategyLevel> levels,
   ) {
-    final selectedPrices = _selected.values
+    final selectedLevels = _selected.values
         .where((item) => item.side == side)
-        .map((item) => item.price)
         .toList(growable: false);
-    final nearestPrice = selectedPrices.isEmpty
-        ? null
-        : selectedPrices.reduce(
-            (left, right) =>
-                (left - _snapshot!.ticker.lastPrice).abs() <=
-                    (right - _snapshot!.ticker.lastPrice).abs()
-                ? left
-                : right,
-          );
+    final reference = StrategyDecimal.tryParse(_snapshot!.ticker.priceText)!;
+    final selectedDistances = <String, StrategyDecimal>{
+      for (final item in selectedLevels)
+        item.id: (StrategyDecimal.tryParse(item.priceText)! - reference).abs(),
+    };
+    StrategyDecimal? nearestDistance;
+    for (final distance in selectedDistances.values) {
+      if (nearestDistance == null || distance.compareTo(nearestDistance) < 0) {
+        nearestDistance = distance;
+      }
+    }
+    final nearestIds = {
+      for (final entry in selectedDistances.entries)
+        if (entry.value.compareTo(nearestDistance ?? entry.value) == 0)
+          entry.key,
+    };
     return Padding(
       padding: const EdgeInsets.only(top: 12),
       child: Column(
@@ -964,13 +843,11 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
                 side: side,
                 level: level,
                 referencePrice: _snapshot!.ticker.lastPrice,
-                selected: _selected.values.any(
-                  (item) => item.side == side && item.price == level.price,
-                ),
-                entryPrice: _entries[side],
-                canBeEntry: level.price == nearestPrice,
+                selected: _selected.containsKey(level.id),
+                entryLevelId: _entries[side],
+                canBeEntry: nearestIds.contains(level.id),
                 onSelected: (selected) => _toggleLevel(side, level, selected),
-                onEntry: () => _chooseEntry(side, level.price),
+                onEntry: () => _chooseEntry(side, level.id),
               ),
         ],
       ),
@@ -1108,12 +985,6 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog>
             ),
           ),
         ),
-        if (!_quoteIsFresh)
-          _WizardNotice(
-            message:
-                'Giá SWAP đã cũ. Chờ báo giá mới để lưu hoặc áp dụng bản xem trước này.',
-            error: true,
-          ),
         Text('Giá thị trường lúc xem: ${_text(preview['currentPrice'])}'),
         Text('Thời điểm giá: ${_text(preview['quoteTimestamp'])}'),
         const SizedBox(height: 8),
@@ -1308,7 +1179,7 @@ class _StrategyLevelCard extends StatelessWidget {
     required this.level,
     required this.referencePrice,
     required this.selected,
-    required this.entryPrice,
+    required this.entryLevelId,
     required this.canBeEntry,
     required this.onSelected,
     required this.onEntry,
@@ -1318,7 +1189,7 @@ class _StrategyLevelCard extends StatelessWidget {
   final StrategyLevel level;
   final double referencePrice;
   final bool selected;
-  final double? entryPrice;
+  final String? entryLevelId;
   final bool canBeEntry;
   final ValueChanged<bool> onSelected;
   final VoidCallback onEntry;
@@ -1334,7 +1205,7 @@ class _StrategyLevelCard extends StatelessWidget {
           CheckboxListTile(
             value: selected,
             onChanged: (value) => onSelected(value ?? false),
-            title: Text('${_price(level.price)} USDT'),
+            title: Text('${level.priceText} USDT'),
             subtitle: Text(
               '${distance.toStringAsPrecision(6)} · ${percent.toStringAsFixed(3)}% · ${level.touchCount} lần',
             ),
@@ -1344,9 +1215,9 @@ class _StrategyLevelCard extends StatelessWidget {
             controlAffinity: ListTileControlAffinity.leading,
           ),
           if (selected)
-            RadioListTile<double>(
-              value: level.price,
-              groupValue: entryPrice,
+            RadioListTile<String>(
+              value: level.id,
+              groupValue: entryLevelId,
               onChanged: canBeEntry ? (_) => onEntry() : null,
               title: const Text('Điểm vào gần giá nhất'),
               dense: true,
@@ -1523,13 +1394,6 @@ Map<String, dynamic> _asMap(Object? value) => value is Map
     : const {};
 
 String _text(Object? value) => value == null ? '' : value.toString();
-
-String _price(double value) => value >= 1000
-    ? value.toStringAsFixed(2)
-    : value
-          .toStringAsPrecision(8)
-          .replaceFirst(RegExp(r'0+$'), '')
-          .replaceFirst(RegExp(r'\.$'), '');
 
 String _dateTime(DateTime value) {
   final local = value.toLocal();

@@ -171,8 +171,14 @@ class StrategyService:
         levels_value = body.get("selectedLevels")
         if not isinstance(levels_value, list) or not levels_value or len(levels_value) > _MAX_ORDERS:
             raise self._invalid("invalid_order_count", "Select between one and twenty levels.")
+        id_mode = (
+            "direction" in body
+            or "entryLevelIdBySide" in body
+            or any(isinstance(row, dict) and "levelId" in row for row in levels_value)
+        )
         levels: list[dict[str, str]] = []
         seen: set[tuple[str, str]] = set()
+        seen_ids: set[str] = set()
         for row in levels_value:
             if not isinstance(row, dict) or row.get("side") not in ("long", "short"):
                 raise self._invalid("invalid_level", "Each selected level must have a Long or Short side.")
@@ -180,21 +186,59 @@ class StrategyService:
             if price is None:
                 raise self._invalid("invalid_level", "Selected level prices must be positive decimals.")
             key = (row["side"], _text(price) or "0")
-            if key in seen:
-                raise self._invalid("duplicate_level", "A strategy cannot contain duplicate levels.")
-            seen.add(key)
-            levels.append({"side": row["side"], "price": key[1]})
+            if id_mode:
+                level_id = row.get("levelId")
+                if not isinstance(level_id, str) or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", level_id) is None:
+                    raise self._invalid("invalid_level_id", "Each selected level needs a valid bounded ID.")
+                if level_id in seen_ids:
+                    raise self._invalid("duplicate_level_id", "Selected level IDs must be unique.")
+                seen_ids.add(level_id)
+                levels.append({"side": row["side"], "price": key[1], "levelId": level_id})
+            else:
+                if key in seen:
+                    raise self._invalid("duplicate_level", "A strategy cannot contain duplicate levels.")
+                seen.add(key)
+                levels.append({"side": row["side"], "price": key[1]})
         sides = sorted({row["side"] for row in levels}, key=lambda side: (side != "long", side))
 
-        entries_value = body.get("entryBySide")
-        if not isinstance(entries_value, dict) or set(entries_value) != set(sides):
-            raise self._invalid("entry_required", "Choose one nearest entry level for every selected side.")
         entries: dict[str, str] = {}
-        for side in sides:
-            entry = _positive(entries_value.get(side))
-            if entry is None or (side, _text(entry) or "0") not in seen:
-                raise self._invalid("entry_required", "The entry level must be one of the selected levels.")
-            entries[side] = _text(entry) or "0"
+        entry_ids: dict[str, str] = {}
+        if id_mode:
+            direction = body.get("direction")
+            if direction not in ("long", "short", "both"):
+                raise self._invalid("invalid_direction", "Direction must be long, short, or both.")
+            expected_sides = {"long"} if direction == "long" else {"short"} if direction == "short" else {"long", "short"}
+            if set(sides) != expected_sides:
+                raise self._invalid("direction_mismatch", "Direction must match the submitted Long and Short levels.")
+
+            entry_ids_value = body.get("entryLevelIdBySide")
+            if not isinstance(entry_ids_value, dict) or set(entry_ids_value) != set(sides):
+                raise self._invalid("entry_id_required", "Choose one entry level ID for every selected side.")
+            levels_by_id = {row["levelId"]: row for row in levels}
+            for side in sides:
+                entry_id = entry_ids_value.get(side)
+                if not isinstance(entry_id, str) or entry_id not in levels_by_id or levels_by_id[entry_id]["side"] != side:
+                    raise self._invalid("entry_id_required", "The entry ID must identify a selected level on its side.")
+                entry_ids[side] = entry_id
+                entries[side] = levels_by_id[entry_id]["price"]
+
+            if "entryBySide" in body:
+                entries_value = body.get("entryBySide")
+                if not isinstance(entries_value, dict) or set(entries_value) != set(sides):
+                    raise self._invalid("entry_id_price_mismatch", "Legacy entry prices must match the selected entry IDs.")
+                for side in sides:
+                    entry = _positive(entries_value.get(side))
+                    if entry is None or (_text(entry) or "0") != entries[side]:
+                        raise self._invalid("entry_id_price_mismatch", "Legacy entry prices must match the selected entry IDs.")
+        else:
+            entries_value = body.get("entryBySide")
+            if not isinstance(entries_value, dict) or set(entries_value) != set(sides):
+                raise self._invalid("entry_required", "Choose one nearest entry level for every selected side.")
+            for side in sides:
+                entry = _positive(entries_value.get(side))
+                if entry is None or (side, _text(entry) or "0") not in seen:
+                    raise self._invalid("entry_required", "The entry level must be one of the selected levels.")
+                entries[side] = _text(entry) or "0"
 
         leverage_value = body.get("leverage")
         if not isinstance(leverage_value, dict) or set(leverage_value) != set(sides):
@@ -223,6 +267,27 @@ class StrategyService:
         allocation = body.get("allocation", "equal")
         if allocation not in ("equal", "increasing", "decreasing"):
             raise self._invalid("invalid_allocation", "Choose equal, increasing, or decreasing allocation.")
+        if id_mode:
+            normalized_levels = sorted(
+                levels,
+                key=lambda row: (
+                    sides.index(row["side"]),
+                    Decimal(row["price"]),
+                    row["levelId"],
+                ),
+            )
+            return {
+                "instrumentId": instrument_id,
+                "interval": interval,
+                "direction": direction,
+                "selectedLevels": normalized_levels,
+                "entryLevelIdBySide": entry_ids,
+                "entryBySide": entries,
+                "totalMargin": _text(total_margin) or "0",
+                "leverage": leverage,
+                "sidePercent": percentages,
+                "allocation": allocation,
+            }
         return {
             "instrumentId": instrument_id,
             "interval": interval,
@@ -320,9 +385,11 @@ class StrategyService:
             maximum = _positive(row.get("maxSz"))
             mmr = _decimal(row.get("mmr"))
             max_leverage = _positive(row.get("maxLever"))
+            row_type = row.get("instType")
+            row_mode = row.get("tdMode")
             if (
-                row.get("instType") != "SWAP"
-                or row.get("tdMode") != "isolated"
+                row_type not in (None, "", "SWAP")
+                or row_mode not in (None, "", "isolated")
                 or row.get("instFamily") != family
                 or minimum is None or minimum < 0
                 or maximum is None or maximum < minimum
@@ -350,7 +417,8 @@ class StrategyService:
         account, fingerprint, meta, fee_rate, tiers = self._load_market_inputs(contract)
         current = meta["last"]
         tick = meta["tickSize"]
-        levels_by_side: dict[str, list[Decimal]] = {"long": [], "short": []}
+        id_mode = "direction" in contract
+        levels_by_side: dict[str, list[dict[str, Any]]] = {"long": [], "short": []}
         for row in contract["selectedLevels"]:
             price = Decimal(row["price"])
             if (price / tick) != (price / tick).to_integral_value():
@@ -360,7 +428,10 @@ class StrategyService:
                     raise self._invalid("entry_side_invalid", "Long support entries must remain below the current SWAP price.")
             elif price <= current:
                 raise self._invalid("entry_side_invalid", "Short resistance entries must remain above the current SWAP price.")
-            levels_by_side[row["side"]].append(price)
+            normalized_row: dict[str, Any] = {"price": price}
+            if id_mode:
+                normalized_row["levelId"] = row["levelId"]
+            levels_by_side[row["side"]].append(normalized_row)
 
         unit = meta["contractValue"] * meta["contractMultiplier"]
         total_margin = Decimal(contract["totalMargin"])
@@ -368,16 +439,28 @@ class StrategyService:
         total_actual_margin = Decimal(0)
         total_fees = Decimal(0)
         for side in ("long", "short"):
-            prices = levels_by_side[side]
-            if not prices:
+            side_rows = levels_by_side[side]
+            if not side_rows:
                 continue
-            prices.sort(reverse=(side == "long"))
+            if id_mode:
+                side_rows.sort(
+                    key=lambda row: (
+                        -row["price"] if side == "long" else row["price"],
+                        row["levelId"],
+                    )
+                )
+            else:
+                side_rows.sort(key=lambda row: row["price"], reverse=(side == "long"))
             entry = Decimal(contract["entryBySide"][side])
-            nearest_distance = min(abs(current - price) for price in prices)
+            nearest_distance = min(abs(current - row["price"]) for row in side_rows)
+            entry_id = contract["entryLevelIdBySide"][side] if id_mode else None
+            if id_mode:
+                entry_row = next(row for row in side_rows if row["levelId"] == entry_id)
+                entry = entry_row["price"]
             if abs(current - entry) != nearest_distance:
                 raise self._invalid("entry_not_nearest", "The entry must be the nearest selected level to the current SWAP price.")
 
-            count = len(prices)
+            count = len(side_rows)
             if contract["allocation"] == "increasing":
                 weights = list(range(1, count + 1))
             elif contract["allocation"] == "decreasing":
@@ -389,7 +472,9 @@ class StrategyService:
             cumulative_contracts = Decimal(0)
             cumulative_notional = Decimal(0)
             cumulative_margin = Decimal(0)
-            for index, (price, weight) in enumerate(zip(prices, weights)):
+            side_order_start = len(orders)
+            for index, (selected_row, weight) in enumerate(zip(side_rows, weights)):
+                price = selected_row["price"]
                 allocation = side_budget * Decimal(weight) / weight_total
                 side_leverage = Decimal(contract["leverage"][side])
                 intended_notional = allocation * side_leverage
@@ -439,9 +524,11 @@ class StrategyService:
                 else:
                     numerator = unit * cumulative_contracts * cumulative_average + cumulative_margin
                     liquidation = {"status": "estimated", "price": _text(_round_down(numerator / short_denominator, tick))}
-                orders.append({
+                order = {
                     "side": side,
-                    "role": "entry" if price == entry else "dca",
+                    "role": (
+                        "entry" if selected_row["levelId"] == entry_id else "dca"
+                    ) if id_mode else ("entry" if price == entry else "dca"),
                     "limitPrice": _text(price),
                     "contracts": _text(contracts),
                     "leverage": int(side_leverage),
@@ -453,7 +540,25 @@ class StrategyService:
                     "cumulativeContracts": _text(cumulative_contracts),
                     "cumulativeAverageEntry": _text(cumulative_average),
                     "liquidationEstimate": liquidation,
-                })
+                }
+                if id_mode:
+                    order["levelId"] = selected_row["levelId"]
+                orders.append(order)
+
+            if id_mode:
+                same_price_groups: dict[Decimal, list[int]] = {}
+                for order_index in range(side_order_start, len(orders)):
+                    price = Decimal(orders[order_index]["limitPrice"])
+                    same_price_groups.setdefault(price, []).append(order_index)
+                for group_indices in same_price_groups.values():
+                    if len(group_indices) < 2:
+                        continue
+                    group_estimate = orders[group_indices[-1]]["liquidationEstimate"]
+                    for order_index in group_indices:
+                        orders[order_index]["liquidationEstimate"] = group_estimate
+                        orders[order_index]["liquidationEstimateNote"] = (
+                            "Estimated after all same-price orders fill; OKX fill order is not guaranteed."
+                        )
 
         unallocated = total_margin - total_actual_margin
         if unallocated < 0:
@@ -512,13 +617,19 @@ class StrategyService:
 
     @staticmethod
     def _with_client_ids(preview: dict[str, Any], old_orders: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
-        existing: dict[tuple[str, str, str], str] = {}
+        id_mode = any("levelId" in row for row in preview["orders"])
+        existing: dict[Any, str] = {}
         for row in old_orders or []:
-            existing[(row.get("side", ""), row.get("limitPrice", ""), row.get("role", ""))] = row.get("clientOrderId", "")
+            if id_mode:
+                level_id = row.get("levelId")
+                if isinstance(level_id, str):
+                    existing[level_id] = row.get("clientOrderId", "")
+            else:
+                existing[(row.get("side", ""), row.get("limitPrice", ""), row.get("role", ""))] = row.get("clientOrderId", "")
         result: list[dict[str, Any]] = []
         for row in preview["orders"]:
             order = dict(row)
-            key = (order["side"], order["limitPrice"], order["role"])
+            key: Any = order["levelId"] if id_mode else (order["side"], order["limitPrice"], order["role"])
             order["clientOrderId"] = existing.get(key) or "st" + secrets.token_hex(14)
             result.append(order)
         return result

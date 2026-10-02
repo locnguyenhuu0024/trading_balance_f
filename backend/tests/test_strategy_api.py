@@ -6,7 +6,7 @@ import threading
 import unittest
 from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor
-from decimal import Decimal, ROUND_CEILING
+from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 from tempfile import TemporaryDirectory
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
@@ -193,6 +193,35 @@ class StrategyApiTests(unittest.TestCase):
             "allocation": "equal",
         }
 
+    @staticmethod
+    def id_mode_contract(
+        selected_levels: list[dict[str, Any]] | None = None,
+        *,
+        direction: str = "long",
+        entry_ids: dict[str, str] | None = None,
+        include_legacy_entries: bool = False,
+    ) -> dict[str, Any]:
+        rows = deepcopy(selected_levels or [{"side": "long", "price": "59000", "levelId": "long-1"}])
+        selected_entries = dict(entry_ids or {"long": rows[0]["levelId"]})
+        sides = sorted({row["side"] for row in rows}, key=lambda side: (side != "long", side))
+        contract: dict[str, Any] = {
+            "instrumentId": INSTRUMENT,
+            "interval": "12Hutc",
+            "selectedLevels": rows,
+            "direction": direction,
+            "entryLevelIdBySide": selected_entries,
+            "totalMargin": "60" if len(sides) == 1 else "100",
+            "leverage": {side: 5 for side in sides},
+            "sidePercent": {side: "100" if len(sides) == 1 else "50" for side in sides},
+            "allocation": "equal",
+        }
+        if include_legacy_entries:
+            contract["entryBySide"] = {
+                side: next(row["price"] for row in rows if row["levelId"] == level_id)
+                for side, level_id in selected_entries.items()
+            }
+        return contract
+
     def save_draft(self, contract: dict[str, Any] | None = None) -> tuple[str, dict[str, Any]]:
         source = self.one_sided_contract() if contract is None else contract
         status, preview = self.request("POST", "/v1/strategies/preview", source)
@@ -315,6 +344,231 @@ class StrategyApiTests(unittest.TestCase):
         self.assertEqual(status, 422, result)
         self.assertEqual(result["reason"], "entry_side_invalid")
         self.assertEqual(self.exchange.trade_writes, [])
+
+    def test_red_id_mode_preserves_equal_price_levels_and_groups_liquidation(self) -> None:
+        self.exchange.tier_data = [
+            {"instType": "SWAP", "tdMode": "isolated", "instFamily": "BTC-USDT", "tier": "1",
+             "minSz": "0", "maxSz": "2", "mmr": "0.01", "imr": "0.1", "maxLever": "125"},
+            {"instType": "SWAP", "tdMode": "isolated", "instFamily": "BTC-USDT", "tier": "2",
+             "minSz": "2.1", "maxSz": "100000", "mmr": "0.02", "imr": "0.1", "maxLever": "125"},
+        ]
+        rows = [
+            {"side": "long", "price": "59000", "levelId": "long-z"},
+            {"side": "long", "price": "59000", "levelId": "long-a"},
+        ]
+        contract = self.id_mode_contract(
+            rows, entry_ids={"long": "long-z"}, include_legacy_entries=True,
+        )
+
+        status, preview = self.request("POST", "/v1/strategies/preview", contract)
+        self.assertEqual(status, 200, preview)
+        self.assertEqual([row["levelId"] for row in preview["orders"]], ["long-a", "long-z"])
+        self.assertEqual({row["role"] for row in preview["orders"] if row["levelId"] == "long-z"}, {"entry"})
+        self.assertEqual({row["role"] for row in preview["orders"] if row["levelId"] == "long-a"}, {"dca"})
+
+        unit = Decimal("0.001")
+        contracts = Decimal("4")
+        average = Decimal("59000")
+        margin = Decimal("47.2")
+        mmr = Decimal("0.02")
+        fee = Decimal("0.0005")
+        long_price = ((unit * contracts * average - margin) / (unit * contracts * (1 - mmr - fee))).quantize(
+            Decimal("0.1"), rounding=ROUND_CEILING,
+        )
+        estimates = [row["liquidationEstimate"]["price"] for row in preview["orders"]]
+        self.assertEqual(estimates, [format(long_price, "f"), format(long_price, "f")])
+        for row in preview["orders"]:
+            note = row["liquidationEstimateNote"].lower()
+            self.assertIn("same-price orders", note)
+            self.assertIn("fill order is not guaranteed", note)
+
+        reordered = {**contract, "selectedLevels": list(reversed(rows))}
+        status, reordered_preview = self.request("POST", "/v1/strategies/preview", reordered)
+        self.assertEqual(status, 200, reordered_preview)
+        self.assertEqual(reordered_preview["previewHash"], preview["previewHash"])
+
+        sequence_contract = self.id_mode_contract(
+            [
+                {"side": "long", "price": "58000", "levelId": "long-low"},
+                {"side": "long", "price": "59000", "levelId": "long-high"},
+            ],
+            entry_ids={"long": "long-high"},
+        )
+        status, sequence_preview = self.request("POST", "/v1/strategies/preview", sequence_contract)
+        self.assertEqual(status, 200, sequence_preview)
+        self.assertEqual([row["levelId"] for row in sequence_preview["orders"]], ["long-high", "long-low"])
+
+    def test_red_id_mode_validates_ids_direction_entries_tick_and_order_limit(self) -> None:
+        rows = [
+            {"side": "long", "price": "59000", "levelId": "near"},
+            {"side": "long", "price": "58000", "levelId": "far"},
+        ]
+        base = self.id_mode_contract(
+            rows, entry_ids={"long": "near"}, include_legacy_entries=True,
+        )
+        invalid_contracts: list[tuple[str, dict[str, Any]]] = []
+
+        missing_direction = deepcopy(base)
+        missing_direction.pop("direction")
+        invalid_contracts.append(("missing direction", missing_direction))
+
+        wrong_direction = deepcopy(base)
+        wrong_direction["direction"] = "both"
+        invalid_contracts.append(("direction does not match sides", wrong_direction))
+
+        mixed_ids = deepcopy(base)
+        mixed_ids["selectedLevels"][1].pop("levelId")
+        invalid_contracts.append(("ID mode is all or none", mixed_ids))
+
+        duplicate_ids = deepcopy(base)
+        duplicate_ids["selectedLevels"][1]["levelId"] = "near"
+        invalid_contracts.append(("duplicate IDs", duplicate_ids))
+
+        invalid_id = deepcopy(base)
+        invalid_id["selectedLevels"][0]["levelId"] = "near:bad"
+        invalid_contracts.append(("unsafe ID characters", invalid_id))
+
+        long_id = deepcopy(base)
+        long_id["selectedLevels"][0]["levelId"] = "a" * 129
+        invalid_contracts.append(("ID exceeds bound", long_id))
+
+        missing_entry = deepcopy(base)
+        missing_entry["entryLevelIdBySide"] = {}
+        invalid_contracts.append(("missing entry ID", missing_entry))
+
+        foreign_entry = self.id_mode_contract(
+            [
+                {"side": "long", "price": "59000", "levelId": "near"},
+                {"side": "short", "price": "61000", "levelId": "short-near"},
+            ],
+            direction="both", entry_ids={"long": "short-near", "short": "short-near"},
+        )
+        invalid_contracts.append(("entry ID belongs to another side", foreign_entry))
+
+        inconsistent_legacy_entry = deepcopy(base)
+        inconsistent_legacy_entry["entryBySide"]["long"] = "58000"
+        invalid_contracts.append(("legacy entry price disagrees with selected ID", inconsistent_legacy_entry))
+
+        off_tick = deepcopy(base)
+        off_tick["selectedLevels"][0]["price"] = "59000.05"
+        off_tick["entryBySide"]["long"] = "59000.05"
+        invalid_contracts.append(("off tick price", off_tick))
+
+        not_nearest = deepcopy(base)
+        not_nearest["entryLevelIdBySide"]["long"] = "far"
+        not_nearest["entryBySide"]["long"] = "58000"
+        invalid_contracts.append(("entry ID is not nearest", not_nearest))
+
+        too_many = deepcopy(base)
+        too_many["selectedLevels"] = [
+            {"side": "long", "price": "59000", "levelId": f"level-{index}"}
+            for index in range(21)
+        ]
+        too_many["entryLevelIdBySide"] = {"long": "level-0"}
+        too_many["entryBySide"] = {"long": "59000"}
+        invalid_contracts.append(("more than twenty rows", too_many))
+
+        for label, contract in invalid_contracts:
+            with self.subTest(label=label):
+                status, result = self.request("POST", "/v1/strategies/preview", contract)
+                self.assertEqual(status, 422, result)
+                self.assertEqual(self.exchange.trade_writes, [])
+
+    def test_red_id_mode_persists_both_sides_through_prepare_batch_and_reconciliation(self) -> None:
+        self.exchange.tier_data = [
+            {"instType": "SWAP", "tdMode": "isolated", "instFamily": "BTC-USDT", "tier": "1",
+             "minSz": "0", "maxSz": "2", "mmr": "0.01", "imr": "0.1", "maxLever": "125"},
+            {"instType": "SWAP", "tdMode": "isolated", "instFamily": "BTC-USDT", "tier": "2",
+             "minSz": "2.1", "maxSz": "100000", "mmr": "0.02", "imr": "0.1", "maxLever": "125"},
+        ]
+        rows = [
+            {"side": "short", "price": "61000", "levelId": "short-z"},
+            {"side": "long", "price": "59000", "levelId": "long-z"},
+            {"side": "short", "price": "61000", "levelId": "short-a"},
+            {"side": "long", "price": "59000", "levelId": "long-a"},
+        ]
+        contract = self.id_mode_contract(
+            rows, direction="both", entry_ids={"long": "long-z", "short": "short-a"},
+        )
+        status, preview = self.request("POST", "/v1/strategies/preview", contract)
+        self.assertEqual(status, 200, preview)
+        self.assertEqual([row["levelId"] for row in preview["orders"]], [
+            "long-a", "long-z", "short-a", "short-z",
+        ])
+        self.assertEqual([row["side"] for row in preview["orders"]], ["long", "long", "short", "short"])
+        roles = {row["levelId"]: row["role"] for row in preview["orders"]}
+        self.assertEqual(roles, {
+            "long-a": "dca", "long-z": "entry", "short-a": "entry", "short-z": "dca",
+        })
+        unit = Decimal("0.001")
+        contracts = Decimal("4")
+        mmr = Decimal("0.02")
+        fee = Decimal("0.0005")
+        long_margin = Decimal("23.6") * 2
+        long_expected = ((unit * contracts * Decimal("59000") - long_margin) /
+                         (unit * contracts * (1 - mmr - fee))).quantize(Decimal("0.1"), rounding=ROUND_CEILING)
+        short_margin = Decimal("24.4") * 2
+        short_expected = ((unit * contracts * Decimal("61000") + short_margin) /
+                          (unit * contracts * (1 + mmr + fee))).quantize(Decimal("0.1"), rounding=ROUND_FLOOR)
+        for side, expected in (("long", long_expected), ("short", short_expected)):
+            side_orders = [row for row in preview["orders"] if row["side"] == side]
+            self.assertEqual(
+                [row["liquidationEstimate"]["price"] for row in side_orders],
+                [format(expected, "f"), format(expected, "f")],
+            )
+            self.assertTrue(all("fill order is not guaranteed" in row["liquidationEstimateNote"] for row in side_orders))
+
+        reordered = {**contract, "selectedLevels": list(reversed(rows))}
+        status, reordered_preview = self.request("POST", "/v1/strategies/preview", reordered)
+        self.assertEqual(status, 200, reordered_preview)
+        self.assertEqual(reordered_preview["previewHash"], preview["previewHash"])
+
+        strategy_id, saved_preview = self.save_draft(contract)
+        status, draft = self.request("GET", f"/v1/strategies/{strategy_id}/result")
+        self.assertEqual(status, 200, draft)
+        draft_by_id = {row["levelId"]: row["clientOrderId"] for row in draft["orders"]}
+        self.assertEqual(set(draft_by_id), {"long-a", "long-z", "short-a", "short-z"})
+
+        status, net_mode = self.request("POST", f"/v1/strategies/{strategy_id}/prepare-apply", {})
+        self.assertEqual(status, 409, net_mode)
+        self.assertEqual(net_mode["error"], "account_mode_unsupported")
+        self.assertEqual(self.exchange.trade_writes, [])
+        self.exchange.pos_mode = "long_short_mode"
+        status, prepared = self.request("POST", f"/v1/strategies/{strategy_id}/prepare-apply", {})
+        self.assertEqual(status, 200, prepared)
+        prepared_by_id = {row["levelId"]: row["clientOrderId"] for row in prepared["orders"]}
+        self.assertEqual(prepared_by_id, draft_by_id)
+        self.assertEqual(saved_preview["previewHash"], preview["previewHash"])
+
+        status, applied = self.request(
+            "POST", f"/v1/strategies/{strategy_id}/execute-apply",
+            {"confirmationToken": prepared["confirmationToken"]},
+        )
+        self.assertEqual(status, 200, applied)
+        self.assertEqual(applied["status"], "APPLIED")
+        self.assertEqual({row["levelId"]: row["clientOrderId"] for row in applied["orders"]}, draft_by_id)
+        batch = self.exchange.batch_writes[0][2]
+        self.assertEqual(len(batch), 4)
+        self.assertEqual([row["posSide"] for row in batch], ["long", "long", "short", "short"])
+        self.assertEqual({row["clOrdId"] for row in batch}, set(draft_by_id.values()))
+        self.assertEqual(len({row["clOrdId"] for row in batch}), 4)
+
+        status, reconciled = self.request("GET", f"/v1/strategies/{strategy_id}/result")
+        self.assertEqual(status, 200, reconciled)
+        self.assertEqual(reconciled["status"], "APPLIED")
+        self.assertEqual({row["levelId"]: row["clientOrderId"] for row in reconciled["orders"]}, draft_by_id)
+        self.assertEqual([row["status"] for row in reconciled["orders"]], ["live"] * 4)
+
+    def test_green_legacy_preview_hash_and_idless_orders_remain_unchanged(self) -> None:
+        status, preview = self.request("POST", "/v1/strategies/preview", self.one_sided_contract())
+        self.assertEqual(status, 200, preview)
+        self.assertEqual(preview["previewHash"], "1daa30a7fbef88e95ac266a003bdcd5c9321bfc244ee8f71273253ee9f1072c8")
+        self.assertTrue(all("levelId" not in row for row in preview["orders"]))
+
+        strategy_id, _ = self.save_draft()
+        status, result = self.request("GET", f"/v1/strategies/{strategy_id}/result")
+        self.assertEqual(status, 200, result)
+        self.assertTrue(all("levelId" not in row for row in result["orders"]))
 
     def test_red_account_change_and_expired_prepare_do_not_write(self) -> None:
         strategy_id, _ = self.save_draft()
@@ -659,9 +913,9 @@ class StrategyApiTests(unittest.TestCase):
         self.assertEqual(status, 422, result)
         self.assertEqual(result["reason"], "leverage_exceeds_tier")
 
-    def test_red_missing_fee_identity_and_tier_instrument_type_fail_closed(self) -> None:
+    def test_red_missing_fee_identity_fails_closed(self) -> None:
         for path, field in (
-            ("fee_data", "instType"), ("fee_data", "instFamily"), ("tier_data", "instType"),
+            ("fee_data", "instType"), ("fee_data", "instFamily"),
         ):
             with self.subTest(path=path, field=field):
                 exchange_rows = getattr(self.exchange, path)
@@ -670,6 +924,35 @@ class StrategyApiTests(unittest.TestCase):
                 status, result = self.request("POST", "/v1/strategies/preview", self.one_sided_contract())
                 self.assertEqual(status, 502, result)
                 setattr(self.exchange, path, original)
+
+    def test_green_omitted_tier_request_metadata_is_accepted_but_conflicts_fail_closed(self) -> None:
+        baseline = deepcopy(self.exchange.tier_data)
+        optional_metadata_cases = [
+            ("both omitted", {"instType": ..., "tdMode": ...}),
+            ("null", {"instType": None, "tdMode": None}),
+            ("blank", {"instType": "", "tdMode": ""}),
+        ]
+        for label, values in optional_metadata_cases:
+            with self.subTest(label=label):
+                self.exchange.tier_data = deepcopy(baseline)
+                row = self.exchange.tier_data[0]
+                for field, value in values.items():
+                    if value is ...:
+                        row.pop(field)
+                    else:
+                        row[field] = value
+                status, result = self.request("POST", "/v1/strategies/preview", self.one_sided_contract())
+                self.assertEqual(status, 200, result)
+                self.assertEqual(self.exchange.trade_writes, [])
+
+        for field, value in (("instType", "SPOT"), ("tdMode", "cross"), ("instType", 1), ("tdMode", [])):
+            with self.subTest(field=field, value=value):
+                self.exchange.tier_data = deepcopy(baseline)
+                self.exchange.tier_data[0][field] = value
+                status, result = self.request("POST", "/v1/strategies/preview", self.one_sided_contract())
+                self.assertEqual(status, 502, result)
+                self.assertEqual(result["error"], "preview_inputs_unavailable")
+                self.assertEqual(self.exchange.trade_writes, [])
 
     def test_green_decimal_preview_batch_and_restart_status(self) -> None:
         strategy_id, preview = self.save_draft()

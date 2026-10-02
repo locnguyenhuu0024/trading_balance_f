@@ -119,7 +119,7 @@ void main() {
     () async {
       var now = DateTime.utc(2026, 10, 1, 8);
       final market = _FakeMarketRepository(clock: () => now);
-      final api = _FakeStrategyApi();
+      final api = _FakeStrategyApi(status: 'APPLIED');
       final controller = _controller(api, market: market, clock: () => now);
       addTearDown(controller.dispose);
       await controller.load();
@@ -140,7 +140,10 @@ void main() {
 
   test('backs off repeated public ticker failures', () async {
     final market = _FakeMarketRepository()..failTickers = true;
-    final controller = _controller(_FakeStrategyApi(), market: market);
+    final controller = _controller(
+      _FakeStrategyApi(status: 'APPLIED'),
+      market: market,
+    );
     addTearDown(controller.dispose);
     await controller.load();
     controller.setVisibility(pageVisible: true, appVisible: true);
@@ -149,9 +152,22 @@ void main() {
     expect(market.tickerCalls, 1);
   });
 
+  test('does not poll draft or prepared strategies', () async {
+    final market = _FakeMarketRepository();
+    final api = _FakeStrategyApi(statuses: ['DRAFT', 'PREPARED']);
+    final controller = _controller(api, market: market);
+    addTearDown(controller.dispose);
+    await controller.load();
+    controller.setVisibility(pageVisible: true, appVisible: true);
+    await Future<void>.delayed(const Duration(milliseconds: 1100));
+
+    expect(market.tickerCalls, 0);
+  });
+
   test('public ticker polling stops when the page or app is hidden', () async {
     final market = _FakeMarketRepository();
-    final controller = _controller(_FakeStrategyApi(), market: market);
+    final api = _FakeStrategyApi(statuses: ['APPLIED', 'PARTIAL', 'UNKNOWN']);
+    final controller = _controller(api, market: market);
     addTearDown(controller.dispose);
     await controller.load();
     expect(market.tickerCalls, 0);
@@ -160,19 +176,25 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 20));
     expect(market.tickerCalls, 1);
 
+    await Future<void>.delayed(const Duration(milliseconds: 1100));
+    expect(market.tickerCalls, 2);
+
     controller.setVisibility(pageVisible: true, appVisible: false);
     await Future<void>.delayed(const Duration(milliseconds: 1100));
-    expect(market.tickerCalls, 1);
+    expect(market.tickerCalls, 2);
 
     controller.setVisibility(pageVisible: false, appVisible: true);
     await Future<void>.delayed(const Duration(milliseconds: 1100));
-    expect(market.tickerCalls, 1);
+    expect(market.tickerCalls, 2);
   });
 
   test('does not overlap a slow public ticker request', () async {
     final market = _FakeMarketRepository()
       ..tickerCompleter = Completer<StrategyTicker>();
-    final controller = _controller(_FakeStrategyApi(), market: market);
+    final controller = _controller(
+      _FakeStrategyApi(status: 'APPLIED'),
+      market: market,
+    );
     addTearDown(controller.dispose);
     await controller.load();
     controller.setVisibility(pageVisible: true, appVisible: true);
@@ -206,7 +228,7 @@ void main() {
           ),
         ];
       final controller = _controller(
-        _FakeStrategyApi(),
+        _FakeStrategyApi(status: 'APPLIED'),
         market: market,
         clock: () => now,
       );
@@ -432,9 +454,11 @@ class _FakeMarketRepository extends StrategyMarketRepository {
 }
 
 class _FakeStrategyApi implements StrategyApi {
-  _FakeStrategyApi({this.status = 'DRAFT'});
+  _FakeStrategyApi({this.status = 'DRAFT', List<String>? statuses})
+    : statuses = statuses ?? [status];
 
   final String status;
+  final List<String> statuses;
   final prepared = <String, dynamic>{
     'confirmationToken': 'one-use-token',
     'estimatedOpeningFees': '0.03',
@@ -449,12 +473,13 @@ class _FakeStrategyApi implements StrategyApi {
   String executeStatus = 'APPLIED';
   StrategyApiException? listError;
 
-  List<Map<String, dynamic>> get strategies => [
-    {
-      'id': 'draft-1',
+  List<Map<String, dynamic>> get strategies => List.generate(
+    statuses.length,
+    (index) => {
+      'id': index == 0 ? 'draft-1' : 'strategy-$index',
       'instrumentId': 'BTC-USDT-SWAP',
       'interval': '6Hutc',
-      'status': status,
+      'status': statuses[index],
       'unrealizedPnl': '12',
       'filledMargin': '50',
       'pnlPercent': '24',
@@ -467,7 +492,7 @@ class _FakeStrategyApi implements StrategyApi {
         },
       ],
     },
-  ];
+  );
 
   @override
   Future<Map<String, dynamic>> preview(

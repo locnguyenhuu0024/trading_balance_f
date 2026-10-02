@@ -7,6 +7,7 @@ import '../domain/strategy_calculator.dart';
 import '../domain/strategy_models.dart';
 
 typedef StrategyMarketClock = DateTime Function();
+typedef _MarketPrice = ({double value, String text});
 
 class StrategyMarketRepository {
   StrategyMarketRepository(
@@ -45,19 +46,26 @@ class StrategyMarketRepository {
       }
       final instrumentId = _text(raw['instId'])?.toUpperCase();
       if (instrumentId == null) continue;
-      final instrumentMatch =
-          RegExp(r'^([A-Z0-9]+)-USDT-SWAP$').firstMatch(instrumentId);
+      final instrumentMatch = RegExp(
+        r'^([A-Z0-9]+)-USDT-SWAP$',
+      ).firstMatch(instrumentId);
       if (instrumentMatch == null) continue;
       final base = instrumentMatch.group(1)!;
       final metadataBase = _text(raw['baseCcy'])?.toUpperCase();
+      final tickSize = _marketPrice(raw['tickSz']);
       if ((metadataBase != null &&
               metadataBase.isNotEmpty &&
               metadataBase != base) ||
+          tickSize == null ||
           !seen.add(instrumentId)) {
         continue;
       }
       instruments.add(
-        StrategyInstrument(instrumentId: instrumentId, base: base),
+        StrategyInstrument(
+          instrumentId: instrumentId,
+          base: base,
+          tickSizeText: tickSize.text,
+        ),
       );
     }
     instruments.sort(
@@ -76,10 +84,10 @@ class StrategyMarketRepository {
         'No ticker for the selected USDT swap is available.',
       );
     }
-    final price = _number(rows.single['last']);
+    final price = _marketPrice(rows.single['last']);
     final timestamp = _epoch(rows.single['ts']);
     final now = clock().toUtc();
-    if (price == null || price <= 0 || timestamp == null) {
+    if (price == null || timestamp == null) {
       throw const StrategyMarketException(
         'The selected swap ticker is invalid.',
       );
@@ -97,8 +105,9 @@ class StrategyMarketRepository {
     _lastTickerTimestamps[normalized] = timestamp;
     return StrategyTicker(
       instrumentId: normalized,
-      lastPrice: price,
+      lastPrice: price.value,
       observedAt: timestamp,
+      exactPriceText: price.text,
     );
   }
 
@@ -152,19 +161,23 @@ class StrategyMarketRepository {
         }
         final key = timestamp.millisecondsSinceEpoch;
         if (!seenTimestamps.add(key)) continue;
-        final open = _number(row['o']);
-        final high = _number(row['h']);
-        final low = _number(row['l']);
-        final close = _number(row['c']);
+        final open = _marketPrice(row['o']);
+        final high = _marketPrice(row['h']);
+        final low = _marketPrice(row['l']);
+        final close = _marketPrice(row['c']);
         if (open == null || high == null || low == null || close == null)
           continue;
         final candle = StrategyCandle(
           timestamp: timestamp,
-          open: open,
-          high: high,
-          low: low,
-          close: close,
+          open: open.value,
+          high: high.value,
+          low: low.value,
+          close: close.value,
           interval: interval,
+          exactOpenText: open.text,
+          exactHighText: high.text,
+          exactLowText: low.text,
+          exactCloseText: close.text,
         );
         if (!candle.hasValidPrices) continue;
         candles.add(candle);
@@ -192,8 +205,15 @@ class StrategyMarketRepository {
   Future<StrategyMarketSnapshot> loadLevels({
     required String instrumentId,
     required StrategyInterval interval,
+    required String tickSizeText,
   }) async {
     final normalized = _validateInstrument(instrumentId);
+    final tickSize = StrategyDecimal.tryParse(tickSizeText);
+    if (tickSize == null || !tickSize.isPositive) {
+      throw const StrategyMarketException(
+        'The selected swap tick size is invalid.',
+      );
+    }
     final tickerFuture = getTicker(instrumentId: normalized);
     final candlesFuture = getCandles(
       instrumentId: normalized,
@@ -209,6 +229,8 @@ class StrategyMarketRepository {
       analysis: calculator.calculate(
         candles: candles,
         referencePrice: ticker.lastPrice,
+        referencePriceText: ticker.priceText,
+        tickSizeText: tickSizeText,
       ),
     );
   }
@@ -297,13 +319,23 @@ class StrategyMarketRepository {
   String? _text(Object? value) =>
       value is String || value is num ? value.toString().trim() : null;
 
-  double? _number(Object? value) {
-    final parsed = switch (value) {
-      num number => number.toDouble(),
-      String text => double.tryParse(text.trim()),
+  _MarketPrice? _marketPrice(Object? value) {
+    final text = switch (value) {
+      String string => string.trim(),
+      num number => number.toString(),
       _ => null,
     };
-    return parsed != null && parsed.isFinite ? parsed : null;
+    if (text == null) return null;
+    final decimal = StrategyDecimal.tryParse(text);
+    final number = double.tryParse(text);
+    if (decimal == null ||
+        !decimal.isPositive ||
+        number == null ||
+        !number.isFinite ||
+        number <= 0) {
+      return null;
+    }
+    return (value: number, text: text);
   }
 
   DateTime? _epoch(Object? value) {
