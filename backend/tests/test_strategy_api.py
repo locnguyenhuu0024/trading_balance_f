@@ -33,7 +33,13 @@ class FakeStrategyExchange:
         self.fail_position_reads = False
         self.pending: list[dict[str, Any]] = []
         self.fee_data: list[dict[str, Any]] = [
-            {"instType": "SWAP", "instFamily": "BTC-USDT", "maker": "0.0002", "taker": "0.0005"}
+            {
+                "instType": "SWAP", "instFamily": "BTC-USDT",
+                "feeGroup": [
+                    {"groupId": "1", "maker": "-0.0001", "taker": "-0.001"},
+                    {"groupId": "2", "maker": "-0.0002", "taker": "-0.0005"},
+                ],
+            }
         ]
         self.tier_data: list[dict[str, Any]] = [
             {"instType": "SWAP", "tdMode": "isolated", "instFamily": "BTC-USDT", "tier": "1",
@@ -41,7 +47,7 @@ class FakeStrategyExchange:
         ]
         self.instrument_data: list[dict[str, Any]] = [
             {"instId": INSTRUMENT, "instType": "SWAP", "instFamily": "BTC-USDT", "state": "live",
-             "ctType": "linear",
+             "groupId": "2", "ctType": "linear",
              "baseCcy": "BTC", "quoteCcy": "USDT",
              "settleCcy": "USDT", "ctVal": "0.001", "ctMult": "1", "ctValCcy": "BTC",
              "tickSz": "0.1", "lotSz": "1", "minSz": "1"}
@@ -269,14 +275,13 @@ class StrategyApiTests(unittest.TestCase):
             {"instType": "SWAP", "tdMode": "isolated", "instFamily": "BTC-USDT", "tier": "1",
              "minSz": "0", "maxSz": "100000", "mmr": "0.01", "imr": "0.1", "maxLever": "125"}
         ]
+        valid_fee_data = deepcopy(self.exchange.fee_data)
         self.exchange.fee_data = []
         status, result = self.request("POST", "/v1/strategies/preview", self.one_sided_contract())
         self.assertEqual(status, 502, result)
         self.assertEqual(result["error"], "preview_inputs_unavailable")
 
-        self.exchange.fee_data = [
-            {"instType": "SWAP", "instFamily": "BTC-USDT", "maker": "0.0002", "taker": "0.0005"}
-        ]
+        self.exchange.fee_data = valid_fee_data
         undersized = self.one_sided_contract()
         undersized["totalMargin"] = "1"
         undersized["leverage"] = {"long": 1}
@@ -914,16 +919,79 @@ class StrategyApiTests(unittest.TestCase):
         self.assertEqual(result["reason"], "leverage_exceeds_tier")
 
     def test_red_missing_fee_identity_fails_closed(self) -> None:
-        for path, field in (
-            ("fee_data", "instType"), ("fee_data", "instFamily"),
-        ):
-            with self.subTest(path=path, field=field):
-                exchange_rows = getattr(self.exchange, path)
-                original = deepcopy(exchange_rows)
-                exchange_rows[0].pop(field)
+        original = deepcopy(self.exchange.fee_data)
+        self.exchange.fee_data[0].pop("instType")
+        status, result = self.request("POST", "/v1/strategies/preview", self.one_sided_contract())
+        self.assertEqual(status, 502, result)
+        self.exchange.fee_data = original
+
+    def test_green_documented_fee_group_selects_instrument_group_without_family_echo(self) -> None:
+        self.exchange.fee_data = [{
+            "instType": "SWAP",
+            "feeGroup": [
+                {"groupId": "1", "maker": "-0.0001", "taker": "-0.001"},
+                {"groupId": "2", "maker": "-0.0002", "taker": "-0.0005"},
+            ],
+        }]
+        status, preview = self.request("POST", "/v1/strategies/preview", self.one_sided_contract())
+        self.assertEqual(status, 200, preview)
+        expected_notional = Decimal("5") * Decimal("59000") * Decimal("0.001")
+        expected_taker_cost = expected_notional * Decimal("0.0005")
+        self.assertEqual(Decimal(preview["estimatedOpeningFees"]), expected_taker_cost)
+        self.assertEqual(Decimal(preview["orders"][0]["openingFeeEstimate"]), expected_taker_cost)
+        self.assertEqual(preview["feesOutsideMargin"], True)
+        self.assertEqual(self.exchange.trade_writes, [])
+
+    def test_green_fee_group_rejects_ambiguous_or_malformed_data_without_writes(self) -> None:
+        baseline_fees = deepcopy(self.exchange.fee_data)
+        baseline_instruments = deepcopy(self.exchange.instrument_data)
+        cases = [
+            ("missing instrument group", lambda: self.exchange.instrument_data[0].pop("groupId")),
+            ("blank instrument group", lambda: self.exchange.instrument_data[0].update(groupId=" ")),
+            ("wrong fee group", lambda: self.exchange.fee_data[0].update(feeGroup=[{
+                "groupId": "3", "maker": "-0.0002", "taker": "-0.0005",
+            }])),
+            ("duplicate matching group", lambda: self.exchange.fee_data[0]["feeGroup"].append(
+                deepcopy(self.exchange.fee_data[0]["feeGroup"][1])
+            )),
+            ("malformed unrelated group", lambda: self.exchange.fee_data[0]["feeGroup"].__setitem__(0, {
+                "groupId": "", "maker": "-0.0001", "taker": "-0.001",
+            })),
+            ("conflicting family", lambda: self.exchange.fee_data[0].update(instFamily="ETH-USDT")),
+            ("missing signed taker", lambda: self.exchange.fee_data[0]["feeGroup"][1].pop("taker")),
+            ("nonfinite signed maker", lambda: self.exchange.fee_data[0]["feeGroup"][1].update(maker="NaN")),
+            ("out of range signed taker", lambda: self.exchange.fee_data[0]["feeGroup"][1].update(taker="-1")),
+            ("numeric signed taker", lambda: self.exchange.fee_data[0]["feeGroup"][1].update(taker=0.0005)),
+            ("legacy top-level rates", lambda: self.exchange.fee_data.__setitem__(0, {
+                "instType": "SWAP", "instFamily": "BTC-USDT",
+                "maker": "-0.0002", "taker": "-0.0005",
+            })),
+            ("multiple fee rows", lambda: self.exchange.fee_data.append(deepcopy(self.exchange.fee_data[0]))),
+        ]
+        for label, corrupt in cases:
+            with self.subTest(label=label):
+                self.exchange.fee_data = deepcopy(baseline_fees)
+                self.exchange.instrument_data = deepcopy(baseline_instruments)
+                corrupt()
                 status, result = self.request("POST", "/v1/strategies/preview", self.one_sided_contract())
                 self.assertEqual(status, 502, result)
-                setattr(self.exchange, path, original)
+                self.assertEqual(result["error"], "preview_inputs_unavailable")
+                self.assertEqual(self.exchange.trade_writes, [])
+
+    def test_green_positive_fee_rebate_has_zero_estimated_cost(self) -> None:
+        self.exchange.fee_data = [{
+            "instType": "SWAP",
+            "feeGroup": [
+                {"groupId": "2", "maker": "0.0002", "taker": "0.0005"},
+            ],
+        }]
+        status, preview = self.request("POST", "/v1/strategies/preview", self.one_sided_contract())
+        self.assertEqual(status, 200, preview)
+        self.assertEqual(preview["estimatedOpeningFees"], "0")
+        self.assertEqual(preview["orders"][0]["openingFeeEstimate"], "0")
+        self.assertEqual(preview["plannedMargin"], "59")
+        self.assertEqual(preview["feesOutsideMargin"], True)
+        self.assertEqual(self.exchange.trade_writes, [])
 
     def test_green_omitted_tier_request_metadata_is_accepted_but_conflicts_fail_closed(self) -> None:
         baseline = deepcopy(self.exchange.tier_data)

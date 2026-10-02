@@ -171,7 +171,7 @@ class OKXClient:
             params={"instType": "SWAP", "instFamily": instrument_family},
         )
         data = response.get("data", [])
-        if not data or not isinstance(data[0], dict):
+        if not isinstance(data, list) or len(data) != 1 or not isinstance(data[0], dict):
             raise OKXTransportError("exchange fee metadata is unavailable")
         return data[0]
 

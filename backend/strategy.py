@@ -332,6 +332,9 @@ class StrategyService:
                 502, "preview_inputs_unavailable",
                 "The selected instrument is not a live member of the requested USDT SWAP family.",
             )
+        instrument_group_id = instrument.get("groupId")
+        if not isinstance(instrument_group_id, str) or not instrument_group_id.strip():
+            raise APIError(502, "preview_inputs_unavailable", "The selected instrument's fee group is invalid.")
         base = contract["instrumentId"].split("-", 1)[0]
         instrument_base = instrument.get("baseCcy")
         instrument_quote = instrument.get("quoteCcy")
@@ -369,15 +372,37 @@ class StrategyService:
         if quote_age < 0 or quote_age > _QUOTE_MAX_AGE_MS:
             raise APIError(409, "quote_stale", "The selected SWAP quote is stale; refresh the preview.")
 
-        maker_fee = _decimal(fee.get("maker"))
-        taker_fee = _decimal(fee.get("taker"))
+        fee_family = fee.get("instFamily")
+        fee_groups = fee.get("feeGroup")
         if (
-            maker_fee is None or abs(maker_fee) >= 1
-            or taker_fee is None or taker_fee < 0 or taker_fee >= 1
-            or fee.get("instType") != "SWAP"
-            or fee.get("instFamily") != family
+            fee.get("instType") != "SWAP"
+            or (fee_family is not None and fee_family != family)
+            or not isinstance(fee_groups, list)
+            or not fee_groups
+            or any(
+                not isinstance(group, dict)
+                or not isinstance(group.get("groupId"), str)
+                or not group["groupId"].strip()
+                for group in fee_groups
+            )
         ):
             raise APIError(502, "preview_inputs_unavailable", "The account's applicable SWAP fee is invalid.")
+        matching_fee_groups = [
+            group for group in fee_groups if group["groupId"] == instrument_group_id
+        ]
+        if len(matching_fee_groups) != 1:
+            raise APIError(502, "preview_inputs_unavailable", "The account's applicable SWAP fee is invalid.")
+        maker_value = matching_fee_groups[0].get("maker")
+        taker_value = matching_fee_groups[0].get("taker")
+        maker_signed_fee = _decimal(maker_value) if isinstance(maker_value, str) else None
+        taker_signed_fee = _decimal(taker_value) if isinstance(taker_value, str) else None
+        if (
+            maker_signed_fee is None or abs(maker_signed_fee) >= 1
+            or taker_signed_fee is None or abs(taker_signed_fee) >= 1
+        ):
+            raise APIError(502, "preview_inputs_unavailable", "The account's applicable SWAP fee is invalid.")
+        maker_fee = max(Decimal(0), -maker_signed_fee)
+        taker_fee = max(Decimal(0), -taker_signed_fee)
 
         tiers: list[dict[str, Decimal]] = []
         for row in tier_rows:
