@@ -76,6 +76,52 @@ void main() {
     );
   });
 
+  testWidgets('preview failure can be retried without losing inputs', (
+    tester,
+  ) async {
+    final market = _FakeStrategyMarketRepository();
+    final api = _FakeStrategyApi()
+      ..nextPreviewError = const StrategyApiException(
+        code: 'network_error',
+        statusCode: 503,
+        message: 'Máy chủ xem trước đang gặp sự cố. (HTTP 503)',
+      );
+    final dashboard = _dashboard(api, market);
+    addTearDown(dashboard.dispose);
+    await _pumpWizard(tester, market, api, dashboard);
+
+    await tester.tap(find.byType(CheckboxListTile).first);
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('strategy-next-step-one')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('strategy-margin-input')),
+      '100',
+    );
+    await tester.tap(find.byKey(const Key('strategy-request-preview')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Bước 2 / 3 · Ký quỹ và đòn bẩy'), findsOneWidget);
+    expect(find.textContaining('HTTP 503'), findsOneWidget);
+    expect(api.previewBodies, hasLength(1));
+    expect(api.previewBodies.single['totalMargin'], '100');
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.byKey(const Key('strategy-request-preview')),
+          )
+          .onPressed,
+      isNotNull,
+    );
+
+    await tester.tap(find.byKey(const Key('strategy-request-preview')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Bước 3 / 3 · Xem lại và xác nhận'), findsOneWidget);
+    expect(api.previewBodies, hasLength(2));
+    expect(api.previewBodies[1], api.previewBodies[0]);
+  });
+
   testWidgets(
     'manual quote retry bypasses backoff without overlapping a request',
     (tester) async {
@@ -410,6 +456,7 @@ Future<void> _pumpWizard(
 class _FakeStrategyApi implements StrategyApi {
   final previewBodies = <Map<String, dynamic>>[];
   final saveBodies = <Map<String, dynamic>>[];
+  StrategyApiException? nextPreviewError;
 
   @override
   Future<Map<String, dynamic>> preview(
@@ -417,6 +464,9 @@ class _FakeStrategyApi implements StrategyApi {
     Map<String, dynamic> body,
   ) async {
     previewBodies.add(body);
+    final error = nextPreviewError;
+    nextPreviewError = null;
+    if (error != null) throw error;
     return {
       'previewHash': 'preview-hash',
       'orders': [

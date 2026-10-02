@@ -196,13 +196,45 @@ class StrategyApiClient implements StrategyApi {
         code: _text(payload['error']).isEmpty
             ? 'network_error'
             : _text(payload['error']),
-        message: message.isEmpty
-            ? 'The authenticated strategy request could not be completed.'
-            : message,
+        message: message.isEmpty ? _failureMessage(error) : message,
         details: payload,
       );
     }
   }
+}
+
+String _failureMessage(DioException error) {
+  final statusCode = error.response?.statusCode;
+  if (statusCode != null) {
+    final guidance = switch (statusCode) {
+      401 => 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.',
+      404 =>
+        'Không tìm thấy đường dẫn xem trước chiến lược. Vui lòng kiểm tra API rồi thử lại.',
+      429 =>
+        'Yêu cầu xem trước quá thường xuyên. Vui lòng chờ một chút rồi thử lại.',
+      >= 500 => 'Máy chủ xem trước đang gặp sự cố. Vui lòng thử lại sau.',
+      >= 400 =>
+        'Máy chủ từ chối yêu cầu xem trước. Vui lòng kiểm tra thông tin rồi thử lại.',
+      _ => 'Máy chủ trả về phản hồi không thể xử lý. Vui lòng thử lại sau.',
+    };
+    return '$guidance (HTTP $statusCode)';
+  }
+
+  return switch (error.type) {
+    DioExceptionType.connectionTimeout ||
+    DioExceptionType.sendTimeout ||
+    DioExceptionType.receiveTimeout ||
+    DioExceptionType.transformTimeout =>
+      'Yêu cầu xem trước đã quá thời gian chờ. Vui lòng thử lại. (TIMEOUT)',
+    DioExceptionType.cancel =>
+      'Yêu cầu xem trước đã bị hủy. Bạn có thể nhấn “Xem lại lệnh” để thử lại. (CANCELLED)',
+    DioExceptionType.connectionError ||
+    DioExceptionType.badCertificate ||
+    DioExceptionType.unknown =>
+      'Không thể kết nối để xem trước lệnh. Kiểm tra mạng hoặc trình duyệt rồi thử lại. (CONNECTION)',
+    DioExceptionType.badResponse =>
+      'Máy chủ trả về phản hồi không hợp lệ. Vui lòng thử lại sau. (SERVER_RESPONSE)',
+  };
 }
 
 class StrategyApiException implements Exception {
