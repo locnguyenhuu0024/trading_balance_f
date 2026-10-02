@@ -6,9 +6,10 @@ import hmac
 import re
 import secrets
 import sqlite3
+import threading
 import time
 from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_DOWN, ROUND_FLOOR
-from typing import Any
+from typing import Any, Callable
 
 from .okx import OKXError, OKXTransportError
 from .security import new_confirmation_token, new_operation_id, token_digest
@@ -21,6 +22,9 @@ _MAX_ORDERS = 20
 _PREPARE_TTL_SECONDS = 120
 _EXECUTION_LEASE_SECONDS = 120
 _QUOTE_MAX_AGE_MS = 15_000
+_ORDER_SCAN_INTERVAL_SECONDS = 5
+_ORDER_SCAN_FRESH_SECONDS = 15
+_ORDER_TERMINAL_STATES = frozenset({"rejected", "filled", "canceled", "mmp_canceled", "not_submitted"})
 _STRATEGY_ID = re.compile(r"[A-Za-z0-9_-]{8,64}\Z")
 
 
@@ -47,6 +51,125 @@ def _positive(value: Any) -> Decimal | None:
     return parsed if parsed is not None and parsed > 0 else None
 
 
+def _validated_order_update(
+    instrument_id: str, row: dict[str, Any], details: Any
+) -> dict[str, Any] | None:
+    if not isinstance(details, dict):
+        return None
+    client_id = row.get("clientOrderId")
+    expected_size = _decimal(row.get("contracts"))
+    size = _decimal(details.get("sz"))
+    if (
+        details.get("instId") != instrument_id
+        or details.get("clOrdId") != client_id
+        or not isinstance(client_id, str)
+        or not client_id
+        or expected_size is None
+        or size is None
+        or size != expected_size
+    ):
+        return None
+    filled = _decimal(details.get("accFillSz"))
+    if filled is None or filled < 0 or filled > size:
+        return None
+    state = str(details.get("state", "")).lower()
+    if state not in ("live", "partially_filled", "filled", "canceled", "mmp_canceled"):
+        return None
+    average = _positive(details.get("avgPx"))
+    return {
+        **row,
+        "status": state,
+        "exchangeOrderId": details.get("ordId") or row.get("exchangeOrderId"),
+        "filledContracts": _text(filled),
+        "averageFillPrice": _text(average),
+    }
+
+
+def _read_order_rows(
+    strategy: dict[str, Any],
+    okx: Any,
+    *,
+    recovering: bool = False,
+    preserve_last_known: bool = False,
+    max_reads: int | None = None,
+    stop_after_failure: bool = False,
+    before_order_call: Callable[[], None] | None = None,
+) -> tuple[list[dict[str, Any]], str | None, int]:
+    results = list(strategy["results"])
+    failure: str | None = None
+    reads = 0
+    for index, row in enumerate(results):
+        state = row.get("status")
+        if state in _ORDER_TERMINAL_STATES and not (recovering and state == "not_submitted"):
+            continue
+        client_id = row.get("clientOrderId")
+        if not isinstance(client_id, str) or not client_id:
+            if not preserve_last_known:
+                results[index] = {**row, "status": "unknown"}
+            failure = failure or "invalid_order_details"
+            if stop_after_failure:
+                break
+            continue
+        if max_reads is not None and reads >= max_reads:
+            failure = failure or "order_limit_exceeded"
+            break
+        reads += 1
+        if before_order_call is not None:
+            before_order_call()
+        try:
+            details = okx.order_details(strategy["contract"]["instrumentId"], client_id)
+        except OKXError:
+            failure = failure or "exchange_unavailable"
+            if recovering and not preserve_last_known:
+                results[index] = {**row, "status": "unknown"}
+            if stop_after_failure:
+                break
+            continue
+        if details is None:
+            failure = failure or "order_unavailable"
+            if recovering and not preserve_last_known:
+                results[index] = {**row, "status": "unknown"}
+            if stop_after_failure:
+                break
+            continue
+        update = _validated_order_update(strategy["contract"]["instrumentId"], row, details)
+        if update is None:
+            failure = failure or "invalid_order_details"
+            if not preserve_last_known:
+                results[index] = {**row, "status": "unknown"}
+            if stop_after_failure:
+                break
+            continue
+        results[index] = update
+    return results, failure, reads
+
+
+def _reconciled_strategy_state(
+    strategy: dict[str, Any], results: list[dict[str, Any]], *, recovering: bool
+) -> tuple[str, str | None]:
+    states = {row.get("status") for row in results}
+    new_status = strategy["status"]
+    error: str | None = strategy["failureReason"]
+    if recovering:
+        if "unknown" in states or "not_submitted" in states:
+            return "UNKNOWN", "batch_reconciliation_incomplete"
+        if states.intersection({"rejected", "canceled", "mmp_canceled"}):
+            return "PARTIAL", "order_rejected_or_canceled"
+        return "APPLIED", None
+    if strategy["status"] == "UNKNOWN" and not (
+        "unknown" in states or "not_submitted" in states or "accepted" in states
+    ):
+        new_status = "PARTIAL" if states.intersection({"rejected", "canceled", "mmp_canceled"}) else "APPLIED"
+        error = None
+    elif strategy["status"] == "APPLIED" and "unknown" in states:
+        new_status = "UNKNOWN"
+    elif strategy["status"] == "APPLIED" and states.intersection({"rejected", "canceled", "mmp_canceled"}):
+        new_status = "PARTIAL"
+    elif strategy["status"] == "PARTIAL" and "unknown" in states:
+        new_status = "UNKNOWN"
+    return new_status, error
+
+
 def _round_up(value: Decimal, increment: Decimal) -> Decimal:
     return (value / increment).to_integral_value(rounding=ROUND_CEILING) * increment
 
@@ -61,6 +184,9 @@ class StrategyService:
         self.store = owner.store
         self.okx = owner.okx
         self.clock = owner.clock
+        self._quote_cache: dict[str, tuple[float, dict[str, str]]] = {}
+        self._quote_cache_lock = threading.Lock()
+        self._quote_instrument_locks: dict[str, threading.Lock] = {}
 
     def dispatch(self, method: str, path: str, body: dict[str, Any]) -> dict[str, Any]:
         if method == "POST" and path == "/v1/strategies/preview":
@@ -69,7 +195,7 @@ class StrategyService:
             return self._save(body)
         if method == "GET" and path == "/v1/strategies":
             return self._list()
-        match = re.fullmatch(r"/v1/strategies/([A-Za-z0-9_-]{8,64})/(prepare-apply|execute-apply|result|delete)", path)
+        match = re.fullmatch(r"/v1/strategies/([A-Za-z0-9_-]{8,64})/(prepare-apply|execute-apply|result|delete|quote)", path)
         if match is None:
             raise APIError(404, "not_found", "The requested endpoint was not found.")
         strategy_id, action = match.groups()
@@ -81,7 +207,69 @@ class StrategyService:
             return self._result(strategy_id)
         if action == "delete" and method == "POST":
             return self._delete(strategy_id)
+        if action == "quote" and method == "GET":
+            return self._quote(strategy_id)
         raise APIError(404, "not_found", "The requested endpoint was not found.")
+
+    def _quote(self, strategy_id: str) -> dict[str, str]:
+        strategy, _, _ = self._current_strategy(strategy_id)
+        if strategy["status"] not in {"APPLIED", "PARTIAL", "UNKNOWN"}:
+            raise APIError(409, "strategy_not_applied", "A quote is available only for an applied strategy.")
+        instrument_id = strategy["contract"].get("instrumentId")
+        if not isinstance(instrument_id, str) or not instrument_id:
+            raise APIError(502, "quote_invalid", "The strategy instrument is invalid.")
+        return self._quote_for_instrument(instrument_id)
+
+    def _quote_for_instrument(self, instrument_id: str) -> dict[str, str]:
+        now = self.clock()
+        with self._quote_cache_lock:
+            cached = self._quote_cache.get(instrument_id)
+            if cached is not None and now < cached[0]:
+                return dict(cached[1])
+            instrument_lock = self._quote_instrument_locks.setdefault(
+                instrument_id, threading.Lock()
+            )
+
+        with instrument_lock:
+            now = self.clock()
+            with self._quote_cache_lock:
+                cached = self._quote_cache.get(instrument_id)
+                if cached is not None and now < cached[0]:
+                    return dict(cached[1])
+            try:
+                ticker = self.okx.ticker(instrument_id)
+            except OKXError:
+                raise APIError(502, "quote_unavailable", "The current market quote is unavailable.") from None
+
+            last = _positive(ticker.get("last")) if isinstance(ticker, dict) else None
+            timestamp = _decimal(ticker.get("ts")) if isinstance(ticker, dict) else None
+            if (
+                not isinstance(ticker, dict)
+                or ticker.get("instId") != instrument_id
+                or last is None
+                or timestamp is None
+                or timestamp <= 0
+                or timestamp != timestamp.to_integral_value()
+            ):
+                raise APIError(502, "quote_invalid", "The current market quote is invalid.")
+
+            timestamp_ms = int(timestamp)
+            age_ms = int(self.clock() * 1000) - timestamp_ms
+            if age_ms < 0 or age_ms > _QUOTE_MAX_AGE_MS:
+                raise APIError(409, "quote_stale", "The current market quote is stale; try again shortly.")
+
+            observed_at = (
+                time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(timestamp_ms // 1000))
+                + f".{timestamp_ms % 1000:03d}Z"
+            )
+            quote = {
+                "instrumentId": instrument_id,
+                "lastPrice": _text(last) or "0",
+                "observedAt": observed_at,
+            }
+            with self._quote_cache_lock:
+                self._quote_cache[instrument_id] = (self.clock() + 1, quote)
+            return dict(quote)
 
     def _invalid(self, reason: str, message: str = "The strategy request is invalid.") -> APIError:
         return APIError(422, "invalid_strategy", message, details={"reason": reason})
@@ -1038,8 +1226,8 @@ class StrategyService:
     ) -> bool:
         if status == "UNKNOWN":
             return not batch_attempted
-        terminal = {"rejected", "filled", "canceled", "mmp_canceled", "not_submitted"}
-        return status in ("APPLIED", "PARTIAL", "UNKNOWN") and all(
+        terminal = _ORDER_TERMINAL_STATES
+        return status in ("APPLIED", "PARTIAL", "UNKNOWN", "COMPLETED") and all(
             row.get("status") in terminal for row in orders
         )
 
@@ -1087,7 +1275,9 @@ class StrategyService:
             if lease_until is None or lease_until <= self.clock():
                 strategy = self._recover_interrupted_apply(strategy)
         elif strategy["status"] in ("UNKNOWN", "APPLIED", "PARTIAL"):
-            strategy = self._reconcile_orders(strategy)
+            if self._order_scan_due(strategy["id"]):
+                strategy, scan_error = self._reconcile_orders_with_outcome(strategy)
+                self._record_api_order_scan(strategy["id"], scan_error)
         try:
             account, current_fingerprint = self._account()
             if not hmac.compare_digest(fingerprint, current_fingerprint):
@@ -1180,8 +1370,65 @@ class StrategyService:
             "attributionChanged": attribution_changed,
             "observedAt": observed,
             "positionMode": account.get("posMode"),
+            **self._order_sync_fields(strategy["id"]),
         })
         return result
+
+    def _order_scan_due(self, strategy_id: str) -> bool:
+        now = self.clock()
+        with self.store.connection() as connection:
+            row = connection.execute(
+                "SELECT last_attempt_at, last_success_at, last_error, next_scan_at "
+                "FROM strategy_sync_state WHERE strategy_id=?",
+                (strategy_id,),
+            ).fetchone()
+        if row is None:
+            return True
+        if row["next_scan_at"] is not None and row["next_scan_at"] > now:
+            return False
+        if row["last_error"]:
+            return True
+        last_success = row["last_success_at"]
+        return last_success is None or now - last_success >= _ORDER_SCAN_INTERVAL_SECONDS
+
+    def _record_api_order_scan(self, strategy_id: str, scan_error: str | None) -> None:
+        now = self.clock()
+        with self.store.transaction() as connection:
+            if scan_error is None:
+                connection.execute(
+                    "INSERT INTO strategy_sync_state(strategy_id, last_attempt_at, last_success_at, "
+                    "last_error, next_scan_at, consecutive_errors) VALUES (?, ?, ?, NULL, ?, 0) "
+                    "ON CONFLICT(strategy_id) DO UPDATE SET last_attempt_at=excluded.last_attempt_at, "
+                    "last_success_at=excluded.last_success_at, last_error=NULL, "
+                    "next_scan_at=excluded.next_scan_at, consecutive_errors=0",
+                    (strategy_id, now, now, now + _ORDER_SCAN_INTERVAL_SECONDS),
+                )
+            else:
+                connection.execute(
+                    "INSERT INTO strategy_sync_state(strategy_id, last_attempt_at, last_success_at, "
+                    "last_error, next_scan_at, consecutive_errors) VALUES (?, ?, NULL, ?, ?, 1) "
+                    "ON CONFLICT(strategy_id) DO UPDATE SET last_attempt_at=excluded.last_attempt_at, "
+                    "last_error=excluded.last_error, next_scan_at=excluded.next_scan_at, "
+                    "consecutive_errors=strategy_sync_state.consecutive_errors+1",
+                    (strategy_id, now, scan_error, now),
+                )
+
+    def _order_sync_fields(self, strategy_id: str) -> dict[str, Any]:
+        with self.store.connection() as connection:
+            row = connection.execute(
+                "SELECT last_success_at, last_error FROM strategy_sync_state WHERE strategy_id=?",
+                (strategy_id,),
+            ).fetchone()
+        last_success = None if row is None else row["last_success_at"]
+        last_error = None if row is None else row["last_error"]
+        if last_success is None:
+            state = "error" if last_error else "stale"
+            formatted = None
+        else:
+            formatted = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(last_success))
+            age = self.clock() - last_success
+            state = "error" if last_error else "fresh" if 0 <= age <= _ORDER_SCAN_FRESH_SECONDS else "stale"
+        return {"lastOrderScanAt": formatted, "orderSyncState": state}
 
     def _recover_interrupted_apply(self, strategy: dict[str, Any]) -> dict[str, Any]:
         if strategy["executionLeaseUntil"] is not None and strategy["executionLeaseUntil"] > self.clock():
@@ -1212,83 +1459,18 @@ class StrategyService:
                 )
 
     def _reconcile_orders(self, strategy: dict[str, Any], *, recovering: bool = False) -> dict[str, Any]:
+        return self._reconcile_orders_with_outcome(strategy, recovering=recovering)[0]
+
+    def _reconcile_orders_with_outcome(
+        self, strategy: dict[str, Any], *, recovering: bool = False
+    ) -> tuple[dict[str, Any], str | None]:
         if not strategy["batchAttempted"]:
-            return strategy
+            return strategy, None
         if strategy["status"] == "APPLYING" and not recovering:
-            return strategy
-        results = list(strategy["results"])
-        changed = False
-        for index, row in enumerate(results):
-            if row.get("status") in ("rejected", "filled", "canceled", "mmp_canceled"):
-                continue
-            client_id = row.get("clientOrderId")
-            if not isinstance(client_id, str) or not client_id:
-                results[index] = {**row, "status": "unknown"}
-                changed = True
-                continue
-            try:
-                details = self.okx.order_details(strategy["contract"]["instrumentId"], client_id)
-            except OKXError:
-                if recovering:
-                    results[index] = {**row, "status": "unknown"}
-                    changed = True
-                continue
-            if details is None:
-                if recovering:
-                    results[index] = {**row, "status": "unknown"}
-                    changed = True
-                continue
-            expected_size = _decimal(row.get("contracts"))
-            size = _decimal(details.get("sz"))
-            if (
-                details.get("instId") != strategy["contract"]["instrumentId"]
-                or details.get("clOrdId") != client_id
-                or expected_size is None
-                or size is None
-                or size != expected_size
-            ):
-                results[index] = {**row, "status": "unknown"}
-                changed = True
-                continue
-            filled = _decimal(details.get("accFillSz"))
-            if size is None or filled is None or filled < 0 or filled > size:
-                results[index] = {**row, "status": "unknown"}
-                changed = True
-                continue
-            state = str(details.get("state", "")).lower()
-            if state not in ("live", "partially_filled", "filled", "canceled", "mmp_canceled"):
-                state = "unknown"
-            results[index] = {
-                **row,
-                "status": state,
-                "exchangeOrderId": details.get("ordId") or row.get("exchangeOrderId"),
-                "filledContracts": _text(filled),
-                "averageFillPrice": details.get("avgPx"),
-            }
-            changed = True
-        states = {row.get("status") for row in results}
-        new_status = strategy["status"]
-        error: str | None = strategy["failureReason"]
-        if recovering:
-            if "unknown" in states or "not_submitted" in states:
-                new_status = "UNKNOWN"
-                error = "batch_reconciliation_incomplete"
-            elif states.intersection({"rejected", "canceled", "mmp_canceled"}):
-                new_status = "PARTIAL"
-                error = "order_rejected_or_canceled"
-            else:
-                new_status = "APPLIED"
-                error = None
-        elif strategy["status"] == "UNKNOWN" and not (
-            "unknown" in states or "not_submitted" in states or "accepted" in states
-        ):
-            new_status = "PARTIAL" if states.intersection({"rejected", "canceled", "mmp_canceled"}) else "APPLIED"
-        elif strategy["status"] == "APPLIED" and "unknown" in states:
-            new_status = "UNKNOWN"
-        elif strategy["status"] == "APPLIED" and states.intersection({"rejected", "canceled", "mmp_canceled"}):
-            new_status = "PARTIAL"
-        elif strategy["status"] == "PARTIAL" and "unknown" in states:
-            new_status = "UNKNOWN"
+            return strategy, None
+        results, scan_error, _ = _read_order_rows(strategy, self.okx, recovering=recovering)
+        new_status, error = _reconciled_strategy_state(strategy, results, recovering=recovering)
+        changed = results != strategy["results"]
         if changed or new_status != strategy["status"]:
             with self.store.transaction() as connection:
                 if recovering:
@@ -1318,7 +1500,7 @@ class StrategyService:
                         "DELETE FROM strategy_reservations WHERE strategy_id=?", (strategy["id"],)
                     )
             strategy = self._load_row(strategy["id"])
-        return strategy
+        return strategy, scan_error
 
     def _list(self) -> dict[str, Any]:
         _, fingerprint = self._account()

@@ -1,6 +1,6 @@
 # Task 53 — Background read-only strategy order worker
 
-Status: READY
+Status: PASS
 Agent Role: implementation_executor
 Executor Class: E2
 Target Model: gpt-6-luna
@@ -8,7 +8,7 @@ Target Effort: max
 Target Route: gpt-6-luna / max
 Route Binding: EXPLICIT
 Parent Route Inheritance: FORBIDDEN
-Dispatch Route Status: PENDING
+Dispatch Route Status: UNVERIFIABLE (explicit model/effort bound; runtime effective route unavailable)
 Specification: `docs/agents/specs/2026-10-02-strategy-background-order-monitor.md`
 Plan: `docs/agents/plans/2026-10-02-strategy-background-order-monitor.md`, P01
 Requirements: REQ-001–003, REQ-006
@@ -44,4 +44,4 @@ Task buildability: REQUIRED, affected canonical unit Python backend, exact comma
 
 ## 5. Coordinator audit
 
-Scope: PENDING. Lease/fence: PENDING. Account isolation: PENDING. Apply limit placement preserved: PENDING. Zero worker writes: PENDING. RED-before-GREEN: PENDING. Task buildability: PENDING. Route compliance: PENDING. Verdict: PENDING.
+Scope: PASS. Lease/fence: PASS. Account isolation: PASS. Apply limit placement preserved: PASS. Zero worker writes: PASS. RED-before-GREEN: PASS. Task buildability: PASS. Route compliance: PASS (explicit binding, effective route unavailable). Verdict: PASS. See `docs/agents/audits/2026-10-02-task-53-strategy-background-order-worker.md`.

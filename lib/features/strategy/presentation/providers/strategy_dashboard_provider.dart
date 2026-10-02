@@ -33,20 +33,19 @@ class StrategyDashboardController extends ChangeNotifier {
 
   StrategyDashboardController({
     required StrategyApi api,
-    required StrategyMarketRepository marketRepository,
+    // Preserve compatibility for existing callers during the API handoff.
+    StrategyMarketRepository? marketRepository,
     required String bearerToken,
-    StrategyMarketClock? clock,
+    DateTime Function()? clock,
     VoidCallback? onUnauthorized,
   }) : _api = api,
-       _marketRepository = marketRepository,
        _bearerToken = bearerToken,
        _clock = clock ?? DateTime.now,
        _onUnauthorized = onUnauthorized;
 
   final StrategyApi _api;
-  final StrategyMarketRepository _marketRepository;
   final String _bearerToken;
-  final StrategyMarketClock _clock;
+  final DateTime Function() _clock;
   final VoidCallback? _onUnauthorized;
   List<Map<String, dynamic>> _strategies = const [];
   final Map<String, StrategyTicker> _quotes = {};
@@ -311,28 +310,34 @@ class StrategyDashboardController extends ChangeNotifier {
   Future<void> _pollQuotes() async {
     if (!_pollingActive) return;
     _notifyQuoteFreshnessIfChanged();
-    final instruments =
-        _strategies
-            .where(
-              (item) => _quotePollingStatuses.contains(
-                _text(item['status']).toUpperCase(),
-              ),
-            )
-            .map((item) => _text(item['instrumentId']).toUpperCase())
-            .where((id) => RegExp(r'^[A-Z0-9]+-USDT-SWAP$').hasMatch(id))
-            .toSet()
-            .toList()
-          ..sort();
+    final strategyByInstrument = <String, String>{};
+    for (final item in _strategies) {
+      if (!_quotePollingStatuses.contains(
+        _text(item['status']).toUpperCase(),
+      )) {
+        continue;
+      }
+      final instrumentId = _text(item['instrumentId']).toUpperCase();
+      final strategyId = _text(item['id']);
+      if (strategyId.isEmpty ||
+          !RegExp(r'^[A-Z0-9]+-USDT-SWAP$').hasMatch(instrumentId)) {
+        continue;
+      }
+      strategyByInstrument.putIfAbsent(instrumentId, () => strategyId);
+    }
+    final instruments = strategyByInstrument.keys.toList()..sort();
     for (final id in instruments) {
       if (!_pollingActive || _quoteInFlight.contains(id)) continue;
       final retryAt = _quoteRetryAt[id];
       if (retryAt != null && _clock().toUtc().isBefore(retryAt)) continue;
       if (!_quoteInFlight.add(id)) continue;
       try {
-        final quote = await _marketRepository.getTicker(instrumentId: id);
+        final strategyId = strategyByInstrument[id]!;
+        final response = await _api.getQuote(_bearerToken, strategyId);
+        final quote = _tickerFromResponse(id, response);
         final previous = _quotes[id];
         if (_pollingActive &&
-            instruments.contains(id) &&
+            strategyByInstrument[id] == strategyId &&
             quote.instrumentId == id &&
             (previous == null ||
                 !quote.observedAt.isBefore(previous.observedAt))) {
@@ -344,15 +349,51 @@ class StrategyDashboardController extends ChangeNotifier {
         } else if (_pollingActive) {
           _scheduleQuoteRetry(id);
         }
+      } on StrategyApiException catch (error) {
+        if (error.isUnauthorized) _onUnauthorized?.call();
+        _scheduleQuoteRetry(id);
+        _notifyQuoteFreshnessIfChanged();
       } on Object {
-        // Retain the last quote with its original timestamp. The UI marks it
-        // stale after four seconds instead of presenting it as current.
+        // Retain the last backend quote with its original timestamp.
         _scheduleQuoteRetry(id);
         _notifyQuoteFreshnessIfChanged();
       } finally {
         _quoteInFlight.remove(id);
       }
     }
+  }
+
+  StrategyTicker _tickerFromResponse(
+    String expectedInstrumentId,
+    Map<String, dynamic> response,
+  ) {
+    final instrumentId = _text(response['instrumentId']).toUpperCase();
+    final exactPriceText = response['lastPrice'] is String
+        ? response['lastPrice'] as String
+        : '';
+    final price = double.tryParse(exactPriceText);
+    final observedAt = DateTime.tryParse(
+      _text(response['observedAt']),
+    )?.toUtc();
+    final now = _clock().toUtc();
+    if (instrumentId != expectedInstrumentId ||
+        exactPriceText.isEmpty ||
+        price == null ||
+        !price.isFinite ||
+        price <= 0 ||
+        observedAt == null) {
+      throw const FormatException('The strategy quote response is invalid.');
+    }
+    final age = now.difference(observedAt);
+    if (age.isNegative || age > const Duration(seconds: 15)) {
+      throw const FormatException('The strategy quote response is stale.');
+    }
+    return StrategyTicker(
+      instrumentId: instrumentId,
+      lastPrice: price,
+      observedAt: observedAt,
+      exactPriceText: exactPriceText,
+    );
   }
 
   void _scheduleQuoteRetry(String instrumentId) {
@@ -412,7 +453,6 @@ final strategyDashboardProvider = ChangeNotifierProvider.autoDispose
     .family<StrategyDashboardController, String>((ref, bearerToken) {
       final controller = StrategyDashboardController(
         api: ref.watch(strategyApiProvider),
-        marketRepository: ref.watch(strategyMarketRepositoryProvider),
         bearerToken: bearerToken,
         onUnauthorized: () => ref.read(tradeSessionProvider.notifier).expire(),
       );

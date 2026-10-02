@@ -72,6 +72,23 @@ CREATE TABLE IF NOT EXISTS strategy_reservations (
     created_at REAL NOT NULL,
     PRIMARY KEY (account_fingerprint, instrument_id)
 );
+CREATE TABLE IF NOT EXISTS strategy_monitor_lease (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    owner_id TEXT,
+    fence INTEGER NOT NULL DEFAULT 0,
+    lease_until REAL NOT NULL DEFAULT 0
+);
+INSERT OR IGNORE INTO strategy_monitor_lease(singleton, owner_id, fence, lease_until)
+VALUES (1, NULL, 0, 0);
+CREATE TABLE IF NOT EXISTS strategy_sync_state (
+    strategy_id TEXT PRIMARY KEY,
+    last_attempt_at REAL,
+    last_success_at REAL,
+    last_error TEXT,
+    next_scan_at REAL,
+    consecutive_errors INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS strategy_sync_next_scan ON strategy_sync_state(next_scan_at);
 """
 
 
@@ -136,3 +153,39 @@ class SQLiteStore:
             except Exception:
                 connection.execute("ROLLBACK")
                 raise
+
+    def acquire_strategy_monitor_lease(self, owner_id: str, now: float, lease_seconds: float) -> int | None:
+        """Claim or renew the singleton order-monitor lease and return its fence."""
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT owner_id, fence, lease_until FROM strategy_monitor_lease WHERE singleton=1"
+            ).fetchone()
+            if row is None:
+                return None
+            if row["owner_id"] == owner_id and row["lease_until"] > now:
+                changed = connection.execute(
+                    "UPDATE strategy_monitor_lease SET lease_until=? WHERE singleton=1 "
+                    "AND owner_id=? AND fence=? AND lease_until>?",
+                    (now + lease_seconds, owner_id, row["fence"], now),
+                ).rowcount
+                return int(row["fence"]) if changed == 1 else None
+            if row["lease_until"] > now:
+                return None
+            fence = int(row["fence"]) + 1
+            changed = connection.execute(
+                "UPDATE strategy_monitor_lease SET owner_id=?, fence=?, lease_until=? "
+                "WHERE singleton=1 AND fence=? AND lease_until<=?",
+                (owner_id, fence, now + lease_seconds, row["fence"], now),
+            ).rowcount
+            return fence if changed == 1 else None
+
+    def renew_strategy_monitor_lease(
+        self, owner_id: str, fence: int, now: float, lease_seconds: float
+    ) -> bool:
+        with self.transaction() as connection:
+            changed = connection.execute(
+                "UPDATE strategy_monitor_lease SET lease_until=? WHERE singleton=1 "
+                "AND owner_id=? AND fence=? AND lease_until>?",
+                (now + lease_seconds, owner_id, fence, now),
+            ).rowcount
+        return changed == 1

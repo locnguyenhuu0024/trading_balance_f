@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import threading
 import unittest
 from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
-from tempfile import TemporaryDirectory
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
@@ -54,6 +55,7 @@ class FakeStrategyExchange:
         ]
         self.last = "60000"
         self.ticker_instrument_id = INSTRUMENT
+        self.ticker_timestamp_ms = str(int(NOW * 1000))
         self.calls: list[tuple[str, str, Any]] = []
         self.orders: dict[str, dict[str, Any]] = {}
         self.batch_timeout = False
@@ -65,6 +67,10 @@ class FakeStrategyExchange:
         self.batch_started = threading.Event()
         self.batch_release = threading.Event()
         self.order_detail_reads = 0
+        self.quote_account_barrier: threading.Barrier | None = None
+        self.pause_ticker = False
+        self.ticker_started = threading.Event()
+        self.ticker_release = threading.Event()
 
     @property
     def trade_writes(self) -> list[tuple[str, str, Any]]:
@@ -81,6 +87,8 @@ class FakeStrategyExchange:
         self.calls.append((method, path, payload))
 
         if method == "GET" and parsed.path == "/api/v5/account/config":
+            if self.quote_account_barrier is not None:
+                self.quote_account_barrier.wait(timeout=3)
             return {"code": "0", "data": [{"uid": self.account_uid, "posMode": self.pos_mode}]}
         if method == "GET" and parsed.path == "/api/v5/account/balance":
             return {"code": "0", "data": [{"details": [{"ccy": "USDT", "availBal": "100000"}]}]}
@@ -100,7 +108,11 @@ class FakeStrategyExchange:
         if method == "GET" and parsed.path == "/api/v5/public/position-tiers":
             return {"code": "0", "data": [dict(row) for row in self.tier_data]}
         if method == "GET" and parsed.path == "/api/v5/market/ticker":
-            return {"code": "0", "data": [{"instId": self.ticker_instrument_id, "last": self.last, "ts": str(int(NOW * 1000))}]}
+            if self.pause_ticker:
+                self.ticker_started.set()
+                if not self.ticker_release.wait(timeout=3):
+                    raise TimeoutError("test ticker response release timed out")
+            return {"code": "0", "data": [{"instId": self.ticker_instrument_id, "last": self.last, "ts": self.ticker_timestamp_ms}]}
         if method == "GET" and parsed.path == "/api/v5/trade/order":
             self.order_detail_reads += 1
             client_id = params.get("clOrdId", "")
@@ -131,14 +143,16 @@ class FakeStrategyExchange:
 
 class StrategyApiTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.temp = TemporaryDirectory()
+        self.db_path = Path(__file__).resolve().parents[2] / (
+            f".strategy-api-test-{os.getpid()}-{id(self)}.sqlite3"
+        )
         self.now = NOW
         self.exchange = FakeStrategyExchange()
         self.settings = RuntimeSettings(
             okx_api_key="test-key", okx_api_secret="test-secret", okx_api_passphrase="test-passphrase",
             admin_password_hash="unused-in-this-session-fixture", totp_secret="unused-in-this-session-fixture",
             session_signing_key=SIGNING_KEY, allowed_web_origin=ORIGIN,
-            operation_db_path=f"{self.temp.name}/operations.sqlite3",
+            operation_db_path=str(self.db_path),
         )
         self.service = TradeService(self.settings, transport=self.exchange.transport, clock=lambda: self.now)
         self.app = create_application(service=self.service)
@@ -149,7 +163,7 @@ class StrategyApiTests(unittest.TestCase):
             )
 
     def tearDown(self) -> None:
-        self.temp.cleanup()
+        self.db_path.unlink(missing_ok=True)
 
     def request(
         self, method: str, path: str, body: dict[str, Any] | None = None, *, authenticated: bool = True
@@ -238,11 +252,121 @@ class StrategyApiTests(unittest.TestCase):
         self.assertEqual(status, 200, saved)
         return saved["id"], preview
 
+    def apply_strategy(self) -> str:
+        strategy_id, _ = self.save_draft()
+        self.exchange.pos_mode = "long_short_mode"
+        status, prepared = self.request("POST", f"/v1/strategies/{strategy_id}/prepare-apply", {})
+        self.assertEqual(status, 200, prepared)
+        status, applied = self.request(
+            "POST", f"/v1/strategies/{strategy_id}/execute-apply",
+            {"confirmationToken": prepared["confirmationToken"]},
+        )
+        self.assertEqual(status, 200, applied)
+        self.assertEqual(applied["status"], "APPLIED")
+        return strategy_id
+
     def test_red_strategy_routes_require_bearer_before_exchange_reads(self) -> None:
         status, result = self.request("GET", "/v1/strategies", authenticated=False)
         self.assertEqual(status, 401, result)
         self.assertEqual(result["error"], "authentication_required")
         self.assertEqual(self.exchange.calls, [])
+
+    def test_red_owned_applied_strategy_quote_requires_authentication_and_is_backend_fed(self) -> None:
+        strategy_id = self.apply_strategy()
+        path = f"/v1/strategies/{strategy_id}/quote"
+        self.exchange.calls.clear()
+        self.exchange.last = "60000.0000000123"
+
+        status, result = self.request("GET", path, authenticated=False)
+        self.assertEqual(status, 401, result)
+        self.assertEqual(result["error"], "authentication_required")
+        self.assertEqual(self.exchange.calls, [])
+
+        status, quote = self.request("GET", path)
+        self.assertEqual(status, 200, quote)
+        self.assertEqual(quote["instrumentId"], INSTRUMENT)
+        self.assertEqual(quote["lastPrice"], "60000.0000000123")
+        self.assertTrue(quote["observedAt"].endswith("Z"))
+        self.assertEqual(set(quote), {"instrumentId", "lastPrice", "observedAt"})
+
+    def test_quote_revalidates_account_before_serving_one_second_instrument_cache(self) -> None:
+        strategy_id = self.apply_strategy()
+        path = f"/v1/strategies/{strategy_id}/quote"
+        self.exchange.calls.clear()
+
+        status, first = self.request("GET", path)
+        self.assertEqual(status, 200, first)
+        self.assertEqual(first["lastPrice"], "60000")
+        status, second = self.request("GET", path)
+        self.assertEqual(status, 200, second)
+        self.assertEqual(second, first)
+        account_reads = [call for call in self.exchange.calls if call[1].split("?", 1)[0] == "/api/v5/account/config"]
+        ticker_reads = [call for call in self.exchange.calls if call[1].split("?", 1)[0] == "/api/v5/market/ticker"]
+        self.assertEqual(len(account_reads), 2)
+        self.assertEqual(len(ticker_reads), 1)
+
+        self.now += 1.1
+        self.exchange.last = "61000"
+        status, refreshed = self.request("GET", path)
+        self.assertEqual(status, 200, refreshed)
+        self.assertEqual(refreshed["lastPrice"], "61000")
+        account_reads = [call for call in self.exchange.calls if call[1].split("?", 1)[0] == "/api/v5/account/config"]
+        ticker_reads = [call for call in self.exchange.calls if call[1].split("?", 1)[0] == "/api/v5/market/ticker"]
+        self.assertEqual(len(account_reads), 3)
+        self.assertEqual(len(ticker_reads), 2)
+
+        self.exchange.account_uid = "different-account"
+        status, changed = self.request("GET", path)
+        self.assertEqual(status, 409, changed)
+        self.assertEqual(changed["error"], "account_changed")
+        account_reads = [call for call in self.exchange.calls if call[1].split("?", 1)[0] == "/api/v5/account/config"]
+        ticker_reads = [call for call in self.exchange.calls if call[1].split("?", 1)[0] == "/api/v5/market/ticker"]
+        self.assertEqual(len(account_reads), 4)
+        self.assertEqual(len(ticker_reads), 2)
+
+    def test_concurrent_quote_reads_coalesce_to_one_public_ticker_request(self) -> None:
+        strategy_id = self.apply_strategy()
+        path = f"/v1/strategies/{strategy_id}/quote"
+        self.exchange.calls.clear()
+        self.exchange.quote_account_barrier = threading.Barrier(2)
+        self.exchange.pause_ticker = True
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            first = executor.submit(self.request, "GET", path)
+            second = executor.submit(self.request, "GET", path)
+            self.assertTrue(self.exchange.ticker_started.wait(timeout=3))
+            self.exchange.ticker_release.set()
+            results = [first.result(timeout=3), second.result(timeout=3)]
+
+        self.exchange.quote_account_barrier = None
+        self.assertEqual([status for status, _ in results], [200, 200])
+        self.assertEqual(results[0][1], results[1][1])
+        ticker_reads = [call for call in self.exchange.calls if call[1].split("?", 1)[0] == "/api/v5/market/ticker"]
+        self.assertEqual(len(ticker_reads), 1)
+
+    def test_quote_rejects_wrong_instrument_invalid_decimal_and_stale_or_future_timestamps(self) -> None:
+        strategy_id = self.apply_strategy()
+        path = f"/v1/strategies/{strategy_id}/quote"
+        invalid_quotes = [
+            (INSTRUMENT.replace("BTC", "ETH"), "60000", str(int(NOW * 1000)), 502),
+            (INSTRUMENT, "0", str(int(NOW * 1000)), 502),
+            (INSTRUMENT, "NaN", str(int(NOW * 1000)), 502),
+            (INSTRUMENT, "60000", str(int((NOW - 16) * 1000)), 409),
+            (INSTRUMENT, "60000", str(int((NOW + 1) * 1000)), 409),
+            (INSTRUMENT, "60000", str(int(NOW * 1000) + 1) + ".5", 502),
+            (INSTRUMENT, "60000.0000000001", str(int((NOW - 15) * 1000)), 200),
+        ]
+        for instrument, last, timestamp_ms, expected_status in invalid_quotes:
+            with self.subTest(instrument=instrument, last=last, timestamp=timestamp_ms):
+                self.exchange.ticker_instrument_id = instrument
+                self.exchange.last = last
+                self.exchange.ticker_timestamp_ms = timestamp_ms
+                status, result = self.request("GET", path)
+                self.assertEqual(status, expected_status, result)
+                if expected_status == 200:
+                    self.assertEqual(result["lastPrice"], "60000.0000000001")
+                self.assertNotIn("test-key", json.dumps(result))
+                self.assertNotIn("test-secret", json.dumps(result))
 
     def test_red_apply_preflight_blocks_net_mode_position_and_pending_order_before_writes(self) -> None:
         strategy_id, _ = self.save_draft(self.two_sided_contract())
@@ -557,6 +681,22 @@ class StrategyApiTests(unittest.TestCase):
         self.assertEqual([row["posSide"] for row in batch], ["long", "long", "short", "short"])
         self.assertEqual({row["clOrdId"] for row in batch}, set(draft_by_id.values()))
         self.assertEqual(len({row["clOrdId"] for row in batch}), 4)
+        prepared_by_client = {row["clientOrderId"]: row for row in prepared["orders"]}
+        self.assertEqual(
+            [
+                (row["ordType"], row["side"], row["px"], row["sz"])
+                for row in batch
+            ],
+            [
+                (
+                    "limit",
+                    "buy" if prepared_by_client[row["clOrdId"]]["side"] == "long" else "sell",
+                    prepared_by_client[row["clOrdId"]]["limitPrice"],
+                    prepared_by_client[row["clOrdId"]]["contracts"],
+                )
+                for row in batch
+            ],
+        )
 
         status, reconciled = self.request("GET", f"/v1/strategies/{strategy_id}/result")
         self.assertEqual(status, 200, reconciled)
@@ -574,6 +714,31 @@ class StrategyApiTests(unittest.TestCase):
         status, result = self.request("GET", f"/v1/strategies/{strategy_id}/result")
         self.assertEqual(status, 200, result)
         self.assertTrue(all("levelId" not in row for row in result["orders"]))
+
+    def test_green_order_scan_metadata_is_fresh_and_recent_get_skips_duplicate_scan(self) -> None:
+        strategy_id, _ = self.save_draft()
+        status, prepared = self.request("POST", f"/v1/strategies/{strategy_id}/prepare-apply", {})
+        self.assertEqual(status, 200, prepared)
+        status, applied = self.request(
+            "POST", f"/v1/strategies/{strategy_id}/execute-apply",
+            {"confirmationToken": prepared["confirmationToken"]},
+        )
+        self.assertEqual(status, 200, applied)
+        self.assertEqual(applied["orderSyncState"], "fresh")
+        self.assertEqual(applied["lastOrderScanAt"], "2027-01-02T00:00:00Z")
+        reads_after_apply = self.exchange.order_detail_reads
+
+        status, result = self.request("GET", f"/v1/strategies/{strategy_id}/result")
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["orderSyncState"], "fresh")
+        self.assertEqual(result["lastOrderScanAt"], applied["lastOrderScanAt"])
+        self.assertEqual(self.exchange.order_detail_reads, reads_after_apply)
+
+        status, listing = self.request("GET", "/v1/strategies")
+        self.assertEqual(status, 200, listing)
+        listed = next(row for row in listing["strategies"] if row["id"] == strategy_id)
+        self.assertEqual(listed["orderSyncState"], "fresh")
+        self.assertEqual(listed["lastOrderScanAt"], applied["lastOrderScanAt"])
 
     def test_red_account_change_and_expired_prepare_do_not_write(self) -> None:
         strategy_id, _ = self.save_draft()
@@ -805,6 +970,7 @@ class StrategyApiTests(unittest.TestCase):
         ]
         for label, changes in mismatches:
             with self.subTest(label=label):
+                self.now += 5
                 self.exchange.orders[client_id] = {
                     **original, **changes, "state": "filled", "accFillSz": "4", "avgPx": "59000",
                 }
@@ -879,6 +1045,7 @@ class StrategyApiTests(unittest.TestCase):
         self.exchange.positions = [{
             "instId": INSTRUMENT, "pos": "5", "posSide": "net", "mgnMode": "isolated", "upl": "10",
         }]
+        self.now += 5
         status, result = self.request("GET", f"/v1/strategies/{strategy_id}/result")
         self.assertEqual(status, 200, result)
         self.assertIsNone(result["filledMargin"])
@@ -1070,6 +1237,7 @@ class StrategyApiTests(unittest.TestCase):
             "instId": INSTRUMENT, "pos": "5", "posSide": "net", "mgnMode": "isolated",
             "upl": "10", "avgPx": "59000", "markPx": "60000", "liqPx": "47700.9",
         }]
+        self.now += 5
         status, filled = self.request("GET", f"/v1/strategies/{strategy_id}/result")
         self.assertEqual(status, 200, filled)
         self.assertEqual(filled["orders"][0]["status"], "filled")

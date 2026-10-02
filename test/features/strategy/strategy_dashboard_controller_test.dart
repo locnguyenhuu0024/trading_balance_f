@@ -1,12 +1,7 @@
 import 'dart:async';
-import 'dart:convert';
-import 'dart:typed_data';
 
-import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:trading_balance_f/features/portfolio/data/risk/risk_request_coordinator.dart';
 import 'package:trading_balance_f/features/strategy/data/strategy_api_client.dart';
-import 'package:trading_balance_f/features/strategy/data/strategy_market_repository.dart';
 import 'package:trading_balance_f/features/strategy/domain/strategy_models.dart';
 import 'package:trading_balance_f/features/strategy/presentation/providers/strategy_dashboard_provider.dart';
 
@@ -115,12 +110,11 @@ void main() {
   );
 
   test(
-    'a fresh dashboard quote becomes visibly stale after a failed poll',
+    'a backend quote becomes visibly stale after a failed poll',
     () async {
       var now = DateTime.utc(2026, 10, 1, 8);
-      final market = _FakeMarketRepository(clock: () => now);
-      final api = _FakeStrategyApi(status: 'APPLIED');
-      final controller = _controller(api, market: market, clock: () => now);
+      final api = _FakeStrategyApi(status: 'APPLIED', clock: () => now);
+      final controller = _controller(api, clock: () => now);
       addTearDown(controller.dispose);
       await controller.load();
       controller.setVisibility(pageVisible: true, appVisible: true);
@@ -129,7 +123,7 @@ void main() {
 
       var notificationsAfterAge = 0;
       controller.addListener(() => notificationsAfterAge++);
-      market.failTickers = true;
+      api.failQuotes = true;
       now = now.add(const Duration(seconds: 5));
       await Future<void>.delayed(const Duration(milliseconds: 1100));
 
@@ -138,75 +132,63 @@ void main() {
     },
   );
 
-  test('backs off repeated public ticker failures', () async {
-    final market = _FakeMarketRepository()..failTickers = true;
-    final controller = _controller(
-      _FakeStrategyApi(status: 'APPLIED'),
-      market: market,
-    );
+  test('backs off repeated backend quote failures', () async {
+    final api = _FakeStrategyApi(status: 'APPLIED')..failQuotes = true;
+    final controller = _controller(api);
     addTearDown(controller.dispose);
     await controller.load();
     controller.setVisibility(pageVisible: true, appVisible: true);
     await Future<void>.delayed(const Duration(milliseconds: 1100));
 
-    expect(market.tickerCalls, 1);
+    expect(api.quoteCalls, 1);
   });
 
   test('does not poll draft or prepared strategies', () async {
-    final market = _FakeMarketRepository();
     final api = _FakeStrategyApi(statuses: ['DRAFT', 'PREPARED']);
-    final controller = _controller(api, market: market);
+    final controller = _controller(api);
     addTearDown(controller.dispose);
     await controller.load();
     controller.setVisibility(pageVisible: true, appVisible: true);
     await Future<void>.delayed(const Duration(milliseconds: 1100));
 
-    expect(market.tickerCalls, 0);
+    expect(api.quoteCalls, 0);
   });
 
-  test('public ticker polling stops when the page or app is hidden', () async {
-    final market = _FakeMarketRepository();
+  test('backend quote polling stops when the page or app is hidden', () async {
     final api = _FakeStrategyApi(statuses: ['APPLIED', 'PARTIAL', 'UNKNOWN']);
-    final controller = _controller(api, market: market);
+    final controller = _controller(api);
     addTearDown(controller.dispose);
     await controller.load();
-    expect(market.tickerCalls, 0);
+    expect(api.quoteCalls, 0);
 
     controller.setVisibility(pageVisible: true, appVisible: true);
     await Future<void>.delayed(const Duration(milliseconds: 20));
-    expect(market.tickerCalls, 1);
+    expect(api.quoteCalls, 1);
 
     await Future<void>.delayed(const Duration(milliseconds: 1100));
-    expect(market.tickerCalls, 2);
+    expect(api.quoteCalls, 2);
 
     controller.setVisibility(pageVisible: true, appVisible: false);
     await Future<void>.delayed(const Duration(milliseconds: 1100));
-    expect(market.tickerCalls, 2);
+    expect(api.quoteCalls, 2);
 
     controller.setVisibility(pageVisible: false, appVisible: true);
     await Future<void>.delayed(const Duration(milliseconds: 1100));
-    expect(market.tickerCalls, 2);
+    expect(api.quoteCalls, 2);
   });
 
-  test('does not overlap a slow public ticker request', () async {
-    final market = _FakeMarketRepository()
-      ..tickerCompleter = Completer<StrategyTicker>();
-    final controller = _controller(
-      _FakeStrategyApi(status: 'APPLIED'),
-      market: market,
-    );
+  test('does not overlap a slow backend quote request', () async {
+    final api = _FakeStrategyApi(status: 'APPLIED')
+      ..quoteCompleter = Completer<Map<String, dynamic>>();
+    final controller = _controller(api);
     addTearDown(controller.dispose);
     await controller.load();
     controller.setVisibility(pageVisible: true, appVisible: true);
     await Future<void>.delayed(const Duration(milliseconds: 1100));
 
-    expect(market.tickerCalls, 1);
-    market.tickerCompleter!.complete(
-      StrategyTicker(
-        instrumentId: 'BTC-USDT-SWAP',
-        lastPrice: 65000,
-        observedAt: DateTime.utc(2026, 10, 1, 8),
-      ),
+    expect(api.quoteCalls, 1);
+    api.quoteCompleter!.complete(
+      _quoteResponse(DateTime.utc(2026, 10, 1, 8)),
     );
   });
 
@@ -214,24 +196,12 @@ void main() {
     'does not replace a fresh quote with an out-of-order response',
     () async {
       final now = DateTime.utc(2026, 10, 1, 8);
-      final market = _FakeMarketRepository(clock: () => now)
-        ..tickerSequence = [
-          StrategyTicker(
-            instrumentId: 'BTC-USDT-SWAP',
-            lastPrice: 65000,
-            observedAt: now,
-          ),
-          StrategyTicker(
-            instrumentId: 'BTC-USDT-SWAP',
-            lastPrice: 66000,
-            observedAt: now.subtract(const Duration(seconds: 1)),
-          ),
+      final api = _FakeStrategyApi(status: 'APPLIED', clock: () => now)
+        ..quoteSequence = [
+          _quoteResponse(now, price: '65000'),
+          _quoteResponse(now.subtract(const Duration(seconds: 1)), price: '66000'),
         ];
-      final controller = _controller(
-        _FakeStrategyApi(status: 'APPLIED'),
-        market: market,
-        clock: () => now,
-      );
+      final controller = _controller(api, clock: () => now);
       addTearDown(controller.dispose);
       await controller.load();
       controller.setVisibility(pageVisible: true, appVisible: true);
@@ -239,7 +209,7 @@ void main() {
       await Future<void>.delayed(const Duration(seconds: 1));
 
       expect(controller.quoteFor('BTC-USDT-SWAP')?.lastPrice, 65000);
-      expect(market.tickerCalls, 2);
+      expect(api.quoteCalls, 2);
     },
   );
 
@@ -393,69 +363,23 @@ Future<void> _expectPreparedRejected(
 
 StrategyDashboardController _controller(
   _FakeStrategyApi api, {
-  StrategyMarketRepository? market,
   DateTime Function()? clock,
 }) {
-  final resolvedMarket =
-      market ??
-      (() {
-        final adapter = _TickerAdapter();
-        return StrategyMarketRepository(
-          Dio(BaseOptions(baseUrl: 'https://www.okx.com'))
-            ..httpClientAdapter = adapter,
-          requestCoordinator: RiskRequestCoordinator(
-            minimumSpacing: Duration.zero,
-            delay: (_) async {},
-          ),
-          clock: clock ?? () => DateTime.utc(2026, 10, 1, 8),
-        );
-      })();
+  if (clock != null) api.quoteClock = clock;
   return StrategyDashboardController(
     api: api,
-    marketRepository: resolvedMarket,
     bearerToken: 'test-session-token',
     clock: clock ?? () => DateTime.utc(2026, 10, 1, 8),
   );
 }
 
-class _FakeMarketRepository extends StrategyMarketRepository {
-  _FakeMarketRepository({DateTime Function()? clock})
-    : _clock = clock ?? DateTime.now,
-      super(
-        Dio(BaseOptions(baseUrl: 'https://www.okx.com')),
-        requestCoordinator: RiskRequestCoordinator(
-          minimumSpacing: Duration.zero,
-          delay: (_) async {},
-        ),
-      );
-
-  final DateTime Function() _clock;
-  bool failTickers = false;
-  int tickerCalls = 0;
-  Completer<StrategyTicker>? tickerCompleter;
-  List<StrategyTicker>? tickerSequence;
-
-  @override
-  Future<StrategyTicker> getTicker({required String instrumentId}) async {
-    tickerCalls++;
-    if (failTickers) throw const StrategyMarketException('ticker failure');
-    if (tickerCompleter != null) return tickerCompleter!.future;
-    final sequence = tickerSequence;
-    if (sequence != null && sequence.isNotEmpty) {
-      return sequence.removeAt(0);
-    }
-    final observedAt = _clock().toUtc();
-    return StrategyTicker(
-      instrumentId: instrumentId,
-      lastPrice: 65000,
-      observedAt: observedAt,
-    );
-  }
-}
-
 class _FakeStrategyApi implements StrategyApi {
-  _FakeStrategyApi({this.status = 'DRAFT', List<String>? statuses})
-    : statuses = statuses ?? [status];
+  _FakeStrategyApi({
+    this.status = 'DRAFT',
+    List<String>? statuses,
+    DateTime Function()? clock,
+  }) : statuses = statuses ?? [status],
+       quoteClock = clock ?? (() => DateTime.utc(2026, 10, 1, 8));
 
   final String status;
   final List<String> statuses;
@@ -470,8 +394,13 @@ class _FakeStrategyApi implements StrategyApi {
   int executeCalls = 0;
   int deleteCalls = 0;
   int listCalls = 0;
+  int quoteCalls = 0;
   String executeStatus = 'APPLIED';
   StrategyApiException? listError;
+  bool failQuotes = false;
+  Completer<Map<String, dynamic>>? quoteCompleter;
+  List<Map<String, dynamic>>? quoteSequence;
+  DateTime Function() quoteClock;
 
   List<Map<String, dynamic>> get strategies => List.generate(
     statuses.length,
@@ -536,34 +465,33 @@ class _FakeStrategyApi implements StrategyApi {
   };
 
   @override
+  Future<Map<String, dynamic>> getQuote(String token, String id) async {
+    quoteCalls++;
+    if (failQuotes) {
+      throw const StrategyApiException(
+        code: 'quote_unavailable',
+        message: 'quote unavailable',
+        statusCode: 503,
+      );
+    }
+    if (quoteCompleter != null) return quoteCompleter!.future;
+    final sequence = quoteSequence;
+    if (sequence != null && sequence.isNotEmpty) return sequence.removeAt(0);
+    return _quoteResponse(quoteClock().toUtc());
+  }
+
+  @override
   Future<void> deleteDraft(String token, String id) async {
     deleteCalls++;
   }
 }
 
-class _TickerAdapter implements HttpClientAdapter {
-  @override
-  Future<ResponseBody> fetch(
-    RequestOptions options,
-    Stream<Uint8List>? requestStream,
-    Future<void>? cancelFuture,
-  ) async => ResponseBody.fromString(
-    jsonEncode({
-      'code': '0',
-      'data': [
-        {
-          'instId': options.uri.queryParameters['instId'],
-          'last': '65000',
-          'ts': DateTime.utc(2026, 10, 1, 8).millisecondsSinceEpoch.toString(),
-        },
-      ],
-    }),
-    200,
-    headers: {
-      Headers.contentTypeHeader: [Headers.jsonContentType],
-    },
-  );
-
-  @override
-  void close({bool force = false}) {}
-}
+Map<String, dynamic> _quoteResponse(
+  DateTime observedAt, {
+  String instrumentId = 'BTC-USDT-SWAP',
+  String price = '65000',
+}) => {
+  'instrumentId': instrumentId,
+  'lastPrice': price,
+  'observedAt': observedAt.toUtc().toIso8601String(),
+};

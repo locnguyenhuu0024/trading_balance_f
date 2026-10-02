@@ -29,6 +29,8 @@ abstract class StrategyApi {
 
   Future<Map<String, dynamic>> getResult(String bearerToken, String id);
 
+  Future<Map<String, dynamic>> getQuote(String bearerToken, String id);
+
   Future<void> deleteDraft(String bearerToken, String id);
 }
 
@@ -144,6 +146,14 @@ class StrategyApiClient implements StrategyApi {
       _request(
         'GET',
         'v1/strategies/${Uri.encodeComponent(id)}/result',
+        bearerToken: bearerToken,
+      );
+
+  @override
+  Future<Map<String, dynamic>> getQuote(String bearerToken, String id) =>
+      _request(
+        'GET',
+        'v1/strategies/${Uri.encodeComponent(id)}/quote',
         bearerToken: bearerToken,
       );
 

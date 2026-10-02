@@ -372,7 +372,7 @@ class _StrategyCard extends StatelessWidget {
         : positions.first;
     final quoteLabel = quote == null
         ? 'Giá SWAP chưa sẵn sàng'
-        : 'Giá SWAP ${_price(quote!.lastPrice)}${quoteIsFresh ? '' : ' · đã cũ'}';
+        : 'Giá SWAP ${quote!.priceText}${quoteIsFresh ? '' : ' · đã cũ'}';
     final quoteStyle = Theme.of(context).textTheme.bodySmall?.copyWith(
       color: quoteIsFresh ? null : Theme.of(context).colorScheme.error,
     );
@@ -381,6 +381,26 @@ class _StrategyCard extends StatelessWidget {
     final pnl = _first(strategy, ['unrealizedPnl', 'upl']);
     final observedAt =
         _first(position, ['observedAt']) ?? strategy['observedAt'];
+    final orderSyncState = _text(strategy['orderSyncState']).toLowerCase();
+    final lastOrderScanAt = _text(strategy['lastOrderScanAt']);
+    final orderRows = _mapList(strategy['orders']);
+    final showOrderOutcomes = const {
+      'APPLIED',
+      'PARTIAL',
+      'UNKNOWN',
+      'COMPLETED',
+    }.contains(status);
+    final orderScanNotice = switch (orderSyncState) {
+      'error' => 'Lỗi đồng bộ lệnh',
+      'stale' => 'Lần quét lệnh đã cũ',
+      _ => null,
+    };
+    final lastSuccessfulOrderScan = lastOrderScanAt.isEmpty
+        ? 'chưa có lần quét thành công'
+        : 'lần quét thành công gần nhất: ${_timeText(lastOrderScanAt)}';
+    final orderScanNoticeText = orderScanNotice == null
+        ? null
+        : '$orderScanNotice · $lastSuccessfulOrderScan';
 
     return Card(
       child: Padding(
@@ -450,6 +470,33 @@ class _StrategyCard extends StatelessWidget {
                   'Vị thế có hoạt động ngoài chiến thuật này; số liệu phản ánh tài khoản OKX.',
                 ),
               ),
+            if (showOrderOutcomes && orderRows.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Text(
+                'Trạng thái từng lệnh',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              if (orderScanNoticeText != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    orderScanNoticeText,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                )
+              else if (lastOrderScanAt.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    'Lần quét lệnh gần nhất: ${_timeText(lastOrderScanAt)}',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+              for (var index = 0; index < orderRows.length; index++)
+                _AppliedOrderRow(index: index + 1, order: orderRows[index]),
+            ],
             const SizedBox(height: 10),
             Wrap(
               spacing: 8,
@@ -506,6 +553,34 @@ class _OrderSummaryRow extends StatelessWidget {
       subtitle: Text(
         'Contr: ${_text(order['contracts'])} · Margin: ${_text(order['margin'])} · Fee: ${_text(order['openingFeeEstimate'])} · ${_text(order['leverage'])}x',
       ),
+    );
+  }
+}
+
+class _AppliedOrderRow extends StatelessWidget {
+  const _AppliedOrderRow({required this.index, required this.order});
+
+  final int index;
+  final Map<String, dynamic> order;
+
+  @override
+  Widget build(BuildContext context) {
+    final side = _text(order['side']).toUpperCase();
+    final role = _text(order['role']).toLowerCase();
+    final status = _orderStatusLabel(_text(order['status']).toLowerCase());
+    final averageFill = _text(order['averageFillPrice']);
+    final fillSummary =
+        'Khớp: ${_display(order['filledContracts'])} / ${_display(order['contracts'])} hợp đồng';
+    final subtitle = averageFill.isEmpty
+        ? fillSummary
+        : '$fillSummary · Giá khớp TB: $averageFill';
+    return ListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      leading: CircleAvatar(radius: 14, child: Text('$index')),
+      title: Text('$side · $role · ${_text(order['limitPrice'])}'),
+      subtitle: Text(subtitle),
+      trailing: Chip(label: Text(status)),
     );
   }
 }
@@ -630,17 +705,15 @@ String _display(Object? value) => value == null || value.toString().isEmpty
     ? 'Chưa có dữ liệu'
     : value.toString();
 
-String _price(double value) => value >= 1000
-    ? value.toStringAsFixed(2)
-    : value
-          .toStringAsPrecision(8)
-          .replaceFirst(RegExp(r'0+$'), '')
-          .replaceFirst(RegExp(r'\.$'), '');
-
 String _time(DateTime timestamp) {
   final local = timestamp.toLocal();
   String two(int value) => value.toString().padLeft(2, '0');
   return '${two(local.hour)}:${two(local.minute)}:${two(local.second)}';
+}
+
+String _timeText(String value) {
+  final parsed = DateTime.tryParse(value);
+  return parsed == null ? value : _time(parsed);
 }
 
 String _statusLabel(String status) => switch (status) {
@@ -650,5 +723,18 @@ String _statusLabel(String status) => switch (status) {
   'APPLIED' => 'Đã gửi',
   'PARTIAL' => 'Một phần / cần kiểm tra',
   'UNKNOWN' => 'Chưa rõ kết quả',
+  'COMPLETED' => 'Hoàn tất',
   _ => status.isEmpty ? 'Không rõ trạng thái' : status,
+};
+
+String _orderStatusLabel(String status) => switch (status) {
+  'accepted' => 'Đã nhận',
+  'live' => 'Đang chờ',
+  'partially_filled' => 'Khớp một phần',
+  'filled' => 'Đã khớp',
+  'canceled' => 'Đã hủy',
+  'mmp_canceled' => 'Đã hủy MMP',
+  'rejected' => 'Bị từ chối',
+  'not_submitted' => 'Chưa gửi',
+  _ => 'Chưa xác định',
 };

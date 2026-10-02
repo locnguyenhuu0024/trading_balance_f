@@ -148,6 +148,7 @@ void main() {
         'confirm-once',
       );
       await client.getResult(token, 'draft-123');
+      final quote = await client.getQuote(token, 'draft-123');
       await client.deleteDraft(token, 'draft-123');
 
       expect(preview['previewHash'], 'hash');
@@ -155,6 +156,7 @@ void main() {
       expect(strategies, isEmpty);
       expect(prepared['confirmationToken'], 'confirm-once');
       expect(executed['status'], 'UNKNOWN');
+      expect(quote['lastPrice'], '65000.125');
       expect(adapter.requests.map((request) => request.uri.path), [
         '/v1/strategies/preview',
         '/v1/strategies',
@@ -162,6 +164,7 @@ void main() {
         '/v1/strategies/draft-123/prepare-apply',
         '/v1/strategies/draft-123/execute-apply',
         '/v1/strategies/draft-123/result',
+        '/v1/strategies/draft-123/quote',
         '/v1/strategies/draft-123/delete',
       ]);
       expect(
@@ -176,7 +179,8 @@ void main() {
       expect(adapter.requests[0].method, 'POST');
       expect(adapter.requests[1].data, {'previewHash': 'hash'});
       expect(adapter.requests[2].method, 'GET');
-      expect(adapter.requests[6].data, const {});
+      expect(adapter.requests[6].method, 'GET');
+      expect(adapter.requests[7].data, const {});
     },
   );
 }
@@ -226,6 +230,11 @@ class _TradeAdapter implements HttpClientAdapter {
       },
       '/v1/strategies/draft-123/execute-apply' => {'status': 'UNKNOWN'},
       '/v1/strategies/draft-123/result' => {'status': 'UNKNOWN'},
+      '/v1/strategies/draft-123/quote' => {
+        'instrumentId': 'BTC-USDT-SWAP',
+        'lastPrice': '65000.125',
+        'observedAt': '2026-10-02T00:00:00.000Z',
+      },
       _ => {'status': 'DELETED'},
     };
     return ResponseBody.fromString(

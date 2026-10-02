@@ -587,6 +587,10 @@ class _FakeStrategyApi implements StrategyApi {
       const {};
 
   @override
+  Future<Map<String, dynamic>> getQuote(String bearerToken, String id) async =>
+      const {};
+
+  @override
   Future<void> deleteDraft(String bearerToken, String id) async {}
 }
 
