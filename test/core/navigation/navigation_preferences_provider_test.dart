@@ -105,6 +105,7 @@ void main() {
       'risk',
       'bmag',
       'support',
+      'strategy',
     ];
 
     final future = controller.setDestinationOrderIds(order);
@@ -154,6 +155,7 @@ void main() {
       'risk',
       'bmag',
       'support',
+      'strategy',
     ];
 
     await container

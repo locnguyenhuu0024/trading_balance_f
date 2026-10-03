@@ -175,6 +175,9 @@ class TradeService:
             transport=transport,
             clock=clock,
         )
+        from .strategy import StrategyService
+
+        self.strategy = StrategyService(self)
         self._mutation_lock = threading.RLock()
 
     def dispatch(
@@ -197,6 +200,11 @@ class TradeService:
         if method == "GET" and path == "/v1/positions":
             self._require_session(environ)
             return 200, self._positions_response(), []
+        if path == "/v1/strategies" or path.startswith("/v1/strategies/"):
+            self._require_session(environ)
+            if method == "POST":
+                self._check_action_rate("strategies", source)
+            return 200, self.strategy.dispatch(method, path, body), []
         if method == "POST" and path == "/v1/actions/prepare":
             self._require_session(environ)
             self._check_action_rate("prepare", source)

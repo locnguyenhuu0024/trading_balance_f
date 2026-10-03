@@ -4,10 +4,39 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/currency/currency_display_mode.dart';
 import 'package:trading_balance_f/core/typography/app_text_scale.dart';
 import 'package:trading_balance_f/features/orders/data/okx_position_model.dart';
+import 'package:trading_balance_f/features/orders/data/trade_api_client.dart';
 import 'package:trading_balance_f/features/orders/presentation/orders_screen.dart';
 import 'package:trading_balance_f/features/orders/presentation/providers/order_provider.dart';
+import 'package:trading_balance_f/features/orders/presentation/providers/trade_session_provider.dart';
 import 'package:trading_balance_f/features/settings/presentation/settings_screen.dart';
 import 'package:trading_balance_f/main.dart';
+
+class _LayoutTradeApi implements TradeApi {
+  const _LayoutTradeApi({required this.isConfigured});
+
+  @override
+  final bool isConfigured;
+
+  @override
+  bool get supportsSessionRestoration => false;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _LayoutTradeSessionController extends TradeSessionController {
+  _LayoutTradeSessionController(super.api, {required bool authenticated}) {
+    state = TradeSessionState(
+      session: authenticated
+          ? TradeSession(
+              bearerToken: 'layout-test-token',
+              accountIdentifier: 'account-42',
+              expiresAt: DateTime.now().add(const Duration(hours: 1)),
+            )
+          : null,
+    );
+  }
+}
 
 OkxPosition _position({
   required String liqPx,
@@ -31,9 +60,26 @@ Widget _ordersApp({
   required List<OkxPosition> positions,
   String currency = CurrencyDisplayMode.usd,
   double appTextScale = AppTextScale.defaultScale,
+  bool authenticated = false,
+  bool apiConfigured = false,
 }) {
   return ProviderScope(
     overrides: [
+      tradeApiProvider.overrideWithValue(
+        _LayoutTradeApi(isConfigured: apiConfigured),
+      ),
+      tradeSessionProvider.overrideWith(
+        (ref) => _LayoutTradeSessionController(
+          ref.read(tradeApiProvider),
+          authenticated: authenticated,
+        ),
+      ),
+      tradePositionsProvider.overrideWith(
+        (ref) async => TradePositionsSnapshot(
+          accountIdentifier: 'account-42',
+          positions: positions,
+        ),
+      ),
       orderFilterProvider.overrideWith((ref) => 'SWAP'),
       orderTabProvider.overrideWith((ref) => OrderTab.positions),
       positionsFutureProvider.overrideWith((ref) async => positions),
@@ -54,6 +100,62 @@ Finder _cardContainingPrice(String price) {
 }
 
 void main() {
+  testWidgets('shows an accessible signed-out status beside the trade title', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+
+    await tester.pumpWidget(_ordersApp(positions: []));
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('Quản lý Giao dịch'), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp('Chưa đăng nhập')), findsOneWidget);
+    final titleRow = find
+        .ancestor(
+          of: find.text('Quản lý Giao dịch'),
+          matching: find.byType(Row),
+        )
+        .first;
+    expect(
+      find.descendant(of: titleRow, matching: find.byType(Tooltip)),
+      findsOneWidget,
+    );
+    expect(find.text('Đóng tất cả vị thế'), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    semantics.dispose();
+  });
+
+  testWidgets('shows a compact close-all action and signed-in title status', (
+    tester,
+  ) async {
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final semantics = tester.ensureSemantics();
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+
+    await tester.pumpWidget(
+      _ordersApp(positions: [], authenticated: true, apiConfigured: true),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.bySemanticsLabel(RegExp('Đã đăng nhập')), findsOneWidget);
+    final closeAll = find.widgetWithText(OutlinedButton, 'Đóng tất cả vị thế');
+    expect(closeAll, findsOneWidget);
+    expect(tester.getSize(closeAll).width, lessThan(390 * 0.8));
+    expect(
+      find.ancestor(of: closeAll, matching: find.byType(Card)),
+      findsNothing,
+    );
+    expect(find.text('Giao dịch riêng tư'), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    semantics.dispose();
+  });
+
   testWidgets('backend positions show unavailable metrics as dashes', (
     tester,
   ) async {

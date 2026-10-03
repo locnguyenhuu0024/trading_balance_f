@@ -8,13 +8,42 @@ import hashlib
 import hmac
 import http.client
 import json
+import re
 import time
 from typing import Any, Callable, Optional
 from urllib.parse import urlencode
 
+from . import diagnostics
+
+
+_OKX_ERROR_CODE = re.compile(r"[0-9]{1,12}\Z")
+
+
+def bounded_error_code(value: Any) -> str | None:
+    """Return a short numeric exchange error code without exposing response text."""
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        return None
+    token = str(value)
+    return token if _OKX_ERROR_CODE.fullmatch(token) else None
+
 
 class OKXError(RuntimeError):
     """Safe, content-free error raised for a rejected or malformed response."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_code: str | None = None,
+        diagnostic_category: str | None = None,
+        http_status: int | None = None,
+        ack_shape: str | None = None,
+    ):
+        super().__init__(message)
+        self.error_code = bounded_error_code(error_code)
+        self.diagnostic_category = diagnostic_category
+        self.http_status = http_status if isinstance(http_status, int) and not isinstance(http_status, bool) and 100 <= http_status <= 599 else None
+        self.ack_shape = ack_shape
 
 
 class OKXTransportError(OKXError):
@@ -71,14 +100,32 @@ class OKXClient:
             connection.request(method, request_path, body=body, headers=headers)
             response = connection.getresponse()
             response_body = response.read(self.MAX_RESPONSE_BYTES + 1)
-            if len(response_body) > self.MAX_RESPONSE_BYTES or response.status < 200 or response.status >= 300:
-                raise OKXTransportError("exchange returned an unusable HTTP response")
+            if len(response_body) > self.MAX_RESPONSE_BYTES:
+                raise OKXTransportError(
+                    "exchange returned an unusable HTTP response",
+                    diagnostic_category="response_oversized",
+                    http_status=response.status,
+                )
+            if response.status < 200 or response.status >= 300:
+                raise OKXTransportError(
+                    "exchange returned an unusable HTTP response",
+                    diagnostic_category="http_rejected",
+                    http_status=response.status,
+                )
             try:
                 decoded = json.loads(response_body.decode("utf-8"))
             except (UnicodeError, json.JSONDecodeError):
-                raise OKXTransportError("exchange returned malformed JSON") from None
+                raise OKXTransportError(
+                    "exchange returned malformed JSON",
+                    diagnostic_category="malformed_json",
+                    http_status=response.status,
+                ) from None
             if not isinstance(decoded, dict):
-                raise OKXTransportError("exchange returned an unexpected response")
+                raise OKXTransportError(
+                    "exchange returned an unexpected response",
+                    diagnostic_category="nonobject_response",
+                    http_status=response.status,
+                )
             return decoded
         except OKXTransportError:
             raise
@@ -93,8 +140,9 @@ class OKXClient:
         path: str,
         *,
         params: dict[str, str] | None = None,
-        body: dict[str, Any] | None = None,
+        body: dict[str, Any] | list[dict[str, Any]] | None = None,
         private: bool | None = None,
+        allow_nonzero_codes: frozenset[str] = frozenset(),
     ) -> dict[str, Any]:
         query = ""
         if params:
@@ -108,21 +156,96 @@ class OKXClient:
             "User-Agent": "trading-balance-private-api/1.0",
         }
         transport = self._transport or self._network_transport
+        endpoint = diagnostics.endpoint_for_path(path)
+        context = diagnostics.current_context()
+        log_request = endpoint is not None and context is not None
+        started = time.monotonic()
+
+        def log_result(
+            outcome: str,
+            reason: str | None = None,
+            *,
+            error_code: Any = None,
+            http_status: Any = None,
+            top_code: Any = None,
+            data_count: Any = None,
+            ack_shape: str | None = None,
+        ) -> None:
+            if not log_request or endpoint is None:
+                return
+            diagnostics.emit_event(
+                "okx_request",
+                stage=endpoint[1],
+                outcome=outcome,
+                reason=reason,
+                endpoint=endpoint[0],
+                method=method.upper() if method.upper() in {"GET", "POST"} else "other",
+                top_code=top_code,
+                item_code=error_code,
+                http_status=http_status,
+                data_count=data_count,
+                ack_shape=ack_shape,
+                elapsed_ms=max(0, int((time.monotonic() - started) * 1000)),
+            )
+
         try:
             response = transport(method.upper(), request_path, headers, body_bytes)
-        except OKXError:
+        except OKXError as exc:
+            outcome, reason = diagnostics.okx_category_reason(
+                exc.diagnostic_category or ("exchange_rejected" if exc.error_code else "transport_failure")
+            )
+            log_result(
+                outcome, reason, error_code=exc.error_code, http_status=exc.http_status,
+                ack_shape=exc.ack_shape,
+            )
             raise
         except Exception:
             # A thrown transport error after a write may mean the exchange
             # completed it. Never surface the exception text or retry here.
-            raise OKXTransportError("exchange transport failed") from None
+            error = OKXTransportError(
+                "exchange transport failed", diagnostic_category="transport_failure"
+            )
+            outcome, reason = diagnostics.okx_category_reason(error.diagnostic_category)
+            log_result(outcome, reason)
+            raise error from None
         if not isinstance(response, dict):
-            raise OKXTransportError("exchange returned an unexpected response")
-        if str(response.get("code", "")) != "0":
-            raise OKXError("exchange rejected the request")
+            error = OKXTransportError(
+                "exchange returned an unexpected response",
+                diagnostic_category="nonobject_response",
+            )
+            outcome, reason = diagnostics.okx_category_reason(error.diagnostic_category)
+            log_result(outcome, reason)
+            raise error
+        code = str(response.get("code", ""))
+        if code != "0" and code not in allow_nonzero_codes:
+            error = OKXError(
+                "exchange rejected the request", error_code=code,
+                diagnostic_category="exchange_rejected",
+                ack_shape="valid" if bounded_error_code(code) is not None else "invalid_code",
+            )
+            outcome, reason = diagnostics.okx_category_reason(error.diagnostic_category)
+            log_result(
+                outcome, reason, error_code=error.error_code, top_code=error.error_code,
+                ack_shape=error.ack_shape,
+            )
+            raise error
         data = response.get("data")
         if data is not None and not isinstance(data, list):
-            raise OKXTransportError("exchange returned an unexpected response")
+            error = OKXTransportError(
+                "exchange returned an unexpected response",
+                diagnostic_category="malformed_data",
+                ack_shape="invalid_data_type",
+            )
+            outcome, reason = diagnostics.okx_category_reason(error.diagnostic_category)
+            log_result(
+                outcome, reason, top_code=bounded_error_code(code), ack_shape=error.ack_shape
+            )
+            raise error
+        log_result(
+            "success", top_code=bounded_error_code(code),
+            data_count=len(data) if isinstance(data, list) else 0,
+            ack_shape="valid",
+        )
         return response
 
     def account_config(self) -> dict[str, Any]:
@@ -144,6 +267,43 @@ class OKXClient:
         )
         return [item for item in response.get("data", []) if isinstance(item, dict)]
 
+    def ticker(self, instrument_id: str) -> dict[str, Any]:
+        response = self.request(
+            "GET", "/api/v5/market/ticker", params={"instId": instrument_id}, private=False
+        )
+        data = response.get("data", [])
+        if not data or not isinstance(data[0], dict):
+            raise OKXTransportError("exchange ticker is unavailable")
+        return data[0]
+
+    def pending_orders(self, instrument_id: str) -> list[dict[str, Any]]:
+        response = self.request(
+            "GET", "/api/v5/trade/orders-pending", params={"instType": "SWAP", "instId": instrument_id}
+        )
+        return [item for item in response.get("data", []) if isinstance(item, dict)]
+
+    def account_balance(self) -> list[dict[str, Any]]:
+        response = self.request("GET", "/api/v5/account/balance", params={"ccy": "USDT"})
+        return [item for item in response.get("data", []) if isinstance(item, dict)]
+
+    def trade_fee(self, instrument_family: str) -> dict[str, Any]:
+        response = self.request(
+            "GET", "/api/v5/account/trade-fee",
+            params={"instType": "SWAP", "instFamily": instrument_family},
+        )
+        data = response.get("data", [])
+        if not isinstance(data, list) or len(data) != 1 or not isinstance(data[0], dict):
+            raise OKXTransportError("exchange fee metadata is unavailable")
+        return data[0]
+
+    def position_tiers(self, instrument_family: str) -> list[dict[str, Any]]:
+        response = self.request(
+            "GET", "/api/v5/public/position-tiers",
+            params={"instType": "SWAP", "tdMode": "isolated", "instFamily": instrument_family},
+            private=False,
+        )
+        return [item for item in response.get("data", []) if isinstance(item, dict)]
+
     def order_details(self, instrument_id: str, client_order_id: str) -> dict[str, Any] | None:
         response = self.request(
             "GET",
@@ -160,6 +320,18 @@ class OKXClient:
 
     def place_order(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self.request("POST", "/api/v5/trade/order", body=payload)
+
+    def set_leverage(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self.request("POST", "/api/v5/account/set-leverage", body=payload)
+
+    def place_batch_orders(self, payload: list[dict[str, Any]]) -> dict[str, Any]:
+        # Batch placement reports per-order outcomes even when the top-level
+        # response marks the batch partial. Preserve those rows for the strategy
+        # result parser instead of converting them into a blanket rejection.
+        return self.request(
+            "POST", "/api/v5/trade/batch-orders", body=payload,
+            allow_nonzero_codes=frozenset({"1", "2"}),
+        )
 
     def close_position(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self.request("POST", "/api/v5/trade/close-position", body=payload)

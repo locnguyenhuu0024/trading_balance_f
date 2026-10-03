@@ -14,6 +14,21 @@ void main() {
       expect(NavigationPreferences.decode(expected.encode()), expected);
     });
 
+    test('keeps the position strategy destination in saved preferences', () {
+      final preferences = NavigationPreferences.defaults.copyWith(
+        enabledDestinationIds: ['home', 'strategy'],
+        destinationOrderIds: ['strategy', 'home'],
+      );
+
+      expect(preferences.enabledDestinationIds, [
+        'home',
+        'settings',
+        'strategy',
+      ]);
+      expect(preferences.destinationOrderIds.first, 'strategy');
+      expect(NavigationPreferences.decode(preferences.encode()), preferences);
+    });
+
     test('keeps legacy mode and edge records with appearance defaults', () {
       expect(
         NavigationPreferences.decode(
@@ -54,6 +69,7 @@ void main() {
           'risk',
           'bmag',
           'support',
+          'strategy',
         ],
       );
 
@@ -80,6 +96,7 @@ void main() {
           'market',
           'settings',
           'support',
+          'strategy',
         ]);
         expect(decoded.enabledDestinationIds, ['orders', 'settings', 'risk']);
         expect(decoded.displayMode, NavigationDisplayMode.floating);
