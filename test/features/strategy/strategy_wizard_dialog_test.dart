@@ -136,6 +136,192 @@ void main() {
     );
   });
 
+  testWidgets(
+    'RED-002 preserves 10 selected rows and the preview when an 11th is rejected',
+    (tester) async {
+      final market = _FakeStrategyMarketRepository()
+        ..supportLevels = _levels(
+          StrategySide.long,
+          List.generate(11, (index) => 99 - index.toDouble()),
+        );
+      final api = _FakeStrategyApi()..previewOrderCount = 10;
+      final dashboard = _dashboard(api, market);
+      addTearDown(dashboard.dispose);
+      await _pumpWizard(tester, market, api, dashboard);
+
+      for (var index = 0; index < 10; index++) {
+        final level = find.byKey(ValueKey('strategy-level-long_$index'));
+        final checkbox = find.descendant(
+          of: level,
+          matching: find.byType(CheckboxListTile),
+        );
+        await tester.ensureVisible(checkbox);
+        await tester.tap(checkbox);
+        await tester.pump();
+      }
+      expect(
+        find.text('Đã chọn 10/10 lệnh · Long 10 · Short 0'),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byKey(const Key('strategy-next-step-one')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('strategy-margin-input')),
+        '100',
+      );
+      await tester.tap(find.byKey(const Key('strategy-request-preview')));
+      await tester.pumpAndSettle();
+      expect(api.previewBodies, hasLength(1));
+
+      await tester.tap(find.text('Quay lại'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Quay lại'));
+      await tester.pumpAndSettle();
+      final eleventh = find.descendant(
+        of: find.byKey(const ValueKey('strategy-level-long_10')),
+        matching: find.byType(CheckboxListTile),
+      );
+      await tester.ensureVisible(eleventh);
+      await tester.tap(eleventh);
+      await tester.pump();
+
+      expect(
+        find.text('Đã chọn 10/10 lệnh · Long 10 · Short 0'),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .widgetList<CheckboxListTile>(find.byType(CheckboxListTile))
+            .where((checkbox) => checkbox.value == true),
+        hasLength(10),
+      );
+      final radios = tester.widgetList<RadioListTile<String>>(
+        find.byType(RadioListTile<String>),
+      );
+      expect(
+        radios.firstWhere((radio) => radio.value == 'long_0').groupValue,
+        'long_0',
+      );
+      expect(api.previewBodies, hasLength(1));
+      expect(api.saveBodies, isEmpty);
+      expect(find.textContaining('tối đa 10 lệnh'), findsOneWidget);
+    },
+  );
+
+  testWidgets('RED-002 rejects a forged 11-order preview before save', (
+    tester,
+  ) async {
+    final market = _FakeStrategyMarketRepository();
+    final api = _FakeStrategyApi()..previewOrderCount = 11;
+    final dashboard = _dashboard(api, market);
+    addTearDown(dashboard.dispose);
+    await _pumpWizard(tester, market, api, dashboard);
+
+    await tester.tap(find.byType(CheckboxListTile).first);
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('strategy-next-step-one')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('strategy-margin-input')),
+      '100',
+    );
+    await tester.tap(find.byKey(const Key('strategy-request-preview')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('strategy-save-draft')), findsNothing);
+    expect(api.previewBodies, hasLength(1));
+    expect(api.saveBodies, isEmpty);
+    expect(api.prepareCalls, 0);
+    expect(api.executeCalls, 0);
+    expect(find.textContaining('giới hạn 10 lệnh'), findsOneWidget);
+  });
+
+  testWidgets(
+    'RED-002 rejects an 11-order prepared response before confirmation',
+    (tester) async {
+      final market = _FakeStrategyMarketRepository();
+      final api = _FakeStrategyApi()..preparedOrderCount = 11;
+      final dashboard = _dashboard(api, market);
+      addTearDown(dashboard.dispose);
+      await _pumpWizard(tester, market, api, dashboard);
+
+      await tester.tap(find.byType(CheckboxListTile).first);
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('strategy-next-step-one')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('strategy-margin-input')),
+        '100',
+      );
+      await tester.tap(find.byKey(const Key('strategy-request-preview')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('strategy-apply-now')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(api.prepareCalls, 1);
+      expect(find.text('Xác nhận danh sách lệnh'), findsNothing);
+      expect(api.executeCalls, 0);
+    },
+  );
+
+  testWidgets(
+    'GREEN-002 previews and executes a mixed 10-order selection once',
+    (tester) async {
+      final market = _FakeStrategyMarketRepository()
+        ..supportLevels = _levels(
+          StrategySide.long,
+          List.generate(5, (index) => 99 - index.toDouble()),
+        )
+        ..resistanceLevels = _levels(
+          StrategySide.short,
+          List.generate(5, (index) => 101 + index.toDouble()),
+        );
+      final api = _FakeStrategyApi()
+        ..previewOrderCount = 10
+        ..preparedOrderCount = 10;
+      final dashboard = _dashboard(api, market);
+      addTearDown(dashboard.dispose);
+      await _pumpWizard(tester, market, api, dashboard);
+
+      await tester.tap(find.byKey(const Key('strategy-direction-select')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Long và Short'));
+      await tester.pumpAndSettle();
+      for (var index = 0; index < 10; index++) {
+        final checkbox = find.byType(CheckboxListTile).at(index);
+        await tester.ensureVisible(checkbox);
+        await tester.tap(checkbox);
+        await tester.pump();
+      }
+      expect(
+        find.text('Đã chọn 10/10 lệnh · Long 5 · Short 5'),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byKey(const Key('strategy-next-step-one')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('strategy-margin-input')),
+        '100',
+      );
+      await tester.tap(find.byKey(const Key('strategy-request-preview')));
+      await tester.pumpAndSettle();
+      expect(api.previewBodies.single['selectedLevels'], hasLength(10));
+
+      await tester.tap(find.byKey(const Key('strategy-apply-now')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(api.saveBodies.single['selectedLevels'], hasLength(10));
+      expect(api.prepareCalls, 1);
+      await tester.tap(find.byKey(const Key('strategy-confirm-apply')));
+      await tester.pumpAndSettle();
+
+      expect(api.executeCalls, 1);
+    },
+  );
+
   testWidgets('Both cannot continue until each side has a selected entry', (
     tester,
   ) async {
@@ -664,10 +850,36 @@ class _FakeStrategyApi implements StrategyApi {
   final previewBodies = <Map<String, dynamic>>[];
   final saveBodies = <Map<String, dynamic>>[];
   StrategyApiException? nextPreviewError;
+  int previewOrderCount = 1;
+  int preparedOrderCount = 1;
   int prepareCalls = 0;
   int executeCalls = 0;
   int deleteCalls = 0;
   bool reportCleanupConflict = false;
+
+  @override
+  Future<StrategyRetryCandidates> getRetryCandidates(
+    String token,
+    String sourceStrategyId,
+  ) async => throw UnimplementedError();
+
+  @override
+  Future<StrategyRetryPreview> previewRetry(
+    String token,
+    String sourceStrategyId, {
+    required String sourceRevision,
+    required List<String> sourceClientOrderIds,
+  }) async => throw UnimplementedError();
+
+  @override
+  Future<StrategyRetryDraft> createRetryDraft(
+    String token,
+    String sourceStrategyId, {
+    required String sourceRevision,
+    required List<String> sourceClientOrderIds,
+    required String previewHash,
+    required String retryRequestId,
+  }) async => throw UnimplementedError();
 
   @override
   Future<Map<String, dynamic>> preview(
@@ -680,16 +892,17 @@ class _FakeStrategyApi implements StrategyApi {
     if (error != null) throw error;
     return {
       'previewHash': 'preview-hash',
-      'orders': [
-        {
+      'orders': List.generate(
+        previewOrderCount,
+        (index) => {
           'side': 'long',
           'role': 'entry',
-          'limitPrice': '90.0',
+          'limitPrice': (90 - index).toStringAsFixed(1),
           'contracts': '1',
           'margin': '100.0',
           'leverage': '5',
         },
-      ],
+      ),
     };
   }
 
@@ -715,18 +928,19 @@ class _FakeStrategyApi implements StrategyApi {
     return {
       'confirmationToken': 'one-use-token',
       'submissionMode': 'sequential',
-      'estimatedOpeningFees': '0.03',
-      'orders': [
-        {
+      'estimatedOpeningFees': (0.03 * preparedOrderCount).toStringAsFixed(2),
+      'orders': List.generate(
+        preparedOrderCount,
+        (index) => {
           'side': 'long',
           'role': 'entry',
-          'limitPrice': '90.0',
+          'limitPrice': (90 - index).toStringAsFixed(1),
           'contracts': '1',
           'margin': '100.0',
           'leverage': 5,
           'openingFeeEstimate': '0.03',
         },
-      ],
+      ),
     };
   }
 
@@ -783,6 +997,7 @@ class _FakeStrategyMarketRepository extends StrategyMarketRepository {
   Duration tickerAge = Duration.zero;
   final loadCalls = <String>[];
   List<StrategyLevel>? supportLevels;
+  List<StrategyLevel>? resistanceLevels;
   final instruments = const [
     StrategyInstrument(
       instrumentId: 'BTC-USDT-SWAP',
@@ -843,7 +1058,7 @@ class _FakeStrategyMarketRepository extends StrategyMarketRepository {
       analysis: StrategyAnalysis(
         referencePrice: 100,
         supports: supportLevels ?? calculated.supports,
-        resistances: calculated.resistances,
+        resistances: resistanceLevels ?? calculated.resistances,
       ),
     );
   }
@@ -858,3 +1073,16 @@ class _FakeStrategyMarketRepository extends StrategyMarketRepository {
     );
   }
 }
+
+List<StrategyLevel> _levels(StrategySide side, List<double> prices) => [
+  for (var index = 0; index < prices.length; index++)
+    StrategyLevel(
+      price: prices[index],
+      exactPriceText: prices[index].toString(),
+      firstTouchAt: DateTime.utc(2030, 1, 1).add(Duration(days: index)),
+      lastTouchAt: DateTime.utc(2030, 1, 1).add(Duration(days: index)),
+      touchCount: 2,
+      side: side,
+      levelId: '${side.wireValue}_$index',
+    ),
+];

@@ -9,7 +9,7 @@ from typing import Any
 
 from backend.security import token_digest
 from backend.store import SQLiteStore, decode_json, encode_json
-from backend.strategy_queue import StrategyQueueLedger, new_queue, parse_order_ack
+from backend.strategy_queue import StrategyQueueLedger, initial_results, new_queue, parse_order_ack
 from backend.strategy_worker import StrategyOrderWorker, WorkerSettings
 from backend.tests import test_strategy_api as api_fixtures
 
@@ -101,6 +101,34 @@ class StrategyQueueTests(unittest.TestCase):
         self.assertEqual(duplicate["status"], "APPLYING")
         self.assertEqual(self.api.exchange.single_order_attempts, 0)
         return strategy_id, prepared
+
+    def _seed_confirmed_legacy_queue_twenty(self, strategy_id: str) -> None:
+        strategy_service = self.api.service.strategy
+        contract = self._contract(20)
+        contract["entryBySide"] = {"long": "59000"}
+        preview = strategy_service._preview_contract(contract)
+        orders = strategy_service._with_client_ids(preview)
+        snapshot = strategy_service._public_preview(preview)
+        snapshot["orders"] = orders
+        snapshot["_metadata"] = preview["_internal"]["metadata"]
+        snapshot["_positionMode"] = preview["_internal"]["positionMode"]
+        prepared = strategy_service._public_preview(preview)
+        prepared["orders"] = orders
+        prepared["_positionMode"] = preview["_internal"]["positionMode"]
+        prepared["submissionMode"] = "sequential"
+        queue = new_queue(enqueued_at=self.api.now, total_count=20, preview_hash=preview["previewHash"])
+        results = initial_results(orders)
+        with self.api.service.store.transaction() as connection:
+            connection.execute(
+                "UPDATE strategies SET status='APPLYING', contract_json=?, snapshot_json=?, orders_json=?, "
+                "results_json=?, preview_hash=?, confirmation_hash=NULL, prepared_json=?, submission_mode='sequential', "
+                "attempt_started=1, batch_attempted=0, order_placement_attempted=0, queue_json=?, "
+                "execution_id=NULL, execution_lease_until=NULL, updated_at=? WHERE strategy_id=?",
+                (
+                    encode_json(contract), encode_json(snapshot), encode_json(orders), encode_json(results),
+                    preview["previewHash"], encode_json(prepared), encode_json(queue), self.api.now, strategy_id,
+                ),
+            )
 
     def _assert_malformed_order_ack_stops_tail(self, ack: dict[str, Any]) -> None:
         strategy_id, prepared = self._start_queue()
@@ -280,6 +308,18 @@ class StrategyQueueTests(unittest.TestCase):
         self.assertEqual(result["status"], "APPLIED")
         self.assertEqual(result["queue"]["phase"], "submitted")
         self.assertEqual([row["placementState"] for row in result["results"]], ["accepted"] * 3)
+
+    def test_green_ten_order_queue_finishes_the_full_tail(self) -> None:
+        strategy_id, prepared = self._start_queue(count=10)
+        self.assertEqual(len(prepared["orders"]), 10)
+
+        self.assertTrue(self._worker().run_once())
+
+        strategy = self._read_strategy(strategy_id)
+        self.assertEqual(strategy["status"], "APPLIED")
+        self.assertEqual(strategy["queue"]["totalCount"], 10)
+        self.assertEqual([row["placementState"] for row in strategy["results"]], ["accepted"] * 10)
+        self.assertEqual(self.api.exchange.single_order_attempts, 10)
 
     def test_delayed_prewrite_lease_renewal_does_not_shorten_actual_call_spacing(self) -> None:
         self._start_queue()
@@ -477,7 +517,8 @@ class StrategyQueueTests(unittest.TestCase):
         self.assertEqual(self.api.exchange.single_order_attempts, 0)
 
     def test_worker_pass_shares_twenty_placement_budget_and_preserves_spacing(self) -> None:
-        first_id, _ = self._start_queue(count=20)
+        first_id, _ = self._start_queue(count=10)
+        self._seed_confirmed_legacy_queue_twenty(first_id)
         self.api.exchange.instrument_data.append({
             **self.api.exchange.instrument_data[0],
             "instId": "ETH-USDT-SWAP",

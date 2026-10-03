@@ -408,14 +408,768 @@ class StrategyMarketException implements Exception {
 
 String strategyNumber(Object? value) => value == null ? '' : value.toString();
 
+class StrategyRetryCandidate {
+  const StrategyRetryCandidate({
+    required this.sourceClientOrderId,
+    required this.side,
+    required this.role,
+    required this.limitPrice,
+    required this.contracts,
+    required this.leverage,
+    required this.priorOutcome,
+    required this.eligible,
+    required this.reason,
+    required this.levelId,
+  });
+
+  final String sourceClientOrderId;
+  final String side;
+  final String role;
+  final String limitPrice;
+  final String contracts;
+  final String leverage;
+  final String priorOutcome;
+  final bool eligible;
+  final String? reason;
+  final String? levelId;
+
+  static StrategyRetryCandidate? tryParse(Object? value) {
+    final map = _retryStrictMap(value, const {
+      'sourceClientOrderId',
+      'side',
+      'role',
+      'limitPrice',
+      'contracts',
+      'leverage',
+      'priorOutcome',
+      'eligible',
+      'reason',
+      'levelId',
+    });
+    if (map == null ||
+        !_retryHasKeys(map, const {
+          'sourceClientOrderId',
+          'side',
+          'role',
+          'limitPrice',
+          'contracts',
+          'leverage',
+          'priorOutcome',
+          'eligible',
+          'reason',
+        })) {
+      return null;
+    }
+    final id = map['sourceClientOrderId'];
+    final side = map['side'];
+    final role = map['role'];
+    final priorOutcome = map['priorOutcome'];
+    final eligible = map['eligible'];
+    final reasonValue = map['reason'];
+    final levelIdValue = map['levelId'];
+    final price = _retryDecimalText(map['limitPrice'], positive: true);
+    final contracts = _retryDecimalText(map['contracts'], positive: true);
+    final leverage = _retryDecimalText(map['leverage'], positive: true);
+    final leverageDecimal = StrategyDecimal.tryParse(leverage ?? '');
+    if (id is! String ||
+        id.isEmpty ||
+        id.length > 200 ||
+        side is! String ||
+        !const {'long', 'short'}.contains(side) ||
+        role is! String ||
+        !const {'entry', 'dca'}.contains(role) ||
+        priorOutcome is! String ||
+        !const {'not_submitted', 'rejected', 'other'}.contains(priorOutcome) ||
+        eligible is! bool ||
+        (eligible && priorOutcome == 'other') ||
+        (reasonValue != null && reasonValue is! String) ||
+        (levelIdValue != null && levelIdValue is! String) ||
+        price == null ||
+        contracts == null ||
+        leverageDecimal == null ||
+        !const {
+          '1',
+          '2',
+          '3',
+          '4',
+          '5',
+          '6',
+          '7',
+          '8',
+          '9',
+          '10',
+        }.contains(leverageDecimal.toString())) {
+      return null;
+    }
+    final reason = reasonValue as String?;
+    if ((eligible && reason != null) ||
+        (!eligible && (reason == null || reason.isEmpty))) {
+      return null;
+    }
+    return StrategyRetryCandidate(
+      sourceClientOrderId: id,
+      side: side,
+      role: role,
+      limitPrice: price,
+      contracts: contracts,
+      leverage: leverageDecimal.toString(),
+      priorOutcome: priorOutcome,
+      eligible: eligible,
+      reason: reason,
+      levelId: levelIdValue as String?,
+    );
+  }
+}
+
+class StrategyRetryLinkedChild {
+  const StrategyRetryLinkedChild({
+    required this.strategyId,
+    required this.status,
+    required this.sourceClientOrderIds,
+  });
+
+  final String strategyId;
+  final String status;
+  final List<String> sourceClientOrderIds;
+
+  static StrategyRetryLinkedChild? tryParse(Object? value) {
+    final map = _retryStrictMap(value, const {
+      'strategyId',
+      'status',
+      'sourceClientOrderIds',
+    });
+    final id = map?['strategyId'];
+    final status = map?['status'];
+    final ids = _retryStringList(map?['sourceClientOrderIds']);
+    if (map == null ||
+        !_retryHasKeys(map, const {
+          'strategyId',
+          'status',
+          'sourceClientOrderIds',
+        }) ||
+        id is! String ||
+        id.isEmpty ||
+        status is! String ||
+        status.isEmpty ||
+        ids == null ||
+        ids.isEmpty ||
+        ids.toSet().length != ids.length) {
+      return null;
+    }
+    return StrategyRetryLinkedChild(
+      strategyId: id,
+      status: status,
+      sourceClientOrderIds: List.unmodifiable(ids),
+    );
+  }
+}
+
+class StrategyRetryCandidates {
+  const StrategyRetryCandidates({
+    required this.sourceStrategyId,
+    required this.sourceRevision,
+    required this.candidates,
+    required this.blockedReason,
+    required this.linkedChildren,
+  });
+
+  final String sourceStrategyId;
+  final String sourceRevision;
+  final List<StrategyRetryCandidate> candidates;
+  final String? blockedReason;
+  final List<StrategyRetryLinkedChild> linkedChildren;
+
+  static StrategyRetryCandidates? tryParse(Object? value) {
+    final map = _retryStrictMap(value, const {
+      'sourceStrategyId',
+      'sourceRevision',
+      'candidates',
+      'blockedReason',
+      'linkedChildren',
+    });
+    if (map == null ||
+        !_retryHasKeys(map, const {
+          'sourceStrategyId',
+          'sourceRevision',
+          'candidates',
+          'blockedReason',
+          'linkedChildren',
+        })) {
+      return null;
+    }
+    final sourceId = map['sourceStrategyId'];
+    final revision = map['sourceRevision'];
+    final rawCandidates = map['candidates'];
+    final blocked = map['blockedReason'];
+    final rawChildren = map['linkedChildren'];
+    if (sourceId is! String ||
+        sourceId.isEmpty ||
+        revision is! String ||
+        revision.isEmpty ||
+        rawCandidates is! List ||
+        (blocked != null && (blocked is! String || blocked.isEmpty)) ||
+        rawChildren is! List) {
+      return null;
+    }
+    final candidates = rawCandidates
+        .map(StrategyRetryCandidate.tryParse)
+        .toList(growable: false);
+    final children = rawChildren
+        .map(StrategyRetryLinkedChild.tryParse)
+        .toList(growable: false);
+    if (candidates.any((candidate) => candidate == null) ||
+        children.any((child) => child == null)) {
+      return null;
+    }
+    final parsedCandidates = candidates.cast<StrategyRetryCandidate>();
+    final parsedChildren = children.cast<StrategyRetryLinkedChild>();
+    if (parsedCandidates
+            .map((candidate) => candidate.sourceClientOrderId)
+            .toSet()
+            .length !=
+        parsedCandidates.length) {
+      return null;
+    }
+    return StrategyRetryCandidates(
+      sourceStrategyId: sourceId,
+      sourceRevision: revision,
+      candidates: List.unmodifiable(parsedCandidates),
+      blockedReason: blocked as String?,
+      linkedChildren: List.unmodifiable(parsedChildren),
+    );
+  }
+}
+
+class StrategyRetryPreview {
+  const StrategyRetryPreview({
+    required this.sourceStrategyId,
+    required this.sourceRevision,
+    required this.selectedSourceClientOrderIds,
+    required this.previewHash,
+    required this.orders,
+    required this.totalMargin,
+    required this.plannedMargin,
+    required this.unallocatedMargin,
+    required this.estimatedOpeningFees,
+    required this.requiredBalance,
+    required this.raw,
+  });
+
+  final String sourceStrategyId;
+  final String sourceRevision;
+  final List<String> selectedSourceClientOrderIds;
+  final String previewHash;
+  final List<Map<String, dynamic>> orders;
+  final String totalMargin;
+  final String plannedMargin;
+  final String unallocatedMargin;
+  final String estimatedOpeningFees;
+  final String requiredBalance;
+  final Map<String, dynamic> raw;
+
+  static StrategyRetryPreview? tryParse(Object? value) {
+    final map = _retryStringKeyedMap(value);
+    if (map == null ||
+        !_retryHasKeys(map, const {
+          'sourceStrategyId',
+          'sourceRevision',
+          'selectedSourceClientOrderIds',
+          'previewHash',
+          'orders',
+          'totalMargin',
+          'plannedMargin',
+          'unallocatedMargin',
+          'estimatedOpeningFees',
+          'requiredBalance',
+          'allocation',
+          'feesOutsideMargin',
+          'instrumentId',
+          'interval',
+          'currentPrice',
+          'quoteTimestamp',
+          'sidePercent',
+          'sides',
+        })) {
+      return null;
+    }
+    final sourceId = map['sourceStrategyId'];
+    final revision = map['sourceRevision'];
+    final hash = map['previewHash'];
+    final ids = _retryStringList(map['selectedSourceClientOrderIds']);
+    final rawOrders = map['orders'];
+    final totalMargin = _retryDecimalText(map['totalMargin'], positive: false);
+    final plannedMargin = _retryDecimalText(
+      map['plannedMargin'],
+      positive: false,
+    );
+    final unallocatedMargin = _retryDecimalText(
+      map['unallocatedMargin'],
+      positive: false,
+    );
+    final openingFees = _retryDecimalText(
+      map['estimatedOpeningFees'],
+      positive: false,
+    );
+    final requiredBalance = _retryDecimalText(
+      map['requiredBalance'],
+      positive: false,
+    );
+    final instrumentId = map['instrumentId'];
+    final interval = map['interval'];
+    final currentPrice = _retryDecimalText(map['currentPrice'], positive: true);
+    final quoteTimestamp = map['quoteTimestamp'];
+    final sidePercent = map['sidePercent'];
+    final sides = map['sides'];
+    if (sourceId is! String ||
+        sourceId.isEmpty ||
+        revision is! String ||
+        revision.isEmpty ||
+        hash is! String ||
+        hash.isEmpty ||
+        ids == null ||
+        ids.isEmpty ||
+        ids.length > strategyNewSubmissionOrderLimit ||
+        ids.toSet().length != ids.length ||
+        rawOrders is! List ||
+        rawOrders.length != ids.length ||
+        totalMargin == null ||
+        plannedMargin == null ||
+        unallocatedMargin == null ||
+        openingFees == null ||
+        requiredBalance == null ||
+        instrumentId is! String ||
+        instrumentId.isEmpty ||
+        interval is! String ||
+        interval.isEmpty ||
+        currentPrice == null ||
+        quoteTimestamp is! String ||
+        DateTime.tryParse(quoteTimestamp) == null ||
+        sidePercent is! Map ||
+        sidePercent.keys.any((key) => key is! String) ||
+        sides is! List ||
+        map['allocation'] != 'fixed' ||
+        map['feesOutsideMargin'] != true) {
+      return null;
+    }
+    final orders = <Map<String, dynamic>>[];
+    for (var index = 0; index < rawOrders.length; index++) {
+      final order = _retryStringKeyedMap(rawOrders[index]);
+      if (order == null ||
+          !_retryHasKeys(order, const {
+            'sourceClientOrderId',
+            'side',
+            'role',
+            'limitPrice',
+            'contracts',
+            'leverage',
+            'margin',
+            'openingFeeEstimate',
+            'allocatedMargin',
+            'notional',
+            'allocationWeight',
+            'cumulativeContracts',
+            'cumulativeAverageEntry',
+            'liquidationEstimate',
+          }) ||
+          order['sourceClientOrderId'] != ids[index] ||
+          !_retryValidOrder(order, child: false)) {
+        return null;
+      }
+      orders.add(Map.unmodifiable(order));
+    }
+    if (!_retryCostsMatch(
+      totalMargin: totalMargin,
+      plannedMargin: plannedMargin,
+      unallocatedMargin: unallocatedMargin,
+      openingFees: openingFees,
+      requiredBalance: requiredBalance,
+      orders: orders,
+    )) {
+      return null;
+    }
+    return StrategyRetryPreview(
+      sourceStrategyId: sourceId,
+      sourceRevision: revision,
+      selectedSourceClientOrderIds: List.unmodifiable(ids),
+      previewHash: hash,
+      orders: List.unmodifiable(orders),
+      totalMargin: totalMargin,
+      plannedMargin: plannedMargin,
+      unallocatedMargin: unallocatedMargin,
+      estimatedOpeningFees: openingFees,
+      requiredBalance: requiredBalance,
+      raw: Map.unmodifiable(map),
+    );
+  }
+}
+
+class StrategyRetryDraft {
+  const StrategyRetryDraft({
+    required this.id,
+    required this.status,
+    required this.orders,
+    required this.resubmission,
+    required this.preview,
+    required this.raw,
+  });
+
+  final String id;
+  final String status;
+  final List<Map<String, dynamic>> orders;
+  final Map<String, dynamic> resubmission;
+  final StrategyRetryPreview preview;
+  final Map<String, dynamic> raw;
+
+  static StrategyRetryDraft? tryParse(Object? value) {
+    // Retry creation returns the ordinary strategy result envelope as well as
+    // the retry-specific fields. Validate those fields while tolerating the
+    // documented status, cost, and lifecycle fields in that envelope.
+    final map = _retryStringKeyedMap(value);
+    if (map == null ||
+        !_retryHasKeys(map, const {
+          'id',
+          'status',
+          'orders',
+          'resubmission',
+          'preview',
+        })) {
+      return null;
+    }
+    final id = map['id'];
+    final status = map['status'];
+    final rawOrders = map['orders'];
+    final lineage = _retryStrictMap(map['resubmission'], const {
+      'sourceStrategyId',
+      'sourceClientOrderIds',
+    });
+    final rawPreview = map['preview'];
+    if (id is! String ||
+        id.isEmpty ||
+        status is! String ||
+        status.toUpperCase() != 'DRAFT' ||
+        rawOrders is! List ||
+        rawOrders.isEmpty ||
+        rawOrders.length > strategyNewSubmissionOrderLimit ||
+        lineage == null ||
+        !_retryHasKeys(lineage, const {
+          'sourceStrategyId',
+          'sourceClientOrderIds',
+        })) {
+      return null;
+    }
+    final sourceId = lineage['sourceStrategyId'];
+    final sourceIds = _retryStringList(lineage['sourceClientOrderIds']);
+    final parsedOrders = <Map<String, dynamic>>[];
+    for (final rawOrder in rawOrders) {
+      final order = _retryStringKeyedMap(rawOrder);
+      if (order == null || !_retryValidOrder(order, child: true)) return null;
+      parsedOrders.add(Map.unmodifiable(order));
+    }
+    if (sourceId is! String ||
+        sourceId.isEmpty ||
+        sourceIds == null ||
+        sourceIds.isEmpty ||
+        sourceIds.length != parsedOrders.length ||
+        sourceIds.toSet().length != sourceIds.length ||
+        parsedOrders
+                .map((order) => order['sourceClientOrderId'])
+                .join('\u0000') !=
+            sourceIds.join('\u0000') ||
+        parsedOrders.map((order) => order['clientOrderId']).toSet().length !=
+            parsedOrders.length) {
+      return null;
+    }
+    final nestedPreview = StrategyRetryPreview.tryParse(rawPreview);
+    if (nestedPreview == null ||
+        nestedPreview.sourceStrategyId != sourceId ||
+        !_sameStrings(nestedPreview.selectedSourceClientOrderIds, sourceIds) ||
+        nestedPreview.orders.length != parsedOrders.length ||
+        !_sameRetryOrderBindings(
+          nestedPreview.orders,
+          parsedOrders,
+          requireChildIds: true,
+        )) {
+      return null;
+    }
+    return StrategyRetryDraft(
+      id: id,
+      status: status,
+      orders: List.unmodifiable(parsedOrders),
+      resubmission: Map.unmodifiable(lineage),
+      preview: nestedPreview,
+      raw: Map.unmodifiable(map),
+    );
+  }
+}
+
+bool _sameStrings(List<String> left, List<String> right) =>
+    left.length == right.length &&
+    List<bool>.generate(
+      left.length,
+      (index) => left[index] == right[index],
+    ).every((match) => match);
+
+bool _sameRetryOrderBindings(
+  List<Map<String, dynamic>> expected,
+  List<Map<String, dynamic>> actual, {
+  required bool requireChildIds,
+}) {
+  if (expected.length != actual.length) return false;
+  const stableKeys = {
+    'sourceClientOrderId',
+    'side',
+    'role',
+    'limitPrice',
+    'contracts',
+    'leverage',
+    'margin',
+    'allocatedMargin',
+    'notional',
+    'openingFeeEstimate',
+    'allocationWeight',
+    'cumulativeContracts',
+    'cumulativeAverageEntry',
+    'liquidationEstimate',
+    'levelId',
+  };
+  for (var index = 0; index < expected.length; index++) {
+    final left = expected[index];
+    final right = actual[index];
+    for (final key in stableKeys) {
+      if (left.containsKey(key) != right.containsKey(key)) return false;
+      if (left.containsKey(key) &&
+          !_retryOrderValueEqual(key, left[key], right[key])) {
+        return false;
+      }
+    }
+    final childId = right['clientOrderId'];
+    if (requireChildIds &&
+        (childId is! String ||
+            childId.isEmpty ||
+            childId == left['sourceClientOrderId'])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool _retryOrderValueEqual(String key, Object? left, Object? right) {
+  if (const {'sourceClientOrderId', 'side', 'role', 'levelId'}.contains(key)) {
+    return left == right;
+  }
+  return _retryValuesEqual(left, right);
+}
+
+bool _retryValuesEqual(Object? left, Object? right) {
+  if (left == null || right == null) return left == right;
+  if (left is Map && right is Map) {
+    if (left.keys.any((key) => key is! String) ||
+        right.keys.any((key) => key is! String) ||
+        left.length != right.length ||
+        left.keys.toSet().difference(right.keys.toSet()).isNotEmpty) {
+      return false;
+    }
+    for (final key in left.keys) {
+      if (!_retryValuesEqual(left[key], right[key])) return false;
+    }
+    return true;
+  }
+  if (left is List && right is List) {
+    if (left.length != right.length) return false;
+    for (var index = 0; index < left.length; index++) {
+      if (!_retryValuesEqual(left[index], right[index])) return false;
+    }
+    return true;
+  }
+  final leftDecimal = StrategyDecimal.tryParse(strategyNumber(left));
+  final rightDecimal = StrategyDecimal.tryParse(strategyNumber(right));
+  if ((left is num || left is String) &&
+      (right is num || right is String) &&
+      leftDecimal != null &&
+      rightDecimal != null) {
+    if (left is String && right is String) return left == right;
+    if (left is num && right is num) {
+      return leftDecimal.compareTo(rightDecimal) == 0;
+    }
+    return leftDecimal.compareTo(rightDecimal) == 0;
+  }
+  return left == right;
+}
+
+Map<String, dynamic>? _retryStringKeyedMap(Object? value) {
+  if (value is! Map || value.keys.any((key) => key is! String)) return null;
+  return Map<String, dynamic>.from(value);
+}
+
+Map<String, dynamic>? _retryStrictMap(Object? value, Set<String> allowed) {
+  final map = _retryStringKeyedMap(value);
+  if (map == null || map.keys.any((key) => !allowed.contains(key))) return null;
+  return map;
+}
+
+bool _retryHasKeys(Map<String, dynamic> value, Set<String> required) =>
+    required.every(value.containsKey);
+
+List<String>? _retryStringList(Object? value) {
+  if (value is! List || value.any((item) => item is! String || item.isEmpty)) {
+    return null;
+  }
+  return value.cast<String>();
+}
+
+String? _retryDecimalText(Object? value, {required bool positive}) {
+  final text = switch (value) {
+    String string => string.trim(),
+    int number => number.toString(),
+    double number when number.isFinite => number.toString(),
+    _ => null,
+  };
+  final decimal = StrategyDecimal.tryParse(text);
+  if (text == null ||
+      decimal == null ||
+      (positive ? !decimal.isPositive : decimal.coefficient.isNegative)) {
+    return null;
+  }
+  return decimal.toString();
+}
+
+bool _retryValidOrder(Map<String, dynamic> order, {required bool child}) {
+  final sourceId = order['sourceClientOrderId'];
+  final childId = order['clientOrderId'];
+  final side = order['side'];
+  final role = order['role'];
+  final price = _retryDecimalText(order['limitPrice'], positive: true);
+  final contracts = _retryDecimalText(order['contracts'], positive: true);
+  final leverage = _retryDecimalText(order['leverage'], positive: true);
+  final margin = _retryDecimalText(order['margin'], positive: true);
+  final fee = _retryDecimalText(order['openingFeeEstimate'], positive: false);
+  final allocatedMargin = _retryDecimalText(
+    order['allocatedMargin'],
+    positive: false,
+  );
+  final notional = _retryDecimalText(order['notional'], positive: true);
+  final allocationWeight = _retryDecimalText(
+    order['allocationWeight'],
+    positive: false,
+  );
+  final cumulativeContracts = _retryDecimalText(
+    order['cumulativeContracts'],
+    positive: true,
+  );
+  final cumulativeAverageEntry = _retryDecimalText(
+    order['cumulativeAverageEntry'],
+    positive: true,
+  );
+  final leverageDecimal = StrategyDecimal.tryParse(leverage ?? '');
+  return sourceId is String &&
+      sourceId.isNotEmpty &&
+      (!child ||
+          (childId is String && childId.isNotEmpty && childId != sourceId)) &&
+      (child || childId == null || childId is String) &&
+      (side == 'long' || side == 'short') &&
+      (role == 'entry' || role == 'dca') &&
+      price != null &&
+      contracts != null &&
+      leverageDecimal != null &&
+      const {
+        '1',
+        '2',
+        '3',
+        '4',
+        '5',
+        '6',
+        '7',
+        '8',
+        '9',
+        '10',
+      }.contains(leverageDecimal.toString()) &&
+      margin != null &&
+      fee != null &&
+      allocatedMargin != null &&
+      allocatedMargin == margin &&
+      notional != null &&
+      allocationWeight != null &&
+      cumulativeContracts != null &&
+      cumulativeAverageEntry != null &&
+      order['liquidationEstimate'] != null;
+}
+
+bool _retryCostsMatch({
+  required String totalMargin,
+  required String plannedMargin,
+  required String unallocatedMargin,
+  required String openingFees,
+  required String requiredBalance,
+  required List<Map<String, dynamic>> orders,
+}) {
+  final total = StrategyDecimal.tryParse(totalMargin);
+  final planned = StrategyDecimal.tryParse(plannedMargin);
+  final unallocated = StrategyDecimal.tryParse(unallocatedMargin);
+  final fees = StrategyDecimal.tryParse(openingFees);
+  final balance = StrategyDecimal.tryParse(requiredBalance);
+  if (total == null ||
+      planned == null ||
+      unallocated == null ||
+      fees == null ||
+      balance == null ||
+      total.compareTo(planned) != 0 ||
+      unallocated.coefficient != BigInt.zero) {
+    return false;
+  }
+  var marginSum = StrategyDecimal.tryParse('0')!;
+  var feeSum = StrategyDecimal.tryParse('0')!;
+  for (final order in orders) {
+    final margin = StrategyDecimal.tryParse(
+      _retryDecimalText(order['margin'], positive: true) ?? '',
+    );
+    final fee = StrategyDecimal.tryParse(
+      _retryDecimalText(order['openingFeeEstimate'], positive: false) ?? '',
+    );
+    if (margin == null || fee == null) return false;
+    marginSum = marginSum + margin;
+    feeSum = feeSum + fee;
+  }
+  return marginSum.compareTo(total) == 0 &&
+      feeSum.compareTo(fees) == 0 &&
+      (total + fees).compareTo(balance) == 0;
+}
+
+const strategyNewSubmissionOrderLimit = 10;
+const strategyHistoricalOrderLimit = 20;
+
+bool hasOversizedNewStrategyOrderPayload(Map<String, dynamic> strategy) {
+  final selectedLevels = strategy['selectedLevels'];
+  final orders = strategy['orders'];
+  return (selectedLevels is List &&
+          selectedLevels.length > strategyNewSubmissionOrderLimit) ||
+      (orders is List && orders.length > strategyNewSubmissionOrderLimit);
+}
+
 List<Map<String, dynamic>>? validatedStrategyOrders(
   Map<String, dynamic> prepared,
-) {
+) => _validatedStrategyOrders(
+  prepared,
+  maximumCount: strategyHistoricalOrderLimit,
+);
+
+List<Map<String, dynamic>>? validatedNewStrategyOrders(
+  Map<String, dynamic> prepared,
+) => _validatedStrategyOrders(
+  prepared,
+  maximumCount: strategyNewSubmissionOrderLimit,
+);
+
+List<Map<String, dynamic>>? _validatedStrategyOrders(
+  Map<String, dynamic> prepared, {
+  required int maximumCount,
+}) {
   if (_nonNegativeOrderNumber(prepared['estimatedOpeningFees']) == null) {
     return null;
   }
   final rawOrders = prepared['orders'];
-  if (rawOrders is! List || rawOrders.isEmpty || rawOrders.length > 20) {
+  if (rawOrders is! List ||
+      rawOrders.isEmpty ||
+      rawOrders.length > maximumCount) {
     return null;
   }
   final orders = <Map<String, dynamic>>[];

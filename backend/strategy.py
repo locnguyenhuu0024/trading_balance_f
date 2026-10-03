@@ -23,10 +23,23 @@ from .strategy_queue import (
     parse_leverage_ack,
     progress as queue_progress,
 )
+from .strategy_retry import (
+    RetryDataError,
+    classify_row as _retry_classify_row,
+    fixed_preview as _fixed_retry_preview,
+    is_resubmission_contract,
+    ordered_ids as _retry_ordered_ids,
+    ordered_selection as _retry_ordered_selection,
+    retry_metadata as _retry_metadata,
+    selection_hash as _retry_selection_hash,
+    source_revision as _retry_source_revision,
+    source_rows as _retry_source_rows,
+)
 
 
 _INTERVALS = {"6Hutc", "12Hutc", "1Dutc", "1Wutc"}
 _MAX_ORDERS = 20
+_MAX_NEW_ORDERS = 10
 _PREPARE_TTL_SECONDS = 120
 _EXECUTION_LEASE_SECONDS = 120
 _QUOTE_MAX_AGE_MS = 15_000
@@ -219,10 +232,20 @@ class StrategyService:
             return self._save(body)
         if method == "GET" and path == "/v1/strategies":
             return self._list()
-        match = re.fullmatch(r"/v1/strategies/([A-Za-z0-9_-]{8,64})/(prepare-apply|execute-apply|result|delete|quote)", path)
+        match = re.fullmatch(
+            r"/v1/strategies/([A-Za-z0-9_-]{8,64})/"
+            r"(prepare-apply|execute-apply|result|delete|quote|retry-candidates|retry-preview|retry-drafts)",
+            path,
+        )
         if match is None:
             raise APIError(404, "not_found", "The requested endpoint was not found.")
         strategy_id, action = match.groups()
+        if action == "retry-candidates" and method == "GET":
+            return self._retry_candidates(strategy_id)
+        if action == "retry-preview" and method == "POST":
+            return self._retry_preview(strategy_id, body)
+        if action == "retry-drafts" and method == "POST":
+            return self._retry_draft(strategy_id, body)
         if action == "prepare-apply" and method == "POST":
             with diagnostics.strategy_context(strategy_id, component="api"):
                 return self._prepare(strategy_id)
@@ -484,12 +507,75 @@ class StrategyService:
     ) -> bool:
         if not cls._is_never_sent_record(strategy, fingerprint, now):
             return False
+        try:
+            metadata = _retry_metadata(strategy.get("contract"))
+        except RetryDataError:
+            return False
+        if metadata is not None and strategy.get("attemptStarted"):
+            return False
+        children, unsafe = cls._retry_children_in_connection(
+            connection, fingerprint, strategy["id"], strategy["contract"].get("instrumentId")
+        )
+        if unsafe or children:
+            return False
         active_replacement = connection.execute(
             "SELECT 1 FROM strategies WHERE replacement_source_id=? AND account_fingerprint=? "
             "AND status='APPLYING' LIMIT 1",
             (strategy["id"], fingerprint),
         ).fetchone()
         return active_replacement is None
+
+    @classmethod
+    def _retry_children_in_connection(
+        cls, connection: Any, fingerprint: str, source_id: str, instrument_id: Any
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """Read retry lineage locally after narrowing the scan to one account."""
+        rows = connection.execute(
+            "SELECT strategy_id, status, attempt_started, contract_json, preview_hash FROM strategies "
+            "WHERE account_fingerprint=?",
+            (fingerprint,),
+        ).fetchall()
+        children: list[dict[str, Any]] = []
+        unsafe = False
+        for row in rows:
+            try:
+                contract = decode_json(row["contract_json"])
+            except (TypeError, ValueError):
+                unsafe = True
+                continue
+            if not isinstance(contract, dict):
+                unsafe = True
+                continue
+            retry_like = contract.get("kind") == "resubmission" or "resubmission" in contract
+            if not retry_like:
+                continue
+            raw_metadata = contract.get("resubmission")
+            try:
+                metadata = _retry_metadata(contract)
+            except RetryDataError:
+                same_source = (
+                    isinstance(raw_metadata, dict)
+                    and raw_metadata.get("sourceStrategyId") == source_id
+                )
+                if same_source or contract.get("instrumentId") == instrument_id:
+                    unsafe = True
+                continue
+            if metadata is None or metadata.get("sourceStrategyId") != source_id:
+                continue
+            if contract.get("instrumentId") != instrument_id:
+                unsafe = True
+                continue
+            children.append({
+                "id": row["strategy_id"],
+                "status": row["status"],
+                "attemptStarted": bool(row["attempt_started"]),
+                "sourceClientOrderIds": list(metadata["sourceClientOrderIds"]),
+                "sourceRevision": metadata["sourceRevision"],
+                "sourceSelectionHash": metadata["sourceSelectionHash"],
+                "retryRequestId": metadata["retryRequestId"],
+                "previewHash": row["preview_hash"],
+            })
+        return children, unsafe
 
     @staticmethod
     def _delete_strategy_with_dependents(connection: Any, strategy_id: str) -> None:
@@ -549,6 +635,712 @@ class StrategyService:
                     "The never-sent source is no longer eligible for replacement.",
                 )
 
+    @staticmethod
+    def _retry_request_error(code: str, message: str, status: int = 409) -> APIError:
+        return APIError(status, code, message)
+
+    def _retry_source_context(
+        self,
+        source_id: str,
+        *,
+        exclude_child_id: str | None = None,
+        reconcile: bool = True,
+    ) -> dict[str, Any]:
+        account, fingerprint = self._account()
+        with self.store.connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM strategies WHERE strategy_id=?", (source_id,)
+            ).fetchone()
+        if row is None:
+            raise APIError(404, "strategy_not_found", "The strategy was not found.")
+        source = self._decode_row(row)
+        if not hmac.compare_digest(source["accountFingerprint"], fingerprint):
+            raise APIError(409, "account_changed", "This strategy belongs to a different OKX account.")
+        contract = source.get("contract")
+        if not isinstance(contract, dict) or not isinstance(contract.get("instrumentId"), str):
+            raise self._retry_request_error(
+                "retry_source_unavailable", "The source strategy cannot be retried safely."
+            )
+        instrument_id = contract["instrumentId"]
+        now = self.clock()
+        with self.store.connection() as connection:
+            current_row = connection.execute(
+                "SELECT * FROM strategies WHERE strategy_id=? AND account_fingerprint=?",
+                (source_id, fingerprint),
+            ).fetchone()
+            if current_row is None:
+                raise APIError(404, "strategy_not_found", "The strategy was not found.")
+            source = self._decode_row(current_row)
+            children, unsafe_lineage = self._retry_children_in_connection(
+                connection, fingerprint, source_id, instrument_id
+            )
+            ordinary_replacement = connection.execute(
+                "SELECT 1 FROM strategies WHERE replacement_source_id=? AND account_fingerprint=? LIMIT 1",
+                (source_id, fingerprint),
+            ).fetchone()
+            reservations = connection.execute(
+                "SELECT strategy_id FROM strategy_reservations WHERE account_fingerprint=? AND instrument_id=?",
+                (fingerprint, instrument_id),
+            ).fetchall()
+
+        revision = _retry_source_revision(source, self.owner.settings.session_signing_key)
+        blocked: str | None = None
+        if source["status"] == "APPLYING":
+            blocked = "source_applying"
+        elif source["executionLeaseUntil"] is not None and (
+            isinstance(source["executionLeaseUntil"], bool)
+            or not isinstance(source["executionLeaseUntil"], (int, float))
+            or source["executionLeaseUntil"] > now
+        ):
+            blocked = "source_lease_active"
+        elif source["executionId"] is not None:
+            blocked = "source_lease_active"
+        elif source["status"] not in {"APPLIED", "PARTIAL", "UNKNOWN", "COMPLETED"} or not source["attemptStarted"]:
+            blocked = "source_not_attempted"
+        elif source.get("submissionModeInvalid") or source.get("queueCorrupt"):
+            blocked = "source_evidence_malformed"
+        elif unsafe_lineage:
+            blocked = "source_lineage_invalid"
+        elif ordinary_replacement is not None:
+            blocked = "ordinary_replacement_exists"
+        elif any(row["strategy_id"] != exclude_child_id for row in reservations):
+            blocked = "reservation_active"
+
+        try:
+            source_pairs = _retry_source_rows(source)
+        except RetryDataError:
+            source_pairs = []
+            blocked = blocked or "source_evidence_malformed"
+
+        reviewed_source = source
+        if reconcile and blocked is None and source_pairs:
+            try:
+                refreshed, read_error, _ = _read_order_rows(
+                    source,
+                    self.okx,
+                    preserve_last_known=True,
+                    max_reads=_MAX_ORDERS,
+                    stop_after_failure=True,
+                )
+            except OKXError:
+                refreshed, read_error = source["results"], "exchange_unavailable"
+            except Exception:
+                refreshed, read_error = source["results"], "exchange_unavailable"
+            if read_error is not None:
+                blocked = "reconciliation_unavailable"
+            else:
+                reviewed_source = {**source, "results": refreshed}
+                try:
+                    source_pairs = _retry_source_rows(reviewed_source)
+                except RetryDataError:
+                    source_pairs = []
+                    blocked = "source_evidence_malformed"
+
+        candidates: list[dict[str, Any]] = []
+        if source_pairs:
+            for index, order, result in source_pairs:
+                prior, reason = _retry_classify_row(reviewed_source, index, order, result)
+                row_id = order["clientOrderId"]
+                eligible = prior in {"not_submitted", "rejected"} and reason is None
+                if blocked is not None:
+                    eligible = False
+                    reason = blocked
+                elif eligible:
+                    for child in children:
+                        if child["id"] == exclude_child_id:
+                            continue
+                        if row_id in child["sourceClientOrderIds"]:
+                            eligible = False
+                            reason = "selection_in_use"
+                            break
+                public_row: dict[str, Any] = {
+                    "sourceClientOrderId": row_id,
+                    "side": order["side"],
+                    "role": order["role"],
+                    "limitPrice": str(order["limitPrice"]),
+                    "contracts": str(order["contracts"]),
+                    "leverage": order["leverage"],
+                    "priorOutcome": prior,
+                    "eligible": eligible,
+                    "reason": "eligible" if eligible else (reason or "outcome_unknown"),
+                }
+                if "levelId" in order:
+                    public_row["levelId"] = order["levelId"]
+                candidates.append(public_row)
+        if blocked is None and not any(row["eligible"] for row in candidates):
+            blocked = "no_eligible_rows"
+        return {
+            "source": source,
+            "reviewedSource": reviewed_source,
+            "account": account,
+            "fingerprint": fingerprint,
+            "instrumentId": instrument_id,
+            "sourceRevision": revision,
+            "children": children,
+            "blockedReason": blocked,
+            "candidates": candidates,
+            "sourcePairs": source_pairs,
+        }
+
+    def _retry_selection(
+        self,
+        context: dict[str, Any],
+        requested_revision: str,
+        selected_ids: Any,
+        *,
+        exclude_child_id: str | None = None,
+    ) -> tuple[list[tuple[int, dict[str, Any], dict[str, Any]]], str, list[str]]:
+        if not hmac.compare_digest(context["sourceRevision"], requested_revision):
+            raise self._retry_request_error(
+                "retry_source_stale", "The source changed; refresh retry candidates and review again."
+            )
+        if context["blockedReason"] not in (None, "no_eligible_rows"):
+            raise self._retry_request_error(
+                "retry_source_unavailable", "The source is currently blocked from resubmission."
+            )
+        try:
+            selected = _retry_ordered_selection(context["source"], selected_ids)
+        except RetryDataError:
+            raise self._retry_request_error(
+                "retry_selection_invalid", "Choose one through ten unique eligible source orders.", 422
+            ) from None
+        eligible_by_id = {row["sourceClientOrderId"]: row for row in context["candidates"]}
+        selected_source_ids = _retry_ordered_ids(selected)
+        for source_client_id in selected_source_ids:
+            candidate = eligible_by_id.get(source_client_id)
+            if candidate is None or not candidate["eligible"]:
+                reason = None if candidate is None else candidate.get("reason")
+                if reason == "selection_in_use":
+                    raise self._retry_request_error(
+                        "retry_selection_in_use", "One or more selected source orders are already in another retry."
+                    )
+                raise self._retry_request_error(
+                    "retry_selection_invalid", "One or more selected source orders are not safely retryable.", 422
+                )
+        digest = _retry_selection_hash(
+            context["source"], selected, context["sourceRevision"],
+            self.owner.settings.session_signing_key,
+        )
+        return selected, digest, selected_source_ids
+
+    def _validate_retry_source_in_connection(
+        self,
+        connection: Any,
+        *,
+        fingerprint: str,
+        source_id: str,
+        instrument_id: str,
+        source_revision: str,
+        source_selection_hash: str,
+        selected_ids: list[str],
+        exclude_child_id: str | None,
+        now: float,
+        child_orders: list[dict[str, Any]] | None = None,
+        prepared_orders: list[dict[str, Any]] | None = None,
+    ) -> tuple[dict[str, Any], list[tuple[int, dict[str, Any], dict[str, Any]]]]:
+        row = connection.execute(
+            "SELECT * FROM strategies WHERE strategy_id=? AND account_fingerprint=?",
+            (source_id, fingerprint),
+        ).fetchone()
+        if row is None:
+            raise self._retry_request_error(
+                "retry_source_unavailable", "The source strategy is no longer available."
+            )
+        source = self._decode_row(row)
+        contract = source.get("contract")
+        if not isinstance(contract, dict) or contract.get("instrumentId") != instrument_id:
+            raise self._retry_request_error(
+                "retry_source_stale", "The source changed; refresh retry candidates and review again."
+            )
+        if source["status"] == "APPLYING":
+            raise self._retry_request_error(
+                "retry_source_unavailable", "The source is currently being applied or reconciled."
+            )
+        lease_until = source.get("executionLeaseUntil")
+        if (
+            source.get("executionId") is not None
+            or (lease_until is not None and (
+                isinstance(lease_until, bool) or not isinstance(lease_until, (int, float)) or lease_until > now
+            ))
+        ):
+            raise self._retry_request_error(
+                "retry_source_unavailable", "The source is currently being applied or reconciled."
+            )
+        if source["status"] not in {"APPLIED", "PARTIAL", "UNKNOWN", "COMPLETED"} or not source["attemptStarted"]:
+            raise self._retry_request_error(
+                "retry_source_unavailable", "Only a previously attempted strategy can supply retry orders."
+            )
+        if source.get("submissionModeInvalid") or source.get("queueCorrupt"):
+            raise self._retry_request_error(
+                "retry_source_unavailable", "The source history cannot be validated safely."
+            )
+
+        current_revision = _retry_source_revision(source, self.owner.settings.session_signing_key)
+        if not hmac.compare_digest(current_revision, source_revision):
+            raise self._retry_request_error(
+                "retry_source_stale", "The source changed; refresh retry candidates and review again."
+            )
+        try:
+            selected = _retry_ordered_selection(source, selected_ids)
+        except RetryDataError:
+            raise self._retry_request_error(
+                "retry_selection_invalid", "The source rows cannot be validated safely.", 422
+            ) from None
+        selected_order_ids = _retry_ordered_ids(selected)
+        if selected_order_ids != selected_ids:
+            raise self._retry_request_error(
+                "retry_source_stale", "The selected source rows changed order; refresh retry review."
+            )
+
+        children, unsafe_lineage = self._retry_children_in_connection(
+            connection, fingerprint, source_id, instrument_id
+        )
+        ordinary_replacement = connection.execute(
+            "SELECT 1 FROM strategies WHERE replacement_source_id=? AND account_fingerprint=? LIMIT 1",
+            (source_id, fingerprint),
+        ).fetchone()
+        reservations = connection.execute(
+            "SELECT strategy_id FROM strategy_reservations WHERE account_fingerprint=? AND instrument_id=?",
+            (fingerprint, instrument_id),
+        ).fetchall()
+        if (
+            unsafe_lineage or ordinary_replacement is not None
+            or any(item["strategy_id"] != exclude_child_id for item in reservations)
+        ):
+            raise self._retry_request_error(
+                "retry_source_unavailable", "The source is blocked by another strategy attempt."
+            )
+        for index, order, result in selected:
+            prior, reason = _retry_classify_row(source, index, order, result)
+            if prior not in {"not_submitted", "rejected"} or reason is not None:
+                raise self._retry_request_error(
+                    "retry_selection_invalid", "One or more selected source orders are not safely retryable.", 422
+                )
+            for child in children:
+                if child["id"] != exclude_child_id and order["clientOrderId"] in child["sourceClientOrderIds"]:
+                    raise self._retry_request_error(
+                        "retry_selection_in_use", "One or more selected source orders are already in another retry."
+                    )
+
+        actual_selection_hash = _retry_selection_hash(
+            source, selected, current_revision, self.owner.settings.session_signing_key
+        )
+        if not hmac.compare_digest(actual_selection_hash, source_selection_hash):
+            raise self._retry_request_error(
+                "retry_source_stale", "The selected source evidence changed; refresh retry review."
+            )
+
+        if child_orders is not None:
+            if len(child_orders) != len(selected):
+                raise self._retry_request_error(
+                    "retry_source_stale", "The retry child rows no longer match their source."
+                )
+            by_source = {
+                item.get("sourceClientOrderId"): item
+                for item in child_orders if isinstance(item, dict)
+            }
+            if len(by_source) != len(selected):
+                raise self._retry_request_error(
+                    "retry_source_stale", "The retry child rows no longer match their source."
+                )
+            child_client_ids: set[str] = set()
+            for _, source_order, _ in selected:
+                child_order = by_source.get(source_order["clientOrderId"])
+                if not isinstance(child_order, dict):
+                    raise self._retry_request_error(
+                        "retry_source_stale", "The retry child rows no longer match their source."
+                    )
+                child_id = child_order.get("clientOrderId")
+                if (
+                    not isinstance(child_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{8,64}", child_id)
+                    or child_id == source_order["clientOrderId"] or child_id in child_client_ids
+                ):
+                    raise self._retry_request_error(
+                        "retry_source_stale", "The retry child client IDs are invalid."
+                    )
+                child_client_ids.add(child_id)
+                for key in ("side", "role", "limitPrice", "contracts", "leverage", "levelId"):
+                    if child_order.get(key) != source_order.get(key):
+                        raise self._retry_request_error(
+                            "retry_source_stale", "The retry child financial rows changed."
+                        )
+            if prepared_orders is not None:
+                if len(prepared_orders) != len(child_orders) or prepared_orders != child_orders:
+                    raise self._retry_request_error(
+                        "retry_source_stale", "The prepared retry rows no longer match their draft."
+                    )
+        return source, selected
+
+    def _retry_market_preview(
+        self,
+        context: dict[str, Any],
+        selected: list[tuple[int, dict[str, Any], dict[str, Any]]],
+        selection_digest: str,
+    ) -> dict[str, Any]:
+        contract = context["source"]["contract"]
+        interval = contract.get("interval")
+        if interval not in _INTERVALS:
+            raise self._retry_request_error(
+                "retry_source_unavailable", "The source strategy cannot be retried safely."
+            )
+        market_account, fingerprint, meta, maker_fee, tiers = self._load_market_inputs(
+            {"instrumentId": context["instrumentId"]}
+        )
+        if not hmac.compare_digest(context["fingerprint"], fingerprint):
+            raise APIError(409, "account_changed", "The active OKX account changed; refresh retry review.")
+        try:
+            return _fixed_retry_preview(
+                source_id=context["source"]["id"],
+                source_revision_value=context["sourceRevision"],
+                selection_hash_value=selection_digest,
+                selected=selected,
+                instrument_id=context["instrumentId"],
+                interval=interval,
+                current_price=meta["last"],
+                quote_timestamp_ms=meta["quoteTimestamp"],
+                contract_value=meta["contractValue"],
+                contract_multiplier=meta["contractMultiplier"],
+                tick_size=meta["tickSize"],
+                lot_size=meta["lotSize"],
+                minimum_size=meta["minimumSize"],
+                maker_fee=meta["makerFee"],
+                taker_fee=meta["takerFee"],
+                tiers=tiers,
+                account_fingerprint=fingerprint,
+                position_mode=market_account.get("posMode"),
+                signing_key=self.owner.settings.session_signing_key,
+            )
+        except RetryDataError as exc:
+            raise self._retry_request_error(
+                "retry_selection_invalid",
+                "An exact source order is incompatible with current market rules or quote.",
+                422,
+            ) from exc
+
+    def _retry_review_guards(
+        self, context: dict[str, Any], preview: dict[str, Any]
+    ) -> None:
+        mode = preview.get("_internal", {}).get("positionMode")
+        sides = preview.get("sides")
+        if not isinstance(sides, list) or not sides:
+            raise APIError(409, "retry_source_unavailable", "The retry orders cannot be validated safely.")
+        if len(set(sides)) == 2 and mode != "long_short_mode":
+            raise APIError(
+                409, "account_mode_unsupported",
+                "Two-sided strategies require OKX Hedge mode. Change the account mode manually and retry review.",
+            )
+        if mode not in ("net_mode", "long_short_mode") or context["account"].get("posMode") != mode:
+            raise APIError(409, "account_mode_unsupported", "The current OKX position mode is unsupported.")
+
+        instrument_id = context["instrumentId"]
+        try:
+            positions = self.okx.positions("SWAP")
+            pending = self.okx.pending_orders(instrument_id)
+        except OKXError:
+            raise APIError(
+                502, "account_preflight_unavailable", "Current positions or pending orders are unavailable."
+            ) from None
+        for row in positions:
+            if row.get("instId") != instrument_id:
+                continue
+            size = _decimal(row.get("pos"))
+            if size is None or size != 0:
+                raise APIError(
+                    409, "instrument_position_exists",
+                    "Close the existing position for this SWAP before reviewing a retry.",
+                )
+        if any(row.get("instId") == instrument_id for row in pending):
+            raise APIError(
+                409, "pending_order_exists", "Cancel existing pending orders for this SWAP before reviewing a retry."
+            )
+        with self.store.connection() as connection:
+            reservation = connection.execute(
+                "SELECT 1 FROM strategy_reservations WHERE account_fingerprint=? AND instrument_id=? LIMIT 1",
+                (context["fingerprint"], instrument_id),
+            ).fetchone()
+        if reservation is not None:
+            raise APIError(
+                409, "instrument_apply_in_progress",
+                "Another strategy is applying or reconciling this account and instrument.",
+            )
+
+        try:
+            balance_rows = self.okx.account_balance()
+        except OKXError:
+            raise APIError(502, "account_preflight_unavailable", "Available USDT balance is unavailable.") from None
+        available: Decimal | None = None
+        for row in balance_rows:
+            details = row.get("details", [])
+            if not isinstance(details, list):
+                continue
+            for detail in details:
+                if isinstance(detail, dict) and detail.get("ccy") == "USDT":
+                    available = _decimal(detail.get("availBal"))
+                    break
+            if available is not None:
+                break
+        required = Decimal(preview["totalMargin"]) + Decimal(preview["estimatedOpeningFees"] or "0")
+        if available is None or available < required:
+            raise APIError(
+                422, "insufficient_balance", "Available USDT does not cover the retry margin and estimated fees.",
+                details={"required": _text(required), "available": _text(available)},
+            )
+
+    @staticmethod
+    def _public_retry_summary(contract: Any) -> dict[str, Any] | None:
+        try:
+            metadata = _retry_metadata(contract)
+        except RetryDataError:
+            return None
+        if metadata is None:
+            return None
+        return {
+            "sourceStrategyId": metadata["sourceStrategyId"],
+            "sourceClientOrderIds": list(metadata["sourceClientOrderIds"]),
+        }
+
+    def _retry_candidates(self, source_id: str) -> dict[str, Any]:
+        context = self._retry_source_context(source_id)
+        diagnostics.emit_event(
+            "selection", component="api", stage="retry_candidates", outcome="selected",
+            selected_count=len(context["candidates"]),
+            eligible_count=sum(row["eligible"] for row in context["candidates"]),
+            matching_eligible_count=sum(row["eligible"] for row in context["candidates"]),
+        )
+        return {
+            "sourceStrategyId": source_id,
+            "sourceRevision": context["sourceRevision"],
+            "candidates": context["candidates"],
+            "blockedReason": context["blockedReason"],
+            "linkedChildren": [
+                {
+                    "strategyId": child["id"],
+                    "status": child["status"],
+                    "sourceClientOrderIds": child["sourceClientOrderIds"],
+                }
+                for child in context["children"]
+            ],
+        }
+
+    def _retry_preview(self, source_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        if set(body) != {"sourceRevision", "sourceClientOrderIds"}:
+            raise APIError(400, "invalid_request", "The retry preview request is invalid.")
+        revision = body.get("sourceRevision")
+        if not isinstance(revision, str) or re.fullmatch(r"[0-9a-f]{64}", revision) is None:
+            raise self._retry_request_error(
+                "retry_selection_invalid", "The retry preview request is invalid.", 422
+            )
+        context = self._retry_source_context(source_id)
+        selected, selection_digest, ids = self._retry_selection(
+            context, revision, body.get("sourceClientOrderIds")
+        )
+        preview = self._retry_market_preview(context, selected, selection_digest)
+        self._retry_review_guards(context, preview)
+        diagnostics.emit_event(
+            "selection", component="api", stage="retry_preview", outcome="success",
+            selected_count=len(ids), eligible_count=len(context["candidates"]),
+            matching_eligible_count=len(ids), order_count=len(ids),
+        )
+        return self._public_preview(preview)
+
+    @staticmethod
+    def _retry_child_contract(
+        source: dict[str, Any],
+        selected: list[tuple[int, dict[str, Any], dict[str, Any]]],
+        preview: dict[str, Any],
+        metadata: dict[str, Any],
+    ) -> dict[str, Any]:
+        selected_levels: list[dict[str, Any]] = []
+        entry_by_side: dict[str, str] = {}
+        leverage: dict[str, int] = {}
+        for _, order, _ in selected:
+            level: dict[str, Any] = {"side": order["side"], "price": str(order["limitPrice"])}
+            if "levelId" in order:
+                level["levelId"] = order["levelId"]
+            selected_levels.append(level)
+            leverage.setdefault(order["side"], order["leverage"])
+            if order["role"] == "entry":
+                if order["side"] in entry_by_side:
+                    raise RetryDataError()
+                entry_by_side[order["side"]] = str(order["limitPrice"])
+        sides = list(leverage)
+        return {
+            "instrumentId": source["contract"]["instrumentId"],
+            "interval": source["contract"]["interval"],
+            "direction": "both" if len(sides) == 2 else sides[0],
+            "selectedLevels": selected_levels,
+            "entryBySide": entry_by_side,
+            "totalMargin": preview["plannedMargin"],
+            "leverage": leverage,
+            "sidePercent": preview["sidePercent"],
+            "allocation": "fixed",
+            "kind": "resubmission",
+            "resubmission": metadata,
+        }
+
+    @staticmethod
+    def _retry_child_orders(
+        preview: dict[str, Any], selected: list[tuple[int, dict[str, Any], dict[str, Any]]]
+    ) -> list[dict[str, Any]]:
+        ids = _retry_ordered_ids(selected)
+        rows_by_source = {
+            row["sourceClientOrderId"]: row for row in preview["orders"]
+        }
+        result: list[dict[str, Any]] = []
+        if len(rows_by_source) != len(ids):
+            raise RetryDataError()
+        for source_client_id in ids:
+            row = dict(rows_by_source[source_client_id])
+            row["clientOrderId"] = "st" + secrets.token_hex(14)
+            result.append(row)
+        return result
+
+    def _find_retry_request(
+        self, children: list[dict[str, Any]], request_id: str
+    ) -> dict[str, Any] | None:
+        matches = [child for child in children if child["retryRequestId"] == request_id]
+        if len(matches) > 1:
+            raise self._retry_request_error(
+                "retry_request_conflict", "The retry request ID is already bound to conflicting attempts."
+            )
+        return matches[0] if matches else None
+
+    def _retry_replay(
+        self,
+        child: dict[str, Any],
+        *,
+        selected_ids: list[str],
+        revision: str,
+        preview_hash: str,
+    ) -> str:
+        if (
+            child["sourceClientOrderIds"] != selected_ids
+            or not hmac.compare_digest(child["sourceRevision"], revision)
+        ):
+            raise self._retry_request_error(
+                "retry_request_conflict", "This retry request ID is bound to another source selection."
+            )
+        if not isinstance(child.get("previewHash"), str) or not hmac.compare_digest(child["previewHash"], preview_hash):
+            raise self._retry_request_error(
+                "retry_request_conflict", "This retry request ID is bound to another reviewed preview."
+            )
+        return child["id"]
+
+    def _retry_draft_response(self, strategy_id: str) -> dict[str, Any]:
+        strategy = self._load_row(strategy_id)
+        response = self._basic_result(strategy)
+        response["preview"] = self._public_preview(strategy["snapshot"])
+        return response
+
+    def _retry_draft(self, source_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        expected_keys = {"sourceRevision", "sourceClientOrderIds", "previewHash", "retryRequestId"}
+        if set(body) != expected_keys:
+            raise APIError(400, "invalid_request", "The retry draft request is invalid.")
+        revision = body.get("sourceRevision")
+        preview_hash = body.get("previewHash")
+        request_id = body.get("retryRequestId")
+        selected_ids = body.get("sourceClientOrderIds")
+        if (
+            not isinstance(revision, str) or re.fullmatch(r"[0-9a-f]{64}", revision) is None
+            or not isinstance(preview_hash, str) or re.fullmatch(r"[0-9a-f]{64}", preview_hash) is None
+            or not isinstance(request_id, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,64}", request_id) is None
+            or not isinstance(selected_ids, list) or not 1 <= len(selected_ids) <= _MAX_NEW_ORDERS
+            or any(not isinstance(value, str) or re.fullmatch(r"[A-Za-z0-9_-]{8,64}", value) is None for value in selected_ids)
+            or len(set(selected_ids)) != len(selected_ids)
+        ):
+            raise self._retry_request_error(
+                "retry_selection_invalid", "The retry draft request is invalid.", 422
+            )
+
+        # Replay lookup is intentionally before market reads, preview minting, or source writes.
+        context = self._retry_source_context(source_id, reconcile=False)
+        existing = self._find_retry_request(context["children"], request_id)
+        if existing is not None:
+            replay_id = self._retry_replay(
+                existing, selected_ids=selected_ids, revision=revision, preview_hash=preview_hash
+            )
+            return self._retry_draft_response(replay_id)
+
+        context = self._retry_source_context(source_id, reconcile=True)
+        selected, selection_digest, normalized_ids = self._retry_selection(
+            context, revision, selected_ids
+        )
+        preview = self._retry_market_preview(context, selected, selection_digest)
+        self._retry_review_guards(context, preview)
+        if not hmac.compare_digest(preview["previewHash"], preview_hash):
+            raise APIError(
+                409,
+                "retry_preview_stale",
+                "The fixed-order preview changed; review the latest preview before saving.",
+                details={"preview": self._public_preview(preview)},
+            )
+        metadata = {
+            "sourceStrategyId": source_id,
+            "sourceClientOrderIds": normalized_ids,
+            "sourceRevision": revision,
+            "sourceSelectionHash": selection_digest,
+            "retryRequestId": request_id,
+        }
+        contract = self._retry_child_contract(context["source"], selected, preview, metadata)
+        child_orders = self._retry_child_orders(preview, selected)
+        snapshot = self._public_preview(preview)
+        snapshot["orders"] = child_orders
+        snapshot["_metadata"] = preview["_internal"]["metadata"]
+        snapshot["_positionMode"] = preview["_internal"]["positionMode"]
+        now = self.clock()
+        strategy_id = new_operation_id()
+        replay_id: str | None = None
+        with self.store.transaction() as connection:
+            children, _ = self._retry_children_in_connection(
+                connection, context["fingerprint"], source_id, context["instrumentId"]
+            )
+            existing = self._find_retry_request(children, request_id)
+            if existing is not None:
+                replay_id = self._retry_replay(
+                    existing,
+                    selected_ids=normalized_ids,
+                    revision=revision,
+                    preview_hash=preview_hash,
+                )
+            else:
+                self._validate_retry_source_in_connection(
+                    connection,
+                    fingerprint=context["fingerprint"],
+                    source_id=source_id,
+                    instrument_id=context["instrumentId"],
+                    source_revision=revision,
+                    source_selection_hash=selection_digest,
+                    selected_ids=normalized_ids,
+                    exclude_child_id=None,
+                    now=now,
+                )
+                connection.execute(
+                    "INSERT INTO strategies(strategy_id, account_fingerprint, status, contract_json, snapshot_json, "
+                    "orders_json, results_json, preview_hash, replacement_source_id, submission_mode, created_at, updated_at) "
+                    "VALUES (?, ?, 'DRAFT', ?, ?, ?, ?, ?, NULL, NULL, ?, ?)",
+                    (
+                        strategy_id,
+                        context["fingerprint"],
+                        encode_json(contract),
+                        encode_json(snapshot),
+                        encode_json(child_orders),
+                        encode_json([{**row, "status": "not_submitted", "filledContracts": "0"} for row in child_orders]),
+                        preview["previewHash"],
+                        now,
+                        now,
+                    ),
+                )
+        if replay_id is not None:
+            return self._retry_draft_response(replay_id)
+        response = self._retry_draft_response(strategy_id)
+        response["preview"] = self._public_preview(snapshot)
+        diagnostics.emit_event(
+            "selection", component="api", stage="retry_draft", outcome="success",
+            selected_count=len(normalized_ids), eligible_count=len(context["candidates"]),
+            matching_eligible_count=len(normalized_ids), order_count=len(normalized_ids), persisted=True,
+        )
+        return response
+
     def _expire_prepare(self, strategy: dict[str, Any]) -> None:
         if strategy["status"] != "PREPARED" or strategy["preparedExpiresAt"] is None:
             return
@@ -568,6 +1360,14 @@ class StrategyService:
         strategy["updatedAt"] = self.clock()
 
     def _normalize_contract(self, body: dict[str, Any]) -> dict[str, Any]:
+        if any(
+            key in body
+            for key in (
+                "kind", "resubmission", "sourceStrategyId", "sourceClientOrderIds",
+                "sourceRevision", "sourceSelectionHash", "retryRequestId",
+            )
+        ):
+            raise self._invalid("invalid_retry_contract", "Retry lineage is server managed.")
         instrument_id = body.get("instrumentId")
         if not isinstance(instrument_id, str) or re.fullmatch(r"[A-Z0-9]+-USDT-SWAP", instrument_id) is None:
             raise self._invalid("invalid_instrument", "Choose one USDT linear SWAP instrument.")
@@ -579,8 +1379,8 @@ class StrategyService:
             raise self._invalid("invalid_budget", "Total margin must be a positive decimal amount.")
 
         levels_value = body.get("selectedLevels")
-        if not isinstance(levels_value, list) or not levels_value or len(levels_value) > _MAX_ORDERS:
-            raise self._invalid("invalid_order_count", "Select between one and twenty levels.")
+        if not isinstance(levels_value, list) or not levels_value or len(levels_value) > _MAX_NEW_ORDERS:
+            raise self._invalid("invalid_order_count", "Select between one and ten combined levels.")
         id_mode = (
             "direction" in body
             or "entryLevelIdBySide" in body
@@ -708,6 +1508,32 @@ class StrategyService:
             "sidePercent": percentages,
             "allocation": allocation,
         }
+
+    def _ensure_new_order_cap(self, strategy: dict[str, Any]) -> None:
+        contract = strategy.get("contract")
+        levels = contract.get("selectedLevels") if isinstance(contract, dict) else None
+        if not isinstance(levels, list) or not levels or len(levels) > _MAX_NEW_ORDERS:
+            raise self._invalid("invalid_order_count", "Select between one and ten combined levels.")
+
+        orders = strategy.get("orders")
+        if isinstance(orders, list) and len(orders) > _MAX_NEW_ORDERS:
+            raise self._invalid("invalid_order_count", "Select between one and ten combined levels.")
+
+        prepared = strategy.get("prepared")
+        prepared_orders = prepared.get("orders") if isinstance(prepared, dict) else None
+        if isinstance(prepared_orders, list) and len(prepared_orders) > _MAX_NEW_ORDERS:
+            raise self._invalid("invalid_order_count", "Select between one and ten combined levels.")
+
+    def _ensure_persisted_new_order_cap(self, connection: Any, strategy: dict[str, Any]) -> None:
+        row = connection.execute(
+            "SELECT * FROM strategies WHERE strategy_id=? AND account_fingerprint=?",
+            (strategy["id"], strategy["accountFingerprint"]),
+        ).fetchone()
+        if row is None:
+            return
+        persisted = self._decode_row(row)
+        if persisted["status"] == "PREPARED" and not persisted["attemptStarted"]:
+            self._ensure_new_order_cap(persisted)
 
     def _load_market_inputs(
         self, contract: dict[str, Any]
@@ -1069,6 +1895,103 @@ class StrategyService:
             result.append(order)
         return result
 
+    @staticmethod
+    def _retry_prepared_orders(
+        preview: dict[str, Any], child_orders: Any
+    ) -> list[dict[str, Any]]:
+        if not isinstance(child_orders, list) or len(child_orders) != len(preview.get("orders", [])):
+            raise APIError(409, "retry_source_stale", "The retry child rows no longer match their source.")
+        old_by_source = {
+            row.get("sourceClientOrderId"): row
+            for row in child_orders if isinstance(row, dict)
+        }
+        if len(old_by_source) != len(child_orders):
+            raise APIError(409, "retry_source_stale", "The retry child rows no longer match their source.")
+        prepared: list[dict[str, Any]] = []
+        for row in preview["orders"]:
+            old = old_by_source.get(row.get("sourceClientOrderId"))
+            if not isinstance(old, dict) or any(
+                old.get(key) != value
+                for key, value in row.items()
+                if key != "sourceClientOrderId"
+            ):
+                raise APIError(409, "retry_source_stale", "The fixed retry payload changed; review it again.")
+            client_id = old.get("clientOrderId")
+            if not isinstance(client_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{8,64}", client_id):
+                raise APIError(409, "retry_source_stale", "The retry child client IDs are invalid.")
+            prepared.append({**row, "clientOrderId": client_id})
+        return prepared
+
+    def _validate_retry_child_in_connection(
+        self,
+        connection: Any,
+        strategy: dict[str, Any],
+        *,
+        now: float,
+        expected_status: str,
+        prepared_orders: list[dict[str, Any]] | None = None,
+    ) -> tuple[dict[str, Any], list[tuple[int, dict[str, Any], dict[str, Any]]]] | None:
+        try:
+            metadata = _retry_metadata(strategy.get("contract"))
+        except RetryDataError:
+            raise APIError(
+                409, "retry_source_unavailable", "The retry lineage cannot be validated safely."
+            ) from None
+        if metadata is None:
+            return None
+        current_row = connection.execute(
+            "SELECT * FROM strategies WHERE strategy_id=? AND account_fingerprint=?",
+            (strategy["id"], strategy["accountFingerprint"]),
+        ).fetchone()
+        if current_row is None:
+            raise APIError(409, "retry_source_unavailable", "The retry child is no longer available.")
+        current = self._decode_row(current_row)
+        if (
+            current["status"] != expected_status
+            or current["attemptStarted"]
+            or current["replacementSourceId"] is not None
+            or current["contract"] != strategy["contract"]
+            or current["orders"] != strategy["orders"]
+            or current["previewHash"] != strategy["previewHash"]
+            or not isinstance(current["snapshot"], dict)
+            or current["snapshot"].get("previewHash") != current["previewHash"]
+        ):
+            raise APIError(409, "retry_source_stale", "The retry child changed; reload it and review again.")
+        if prepared_orders is not None:
+            persisted_prepared = current.get("prepared")
+            if (
+                not isinstance(persisted_prepared, dict)
+                or persisted_prepared.get("previewHash") != current["previewHash"]
+                or persisted_prepared.get("orders") != prepared_orders
+            ):
+                raise APIError(409, "retry_source_stale", "The prepared retry payload changed; review it again.")
+
+        children, unsafe = self._retry_children_in_connection(
+            connection,
+            strategy["accountFingerprint"],
+            metadata["sourceStrategyId"],
+            strategy["contract"].get("instrumentId"),
+        )
+        if unsafe or any(
+            child["id"] != strategy["id"] and child["retryRequestId"] == metadata["retryRequestId"]
+            for child in children
+        ):
+            raise APIError(409, "retry_request_conflict", "The retry request ID is already bound to another attempt.")
+        source, selected = self._validate_retry_source_in_connection(
+            connection,
+            fingerprint=strategy["accountFingerprint"],
+            source_id=metadata["sourceStrategyId"],
+            instrument_id=strategy["contract"].get("instrumentId"),
+            source_revision=metadata["sourceRevision"],
+            source_selection_hash=metadata["sourceSelectionHash"],
+            selected_ids=metadata["sourceClientOrderIds"],
+            exclude_child_id=strategy["id"],
+            now=now,
+            child_orders=current["orders"],
+            prepared_orders=prepared_orders,
+        )
+        return source, selected
+
     def _preview(self, body: dict[str, Any]) -> dict[str, Any]:
         contract = self._normalize_contract(body)
         preview = self._preview_contract(contract)
@@ -1138,14 +2061,98 @@ class StrategyService:
             "preview": self._public_preview(snapshot),
         }
 
+    def _retry_preflight_preview(
+        self,
+        strategy: dict[str, Any],
+        expected_fingerprint: str,
+    ) -> dict[str, Any] | None:
+        contract = strategy.get("contract")
+        try:
+            metadata = _retry_metadata(contract)
+        except RetryDataError:
+            raise APIError(
+                409, "retry_source_unavailable", "The retry lineage cannot be validated safely."
+            ) from None
+        if metadata is None:
+            return None
+        if strategy.get("replacementSourceId") is not None:
+            raise APIError(
+                409, "retry_source_unavailable", "The retry child has conflicting replacement lineage."
+            )
+        if not hmac.compare_digest(strategy.get("accountFingerprint", ""), expected_fingerprint):
+            raise APIError(409, "account_changed", "The active OKX account changed; no strategy order was sent.")
+
+        context = self._retry_source_context(
+            metadata["sourceStrategyId"], exclude_child_id=strategy["id"], reconcile=True
+        )
+        if context["instrumentId"] != contract.get("instrumentId"):
+            raise APIError(
+                409, "retry_source_stale", "The source changed; refresh retry candidates and review again."
+            )
+        try:
+            selected, selection_digest, selected_ids = self._retry_selection(
+                context, metadata["sourceRevision"], metadata["sourceClientOrderIds"],
+                exclude_child_id=strategy["id"],
+            )
+        except APIError:
+            raise
+        if (
+            selected_ids != metadata["sourceClientOrderIds"]
+            or not hmac.compare_digest(selection_digest, metadata["sourceSelectionHash"])
+        ):
+            raise APIError(
+                409, "retry_source_stale", "The selected source evidence changed; refresh retry review."
+            )
+
+        child_orders = strategy.get("orders")
+        prepared = strategy.get("prepared")
+        prepared_orders = prepared.get("orders") if isinstance(prepared, dict) else None
+        with self.store.connection() as connection:
+            _, validated_selection = self._validate_retry_source_in_connection(
+                connection,
+                fingerprint=expected_fingerprint,
+                source_id=metadata["sourceStrategyId"],
+                instrument_id=context["instrumentId"],
+                source_revision=metadata["sourceRevision"],
+                source_selection_hash=metadata["sourceSelectionHash"],
+                selected_ids=metadata["sourceClientOrderIds"],
+                exclude_child_id=strategy["id"],
+                now=self.clock(),
+                child_orders=child_orders,
+                prepared_orders=prepared_orders,
+            )
+
+        preview = self._retry_market_preview(context, validated_selection, selection_digest)
+        if (
+            not hmac.compare_digest(expected_fingerprint, preview["_internal"]["accountFingerprint"])
+            or context["account"].get("posMode") != preview["_internal"].get("positionMode")
+        ):
+            raise APIError(409, "account_changed", "The active OKX account changed; refresh retry review.")
+        return preview
+
     def _preflight(
-        self, contract: dict[str, Any], expected_fingerprint: str, *, resume: bool = False
+        self,
+        contract: dict[str, Any],
+        expected_fingerprint: str,
+        *,
+        resume: bool = False,
+        strategy: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         account, fingerprint = self._account()
         if not hmac.compare_digest(expected_fingerprint, fingerprint):
             raise APIError(409, "account_changed", "The active OKX account changed; no strategy order was sent.")
         mode = account.get("posMode")
-        sides = set(contract["entryBySide"])
+        retry_preview: dict[str, Any] | None = None
+        if strategy is not None:
+            retry_preview = self._retry_preflight_preview(strategy, fingerprint)
+        elif is_resubmission_contract(contract):
+            raise APIError(
+                409, "prepared_strategy_invalid", "Retry preflight requires the persisted child strategy."
+            )
+        if retry_preview is None:
+            sides = set(contract["entryBySide"])
+        else:
+            sides = {row["side"] for row in retry_preview["orders"]}
         if len(sides) == 2 and mode != "long_short_mode":
             raise APIError(
                 409, "account_mode_unsupported",
@@ -1168,7 +2175,7 @@ class StrategyService:
                     raise APIError(409, "instrument_position_exists", "Close the existing position for this SWAP before applying.")
             if any(row.get("instId") == instrument_id for row in pending):
                 raise APIError(409, "pending_order_exists", "Cancel existing pending orders for this SWAP before applying.")
-        preview = self._preview_contract(contract)
+        preview = retry_preview if retry_preview is not None else self._preview_contract(contract)
         if not hmac.compare_digest(expected_fingerprint, preview["_internal"]["accountFingerprint"]):
             raise APIError(409, "account_changed", "The active OKX account changed; no strategy order was sent.")
         if not resume:
@@ -1199,9 +2206,10 @@ class StrategyService:
         strategy, _, fingerprint = self._current_strategy(strategy_id)
         if strategy["attemptStarted"] or strategy["status"] not in ("DRAFT",):
             raise APIError(409, "strategy_immutable", "This strategy has already entered an application attempt.")
+        self._ensure_new_order_cap(strategy)
         self._require_eligible_replacement_source(strategy["replacementSourceId"], fingerprint)
         try:
-            _, preview = self._preflight(strategy["contract"], fingerprint)
+            _, preview = self._preflight(strategy["contract"], fingerprint, strategy=strategy)
         except APIError as exc:
             diagnostics.emit_event(
                 "preflight", component="api", stage="preflight_initial", outcome="failure",
@@ -1224,11 +2232,20 @@ class StrategyService:
             )
         confirmation = new_confirmation_token()
         expires_at = self.clock() + _PREPARE_TTL_SECONDS
-        prepared_orders = self._with_client_ids(preview, strategy["orders"])
+        if is_resubmission_contract(strategy["contract"]):
+            prepared_orders = self._retry_prepared_orders(preview, strategy["orders"])
+        else:
+            prepared_orders = self._with_client_ids(preview, strategy["orders"])
         prepared = self._public_preview(preview)
         prepared["orders"] = prepared_orders
         prepared["_positionMode"] = preview["_internal"]["positionMode"]
         with self.store.transaction() as connection:
+            self._validate_retry_child_in_connection(
+                connection,
+                strategy,
+                now=self.clock(),
+                expected_status="DRAFT",
+            )
             preference = connection.execute(
                 "SELECT limit_order_submission_mode FROM strategy_account_preferences "
                 "WHERE account_fingerprint=?",
@@ -1257,7 +2274,7 @@ class StrategyService:
             "prepare_result", component="api", stage="prepare", outcome="success",
             status="PREPARED", submission_mode=submission_mode, order_count=len(prepared_orders),
         )
-        return {
+        result = {
             "id": strategy_id,
             "status": "PREPARED",
             "confirmationToken": confirmation,
@@ -1272,8 +2289,13 @@ class StrategyService:
             "queueStatus": None,
             "queueProgress": None,
         }
+        lineage = self._public_retry_summary(strategy.get("contract"))
+        if lineage is not None:
+            result["resubmission"] = lineage
+        return result
 
     def _claim_execution(self, strategy_id: str, strategy: dict[str, Any], token: str) -> str | None:
+        self._ensure_new_order_cap(strategy)
         presented = token_digest(token, self.owner.settings.session_signing_key)
         if not isinstance(strategy["confirmationHash"], str) or not hmac.compare_digest(strategy["confirmationHash"], presented):
             raise APIError(403, "invalid_confirmation", "The confirmation token is invalid.")
@@ -1281,6 +2303,19 @@ class StrategyService:
         now = self.clock()
         try:
             with self.store.transaction() as connection:
+                self._ensure_persisted_new_order_cap(connection, strategy)
+                persisted_prepared = strategy.get("prepared")
+                self._validate_retry_child_in_connection(
+                    connection,
+                    strategy,
+                    now=now,
+                    expected_status="PREPARED",
+                    prepared_orders=(
+                        persisted_prepared.get("orders")
+                        if isinstance(persisted_prepared, dict)
+                        else None
+                    ),
+                )
                 replacement_source_id = strategy["replacementSourceId"]
                 if replacement_source_id is not None:
                     source_row = connection.execute(
@@ -1326,6 +2361,7 @@ class StrategyService:
         return execution_id
 
     def _claim_queue(self, strategy_id: str, strategy: dict[str, Any], token: str) -> bool:
+        self._ensure_new_order_cap(strategy)
         presented = token_digest(token, self.owner.settings.session_signing_key)
         if not isinstance(strategy["confirmationHash"], str) or not hmac.compare_digest(strategy["confirmationHash"], presented):
             raise APIError(403, "invalid_confirmation", "The confirmation token is invalid.")
@@ -1343,6 +2379,14 @@ class StrategyService:
         queued_results = initial_results(orders)
         try:
             with self.store.transaction() as connection:
+                self._ensure_persisted_new_order_cap(connection, strategy)
+                self._validate_retry_child_in_connection(
+                    connection,
+                    strategy,
+                    now=now,
+                    expected_status="PREPARED",
+                    prepared_orders=orders,
+                )
                 replacement_source_id = strategy["replacementSourceId"]
                 if replacement_source_id is not None:
                     source_row = connection.execute(
@@ -1409,6 +2453,13 @@ class StrategyService:
                 } else None,
             )
             return self._basic_result(strategy)
+        if strategy["attemptStarted"]:
+            diagnostics.emit_event(
+                "execute_noop", component="api", stage="execute", outcome="noop",
+                status="PREPARED",
+            )
+            return self._basic_result(strategy)
+        self._ensure_new_order_cap(strategy)
         if strategy["preparedExpiresAt"] is None or strategy["preparedExpiresAt"] <= self.clock():
             self._expire_prepare(strategy)
             diagnostics.emit_event(
@@ -1443,7 +2494,7 @@ class StrategyService:
             )
             return self._basic_result(self._load_row(strategy_id))
         try:
-            _, live_preview = self._preflight(strategy["contract"], fingerprint)
+            _, live_preview = self._preflight(strategy["contract"], fingerprint, strategy=strategy)
         except APIError as exc:
             diagnostics.emit_event(
                 "preflight", component="api", stage="preflight_initial", outcome="failure",
@@ -1568,7 +2619,7 @@ class StrategyService:
             return self._result(strategy_id)
         try:
             try:
-                _, latest_preview = self._preflight(strategy["contract"], fingerprint)
+                _, latest_preview = self._preflight(strategy["contract"], fingerprint, strategy=strategy)
             except APIError as exc:
                 diagnostics.emit_event(
                     "preflight", component="api", stage="preflight_post_leverage", outcome="failure",
@@ -1664,7 +2715,7 @@ class StrategyService:
     def _batch_ack_shape(response: Any, orders: list[dict[str, Any]]) -> str:
         if not isinstance(response, dict):
             return "nonobject_data"
-        top_code = str(response.get("code", ""))
+        top_code = bounded_error_code(response.get("code"))
         if top_code not in ("0", "1", "2"):
             return "missing_code" if "code" not in response else "invalid_code"
         data = response.get("data")
@@ -1696,12 +2747,18 @@ class StrategyService:
             if "sCode" not in item or item.get("sCode") in (None, ""):
                 return "missing_code"
             raw_code = item.get("sCode")
-            if isinstance(raw_code, bool) or not re.fullmatch(r"[0-9]{1,12}", str(raw_code)):
+            code = bounded_error_code(raw_code)
+            if code is None:
                 return "invalid_code"
-            if str(raw_code) == "0":
-                if not (isinstance(item.get("ordId"), str) and item.get("ordId")):
+            if int(code) == 0:
+                if code != "0":
+                    return "invalid_code"
+                if not (isinstance(item.get("ordId"), str) and item.get("ordId", "").strip()):
                     return "missing_order_id"
             else:
+                order_id = item.get("ordId")
+                if "ordId" in item and (not isinstance(order_id, str) or order_id != ""):
+                    return "rejection_order_id_conflict"
                 all_accepted = False
         if top_code in ("1", "2") and all_accepted:
             return "top_level_conflict"
@@ -1723,8 +2780,10 @@ class StrategyService:
         }
 
     @staticmethod
-    def _parse_batch_ack(response: dict[str, Any], orders: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str, str | None]:
-        top_code = str(response.get("code", ""))
+    def _parse_batch_ack(response: Any, orders: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str, str | None]:
+        if not isinstance(response, dict):
+            return [{**row, "status": "unknown"} for row in orders], "UNKNOWN", "batch_ack_malformed"
+        top_code = bounded_error_code(response.get("code"))
         data = response.get("data")
         if top_code not in ("0", "1", "2") or not isinstance(data, list) or len(data) != len(orders):
             return [{**row, "status": "unknown"} for row in orders], "UNKNOWN", "batch_ack_malformed"
@@ -1739,10 +2798,13 @@ class StrategyService:
         rejected = False
         for order in orders:
             item = by_client[order["clientOrderId"]]
-            code = str(item.get("sCode", ""))
-            if code == "0" and isinstance(item.get("ordId"), str) and item["ordId"]:
+            code = bounded_error_code(item.get("sCode"))
+            order_id = item.get("ordId")
+            if code == "0" and isinstance(order_id, str) and order_id.strip():
                 outcomes.append({**order, "status": "accepted", "exchangeOrderId": item["ordId"]})
-            elif code and code != "0":
+            elif code is not None and int(code) != 0 and (
+                "ordId" not in item or (isinstance(order_id, str) and order_id == "")
+            ):
                 rejected = True
                 outcomes.append({**order, "status": "rejected", "errorCode": code})
             else:
@@ -1895,7 +2957,7 @@ class StrategyService:
             and queue_status in ("pending", "sending")
             else None
         )
-        return {
+        result = {
             "id": strategy["id"],
             "status": status,
             "instrumentId": strategy["contract"]["instrumentId"],
@@ -1920,6 +2982,10 @@ class StrategyService:
             "createdAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(strategy["createdAt"])),
             "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(strategy["updatedAt"])),
         }
+        lineage = self._public_retry_summary(strategy.get("contract"))
+        if lineage is not None:
+            result["resubmission"] = lineage
+        return result
 
     def _result(self, strategy_id: str) -> dict[str, Any]:
         strategy, _, fingerprint = self._current_strategy(strategy_id)

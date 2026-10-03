@@ -1,6 +1,8 @@
 # Implementation Plan: Ten Orders Per Strategy
 
-Status: BLOCKED_ON_CLARIFICATION
+Superseded by `docs/agents/specs/2026-10-03-strategy-limit-cap-resubmission-design.md` and `docs/agents/plans/2026-10-03-strategy-limit-cap-resubmission.md` on 2026-10-03; resolved decisions and selective retry are canonical there.
+
+Status: SUPERSEDED
 Date: 2026-10-02
 Tier: M
 Specification: `docs/agents/specs/2026-10-02-strategy-ten-order-cap-design.md`

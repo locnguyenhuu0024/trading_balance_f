@@ -840,7 +840,8 @@ class StrategyOrderWorker:
         service = self._queue_service(fence, queue["deadlineAt"])
         try:
             account, preview = service._preflight(
-                strategy["contract"], strategy["accountFingerprint"], resume=resume
+                strategy["contract"], strategy["accountFingerprint"], resume=resume,
+                strategy=strategy,
             )
         except APIError as exc:
             reason = self._queue_validation_reason(exc, resume=resume)
@@ -962,7 +963,8 @@ class StrategyOrderWorker:
 
             try:
                 account, preview = service._preflight(
-                    strategy["contract"], strategy["accountFingerprint"], resume=False
+                    strategy["contract"], strategy["accountFingerprint"], resume=False,
+                    strategy=strategy,
                 )
             except APIError as exc:
                 reason = self._queue_validation_reason(exc, resume=False)

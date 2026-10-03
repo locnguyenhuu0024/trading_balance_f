@@ -4,8 +4,27 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/features/strategy/data/strategy_api_client.dart';
+import 'package:trading_balance_f/features/strategy/domain/strategy_models.dart';
 
 void main() {
+  test('retry DTOs require bound previews and consistent eligibility', () {
+    expect(
+      StrategyRetryDraft.tryParse(_retryDraftResponse()),
+      isNotNull,
+      reason: 'ordinary strategy result fields accompany retry fields',
+    );
+    final missingRevision = _retryDraftResponse();
+    (missingRevision['preview'] as Map<String, dynamic>).remove(
+      'sourceRevision',
+    );
+    expect(StrategyRetryDraft.tryParse(missingRevision), isNull);
+
+    final contradictoryCandidate = _retryCandidateResponse()
+      ..['priorOutcome'] = 'other'
+      ..['eligible'] = true;
+    expect(StrategyRetryCandidate.tryParse(contradictoryCandidate), isNull);
+  });
+
   final unstructuredHttpFailures = [
     (status: 404, marker: 'HTTP 404', guidance: 'không tìm thấy'),
     (status: 429, marker: 'HTTP 429', guidance: 'quá thường xuyên'),
@@ -141,6 +160,24 @@ void main() {
         'previewHash': 'hash',
         'replacementSourceId': 'never-sent-1',
       });
+      final retryCandidates = await client.getRetryCandidates(
+        token,
+        'source-123',
+      );
+      final retryPreview = await client.previewRetry(
+        token,
+        'source-123',
+        sourceRevision: 'revision-1',
+        sourceClientOrderIds: const ['source-order-1'],
+      );
+      final retryDraft = await client.createRetryDraft(
+        token,
+        'source-123',
+        sourceRevision: 'revision-1',
+        sourceClientOrderIds: const ['source-order-1'],
+        previewHash: 'review-hash-1',
+        retryRequestId: 'retry-request-1234567890',
+      );
       final strategies = await client.listStrategies(token);
       final prepared = await client.prepareApply(token, 'draft-123');
       final executed = await client.executeApply(
@@ -159,6 +196,13 @@ void main() {
 
       expect(preview['previewHash'], 'hash');
       expect(saved['id'], 'draft-123');
+      expect(retryCandidates.candidates.single.eligible, isTrue);
+      expect(
+        retryPreview.orders.single['sourceClientOrderId'],
+        'source-order-1',
+      );
+      expect(retryDraft.id, 'retry-child-1');
+      expect(retryDraft.preview.previewHash, 'review-hash-1');
       expect(strategies, isEmpty);
       expect(prepared['confirmationToken'], 'confirm-once');
       expect(executed['status'], 'UNKNOWN');
@@ -168,6 +212,9 @@ void main() {
       expect(adapter.requests.map((request) => request.uri.path), [
         '/v1/strategies/preview',
         '/v1/strategies',
+        '/v1/strategies/source-123/retry-candidates',
+        '/v1/strategies/source-123/retry-preview',
+        '/v1/strategies/source-123/retry-drafts',
         '/v1/strategies',
         '/v1/strategies/draft-123/prepare-apply',
         '/v1/strategies/draft-123/execute-apply',
@@ -192,11 +239,22 @@ void main() {
         'replacementSourceId': 'never-sent-1',
       });
       expect(adapter.requests[2].method, 'GET');
-      expect(adapter.requests[6].method, 'GET');
-      expect(adapter.requests[7].method, 'GET');
-      expect(adapter.requests[8].method, 'POST');
-      expect(adapter.requests[8].data, {'limitOrderSubmissionMode': 'batch'});
-      expect(adapter.requests[9].data, const {});
+      expect(adapter.requests[3].data, {
+        'sourceRevision': 'revision-1',
+        'sourceClientOrderIds': ['source-order-1'],
+      });
+      expect(adapter.requests[4].data, {
+        'sourceRevision': 'revision-1',
+        'sourceClientOrderIds': ['source-order-1'],
+        'previewHash': 'review-hash-1',
+        'retryRequestId': 'retry-request-1234567890',
+      });
+      expect(adapter.requests[5].method, 'GET');
+      expect(adapter.requests[9].method, 'GET');
+      expect(adapter.requests[10].method, 'GET');
+      expect(adapter.requests[11].method, 'POST');
+      expect(adapter.requests[11].data, {'limitOrderSubmissionMode': 'batch'});
+      expect(adapter.requests[12].data, const {});
     },
   );
 
@@ -255,6 +313,113 @@ Future<StrategyApiException> _captureSettingsFailure(
   fail('Expected strategy settings request to fail.');
 }
 
+Map<String, dynamic> _retryCandidatesResponse() => {
+  'sourceStrategyId': 'source-123',
+  'sourceRevision': 'revision-1',
+  'candidates': [
+    {
+      'sourceClientOrderId': 'source-order-1',
+      'side': 'long',
+      'role': 'entry',
+      'limitPrice': '100',
+      'contracts': '2',
+      'leverage': '5',
+      'priorOutcome': 'not_submitted',
+      'eligible': true,
+      'reason': null,
+    },
+  ],
+  'blockedReason': null,
+  'linkedChildren': <Object>[],
+};
+
+Map<String, dynamic> _retryCandidateResponse() => {
+  'sourceClientOrderId': 'source-order-1',
+  'side': 'long',
+  'role': 'entry',
+  'limitPrice': '100',
+  'contracts': '2',
+  'leverage': '5',
+  'priorOutcome': 'not_submitted',
+  'eligible': true,
+  'reason': null,
+};
+
+Map<String, dynamic> _retryOrder({bool includeChildId = false}) => {
+  if (includeChildId) 'clientOrderId': 'child-order-1',
+  'sourceClientOrderId': 'source-order-1',
+  'side': 'long',
+  'role': 'entry',
+  'limitPrice': '100',
+  'contracts': '2',
+  'leverage': '5',
+  'margin': '4',
+  'allocatedMargin': '4',
+  'notional': '20',
+  'openingFeeEstimate': '0.02',
+  'allocationWeight': '1',
+  'cumulativeContracts': '2',
+  'cumulativeAverageEntry': '100',
+  'liquidationEstimate': {'price': '80', 'method': 'cross'},
+};
+
+Map<String, dynamic> _retryPreviewResponse({bool includeChildId = false}) => {
+  'sourceStrategyId': 'source-123',
+  'sourceRevision': 'revision-1',
+  'selectedSourceClientOrderIds': ['source-order-1'],
+  'previewHash': 'review-hash-1',
+  'instrumentId': 'BTC-USDT-SWAP',
+  'interval': '6Hutc',
+  'allocation': 'fixed',
+  'feesOutsideMargin': true,
+  'currentPrice': '101',
+  'quoteTimestamp': '2026-10-03T00:00:00Z',
+  'sidePercent': {'long': '100', 'short': '0'},
+  'sides': [
+    {'side': 'long', 'contracts': '2'},
+  ],
+  'totalMargin': '4',
+  'plannedMargin': '4',
+  'unallocatedMargin': '0',
+  'estimatedOpeningFees': '0.02',
+  'requiredBalance': '4.02',
+  'orders': [_retryOrder(includeChildId: includeChildId)],
+};
+
+Map<String, dynamic> _retryDraftResponse() => {
+  'id': 'retry-child-1',
+  'status': 'DRAFT',
+  'instrumentId': 'BTC-USDT-SWAP',
+  'interval': '6Hutc',
+  'sides': [
+    {'side': 'long', 'contracts': '2'},
+  ],
+  'totalMargin': '4',
+  'plannedMargin': '4',
+  'unallocatedMargin': '0',
+  'estimatedOpeningFees': '0.02',
+  'fees': '0.02',
+  'sidePercent': {'long': '100', 'short': '0'},
+  'failureReason': null,
+  'leverageResults': [],
+  'batchAttempted': false,
+  'submissionMode': 'sequential',
+  'orderPlacementAttempted': false,
+  'queueStatus': null,
+  'queueProgress': null,
+  'applyOutcome': null,
+  'canDelete': true,
+  'replacementCleanupConflict': false,
+  'createdAt': '2026-10-03T00:00:00Z',
+  'updatedAt': '2026-10-03T00:00:00Z',
+  'orders': [_retryOrder(includeChildId: true)],
+  'resubmission': {
+    'sourceStrategyId': 'source-123',
+    'sourceClientOrderIds': ['source-order-1'],
+  },
+  'preview': _retryPreviewResponse(includeChildId: true),
+};
+
 class _TradeAdapter implements HttpClientAdapter {
   _TradeAdapter({this.getSettingsMode = 'sequential', this.postSettingsMode});
 
@@ -278,6 +443,10 @@ class _TradeAdapter implements HttpClientAdapter {
         ],
       },
       '/v1/strategies' when options.method == 'POST' => {'id': 'draft-123'},
+      '/v1/strategies/source-123/retry-candidates' =>
+        _retryCandidatesResponse(),
+      '/v1/strategies/source-123/retry-preview' => _retryPreviewResponse(),
+      '/v1/strategies/source-123/retry-drafts' => _retryDraftResponse(),
       '/v1/strategies' => {'strategies': <Object>[]},
       '/v1/strategies/draft-123/prepare-apply' => {
         'confirmationToken': 'confirm-once',

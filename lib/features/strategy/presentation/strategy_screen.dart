@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -5,6 +8,7 @@ import '../../orders/data/trade_api_client.dart';
 import '../../orders/presentation/providers/trade_session_provider.dart';
 import '../domain/strategy_models.dart';
 import 'providers/strategy_dashboard_provider.dart';
+import 'strategy_retry_dialog.dart';
 import 'strategy_settings_dialog.dart';
 import 'strategy_wizard_dialog.dart';
 
@@ -172,6 +176,17 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
                               _text(strategy['status']).toUpperCase() == 'DRAFT'
                               ? () => _applySaved(context, dashboard, strategy)
                               : null,
+                          onRetry:
+                              const {'DRAFT', 'PREPARED'}.contains(
+                                _text(strategy['status']).toUpperCase(),
+                              )
+                              ? null
+                              : () => _retryLimitOrders(
+                                  context,
+                                  session,
+                                  dashboard,
+                                  strategy,
+                                ),
                           onDelete: strategy['canDelete'] == true
                               ? () => _deleteStrategy(
                                   context,
@@ -304,6 +319,61 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
     }
   }
 
+  Future<void> _retryLimitOrders(
+    BuildContext context,
+    TradeSession session,
+    StrategyDashboardController dashboard,
+    Map<String, dynamic> strategy,
+  ) async {
+    final sourceId = _text(strategy['id']);
+    if (sourceId.isEmpty) return;
+    final random = math.Random.secure();
+    final retryRequestId = base64Url
+        .encode(List<int>.generate(24, (_) => random.nextInt(256)))
+        .replaceAll('=', '');
+    final outcome = await dashboard.retryLimitOrders(
+      sourceId,
+      retryRequestId: retryRequestId,
+      interact: (flow) => showDialog<StrategyRetryOutcome>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => StrategyRetryDialog(
+          dashboard: dashboard,
+          flow: flow,
+          sourceStrategy: strategy,
+          bearerToken: session.bearerToken,
+        ),
+      ),
+    );
+    if (!context.mounted || !dashboard.ownsSession) return;
+    switch (outcome.kind) {
+      case StrategyRetryOutcomeKind.cancelled:
+        return;
+      case StrategyRetryOutcomeKind.duplicate:
+        _showMessage(context, 'Yêu cầu này đang được xử lý.');
+        break;
+      case StrategyRetryOutcomeKind.rejected:
+      case StrategyRetryOutcomeKind.unknown:
+        _showMessage(
+          context,
+          outcome.message ?? 'Không thể xác nhận kết quả gửi lại. Hãy làm mới.',
+        );
+        break;
+      case StrategyRetryOutcomeKind.queued:
+        _showMessage(
+          context,
+          'Bản gửi lại ${outcome.childId ?? ''} đã vào hàng đợi tuần tự.',
+        );
+        break;
+      case StrategyRetryOutcomeKind.applied:
+        _showMessage(
+          context,
+          'Đã gửi bản liên kết ${outcome.childId ?? ''}. Cập nhật lịch sử để xem trạng thái.',
+        );
+        break;
+    }
+  }
+
   Future<bool> _confirmOrders(
     BuildContext context,
     StrategyDashboardController dashboard,
@@ -423,6 +493,7 @@ class _StrategyCard extends StatelessWidget {
     required this.actionBusy,
     required this.onReplace,
     required this.onApply,
+    required this.onRetry,
     required this.onDelete,
     required this.onRefresh,
   });
@@ -435,6 +506,7 @@ class _StrategyCard extends StatelessWidget {
   final bool actionBusy;
   final VoidCallback? onReplace;
   final VoidCallback? onApply;
+  final VoidCallback? onRetry;
   final VoidCallback? onDelete;
   final VoidCallback? onRefresh;
 
@@ -442,6 +514,10 @@ class _StrategyCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final status = _text(strategy['status']).toUpperCase();
     final neverSent = _isNeverSentStrategy(strategy);
+    final oversizedUnstartedDraft =
+        (status == 'DRAFT' ||
+            (status == 'PREPARED' && strategy['canDelete'] == true)) &&
+        hasOversizedNewStrategyOrderPayload(strategy);
     final instrument = _text(strategy['instrumentId']);
     final positions = _mapList(strategy['positions']);
     final position = positions.isEmpty
@@ -483,6 +559,11 @@ class _StrategyCard extends StatelessWidget {
         ? null
         : '$orderScanNotice · $lastSuccessfulOrderScan';
     final failureReason = _text(strategy['failureReason']);
+    final resubmission = _stringMap(strategy['resubmission']);
+    final sourceStrategyId = _text(resubmission?['sourceStrategyId']);
+    final sourceClientOrderIds = _stringList(
+      resubmission?['sourceClientOrderIds'],
+    );
     final leverageErrorCode = _safeLeverageErrorCode(
       _mapList(strategy['leverageResults']),
     );
@@ -510,6 +591,15 @@ class _StrategyCard extends StatelessWidget {
               ],
             ),
             Text(quoteLabel, style: quoteStyle),
+            if (oversizedUnstartedDraft)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  status == 'PREPARED'
+                      ? 'Bản nháp đã chuẩn bị vượt quá giới hạn 10 lệnh. Cập nhật trạng thái rồi tạo lại với tối đa 10 lệnh.'
+                      : 'Bản nháp cũ vượt quá giới hạn 10 lệnh. Hãy tạo bản nháp mới với tối đa 10 lệnh để tiếp tục.',
+                ),
+              ),
             if (neverSent) ...[
               const SizedBox(height: 6),
               const Text('Không có lệnh nào được gửi lên OKX.'),
@@ -546,6 +636,13 @@ class _StrategyCard extends StatelessWidget {
               const SizedBox(height: 4),
               _QueueStatusSummary(strategy: strategy),
             ],
+            if (sourceStrategyId.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  'Bản gửi lại ${_text(strategy['id'])} liên kết với nguồn $sourceStrategyId · ${sourceClientOrderIds.join(', ')}',
+                ),
+              ),
             if (quote?.observedAt != null)
               Text('Giá được ghi nhận lúc ${_time(quote!.observedAt)}'),
             if (metricsAreStale)
@@ -633,7 +730,9 @@ class _StrategyCard extends StatelessWidget {
                   ),
                 if (onApply != null)
                   FilledButton.tonalIcon(
-                    onPressed: actionBusy ? null : onApply,
+                    onPressed: actionBusy || oversizedUnstartedDraft
+                        ? null
+                        : onApply,
                     icon: actionBusy
                         ? const SizedBox.square(
                             dimension: 16,
@@ -641,6 +740,13 @@ class _StrategyCard extends StatelessWidget {
                           )
                         : const Icon(Icons.play_arrow),
                     label: const Text('Áp dụng bản nháp'),
+                  ),
+                if (onRetry != null)
+                  OutlinedButton.icon(
+                    key: Key('strategy-retry-${_text(strategy['id'])}'),
+                    onPressed: actionBusy ? null : onRetry,
+                    icon: const Icon(Icons.replay_circle_filled_outlined),
+                    label: const Text('Gửi lại lệnh limit'),
                   ),
                 if (onDelete != null)
                   OutlinedButton.icon(
@@ -884,7 +990,7 @@ class _InlineNotice extends StatelessWidget {
 }
 
 List<Map<String, dynamic>> _preparedOrders(Map<String, dynamic> prepared) {
-  return validatedStrategyOrders(prepared) ?? const [];
+  return validatedNewStrategyOrders(prepared) ?? const [];
 }
 
 List<Map<String, dynamic>> _mapList(Object? value) => value is List
@@ -894,6 +1000,15 @@ List<Map<String, dynamic>> _mapList(Object? value) => value is List
 Map<String, dynamic> _map(Object? value) => value is Map
     ? value.map((key, item) => MapEntry(key.toString(), item))
     : const {};
+
+Map<String, dynamic>? _stringMap(Object? value) =>
+    value is Map && value.keys.every((key) => key is String)
+    ? Map<String, dynamic>.from(value)
+    : null;
+
+List<String> _stringList(Object? value) => value is List
+    ? value.whereType<String>().toList(growable: false)
+    : const [];
 
 Object? _first(Map<String, dynamic> values, List<String> keys) {
   for (final key in keys) {

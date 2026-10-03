@@ -20,12 +20,527 @@ enum StrategyApplyOutcomeKind {
   rejected,
 }
 
+enum StrategyRetryOutcomeKind {
+  cancelled,
+  applied,
+  queued,
+  duplicate,
+  unknown,
+  rejected,
+}
+
 class StrategyApplyOutcome {
   const StrategyApplyOutcome(this.kind, {this.result, this.message});
 
   final StrategyApplyOutcomeKind kind;
   final Map<String, dynamic>? result;
   final String? message;
+}
+
+class StrategyRetryOutcome {
+  const StrategyRetryOutcome(
+    this.kind, {
+    this.childId,
+    this.result,
+    this.message,
+  });
+
+  final StrategyRetryOutcomeKind kind;
+  final String? childId;
+  final Map<String, dynamic>? result;
+  final String? message;
+}
+
+typedef StrategyRetryInteraction =
+    Future<StrategyRetryOutcome?> Function(StrategyRetryFlow flow);
+
+class StrategyRetryFlowException implements Exception {
+  const StrategyRetryFlowException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
+class StrategyRetryFlow {
+  StrategyRetryFlow._({
+    required StrategyDashboardController controller,
+    required this.sourceStrategyId,
+    required this.retryRequestId,
+  }) : _controller = controller;
+
+  final StrategyDashboardController _controller;
+  final String sourceStrategyId;
+  final String retryRequestId;
+  StrategyRetryCandidates? _candidates;
+  StrategyRetryPreview? _preview;
+  StrategyRetryDraft? _draft;
+  Map<String, dynamic>? _prepared;
+  bool _createAttempted = false;
+  bool _prepareAttempted = false;
+  bool _executeAttempted = false;
+  bool _writeMayBeUncertain = false;
+  bool _closed = false;
+  int _pendingOperations = 0;
+  Completer<void>? _pendingOperationsDrained;
+  String? _lockedChildId;
+
+  StrategyRetryCandidates? get candidates => _candidates;
+  StrategyRetryPreview? get preview => _preview;
+  StrategyRetryDraft? get draft => _draft;
+  Map<String, dynamic>? get prepared => _prepared;
+  bool get writeMayBeUncertain => _writeMayBeUncertain;
+  bool get createAttempted => _createAttempted;
+  bool get prepareAttempted => _prepareAttempted;
+  bool get executeAttempted => _executeAttempted;
+
+  void cancel() => _closed = true;
+
+  Future<void> waitForPendingOperations() async {
+    final pending = _pendingOperationsDrained?.future;
+    if (pending != null) await pending;
+  }
+
+  Future<T> _track<T>(Future<T> Function() operation) async {
+    if (_pendingOperations++ == 0) {
+      _pendingOperationsDrained = Completer<void>();
+    }
+    try {
+      return await operation();
+    } finally {
+      _pendingOperations--;
+      if (_pendingOperations == 0) {
+        _pendingOperationsDrained?.complete();
+        _pendingOperationsDrained = null;
+      }
+    }
+  }
+
+  void _ensureActive() {
+    if (!_controller.ownsSession) throw const _StrategyRetrySessionChanged();
+    if (_closed) {
+      throw const StrategyRetryFlowException(
+        'Đã đóng bước xem lại. Hãy mở lại chiến thuật để bắt đầu một phiên mới.',
+      );
+    }
+  }
+
+  Future<StrategyRetryCandidates> loadCandidates() => _track(_loadCandidates);
+
+  Future<StrategyRetryCandidates> _loadCandidates() async {
+    _ensureActive();
+    if (!_controller.ownsSession) throw const _StrategyRetrySessionChanged();
+    if (_candidates != null) return _candidates!;
+    final response = await _controller._api.getRetryCandidates(
+      _controller._bearerToken,
+      sourceStrategyId,
+    );
+    _ensureActive();
+    if (response.sourceStrategyId != sourceStrategyId) {
+      throw const StrategyRetryFlowException(
+        'Máy chủ trả về chiến thuật nguồn khác. Hãy làm mới rồi xem lại.',
+      );
+    }
+    _candidates = response;
+    return response;
+  }
+
+  Future<StrategyRetryPreview> previewSelection(
+    Iterable<String> selectedSourceClientOrderIds,
+  ) => _track(() => _previewSelection(selectedSourceClientOrderIds));
+
+  Future<StrategyRetryPreview> _previewSelection(
+    Iterable<String> selectedSourceClientOrderIds,
+  ) async {
+    _ensureActive();
+    _preview = null;
+    final candidates = _candidates;
+    if (candidates == null) {
+      throw const StrategyRetryFlowException('Hãy tải danh sách lệnh trước.');
+    }
+    if (candidates.blockedReason != null) {
+      throw StrategyRetryFlowException(
+        _retryBlockMessage(candidates.blockedReason!),
+      );
+    }
+    final selectedSet = selectedSourceClientOrderIds.toSet();
+    if (selectedSet.isEmpty ||
+        selectedSet.length > strategyNewSubmissionOrderLimit ||
+        selectedSet.length != selectedSourceClientOrderIds.length) {
+      throw const StrategyRetryFlowException(
+        'Chọn từ 1 đến 10 lệnh khác nhau để xem lại.',
+      );
+    }
+    final eligibleIds = candidates.candidates
+        .where((candidate) => candidate.eligible)
+        .map((candidate) => candidate.sourceClientOrderId)
+        .toSet();
+    if (!selectedSet.every(eligibleIds.contains)) {
+      throw const StrategyRetryFlowException(
+        'Danh sách có lệnh không đủ điều kiện. Hãy chọn lại từ các lệnh được đánh dấu.',
+      );
+    }
+    final ids = candidates.candidates
+        .where(
+          (candidate) => selectedSet.contains(candidate.sourceClientOrderId),
+        )
+        .map((candidate) => candidate.sourceClientOrderId)
+        .toList(growable: false);
+    if (candidates.linkedChildren.any(
+      (child) => child.sourceClientOrderIds.any(selectedSet.contains),
+    )) {
+      throw const StrategyRetryFlowException(
+        'Các lệnh đã có bản gửi lại liên kết. Mở lịch sử để xem trạng thái bản đó.',
+      );
+    }
+    final result = await _controller._api.previewRetry(
+      _controller._bearerToken,
+      sourceStrategyId,
+      sourceRevision: candidates.sourceRevision,
+      sourceClientOrderIds: ids,
+    );
+    _ensureActive();
+    _validatePreview(result, candidates, ids);
+    _preview = result;
+    _draft = null;
+    _prepared = null;
+    return result;
+  }
+
+  Future<StrategyRetryDraft> createLinkedDraft() => _track(_createLinkedDraft);
+
+  Future<StrategyRetryDraft> _createLinkedDraft() async {
+    _ensureActive();
+    final candidates = _candidates;
+    final preview = _preview;
+    if (candidates == null || preview == null) {
+      throw const StrategyRetryFlowException(
+        'Xem lại chính xác các lệnh trước khi tạo bản gửi lại.',
+      );
+    }
+    if (_createAttempted) {
+      throw const StrategyRetryFlowException(
+        'Yêu cầu tạo bản gửi lại đã được gửi. Hãy làm mới trạng thái thay vì gửi lại.',
+      );
+    }
+    _createAttempted = true;
+    StrategyRetryDraft response;
+    try {
+      response = await _controller._api.createRetryDraft(
+        _controller._bearerToken,
+        sourceStrategyId,
+        sourceRevision: candidates.sourceRevision,
+        sourceClientOrderIds: preview.selectedSourceClientOrderIds,
+        previewHash: preview.previewHash,
+        retryRequestId: retryRequestId,
+      );
+    } on Object catch (error) {
+      if (_isUncertainWrite(error)) {
+        _writeMayBeUncertain = true;
+        await _refreshAfterUncertain();
+      }
+      rethrow;
+    }
+    if (_closed) {
+      _writeMayBeUncertain = true;
+      await _refreshAfterUncertain();
+      _ensureActive();
+    }
+    _ensureActive();
+    try {
+      _validateDraft(response, preview);
+    } on Object {
+      _writeMayBeUncertain = true;
+      await _refreshAfterUncertain();
+      rethrow;
+    }
+    if (!_controller._actionInFlight.add(response.id)) {
+      _writeMayBeUncertain = true;
+      await _refreshAfterUncertain();
+      throw const StrategyRetryFlowException(
+        'Bản gửi lại đã được tạo nhưng đang được xử lý ở một thao tác khác. Hãy làm mới trạng thái.',
+      );
+    }
+    _lockedChildId = response.id;
+    _controller._notify();
+    _draft = response;
+    await _controller.load();
+    if (!_controller.ownsSession) throw const _StrategyRetrySessionChanged();
+    return response;
+  }
+
+  Future<Map<String, dynamic>> prepareChild() => _track(_prepareChild);
+
+  Future<Map<String, dynamic>> _prepareChild() async {
+    _ensureActive();
+    final draft = _draft;
+    final preview = _preview;
+    if (draft == null || preview == null) {
+      throw const StrategyRetryFlowException(
+        'Tạo bản gửi lại liên kết trước khi chuẩn bị xác nhận.',
+      );
+    }
+    if (_prepareAttempted) {
+      throw const StrategyRetryFlowException(
+        'Bản gửi lại đã được chuẩn bị. Làm mới để xem trạng thái hiện tại.',
+      );
+    }
+    _prepareAttempted = true;
+    Map<String, dynamic> prepared;
+    try {
+      _ensureActive();
+      prepared = await _controller._api.prepareApply(
+        _controller._bearerToken,
+        draft.id,
+      );
+    } on Object catch (error) {
+      if (_isUncertainWrite(error)) {
+        _writeMayBeUncertain = true;
+        await _refreshAfterUncertain();
+      }
+      rethrow;
+    }
+    if (_closed) {
+      _writeMayBeUncertain = true;
+      await _refreshAfterUncertain();
+      _ensureActive();
+    }
+    _ensureActive();
+    try {
+      _validatePrepared(prepared, draft, preview);
+    } on Object {
+      _writeMayBeUncertain = true;
+      await _refreshAfterUncertain();
+      rethrow;
+    }
+    _prepared = Map.unmodifiable(prepared);
+    return _prepared!;
+  }
+
+  Future<Map<String, dynamic>> executeOnce() => _track(_executeOnce);
+
+  Future<Map<String, dynamic>> _executeOnce() async {
+    _ensureActive();
+    final draft = _draft;
+    final preview = _preview;
+    final prepared = _prepared;
+    if (draft == null || preview == null || prepared == null) {
+      throw const StrategyRetryFlowException(
+        'Chưa có bản gửi lại được chuẩn bị để xác nhận.',
+      );
+    }
+    if (_executeAttempted) {
+      throw const StrategyRetryFlowException(
+        'Lệnh gửi đã được xác nhận một lần. Không gửi lại.',
+      );
+    }
+    _executeAttempted = true;
+    final token = _retryText(prepared['confirmationToken']);
+    _ensureActive();
+    Map<String, dynamic> result;
+    try {
+      result = await _controller._api.executeApply(
+        _controller._bearerToken,
+        draft.id,
+        token,
+      );
+    } on Object catch (error) {
+      _writeMayBeUncertain = true;
+      await _refreshAfterUncertain();
+      rethrow;
+    }
+    if (!_controller.ownsSession) throw const _StrategyRetrySessionChanged();
+    await _refreshAfterUncertain();
+    _ensureActive();
+    final resultSource = _retryMap(result['resubmission']);
+    final knownStatus = _retryText(result['status']).toUpperCase();
+    final validAcknowledgement =
+        _retryText(result['id']) == draft.id &&
+        _retryText(resultSource?['sourceStrategyId']) == sourceStrategyId &&
+        _sameStrings(
+          _retryStrings(resultSource?['sourceClientOrderIds']),
+          preview.selectedSourceClientOrderIds,
+        ) &&
+        const {
+          'APPLIED',
+          'COMPLETED',
+          'PARTIAL',
+          'UNKNOWN',
+          'APPLYING',
+          'FAILED',
+          'REJECTED',
+        }.contains(knownStatus);
+    if (!validAcknowledgement) {
+      _writeMayBeUncertain = true;
+      return {
+        'id': draft.id,
+        'status': 'UNKNOWN',
+        'resubmission': {
+          'sourceStrategyId': sourceStrategyId,
+          'sourceClientOrderIds': preview.selectedSourceClientOrderIds,
+        },
+        'acknowledgementInvalid': true,
+      };
+    }
+    if (!const {'APPLIED', 'COMPLETED'}.contains(knownStatus)) {
+      _writeMayBeUncertain = true;
+    }
+    return result;
+  }
+
+  Future<void> refreshReadOnly() => _track(_refreshAfterUncertain);
+
+  Future<void> _refreshAfterUncertain() async {
+    if (!_controller.ownsSession) return;
+    try {
+      final candidates = await _controller._api.getRetryCandidates(
+        _controller._bearerToken,
+        sourceStrategyId,
+      );
+      if (!_controller.ownsSession) return;
+      if (candidates.sourceStrategyId == sourceStrategyId) {
+        _candidates = candidates;
+      }
+    } on Object {
+      if (!_controller.ownsSession) return;
+    }
+    await _controller.load();
+    if (!_controller.ownsSession) return;
+  }
+
+  void _validatePreview(
+    StrategyRetryPreview response,
+    StrategyRetryCandidates candidates,
+    List<String> ids,
+  ) {
+    final source = _controller.strategyById(sourceStrategyId);
+    if (response.sourceStrategyId != sourceStrategyId ||
+        response.sourceRevision != candidates.sourceRevision ||
+        (source != null &&
+            (_retryText(source['instrumentId']) !=
+                    _retryText(response.raw['instrumentId']) ||
+                _retryText(source['interval']) !=
+                    _retryText(response.raw['interval']))) ||
+        !_sameStrings(response.selectedSourceClientOrderIds, ids) ||
+        response.orders.length != ids.length) {
+      throw const StrategyRetryFlowException(
+        'Máy chủ trả về bản xem trước khác với các lệnh đã chọn. Không thể tiếp tục.',
+      );
+    }
+    for (var index = 0; index < ids.length; index++) {
+      final candidate = candidates.candidates.firstWhere(
+        (item) => item.sourceClientOrderId == ids[index],
+      );
+      final order = response.orders[index];
+      if (order['sourceClientOrderId'] != candidate.sourceClientOrderId ||
+          order['side'] != candidate.side ||
+          order['role'] != candidate.role ||
+          !_sameDecimal(order['limitPrice'], candidate.limitPrice) ||
+          !_sameDecimal(order['contracts'], candidate.contracts) ||
+          !_sameDecimal(order['leverage'], candidate.leverage) ||
+          (candidate.levelId != null &&
+              order['levelId'] != candidate.levelId)) {
+        throw const StrategyRetryFlowException(
+          'Giá, số hợp đồng hoặc đòn bẩy của lệnh xem trước khác nguồn. Không thể tiếp tục.',
+        );
+      }
+    }
+  }
+
+  void _validateDraft(
+    StrategyRetryDraft response,
+    StrategyRetryPreview preview,
+  ) {
+    if (response.id == sourceStrategyId ||
+        _retryText(response.resubmission['sourceStrategyId']) !=
+            sourceStrategyId ||
+        !_sameStrings(
+          _retryStrings(response.resubmission['sourceClientOrderIds']),
+          preview.selectedSourceClientOrderIds,
+        ) ||
+        response.orders.length != preview.orders.length ||
+        response.orders.any(
+          (order) => preview.selectedSourceClientOrderIds.contains(
+            _retryText(order['clientOrderId']),
+          ),
+        ) ||
+        !_sameRetryOrders(
+          preview.orders,
+          response.orders,
+          requireChildIds: true,
+        )) {
+      throw const StrategyRetryFlowException(
+        'Bản nháp trả về không khớp với chiến thuật nguồn và danh sách đã duyệt. Không thể chuẩn bị.',
+      );
+    }
+    final nestedPreview = response.preview;
+    if (nestedPreview.sourceStrategyId != preview.sourceStrategyId ||
+        nestedPreview.sourceRevision != preview.sourceRevision ||
+        nestedPreview.previewHash != preview.previewHash ||
+        !_sameStrings(
+          nestedPreview.selectedSourceClientOrderIds,
+          preview.selectedSourceClientOrderIds,
+        ) ||
+        !_sameRetryOrders(
+          preview.orders,
+          nestedPreview.orders,
+          requireChildIds: true,
+        ) ||
+        !_sameRetryCosts(preview, nestedPreview)) {
+      throw const StrategyRetryFlowException(
+        'Bản xem trước gắn trong bản nháp đã thay đổi. Không thể chuẩn bị.',
+      );
+    }
+  }
+
+  void _validatePrepared(
+    Map<String, dynamic> prepared,
+    StrategyRetryDraft draft,
+    StrategyRetryPreview preview,
+  ) {
+    final mode = StrategyLimitOrderSubmissionMode.parse(
+      prepared['submissionMode'],
+    );
+    final preparedOrders = validatedNewStrategyOrders(prepared);
+    final responseIds = _retryStrings(
+      _retryMap(prepared['resubmission'])?['sourceClientOrderIds'],
+    );
+    final preparedSource = _retryText(
+      _retryMap(prepared['resubmission'])?['sourceStrategyId'],
+    );
+    final plannedMargin = _retryDecimal(prepared['plannedMargin']);
+    final unallocatedMargin = _retryDecimal(prepared['unallocatedMargin']);
+    final estimatedFees = _retryDecimal(prepared['estimatedOpeningFees']);
+    if (_retryText(prepared['id']) != draft.id ||
+        _retryText(prepared['status']).toUpperCase() != 'PREPARED' ||
+        _retryText(prepared['confirmationToken']).isEmpty ||
+        _retryText(prepared['confirmationToken']).length > 4096 ||
+        mode == null ||
+        preparedOrders == null ||
+        preparedOrders.length != draft.orders.length ||
+        preparedSource != sourceStrategyId ||
+        !_sameStrings(responseIds, preview.selectedSourceClientOrderIds) ||
+        !_sameRetryOrders(
+          draft.orders,
+          preparedOrders,
+          requireChildIds: true,
+        ) ||
+        plannedMargin == null ||
+        !_sameDecimal(plannedMargin, preview.plannedMargin) ||
+        unallocatedMargin == null ||
+        !_sameDecimal(unallocatedMargin, preview.unallocatedMargin) ||
+        estimatedFees == null ||
+        !_sameDecimal(estimatedFees, preview.estimatedOpeningFees)) {
+      throw const StrategyRetryFlowException(
+        'Máy chủ trả về danh sách, chi phí, nguồn liên kết hoặc cơ chế gửi khác với bản đã duyệt. Không thể xác nhận.',
+      );
+    }
+  }
+}
+
+class _StrategyRetrySessionChanged implements Exception {
+  const _StrategyRetrySessionChanged();
 }
 
 class StrategyDashboardController extends ChangeNotifier {
@@ -237,20 +752,99 @@ class StrategyDashboardController extends ChangeNotifier {
 
   Future<void> refresh() => load();
 
+  Future<StrategyRetryOutcome> retryLimitOrders(
+    String sourceStrategyId, {
+    required String retryRequestId,
+    required StrategyRetryInteraction interact,
+  }) async {
+    if (!_ownsSession ||
+        sourceStrategyId.isEmpty ||
+        !_actionInFlight.add(sourceStrategyId)) {
+      return const StrategyRetryOutcome(StrategyRetryOutcomeKind.duplicate);
+    }
+    if (!RegExp(r'^[A-Za-z0-9_-]{16,64}$').hasMatch(retryRequestId)) {
+      _actionInFlight.remove(sourceStrategyId);
+      return const StrategyRetryOutcome(
+        StrategyRetryOutcomeKind.rejected,
+        message: 'Không thể tạo mã yêu cầu gửi lại an toàn.',
+      );
+    }
+    _actionError = null;
+    _notify();
+    final flow = StrategyRetryFlow._(
+      controller: this,
+      sourceStrategyId: sourceStrategyId,
+      retryRequestId: retryRequestId,
+    );
+    try {
+      final outcome = await interact(flow);
+      if (!_ownsSession) return _staleRetrySessionOutcome();
+      return outcome ??
+          const StrategyRetryOutcome(StrategyRetryOutcomeKind.cancelled);
+    } on StrategyApiException catch (error) {
+      if (!_ownsSession) return _staleRetrySessionOutcome();
+      if (error.isUnauthorized) _onUnauthorized?.call();
+      _actionError = error.message;
+      if (flow.writeMayBeUncertain) await flow.refreshReadOnly();
+      if (!_ownsSession) return _staleRetrySessionOutcome();
+      return StrategyRetryOutcome(
+        StrategyRetryOutcomeKind.rejected,
+        message: error.message,
+      );
+    } on StrategyRetryFlowException catch (error) {
+      if (!_ownsSession) return _staleRetrySessionOutcome();
+      _actionError = error.message;
+      return StrategyRetryOutcome(
+        StrategyRetryOutcomeKind.rejected,
+        message: error.message,
+      );
+    } on Object {
+      if (!_ownsSession) return _staleRetrySessionOutcome();
+      const message =
+          'Kết quả gửi lại chưa rõ. Không gửi lại; hãy làm mới danh sách và lịch sử.';
+      _actionError = message;
+      if (flow.writeMayBeUncertain) await flow.refreshReadOnly();
+      if (!_ownsSession) return _staleRetrySessionOutcome();
+      return const StrategyRetryOutcome(
+        StrategyRetryOutcomeKind.unknown,
+        message: message,
+      );
+    } finally {
+      flow.cancel();
+      await flow.waitForPendingOperations();
+      _actionInFlight.remove(sourceStrategyId);
+      final childId = flow._lockedChildId;
+      if (childId != null) _actionInFlight.remove(childId);
+      _notify();
+    }
+  }
+
   Future<StrategyApplyOutcome> applyDraft(
     String id, {
     required StrategyConfirmation confirm,
   }) async {
-    if (!_ownsSession || !_actionInFlight.add(id)) {
+    final existing = strategyById(id);
+    final resubmission = _retryMap(existing?['resubmission']);
+    final sourceId = _retryText(resubmission?['sourceStrategyId']);
+    final actionIds = <String>{id, if (sourceId.isNotEmpty) sourceId};
+    if (!_ownsSession || actionIds.any(_actionInFlight.contains)) {
       return const StrategyApplyOutcome(StrategyApplyOutcomeKind.duplicate);
     }
-    final existing = strategyById(id);
+    _actionInFlight.addAll(actionIds);
     if (existing != null &&
         _text(existing['status']).toUpperCase() != 'DRAFT') {
-      _actionInFlight.remove(id);
+      _actionInFlight.removeAll(actionIds);
       return const StrategyApplyOutcome(
         StrategyApplyOutcomeKind.rejected,
         message: 'Chỉ có thể áp dụng chiến thuật ở trạng thái bản nháp.',
+      );
+    }
+    if (existing != null && hasOversizedNewStrategyOrderPayload(existing)) {
+      _actionInFlight.removeAll(actionIds);
+      return const StrategyApplyOutcome(
+        StrategyApplyOutcomeKind.rejected,
+        message:
+            'Bản nháp cũ vượt quá giới hạn 10 lệnh. Hãy tạo bản nháp mới với tối đa 10 lệnh.',
       );
     }
     _actionError = null;
@@ -262,7 +856,7 @@ class StrategyDashboardController extends ChangeNotifier {
       if (confirmationToken.isEmpty ||
           StrategyLimitOrderSubmissionMode.parse(prepared['submissionMode']) ==
               null ||
-          validatedStrategyOrders(prepared) == null) {
+          validatedNewStrategyOrders(prepared) == null) {
         const message =
             'Máy chủ không trả về cơ chế gửi và danh sách lệnh hợp lệ để xác nhận.';
         _actionError = message;
@@ -338,7 +932,7 @@ class StrategyDashboardController extends ChangeNotifier {
         message: message,
       );
     } finally {
-      _actionInFlight.remove(id);
+      _actionInFlight.removeAll(actionIds);
       _notify();
     }
   }
@@ -347,6 +941,12 @@ class StrategyDashboardController extends ChangeNotifier {
     StrategyApplyOutcomeKind.rejected,
     message: 'Phiên giao dịch đã thay đổi. Hãy mở lại chiến thuật.',
   );
+
+  StrategyRetryOutcome _staleRetrySessionOutcome() =>
+      const StrategyRetryOutcome(
+        StrategyRetryOutcomeKind.rejected,
+        message: 'Phiên giao dịch đã thay đổi. Hãy mở lại chiến thuật.',
+      );
 
   bool _isAcknowledgedSequentialQueue(Map<String, dynamic> result) {
     final mode = StrategyLimitOrderSubmissionMode.parse(
@@ -357,10 +957,17 @@ class StrategyDashboardController extends ChangeNotifier {
   }
 
   Future<bool> deleteDraft(String id) async {
-    if (!_ownsSession || !_deleteInFlight.add(id)) return false;
+    if (!_ownsSession ||
+        _actionInFlight.contains(id) ||
+        !_deleteInFlight.add(id) ||
+        !_actionInFlight.add(id)) {
+      _deleteInFlight.remove(id);
+      return false;
+    }
     final existing = strategyById(id);
     if (existing == null || existing['canDelete'] != true) {
       _deleteInFlight.remove(id);
+      _actionInFlight.remove(id);
       return false;
     }
     _deleteError = null;
@@ -381,6 +988,7 @@ class StrategyDashboardController extends ChangeNotifier {
       return false;
     } finally {
       _deleteInFlight.remove(id);
+      _actionInFlight.remove(id);
       _notify();
     }
   }
@@ -635,3 +1243,161 @@ final strategyDashboardProvider = ChangeNotifierProvider.autoDispose
       unawaited(controller.load());
       return controller;
     });
+
+String _retryText(Object? value) => value is String ? value : '';
+
+StrategyDecimal? _retryDecimal(Object? value) =>
+    StrategyDecimal.tryParse(strategyNumber(value));
+
+Map<String, dynamic>? _retryMap(Object? value) {
+  if (value is! Map || value.keys.any((key) => key is! String)) return null;
+  return Map<String, dynamic>.from(value);
+}
+
+List<String>? _retryStrings(Object? value) {
+  if (value is! List || value.any((item) => item is! String || item.isEmpty)) {
+    return null;
+  }
+  return value.cast<String>();
+}
+
+bool _sameStrings(List<String>? actual, List<String> expected) =>
+    actual != null &&
+    actual.length == expected.length &&
+    List<bool>.generate(
+      actual.length,
+      (index) => actual[index] == expected[index],
+    ).every((match) => match);
+
+bool _sameDecimal(Object? left, Object? right) {
+  final leftDecimal = StrategyDecimal.tryParse(strategyNumber(left));
+  final rightDecimal = StrategyDecimal.tryParse(strategyNumber(right));
+  return leftDecimal != null &&
+      rightDecimal != null &&
+      leftDecimal.compareTo(rightDecimal) == 0;
+}
+
+bool _sameRetryCosts(StrategyRetryPreview left, StrategyRetryPreview right) =>
+    _sameDecimal(left.totalMargin, right.totalMargin) &&
+    _sameDecimal(left.plannedMargin, right.plannedMargin) &&
+    _sameDecimal(left.unallocatedMargin, right.unallocatedMargin) &&
+    _sameDecimal(left.estimatedOpeningFees, right.estimatedOpeningFees) &&
+    _sameDecimal(left.requiredBalance, right.requiredBalance);
+
+bool _sameRetryOrders(
+  List<Map<String, dynamic>> expected,
+  List<Map<String, dynamic>> actual, {
+  required bool requireChildIds,
+}) {
+  if (expected.length != actual.length) return false;
+  const fields = {
+    'sourceClientOrderId',
+    'side',
+    'role',
+    'limitPrice',
+    'contracts',
+    'leverage',
+    'margin',
+    'allocatedMargin',
+    'notional',
+    'openingFeeEstimate',
+    'allocationWeight',
+    'cumulativeContracts',
+    'cumulativeAverageEntry',
+    'liquidationEstimate',
+    'levelId',
+  };
+  final actualClientIds = <String>{};
+  for (var index = 0; index < expected.length; index++) {
+    final left = expected[index];
+    final right = actual[index];
+    for (final field in fields) {
+      if (left.containsKey(field) != right.containsKey(field)) return false;
+      if (left.containsKey(field) &&
+          !_sameRetryOrderField(field, left[field], right[field])) {
+        return false;
+      }
+    }
+    final expectedChildId = _retryText(left['clientOrderId']);
+    final actualChildId = _retryText(right['clientOrderId']);
+    if (expectedChildId.isNotEmpty && expectedChildId != actualChildId) {
+      return false;
+    }
+    if (requireChildIds) {
+      final sourceOrderId = _retryText(right['sourceClientOrderId']);
+      if (actualChildId.isEmpty ||
+          actualChildId == sourceOrderId ||
+          !actualClientIds.add(actualChildId)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+bool _sameRetryOrderField(String field, Object? left, Object? right) {
+  if (const {
+    'sourceClientOrderId',
+    'side',
+    'role',
+    'levelId',
+  }.contains(field)) {
+    return left == right;
+  }
+  if (field == 'liquidationEstimate') {
+    return _sameRetryNestedValue(left, right);
+  }
+  return _sameDecimal(left, right);
+}
+
+bool _sameRetryNestedValue(Object? left, Object? right) {
+  if (left == null || right == null) return left == right;
+  if (left is Map && right is Map) {
+    if (left.keys.any((key) => key is! String) ||
+        right.keys.any((key) => key is! String) ||
+        left.length != right.length ||
+        left.keys.toSet().difference(right.keys.toSet()).isNotEmpty) {
+      return false;
+    }
+    for (final key in left.keys) {
+      if (!_sameRetryNestedValue(left[key], right[key])) return false;
+    }
+    return true;
+  }
+  if (left is List && right is List) {
+    if (left.length != right.length) return false;
+    for (var index = 0; index < left.length; index++) {
+      if (!_sameRetryNestedValue(left[index], right[index])) return false;
+    }
+    return true;
+  }
+  if (left is String && right is String) return left == right;
+  if (left is num && right is num) {
+    return _sameDecimal(left, right);
+  }
+  return left == right;
+}
+
+bool _isUncertainWrite(Object error) =>
+    error is! StrategyApiException ||
+    error.statusCode == null ||
+    error.statusCode! >= 500 ||
+    error.code == 'invalid_response';
+
+String _retryBlockMessage(String code) => switch (code) {
+  'retry_source_unavailable' =>
+    'Chiến thuật nguồn không còn đủ điều kiện. Làm mới trạng thái vị thế và lệnh đang chờ, rồi xem lại.',
+  'retry_source_stale' || 'retry_preview_stale' =>
+    'Dữ liệu nguồn đã thay đổi. Làm mới danh sách và xem lại lệnh.',
+  'retry_selection_in_use' =>
+    'Một số lệnh đã thuộc bản gửi lại khác. Mở lịch sử liên kết để kiểm tra.',
+  'position_exists' || 'positions_present' =>
+    'Tài khoản đang có vị thế. Đóng hoặc kiểm tra vị thế rồi xem lại.',
+  'pending_order' || 'pending_orders' =>
+    'Tài khoản còn lệnh đang chờ. Cập nhật trạng thái trước khi xem lại.',
+  'reservation_conflict' || 'reservation_exists' =>
+    'Tài khoản đang có khoản vốn được giữ chỗ. Cập nhật trạng thái trước khi xem lại.',
+  'lease_active' || 'strategy_busy' =>
+    'Chiến thuật đang được xử lý. Làm mới trạng thái rồi thử xem lại sau.',
+  _ => 'Máy chủ chưa cho phép gửi lại: $code. Cập nhật trạng thái rồi xem lại.',
+};

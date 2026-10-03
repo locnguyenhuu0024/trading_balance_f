@@ -178,6 +178,50 @@ class StrategyDiagnosticsTests(unittest.TestCase):
         self.assertEqual(preflight["reason"], "account_changed")
         self.assertNotIn(exception_canary, json.dumps(records))
 
+    def test_red_retry_diagnostics_classify_get_and_post_methods(self) -> None:
+        strategy_id = "retry-route-12345678"
+        self.assertEqual(
+            diagnostics.classified_strategy_route(
+                "GET", f"/v1/strategies/{strategy_id}/retry-candidates"
+            ),
+            (strategy_id, "retry_candidates"),
+        )
+        self.assertEqual(
+            diagnostics.classified_strategy_route(
+                "POST", f"/v1/strategies/{strategy_id}/retry-preview"
+            ),
+            (strategy_id, "retry_preview"),
+        )
+        self.assertIsNone(
+            diagnostics.classified_strategy_route(
+                "POST", f"/v1/strategies/{strategy_id}/retry-candidates"
+            )
+        )
+
+        fixture = api_fixtures.StrategyApiTests(
+            "test_red_strategy_routes_require_bearer_before_exchange_reads"
+        )
+        fixture.setUp()
+        self.addCleanup(fixture.tearDown)
+        with _Capture() as capture:
+            get_status, _ = fixture.request(
+                "GET", f"/v1/strategies/{strategy_id}/retry-candidates"
+            )
+            post_status, _ = fixture.request(
+                "POST", f"/v1/strategies/{strategy_id}/retry-preview", {}
+            )
+            records = capture.records()
+
+        self.assertEqual(get_status, 404)
+        self.assertEqual(post_status, 400)
+        starts = [row for row in records if row["event"] == "request_start"]
+        self.assertEqual(
+            [(row["stage"], row["method"]) for row in starts],
+            [("retry_candidates", "GET"), ("retry_preview", "POST")],
+        )
+        failures = [row for row in records if row["event"] == "request_failure"]
+        self.assertEqual([row["method"] for row in failures], ["GET", "POST"])
+
     def test_red_hostile_values_and_invalid_schema_are_dropped_or_sanitized(self) -> None:
         raw_strategy_id = "strat-secret-12345678"
         raw_client_id = "order-secret-12345678"

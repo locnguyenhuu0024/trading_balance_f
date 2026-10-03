@@ -69,14 +69,16 @@ class WSGIApplication:
 
     def __call__(self, environ: dict[str, Any], start_response: Callable[..., Any]) -> list[bytes]:
         method = environ.get("REQUEST_METHOD", "GET")
+        request_method = str(method).upper()
+        diagnostic_method = request_method if request_method in ("GET", "POST") else "other"
         path = environ.get("PATH_INFO", "/")
-        classified = diagnostics.classified_strategy_route(method, path)
+        classified = diagnostics.classified_strategy_route(request_method, path)
         if classified is None:
             return self._handle_request(environ, start_response)
         strategy_id, stage = classified
         with diagnostics.strategy_context(strategy_id, component="api"):
             diagnostics.emit_event(
-                "request_start", stage=stage, outcome="started", method="POST"
+                "request_start", stage=stage, outcome="started", method=diagnostic_method
             )
             observed_status: list[int] = []
 
@@ -94,12 +96,12 @@ class WSGIApplication:
             except Exception:
                 diagnostics.emit_event(
                     "request_failure", stage="request", outcome="failure",
-                    reason="internal_error", api_code="internal_error", method="POST",
+                    reason="internal_error", api_code="internal_error", method=diagnostic_method,
                 )
                 raise
             if observed_status and observed_status[-1] < 400:
                 diagnostics.emit_event(
-                    "request_end", stage=stage, outcome="success", method="POST"
+                    "request_end", stage=stage, outcome="success", method=diagnostic_method
                 )
             return response
 
@@ -107,6 +109,7 @@ class WSGIApplication:
         self, environ: dict[str, Any], start_response: Callable[..., Any]
     ) -> list[bytes]:
         method = str(environ.get("REQUEST_METHOD", "GET")).upper()
+        diagnostic_method = method if method in ("GET", "POST") else "other"
         path = str(environ.get("PATH_INFO", "/"))
         origin = str(environ.get("HTTP_ORIGIN", ""))
         cors_headers: list[tuple[str, str]] = []
@@ -158,10 +161,16 @@ class WSGIApplication:
                     "strategy_immutable": "strategy_immutable",
                     "strategy_state_changed": "strategy_state_changed",
                     "prepared_strategy_invalid": "prepared_invalid",
+                    "retry_source_unavailable": "retry_source_unavailable",
+                    "retry_selection_invalid": "retry_selection_invalid",
+                    "retry_source_stale": "retry_source_stale",
+                    "retry_selection_in_use": "retry_selection_in_use",
+                    "retry_request_conflict": "retry_request_conflict",
+                    "retry_preview_stale": "retry_preview_stale",
                 }.get(error.code, "other")
                 diagnostics.emit_event(
                     "request_failure", stage="request", outcome="failure", reason=reason,
-                    api_code=error.code, method="POST",
+                    api_code=error.code, method=diagnostic_method,
                 )
             return self._response(start_response, error.status, error.response(), [*cors_headers, *error.headers])
         except Exception:
@@ -170,7 +179,7 @@ class WSGIApplication:
             if diagnostics.current_context() is not None:
                 diagnostics.emit_event(
                     "request_failure", stage="request", outcome="failure",
-                    reason="internal_error", api_code="internal_error", method="POST",
+                    reason="internal_error", api_code="internal_error", method=diagnostic_method,
                 )
             return self._response(
                 start_response,

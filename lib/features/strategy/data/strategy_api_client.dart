@@ -5,6 +5,7 @@ import '../../orders/data/trade_api_client.dart';
 import '../../orders/data/trade_api_browser_adapter_stub.dart'
     if (dart.library.html) '../../orders/data/trade_api_browser_adapter.dart'
     as browser;
+import '../domain/strategy_models.dart';
 
 abstract class StrategyApi {
   Future<Map<String, dynamic>> preview(
@@ -16,6 +17,27 @@ abstract class StrategyApi {
     String bearerToken,
     Map<String, dynamic> body,
   );
+
+  Future<StrategyRetryCandidates> getRetryCandidates(
+    String bearerToken,
+    String sourceStrategyId,
+  );
+
+  Future<StrategyRetryPreview> previewRetry(
+    String bearerToken,
+    String sourceStrategyId, {
+    required String sourceRevision,
+    required List<String> sourceClientOrderIds,
+  });
+
+  Future<StrategyRetryDraft> createRetryDraft(
+    String bearerToken,
+    String sourceStrategyId, {
+    required String sourceRevision,
+    required List<String> sourceClientOrderIds,
+    required String previewHash,
+    required String retryRequestId,
+  });
 
   Future<List<Map<String, dynamic>>> listStrategies(String bearerToken);
 
@@ -104,6 +126,82 @@ class StrategyApiClient implements StrategyApi {
     String bearerToken,
     Map<String, dynamic> body,
   ) => _request('POST', 'v1/strategies', bearerToken: bearerToken, body: body);
+
+  @override
+  Future<StrategyRetryCandidates> getRetryCandidates(
+    String bearerToken,
+    String sourceStrategyId,
+  ) async {
+    final response = await _request(
+      'GET',
+      'v1/strategies/${Uri.encodeComponent(sourceStrategyId)}/retry-candidates',
+      bearerToken: bearerToken,
+    );
+    final candidates = StrategyRetryCandidates.tryParse(response);
+    if (candidates == null) throw _invalidRetryResponse();
+    return candidates;
+  }
+
+  @override
+  Future<StrategyRetryPreview> previewRetry(
+    String bearerToken,
+    String sourceStrategyId, {
+    required String sourceRevision,
+    required List<String> sourceClientOrderIds,
+  }) async {
+    if (!_validRetrySelection(sourceRevision, sourceClientOrderIds)) {
+      throw const StrategyApiException(
+        code: 'invalid_request',
+        message: 'The retry selection is invalid.',
+      );
+    }
+    final response = await _request(
+      'POST',
+      'v1/strategies/${Uri.encodeComponent(sourceStrategyId)}/retry-preview',
+      bearerToken: bearerToken,
+      body: {
+        'sourceRevision': sourceRevision,
+        'sourceClientOrderIds': List<String>.from(sourceClientOrderIds),
+      },
+    );
+    final preview = StrategyRetryPreview.tryParse(response);
+    if (preview == null) throw _invalidRetryResponse();
+    return preview;
+  }
+
+  @override
+  Future<StrategyRetryDraft> createRetryDraft(
+    String bearerToken,
+    String sourceStrategyId, {
+    required String sourceRevision,
+    required List<String> sourceClientOrderIds,
+    required String previewHash,
+    required String retryRequestId,
+  }) async {
+    if (!_validRetrySelection(sourceRevision, sourceClientOrderIds) ||
+        previewHash.isEmpty ||
+        previewHash.length > 512 ||
+        !RegExp(r'^[A-Za-z0-9_-]{16,64}$').hasMatch(retryRequestId)) {
+      throw const StrategyApiException(
+        code: 'invalid_request',
+        message: 'The retry draft request is invalid.',
+      );
+    }
+    final response = await _request(
+      'POST',
+      'v1/strategies/${Uri.encodeComponent(sourceStrategyId)}/retry-drafts',
+      bearerToken: bearerToken,
+      body: {
+        'sourceRevision': sourceRevision,
+        'sourceClientOrderIds': List<String>.from(sourceClientOrderIds),
+        'previewHash': previewHash,
+        'retryRequestId': retryRequestId,
+      },
+    );
+    final draft = StrategyRetryDraft.tryParse(response);
+    if (draft == null) throw _invalidRetryResponse();
+    return draft;
+  }
 
   @override
   Future<List<Map<String, dynamic>>> listStrategies(String bearerToken) async {
@@ -255,6 +353,19 @@ class StrategyApiClient implements StrategyApi {
     }
   }
 }
+
+bool _validRetrySelection(String revision, List<String> ids) =>
+    revision.isNotEmpty &&
+    revision.length <= 512 &&
+    ids.isNotEmpty &&
+    ids.length <= strategyNewSubmissionOrderLimit &&
+    ids.every((id) => id.isNotEmpty && id.length <= 200) &&
+    ids.toSet().length == ids.length;
+
+StrategyApiException _invalidRetryResponse() => const StrategyApiException(
+  code: 'invalid_response',
+  message: 'The trade API returned an invalid retry review.',
+);
 
 String _failureMessage(DioException error) {
   final statusCode = error.response?.statusCode;

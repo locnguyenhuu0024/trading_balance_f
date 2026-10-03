@@ -37,7 +37,8 @@ _ENUMS: dict[str, frozenset[str]] = {
         "order", "batch", "commit", "queue", "startup", "shutdown", "fatal",
         "heartbeat", "selection", "sink", "account_config", "positions",
         "pending_orders", "account_balance", "trade_fee", "position_tiers",
-        "instruments", "ticker", "order_details",
+        "instruments", "ticker", "order_details", "retry_candidates",
+        "retry_preview", "retry_draft",
     }),
     "outcome": frozenset({
         "started", "success", "failure", "queued", "noop", "leased", "lease_busy",
@@ -69,6 +70,8 @@ _ENUMS: dict[str, frozenset[str]] = {
         "interrupted_leverage_attempt", "account_mode_unsupported",
         "order_ack_malformed", "batch_ack_malformed", "batch_response_unavailable",
         "preflight_changed_after_leverage", "preflight_failed_after_leverage",
+        "retry_source_unavailable", "retry_selection_invalid", "retry_source_stale",
+        "retry_selection_in_use", "retry_request_conflict", "retry_preview_stale",
     }),
     "endpoint": frozenset({
         "account_config", "positions", "pending_orders", "account_balance",
@@ -102,7 +105,9 @@ _API_CODES = frozenset({
     "not_found", "method_not_allowed", "invalid_request", "account_identity_unavailable",
     "authentication_required",
     "preview_inputs_unavailable", "quote_stale", "quote_invalid", "strategy_expired",
-    "strategy_result_unavailable", "strategy_state_unavailable", "strategy_rate_limited",
+        "strategy_result_unavailable", "strategy_state_unavailable", "strategy_rate_limited",
+    "retry_source_unavailable", "retry_selection_invalid", "retry_source_stale",
+    "retry_selection_in_use", "retry_request_conflict", "retry_preview_stale",
 })
 _NUMERIC_CODE = re.compile(r"[0-9]{1,12}\Z")
 _ENDPOINTS = {
@@ -119,7 +124,8 @@ _ENDPOINTS = {
     "/api/v5/trade/batch-orders": ("batch_orders", "batch"),
 }
 _STRATEGY_ROUTE = re.compile(
-    r"/v1/strategies/([A-Za-z0-9_-]{8,64})/(prepare-apply|execute-apply)\Z"
+    r"/v1/strategies/([A-Za-z0-9_-]{8,64})/"
+    r"(prepare-apply|execute-apply|retry-candidates|retry-preview|retry-drafts)\Z"
 )
 
 
@@ -190,8 +196,18 @@ def classified_strategy_route(method: Any, path: Any) -> tuple[str, str] | None:
     match = _STRATEGY_ROUTE.fullmatch(path)
     if match is None:
         return None
-    if isinstance(method, str) and method.upper() == "POST":
-        return match.group(1), "prepare" if match.group(2) == "prepare-apply" else "execute"
+    action = match.group(2)
+    normalized_method = method.upper() if isinstance(method, str) else ""
+    stages = {
+        ("POST", "prepare-apply"): "prepare",
+        ("POST", "execute-apply"): "execute",
+        ("GET", "retry-candidates"): "retry_candidates",
+        ("POST", "retry-preview"): "retry_preview",
+        ("POST", "retry-drafts"): "retry_draft",
+    }
+    stage = stages.get((normalized_method, action))
+    if stage is not None:
+        return match.group(1), stage
     return None
 
 

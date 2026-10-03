@@ -17,6 +17,9 @@ The API is `backend.app:application`, uses Python's standard library, and is int
 | `GET /v1/actions/result/<operation-id>` | Bearer session | Read and reconcile a recorded operation |
 | `GET /v1/strategies/settings` | Bearer session | Read the current account's limit-order submission preference |
 | `POST /v1/strategies/settings` | Bearer session | Save the current account's limit-order submission preference |
+| `GET /v1/strategies/<source-id>/retry-candidates` | Bearer session | Read source-scoped retry eligibility and linked attempts |
+| `POST /v1/strategies/<source-id>/retry-preview` | Bearer session | Review an exact selected source-order subset with fresh market inputs |
+| `POST /v1/strategies/<source-id>/retry-drafts` | Bearer session | Create or replay one linked retry draft |
 
 Requests and responses use JSON. The body limit is 64 KiB. Browser requests carrying an `Origin` must match `ALLOWED_WEB_ORIGIN` exactly. No `Origin` header is accepted for non-browser clients, but every account or action route still requires a bearer session where listed above. A successful login returns a random bearer token that expires after ten minutes; the API stores only its keyed hash. Keep that token in application memory and discard it on logout or expiry.
 
@@ -77,6 +80,16 @@ The strategy settings endpoints use `limitOrderSubmissionMode`, with `sequential
 In sequential mode, `POST /v1/strategies/<id>/execute-apply` consumes the confirmation and durably queues the reviewed orders. The API response reports `submissionMode`, `queueStatus`, `queueProgress`, and `applyOutcome: "queued"`; the separate strategy worker performs the exchange writes. The worker sends the frozen limit-order payloads in reviewed order, spaces placements by at least 250 ms, and makes no more than 20 placement attempts per worker pass. A queue stops at its 120-second deadline or on a rejected, malformed, or ambiguous write result. It records each write marker and ACK before advancing the cursor. After a restart, it revalidates the account, mode, preview hash, and deadline before continuing an accepted prefix. An ambiguous write remains unknown and is never resent; the untouched tail stays unsent.
 
 With `batch`, the API keeps the existing batch submission path. Both modes use the same reservation and order-reconciliation records in the SQLite database.
+
+### Selective strategy order resubmission
+
+Retry candidates are available only for an attempted strategy owned by the authenticated account. The candidate response includes every source order with a fixed prior outcome, an `eligible` flag, and a bounded reason. Only a definitely `not_submitted` order or an order rejected with a validated numeric OKX error code can be selected. Accepted, canceled-after-acceptance, unknown, malformed, or in-flight rows remain excluded. Current position mode, zero positions, no pending orders, no other instrument reservation, and sufficient available USDT are required.
+
+Send the returned `sourceRevision` and one through ten eligible `sourceClientOrderIds` to `retry-preview`. The server preserves each selected order's side, role, limit price, contract count, leverage, and optional level ID. It recalculates costs, cumulative entry and liquidation estimates, and current tier checks without reallocating quantity. The response contains a review `previewHash`; a changed fee, tier, contract rule, account mode, or source selection requires a fresh review. Quote time and price are checked for freshness on each review and preflight.
+
+Create the child with the same ordered selection and revision, the preview hash, and a random `retryRequestId` containing 16–64 letters, digits, underscores, or hyphens. Repeating an identical request ID and payload returns the existing child without creating another draft or confirmation token. Reusing that ID with a different selection or review is rejected. The child has fresh client order IDs and a public `resubmission` history link to its direct source. The prepare acknowledgement returns the child ID, exact frozen child orders, current submission mode, and the public source strategy ID and ordered source client order IDs. Prepare it normally to freeze the current account submission preference, then confirm once through the existing batch or sequential path.
+
+An unclaimed, never-sent retry draft can be deleted to release its selected rows. Once its token is claimed, the source selection is permanently consumed and both the child and its source history are protected, including when leverage fails before any order placement. A rejected retry child can be selected as a new direct source; the original ancestor does not become available again. Source, selection, retry-request, preview, position, pending-order, balance, and reservation blockers return safe errors; the server never retries an uncertain order automatically.
 
 ### Strategy submission diagnostics
 

@@ -10,12 +10,14 @@ from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
 from backend.app import create_application
 from backend.security import token_digest
-from backend.service import RuntimeSettings, TradeService
+from backend.service import APIError, RuntimeSettings, TradeService
 from backend.store import encode_json
+from backend.strategy_worker import StrategyOrderWorker, WorkerSettings
 
 
 NOW = 1_798_848_000.0
@@ -34,6 +36,7 @@ class FakeStrategyExchange:
         self.positions: list[dict[str, Any]] = []
         self.fail_position_reads = False
         self.pending: list[dict[str, Any]] = []
+        self.available_balance = "100000"
         self.pending_reads = 0
         self.position_reads = 0
         self.fee_data: list[dict[str, Any]] = [
@@ -107,7 +110,7 @@ class FakeStrategyExchange:
                 self.quote_account_barrier.wait(timeout=3)
             return {"code": "0", "data": [{"uid": self.account_uid, "posMode": self.pos_mode}]}
         if method == "GET" and parsed.path == "/api/v5/account/balance":
-            return {"code": "0", "data": [{"details": [{"ccy": "USDT", "availBal": "100000"}]}]}
+            return {"code": "0", "data": [{"details": [{"ccy": "USDT", "availBal": self.available_balance}]}]}
         if method == "GET" and parsed.path == "/api/v5/account/positions":
             self.position_reads += 1
             if self.fail_position_reads:
@@ -304,6 +307,89 @@ class StrategyApiTests(unittest.TestCase):
             }
         return contract
 
+    @staticmethod
+    def multi_order_contract(
+        long_count: int, short_count: int = 0, instrument_id: str = INSTRUMENT
+    ) -> dict[str, Any]:
+        rows: list[dict[str, Any]] = []
+        entries: dict[str, str] = {}
+        for side, count in (("long", long_count), ("short", short_count)):
+            for index in range(count):
+                level_id = f"{side}-{index + 1}"
+                price = str(59000 - index * 100) if side == "long" else str(61000 + index * 100)
+                rows.append({"side": side, "price": price, "levelId": level_id})
+                if index == 0:
+                    entries[side] = level_id
+        direction = "both" if long_count and short_count else "long" if long_count else "short"
+        contract = StrategyApiTests.id_mode_contract(rows, direction=direction, entry_ids=entries)
+        contract["instrumentId"] = instrument_id
+        contract["totalMargin"] = "1000" if long_count and short_count else "600"
+        return contract
+
+    def _add_fake_instrument(self, instrument_id: str) -> None:
+        family = instrument_id[: -len("-SWAP")]
+        currency = family.split("-", 1)[0]
+        self.exchange.instrument_data.append({
+            **self.exchange.instrument_data[0],
+            "instId": instrument_id,
+            "instFamily": family,
+            "baseCcy": currency,
+            "ctValCcy": currency,
+        })
+        self.exchange.fee_data.append({**self.exchange.fee_data[0], "instFamily": family})
+        self.exchange.tier_data.append({**self.exchange.tier_data[0], "instFamily": family})
+        self.exchange.use_requested_ticker = True
+
+    def _worker(self) -> StrategyOrderWorker:
+        monotonic_now = [0.0]
+
+        def sleep(seconds: float) -> None:
+            self.now += seconds
+            monotonic_now[0] += seconds
+
+        settings = WorkerSettings(
+            okx_api_key="test-key",
+            okx_api_secret="test-secret",
+            okx_api_passphrase="test-passphrase",
+            session_signing_key=SIGNING_KEY,
+            operation_db_path=self.settings.operation_db_path,
+        )
+        return StrategyOrderWorker(
+            settings,
+            store=self.service.store,
+            transport=self.exchange.transport,
+            clock=lambda: self.now,
+            owner_id="strategy-api-test-worker",
+            lease_seconds=30,
+            order_interval_seconds=5,
+            call_spacing_seconds=0,
+            sleep=sleep,
+            monotonic=lambda: monotonic_now[0],
+        )
+
+    def _append_persisted_order(self, strategy_id: str, *, append_contract: bool = True) -> None:
+        with self.service.store.transaction() as connection:
+            row = connection.execute(
+                "SELECT contract_json, orders_json, prepared_json FROM strategies WHERE strategy_id=?",
+                (strategy_id,),
+            ).fetchone()
+            contract = json.loads(row["contract_json"])
+            orders = json.loads(row["orders_json"])
+            contract["selectedLevels"].append(deepcopy(contract["selectedLevels"][-1]))
+            orders.append(deepcopy(orders[-1]))
+            prepared = None if row["prepared_json"] is None else json.loads(row["prepared_json"])
+            if isinstance(prepared, dict) and isinstance(prepared.get("orders"), list):
+                prepared["orders"].append(deepcopy(prepared["orders"][-1]))
+            connection.execute(
+                "UPDATE strategies SET contract_json=?, orders_json=?, prepared_json=? WHERE strategy_id=?",
+                (
+                    encode_json(contract) if append_contract else row["contract_json"],
+                    encode_json(orders),
+                    None if prepared is None else encode_json(prepared),
+                    strategy_id,
+                ),
+            )
+
     def save_draft(
         self,
         contract: dict[str, Any] | None = None,
@@ -334,6 +420,54 @@ class StrategyApiTests(unittest.TestCase):
         self.assertEqual(status, 200, applied)
         self.assertEqual(applied["status"], "APPLIED")
         return strategy_id
+
+    def _make_rejected_source(
+        self,
+        *,
+        contract: dict[str, Any] | None = None,
+        rejected_order_index: int = 0,
+        rejected_order_indexes: set[int] | None = None,
+        accepted_as_canceled: bool = False,
+    ) -> tuple[str, dict[str, Any], dict[str, Any]]:
+        source_id, _ = self.save_draft(contract)
+        status, prepared = self.request(
+            "POST", f"/v1/strategies/{source_id}/prepare-apply", {}
+        )
+        self.assertEqual(status, 200, prepared)
+        ack: list[dict[str, Any]] = []
+        rejected_indexes = {rejected_order_index} if rejected_order_indexes is None else rejected_order_indexes
+        for index, row in enumerate(prepared["orders"]):
+            if index in rejected_indexes:
+                ack.append({"clOrdId": row["clientOrderId"], "sCode": "51008", "sMsg": "private rejection"})
+            else:
+                ack.append({"clOrdId": row["clientOrderId"], "sCode": "0", "ordId": f"accepted-{index}"})
+                if accepted_as_canceled:
+                    payload = self.service.strategy._okx_order(
+                        {"instrumentId": INSTRUMENT}, row, "net_mode"
+                    )
+                    self.exchange.orders[row["clientOrderId"]] = {
+                        **payload, "ordId": f"accepted-{index}", "state": "canceled",
+                        "accFillSz": "0", "avgPx": "0",
+                    }
+        self.exchange.batch_ack = ack
+        status, result = self.request(
+            "POST", f"/v1/strategies/{source_id}/execute-apply",
+            {"confirmationToken": prepared["confirmationToken"]},
+        )
+        self.assertEqual(status, 200, result)
+        self.assertIn(result["status"], {"PARTIAL", "UNKNOWN"})
+        self.exchange.batch_ack = None
+        return source_id, result, prepared
+
+    def _make_legacy_never_sent_source(self) -> str:
+        source_id, _ = self.save_draft()
+        with self.service.store.transaction() as connection:
+            connection.execute(
+                "UPDATE strategies SET status='COMPLETED', attempt_started=1, batch_attempted=0, "
+                "order_placement_attempted=0 WHERE strategy_id=?",
+                (source_id,),
+            )
+        return source_id
 
     def test_red_strategy_routes_require_bearer_before_exchange_reads(self) -> None:
         status, result = self.request("GET", "/v1/strategies", authenticated=False)
@@ -658,20 +792,211 @@ class StrategyApiTests(unittest.TestCase):
         not_nearest["entryBySide"]["long"] = "58000"
         invalid_contracts.append(("entry ID is not nearest", not_nearest))
 
-        too_many = deepcopy(base)
-        too_many["selectedLevels"] = [
-            {"side": "long", "price": "59000", "levelId": f"level-{index}"}
-            for index in range(21)
-        ]
-        too_many["entryLevelIdBySide"] = {"long": "level-0"}
-        too_many["entryBySide"] = {"long": "59000"}
-        invalid_contracts.append(("more than twenty rows", too_many))
-
         for label, contract in invalid_contracts:
             with self.subTest(label=label):
                 status, result = self.request("POST", "/v1/strategies/preview", contract)
                 self.assertEqual(status, 422, result)
                 self.assertEqual(self.exchange.trade_writes, [])
+
+    def test_red_new_contract_admission_rejects_eleven_single_and_mixed_rows(self) -> None:
+        oversized = (
+            ("single side", self.multi_order_contract(11)),
+            ("mixed six plus five", self.multi_order_contract(6, 5)),
+        )
+        for label, contract in oversized:
+            for operation, path in (("preview", "/v1/strategies/preview"), ("save", "/v1/strategies")):
+                with self.subTest(contract=label, operation=operation):
+                    body = contract if operation == "preview" else {**contract, "previewHash": "unused"}
+                    status, result = self.request("POST", path, body)
+                    self.assertEqual(status, 422, result)
+                    self.assertEqual(result["reason"], "invalid_order_count")
+                    self.assertIn("ten", result["message"])
+        self.assertEqual(self.exchange.calls, [])
+        with self.service.store.connection() as connection:
+            count = connection.execute("SELECT COUNT(*) FROM strategies").fetchone()[0]
+        self.assertEqual(count, 0)
+
+    def test_red_unstarted_persisted_oversize_records_reject_before_preflight_or_claim(self) -> None:
+        draft_id, _ = self.save_draft(self.multi_order_contract(10))
+        self._append_persisted_order(draft_id)
+        position_reads = self.exchange.position_reads
+        pending_reads = self.exchange.pending_reads
+
+        status, draft_error = self.request("POST", f"/v1/strategies/{draft_id}/prepare-apply", {})
+        self.assertEqual(status, 422, draft_error)
+        self.assertEqual(draft_error["reason"], "invalid_order_count")
+        with self.service.store.connection() as connection:
+            draft_status = connection.execute(
+                "SELECT status FROM strategies WHERE strategy_id=?", (draft_id,)
+            ).fetchone()["status"]
+        self.assertEqual(draft_status, "DRAFT")
+        self.assertEqual(self.exchange.position_reads, position_reads)
+        self.assertEqual(self.exchange.pending_reads, pending_reads)
+        self.assertEqual(self.exchange.trade_writes, [])
+
+        prepared_id, _ = self.save_draft(self.multi_order_contract(10))
+        status, prepared = self.request("POST", f"/v1/strategies/{prepared_id}/prepare-apply", {})
+        self.assertEqual(status, 200, prepared)
+        with self.service.store.connection() as connection:
+            before = connection.execute(
+                "SELECT confirmation_hash, prepared_json FROM strategies WHERE strategy_id=?",
+                (prepared_id,),
+            ).fetchone()
+        prepared_json = json.loads(before["prepared_json"])
+        prepared_json["orders"].append(deepcopy(prepared_json["orders"][-1]))
+        with self.service.store.transaction() as connection:
+            connection.execute(
+                "UPDATE strategies SET prepared_json=? WHERE strategy_id=?",
+                (encode_json(prepared_json), prepared_id),
+            )
+        position_reads = self.exchange.position_reads
+        pending_reads = self.exchange.pending_reads
+        status, prepared_error = self.request(
+            "POST", f"/v1/strategies/{prepared_id}/execute-apply",
+            {"confirmationToken": prepared["confirmationToken"]},
+        )
+        self.assertEqual(status, 422, prepared_error)
+        self.assertEqual(prepared_error["reason"], "invalid_order_count")
+        self.assertEqual(self.exchange.position_reads, position_reads)
+        self.assertEqual(self.exchange.pending_reads, pending_reads)
+        self.assertEqual(self.exchange.trade_writes, [])
+        with self.service.store.connection() as connection:
+            after = connection.execute(
+                "SELECT status, attempt_started, confirmation_hash FROM strategies WHERE strategy_id=?",
+                (prepared_id,),
+            ).fetchone()
+            reservations = connection.execute(
+                "SELECT COUNT(*) FROM strategy_reservations WHERE strategy_id=?", (prepared_id,)
+            ).fetchone()[0]
+        self.assertEqual(after["status"], "PREPARED")
+        self.assertEqual(after["attempt_started"], 0)
+        self.assertEqual(after["confirmation_hash"], before["confirmation_hash"])
+        self.assertEqual(reservations, 0)
+
+    def test_red_batch_and_sequential_claims_recheck_persisted_order_count(self) -> None:
+        for mode in ("batch", "sequential"):
+            with self.subTest(mode=mode):
+                status, settings = self.request(
+                    "POST", "/v1/strategies/settings", {"limitOrderSubmissionMode": mode}
+                )
+                self.assertEqual(status, 200, settings)
+                strategy_id, _ = self.save_draft(self.multi_order_contract(10))
+                status, prepared = self.request("POST", f"/v1/strategies/{strategy_id}/prepare-apply", {})
+                self.assertEqual(status, 200, prepared)
+                strategy, _, _ = self.service.strategy._current_strategy(strategy_id)
+                with self.service.store.transaction() as connection:
+                    row = connection.execute(
+                        "SELECT prepared_json FROM strategies WHERE strategy_id=?", (strategy_id,)
+                    ).fetchone()
+                    persisted_prepared = json.loads(row["prepared_json"])
+                    persisted_prepared["orders"].append(deepcopy(persisted_prepared["orders"][-1]))
+                    connection.execute(
+                        "UPDATE strategies SET prepared_json=? WHERE strategy_id=?",
+                        (encode_json(persisted_prepared), strategy_id),
+                    )
+
+                with self.assertRaises(APIError) as raised:
+                    if mode == "sequential":
+                        self.service.strategy._claim_queue(strategy_id, strategy, prepared["confirmationToken"])
+                    else:
+                        self.service.strategy._claim_execution(strategy_id, strategy, prepared["confirmationToken"])
+                self.assertEqual(raised.exception.details["reason"], "invalid_order_count")
+                with self.service.store.connection() as connection:
+                    current = connection.execute(
+                        "SELECT status, attempt_started, confirmation_hash FROM strategies WHERE strategy_id=?",
+                        (strategy_id,),
+                    ).fetchone()
+                    reservations = connection.execute(
+                        "SELECT COUNT(*) FROM strategy_reservations WHERE strategy_id=?", (strategy_id,)
+                    ).fetchone()[0]
+                self.assertEqual(current["status"], "PREPARED")
+                self.assertEqual(current["attempt_started"], 0)
+                self.assertIsNotNone(current["confirmation_hash"])
+                self.assertEqual(reservations, 0)
+                self.assertEqual(self.exchange.trade_writes, [])
+
+    def test_red_attempted_oversize_strategy_execute_remains_noop_and_keeps_markers(self) -> None:
+        strategy_id, _ = self.save_draft(self.multi_order_contract(10))
+        status, prepared = self.request("POST", f"/v1/strategies/{strategy_id}/prepare-apply", {})
+        self.assertEqual(status, 200, prepared)
+        status, applied = self.request(
+            "POST", f"/v1/strategies/{strategy_id}/execute-apply",
+            {"confirmationToken": prepared["confirmationToken"]},
+        )
+        self.assertEqual(status, 200, applied)
+        self.assertEqual(applied["status"], "APPLIED")
+        self._append_persisted_order(strategy_id)
+        with self.service.store.connection() as connection:
+            before = connection.execute(
+                "SELECT status, attempt_started, order_placement_attempted, batch_attempted "
+                ", contract_json FROM strategies WHERE strategy_id=?", (strategy_id,),
+            ).fetchone()
+        self.assertEqual(len(json.loads(before["contract_json"])["selectedLevels"]), 11)
+        self.assertTrue(before["attempt_started"])
+        writes_before = list(self.exchange.trade_writes)
+
+        status, result = self.request(
+            "POST", f"/v1/strategies/{strategy_id}/execute-apply",
+            {"confirmationToken": "already-consumed"},
+        )
+
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["status"], before["status"])
+        self.assertEqual(self.exchange.trade_writes, writes_before)
+        with self.service.store.connection() as connection:
+            after = connection.execute(
+                "SELECT status, attempt_started, order_placement_attempted, batch_attempted "
+                "FROM strategies WHERE strategy_id=?", (strategy_id,),
+            ).fetchone()
+        self.assertEqual(dict(after), {
+            "status": before["status"],
+            "attempt_started": before["attempt_started"],
+            "order_placement_attempted": before["order_placement_attempted"],
+            "batch_attempted": before["batch_attempted"],
+        })
+
+    def test_green_ten_order_contracts_apply_in_both_submission_modes(self) -> None:
+        cases = (
+            ("batch", "single side", "BTC-USDT-SWAP", self.multi_order_contract(10)),
+            ("batch", "mixed five plus five", "ETH-USDT-SWAP", self.multi_order_contract(5, 5, "ETH-USDT-SWAP")),
+            ("sequential", "single side", "SOL-USDT-SWAP", self.multi_order_contract(10, instrument_id="SOL-USDT-SWAP")),
+            ("sequential", "mixed five plus five", "ADA-USDT-SWAP", self.multi_order_contract(5, 5, "ADA-USDT-SWAP")),
+        )
+        for mode, label, instrument_id, contract in cases:
+            if instrument_id != INSTRUMENT:
+                self._add_fake_instrument(instrument_id)
+            status, settings = self.request(
+                "POST", "/v1/strategies/settings", {"limitOrderSubmissionMode": mode}
+            )
+            self.assertEqual(status, 200, settings)
+            with self.subTest(mode=mode, contract=label):
+                self.exchange.pos_mode = "long_short_mode" if "mixed" in label else "net_mode"
+                batch_count = len(self.exchange.batch_writes)
+                order_count = self.exchange.single_order_attempts
+                strategy_id, _ = self.save_draft(contract)
+                status, prepared = self.request(
+                    "POST", f"/v1/strategies/{strategy_id}/prepare-apply", {}
+                )
+                self.assertEqual(status, 200, prepared)
+                self.assertEqual(len(prepared["orders"]), 10)
+                status, applied = self.request(
+                    "POST", f"/v1/strategies/{strategy_id}/execute-apply",
+                    {"confirmationToken": prepared["confirmationToken"]},
+                )
+                self.assertEqual(status, 200, applied)
+                if mode == "batch":
+                    self.assertEqual(applied["status"], "APPLIED")
+                    self.assertEqual(len(self.exchange.batch_writes), batch_count + 1)
+                    self.assertEqual(len(self.exchange.batch_writes[-1][2]), 10)
+                else:
+                    self.assertEqual(applied["status"], "APPLYING")
+                    self.assertEqual(applied["queueProgress"]["totalCount"], 10)
+                    self.assertEqual(self.exchange.single_order_attempts, order_count)
+                    self.assertTrue(self._worker().run_once())
+                    status, result = self.request("GET", f"/v1/strategies/{strategy_id}/result")
+                    self.assertEqual(status, 200, result)
+                    self.assertEqual(result["status"], "APPLIED")
+                    self.assertEqual(self.exchange.single_order_attempts, order_count + 10)
 
     def test_red_id_mode_persists_both_sides_through_prepare_batch_and_reconciliation(self) -> None:
         self.exchange.tier_data = [
@@ -1652,6 +1977,876 @@ class StrategyApiTests(unittest.TestCase):
                 self.assertNotIn("private exchange message", json.dumps(result))
                 self.assertEqual(self.exchange.batch_writes, [])
                 self.exchange.leverage_response = None
+
+    def test_red_malformed_batch_code_is_unknown_and_never_a_retry_candidate(self) -> None:
+        source_id, _ = self.save_draft()
+        status, prepared = self.request(
+            "POST", f"/v1/strategies/{source_id}/prepare-apply", {}
+        )
+        self.assertEqual(status, 200, prepared)
+        self.exchange.batch_ack = [{
+            "clOrdId": prepared["orders"][0]["clientOrderId"],
+            "sCode": {"private": "51008"},
+        }]
+        status, result = self.request(
+            "POST", f"/v1/strategies/{source_id}/execute-apply",
+            {"confirmationToken": prepared["confirmationToken"]},
+        )
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["status"], "UNKNOWN")
+        self.assertEqual(result["orders"][0]["status"], "unknown")
+        self.exchange.batch_ack = None
+
+        status, candidates = self.request(
+            "GET", f"/v1/strategies/{source_id}/retry-candidates"
+        )
+        self.assertEqual(status, 200, candidates)
+        self.assertFalse(candidates["candidates"][0]["eligible"])
+        self.assertEqual(candidates["blockedReason"], "reservation_active")
+        self.assertEqual(candidates["candidates"][0]["reason"], "reservation_active")
+
+    def test_red_retry_review_rejects_position_pending_reservation_and_balance_blocks(self) -> None:
+        source_id, source_result, _ = self._make_rejected_source()
+        status, candidates = self.request(
+            "GET", f"/v1/strategies/{source_id}/retry-candidates"
+        )
+        self.assertEqual(status, 200, candidates)
+        review = {
+            "sourceRevision": candidates["sourceRevision"],
+            "sourceClientOrderIds": [source_result["orders"][0]["clientOrderId"]],
+        }
+        writes_before = len(self.exchange.trade_writes)
+
+        self.exchange.positions = [{"instId": INSTRUMENT, "pos": "1"}]
+        status, refusal = self.request("POST", f"/v1/strategies/{source_id}/retry-preview", review)
+        self.assertEqual(status, 409, refusal)
+        self.assertEqual(refusal["error"], "instrument_position_exists")
+        self.exchange.positions = []
+
+        self.exchange.pending = [{"instId": INSTRUMENT}]
+        status, refusal = self.request("POST", f"/v1/strategies/{source_id}/retry-preview", review)
+        self.assertEqual(status, 409, refusal)
+        self.assertEqual(refusal["error"], "pending_order_exists")
+        self.exchange.pending = []
+
+        self.exchange.available_balance = "1"
+        status, refusal = self.request("POST", f"/v1/strategies/{source_id}/retry-preview", review)
+        self.assertEqual(status, 422, refusal)
+        self.assertEqual(refusal["error"], "insufficient_balance")
+        self.exchange.available_balance = "100000"
+
+        account_fingerprint = token_digest(
+            "okx-account-uid:v1:" + self.exchange.account_uid, SIGNING_KEY
+        )
+        with self.service.store.transaction() as connection:
+            connection.execute(
+                "INSERT INTO strategy_reservations(account_fingerprint, instrument_id, strategy_id, created_at) "
+                "VALUES (?, ?, ?, ?)",
+                (account_fingerprint, INSTRUMENT, source_id, self.now),
+            )
+        status, refusal = self.request("POST", f"/v1/strategies/{source_id}/retry-preview", review)
+        self.assertEqual(status, 409, refusal)
+        self.assertEqual(refusal["error"], "retry_source_unavailable")
+        with self.service.store.transaction() as connection:
+            connection.execute("DELETE FROM strategy_reservations WHERE strategy_id=?", (source_id,))
+        self.assertEqual(len(self.exchange.trade_writes), writes_before)
+
+    def test_green_retry_dca_only_keeps_fixed_rows_ids_and_idempotent_execute(self) -> None:
+        source_contract = self.id_mode_contract(
+            [
+                {"side": "long", "price": "59000", "levelId": "retry-entry"},
+                {"side": "long", "price": "58000", "levelId": "retry-dca"},
+            ],
+            entry_ids={"long": "retry-entry"},
+        )
+        source_contract["totalMargin"] = "600"
+        source_id, source_result, source_prepared = self._make_rejected_source(
+            contract=source_contract, rejected_order_index=1, accepted_as_canceled=True
+        )
+        self.assertEqual(source_result["status"], "PARTIAL")
+        source_rows = source_result["orders"]
+        rejected_source_row = source_rows[1]
+
+        status, candidates = self.request(
+            "GET", f"/v1/strategies/{source_id}/retry-candidates"
+        )
+        self.assertEqual(status, 200, candidates)
+        eligible = [row for row in candidates["candidates"] if row["eligible"]]
+        self.assertEqual([row["sourceClientOrderId"] for row in eligible], [rejected_source_row["clientOrderId"]])
+        self.assertEqual(eligible[0]["role"], "dca")
+
+        review_body = {
+            "sourceRevision": candidates["sourceRevision"],
+            "sourceClientOrderIds": [rejected_source_row["clientOrderId"]],
+        }
+        status, preview = self.request(
+            "POST", f"/v1/strategies/{source_id}/retry-preview", review_body
+        )
+        self.assertEqual(status, 200, preview)
+        self.assertEqual(preview["orders"][0]["role"], "dca")
+        self.assertEqual(preview["orders"][0]["limitPrice"], rejected_source_row["limitPrice"])
+        self.assertEqual(preview["orders"][0]["contracts"], rejected_source_row["contracts"])
+        self.assertEqual(preview["unallocatedMargin"], "0")
+        self.assertEqual(
+            Decimal(preview["requiredBalance"]),
+            Decimal(preview["totalMargin"]) + Decimal(preview["estimatedOpeningFees"]),
+        )
+
+        request_id = "retry-request-green-001"
+        draft_body = {
+            **review_body,
+            "previewHash": preview["previewHash"],
+            "retryRequestId": request_id,
+        }
+        status, child = self.request(
+            "POST", f"/v1/strategies/{source_id}/retry-drafts", draft_body
+        )
+        self.assertEqual(status, 200, child)
+        self.assertEqual(child["resubmission"]["sourceStrategyId"], source_id)
+        self.assertEqual(child["resubmission"]["sourceClientOrderIds"], review_body["sourceClientOrderIds"])
+        child_order = child["orders"][0]
+        self.assertNotEqual(child_order["clientOrderId"], rejected_source_row["clientOrderId"])
+        self.assertEqual(child_order["sourceClientOrderId"], rejected_source_row["clientOrderId"])
+        self.assertEqual(child_order["role"], "dca")
+
+        with self.service.store.connection() as connection:
+            stored = connection.execute(
+                "SELECT contract_json, replacement_source_id FROM strategies WHERE strategy_id=?",
+                (child["id"],),
+            ).fetchone()
+            stored_contract = json.loads(stored["contract_json"])
+            count = connection.execute("SELECT COUNT(*) FROM strategies").fetchone()[0]
+        self.assertIsNone(stored["replacement_source_id"])
+        self.assertEqual(stored_contract["kind"], "resubmission")
+        self.assertEqual(stored_contract["resubmission"]["retryRequestId"], request_id)
+
+        writes_before_replay = len(self.exchange.trade_writes)
+        status, replay = self.request(
+            "POST", f"/v1/strategies/{source_id}/retry-drafts", draft_body
+        )
+        self.assertEqual(status, 200, replay)
+        self.assertEqual(replay["id"], child["id"])
+        self.assertEqual(replay["status"], "DRAFT")
+        self.assertNotIn("confirmationToken", replay)
+        self.assertEqual(len(self.exchange.trade_writes), writes_before_replay)
+        with self.service.store.connection() as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM strategies").fetchone()[0], count)
+        status, conflicting_replay = self.request(
+            "POST", f"/v1/strategies/{source_id}/retry-drafts",
+            {**draft_body, "previewHash": "0" * 64},
+        )
+        self.assertEqual(status, 409, conflicting_replay)
+        self.assertEqual(conflicting_replay["error"], "retry_request_conflict")
+
+        status, prepared = self.request(
+            "POST", f"/v1/strategies/{child['id']}/prepare-apply", {}
+        )
+        self.assertEqual(status, 200, prepared)
+        self.assertEqual(prepared["id"], child["id"])
+        self.assertEqual(prepared["resubmission"]["sourceStrategyId"], source_id)
+        self.assertEqual(prepared["resubmission"]["sourceClientOrderIds"], review_body["sourceClientOrderIds"])
+        self.assertEqual(prepared["orders"][0]["clientOrderId"], child_order["clientOrderId"])
+        self.assertEqual(prepared["orders"][0]["contracts"], rejected_source_row["contracts"])
+        writes_before_execute = len(self.exchange.trade_writes)
+        status, applied = self.request(
+            "POST", f"/v1/strategies/{child['id']}/execute-apply",
+            {"confirmationToken": prepared["confirmationToken"]},
+        )
+        self.assertEqual(status, 200, applied)
+        self.assertEqual(applied["status"], "APPLIED")
+        self.assertEqual(applied["resubmission"]["sourceStrategyId"], source_id)
+        self.assertEqual(len(self.exchange.trade_writes), writes_before_execute + 2)
+        status, duplicate_execute = self.request(
+            "POST", f"/v1/strategies/{child['id']}/execute-apply",
+            {"confirmationToken": prepared["confirmationToken"]},
+        )
+        self.assertEqual(status, 200, duplicate_execute)
+        self.assertEqual(len(self.exchange.trade_writes), writes_before_execute + 2)
+
+    def test_green_claimed_child_permanently_consumes_source_after_cancel_and_release(self) -> None:
+        source_id, source_result, _ = self._make_rejected_source()
+        source_order = source_result["orders"][0]
+        status, candidates = self.request("GET", f"/v1/strategies/{source_id}/retry-candidates")
+        self.assertEqual(status, 200, candidates)
+        review = {
+            "sourceRevision": candidates["sourceRevision"],
+            "sourceClientOrderIds": [source_order["clientOrderId"]],
+        }
+        status, preview = self.request("POST", f"/v1/strategies/{source_id}/retry-preview", review)
+        self.assertEqual(status, 200, preview)
+        status, child = self.request(
+            "POST", f"/v1/strategies/{source_id}/retry-drafts",
+            {**review, "previewHash": preview["previewHash"], "retryRequestId": "retry-settled-child-001"},
+        )
+        self.assertEqual(status, 200, child)
+        status, prepared = self.request("POST", f"/v1/strategies/{child['id']}/prepare-apply", {})
+        self.assertEqual(status, 200, prepared)
+        status, applied = self.request(
+            "POST", f"/v1/strategies/{child['id']}/execute-apply",
+            {"confirmationToken": prepared["confirmationToken"]},
+        )
+        self.assertEqual(status, 200, applied)
+        self.assertEqual(applied["status"], "APPLIED")
+
+        child_order_id = child["orders"][0]["clientOrderId"]
+        self.exchange.orders[child_order_id]["state"] = "canceled"
+        self.exchange.orders[child_order_id]["accFillSz"] = "0"
+        self.exchange.orders[child_order_id]["avgPx"] = "0"
+        with self.service.store.transaction() as connection:
+            connection.execute("DELETE FROM strategy_sync_state WHERE strategy_id=?", (child["id"],))
+        status, settled = self.request("GET", f"/v1/strategies/{child['id']}/result")
+        self.assertEqual(status, 200, settled)
+        self.assertEqual(settled["status"], "PARTIAL")
+        self.assertEqual(settled["orders"][0]["status"], "canceled")
+        with self.service.store.connection() as connection:
+            self.assertIsNone(connection.execute(
+                "SELECT 1 FROM strategy_reservations WHERE strategy_id=?", (child["id"],)
+            ).fetchone())
+
+        status, refreshed = self.request("GET", f"/v1/strategies/{source_id}/retry-candidates")
+        self.assertEqual(status, 200, refreshed)
+        row = next(item for item in refreshed["candidates"] if item["sourceClientOrderId"] == source_order["clientOrderId"])
+        self.assertFalse(row["eligible"])
+        self.assertEqual(row["reason"], "selection_in_use")
+
+        for strategy_id in (source_id, child["id"]):
+            status, deletion = self.request("POST", f"/v1/strategies/{strategy_id}/delete", {})
+            self.assertEqual(status, 409, deletion)
+        contract = self.one_sided_contract()
+        status, ordinary_preview = self.request("POST", "/v1/strategies/preview", contract)
+        self.assertEqual(status, 200, ordinary_preview)
+        status, replacement = self.request(
+            "POST", "/v1/strategies",
+            {**contract, "previewHash": ordinary_preview["previewHash"], "replacementSourceId": source_id},
+        )
+        self.assertEqual(status, 409, replacement)
+        self.assertEqual(replacement["error"], "replacement_source_unavailable")
+
+    def test_green_rejected_retry_child_can_supply_one_linked_grandchild(self) -> None:
+        ancestor_id, ancestor_result, _ = self._make_rejected_source()
+        ancestor_order = ancestor_result["orders"][0]
+        status, ancestor_candidates = self.request("GET", f"/v1/strategies/{ancestor_id}/retry-candidates")
+        self.assertEqual(status, 200, ancestor_candidates)
+        ancestor_review = {
+            "sourceRevision": ancestor_candidates["sourceRevision"],
+            "sourceClientOrderIds": [ancestor_order["clientOrderId"]],
+        }
+        status, child_preview = self.request(
+            "POST", f"/v1/strategies/{ancestor_id}/retry-preview", ancestor_review
+        )
+        self.assertEqual(status, 200, child_preview)
+        status, child = self.request(
+            "POST", f"/v1/strategies/{ancestor_id}/retry-drafts",
+            {**ancestor_review, "previewHash": child_preview["previewHash"],
+             "retryRequestId": "retry-grandchild-parent-001"},
+        )
+        self.assertEqual(status, 200, child)
+        child_source_order = child["orders"][0]
+        status, child_prepared = self.request("POST", f"/v1/strategies/{child['id']}/prepare-apply", {})
+        self.assertEqual(status, 200, child_prepared)
+        self.assertEqual(child_prepared["resubmission"]["sourceStrategyId"], ancestor_id)
+        self.assertEqual(child_prepared["resubmission"]["sourceClientOrderIds"], ancestor_review["sourceClientOrderIds"])
+        self.exchange.batch_ack = [{
+            "clOrdId": child_source_order["clientOrderId"], "sCode": "51008",
+        }]
+        status, rejected_child = self.request(
+            "POST", f"/v1/strategies/{child['id']}/execute-apply",
+            {"confirmationToken": child_prepared["confirmationToken"]},
+        )
+        self.assertEqual(status, 200, rejected_child)
+        self.assertEqual(rejected_child["status"], "PARTIAL")
+        self.assertEqual(rejected_child["orders"][0]["status"], "rejected")
+        self.exchange.batch_ack = None
+
+        status, child_candidates = self.request("GET", f"/v1/strategies/{child['id']}/retry-candidates")
+        self.assertEqual(status, 200, child_candidates)
+        grandchild_review = {
+            "sourceRevision": child_candidates["sourceRevision"],
+            "sourceClientOrderIds": [child_source_order["clientOrderId"]],
+        }
+        candidate = child_candidates["candidates"][0]
+        self.assertTrue(candidate["eligible"], candidate)
+        self.assertEqual(candidate["sourceClientOrderId"], child_source_order["clientOrderId"])
+        status, grandchild_preview = self.request(
+            "POST", f"/v1/strategies/{child['id']}/retry-preview", grandchild_review
+        )
+        self.assertEqual(status, 200, grandchild_preview)
+        status, grandchild = self.request(
+            "POST", f"/v1/strategies/{child['id']}/retry-drafts",
+            {**grandchild_review, "previewHash": grandchild_preview["previewHash"],
+             "retryRequestId": "retry-grandchild-001"},
+        )
+        self.assertEqual(status, 200, grandchild)
+        self.assertEqual(grandchild["resubmission"]["sourceStrategyId"], child["id"])
+        self.assertEqual(grandchild["resubmission"]["sourceClientOrderIds"], [child_source_order["clientOrderId"]])
+        grandchild_order = grandchild["orders"][0]
+        self.assertEqual(grandchild_order["sourceClientOrderId"], child_source_order["clientOrderId"])
+        self.assertNotEqual(grandchild_order["clientOrderId"], child_source_order["clientOrderId"])
+        status, grandchild_prepared = self.request(
+            "POST", f"/v1/strategies/{grandchild['id']}/prepare-apply", {}
+        )
+        self.assertEqual(status, 200, grandchild_prepared)
+        self.assertEqual(grandchild_prepared["id"], grandchild["id"])
+        self.assertEqual(grandchild_prepared["resubmission"]["sourceStrategyId"], child["id"])
+        self.assertEqual(
+            grandchild_prepared["resubmission"]["sourceClientOrderIds"],
+            [child_source_order["clientOrderId"]],
+        )
+        writes_before_grandchild = len(self.exchange.trade_writes)
+        status, applied = self.request(
+            "POST", f"/v1/strategies/{grandchild['id']}/execute-apply",
+            {"confirmationToken": grandchild_prepared["confirmationToken"]},
+        )
+        self.assertEqual(status, 200, applied)
+        self.assertEqual(applied["status"], "APPLIED")
+        self.assertEqual(applied["resubmission"]["sourceStrategyId"], child["id"])
+        self.assertEqual(len(self.exchange.trade_writes), writes_before_grandchild + 2)
+        status, duplicate = self.request(
+            "POST", f"/v1/strategies/{grandchild['id']}/execute-apply",
+            {"confirmationToken": grandchild_prepared["confirmationToken"]},
+        )
+        self.assertEqual(status, 200, duplicate)
+        self.assertEqual(len(self.exchange.trade_writes), writes_before_grandchild + 2)
+
+        grandchild_client_id = grandchild_order["clientOrderId"]
+        self.exchange.orders[grandchild_client_id]["state"] = "canceled"
+        self.exchange.orders[grandchild_client_id]["accFillSz"] = "0"
+        self.exchange.orders[grandchild_client_id]["avgPx"] = "0"
+        with self.service.store.transaction() as connection:
+            connection.execute(
+                "DELETE FROM strategy_sync_state WHERE strategy_id=?", (grandchild["id"],)
+            )
+        status, settled_grandchild = self.request(
+            "GET", f"/v1/strategies/{grandchild['id']}/result"
+        )
+        self.assertEqual(status, 200, settled_grandchild)
+        self.assertEqual(settled_grandchild["orders"][0]["status"], "canceled")
+        with self.service.store.connection() as connection:
+            self.assertIsNone(connection.execute(
+                "SELECT 1 FROM strategy_reservations WHERE strategy_id=?", (grandchild["id"],)
+            ).fetchone())
+
+        status, ancestor_after_claim = self.request(
+            "GET", f"/v1/strategies/{ancestor_id}/retry-candidates"
+        )
+        self.assertEqual(status, 200, ancestor_after_claim)
+        ancestor_row = next(
+            row for row in ancestor_after_claim["candidates"]
+            if row["sourceClientOrderId"] == ancestor_order["clientOrderId"]
+        )
+        self.assertFalse(ancestor_row["eligible"])
+        self.assertEqual(ancestor_row["reason"], "selection_in_use")
+
+    def test_green_retry_mixed_long_short_subset_preserves_hedge_sides_and_payload(self) -> None:
+        self.exchange.pos_mode = "long_short_mode"
+        contract = self.id_mode_contract(
+            [
+                {"side": "long", "price": "59000", "levelId": "long-z"},
+                {"side": "long", "price": "58000", "levelId": "long-a"},
+                {"side": "short", "price": "61000", "levelId": "short-z"},
+                {"side": "short", "price": "62000", "levelId": "short-a"},
+            ],
+            direction="both",
+            entry_ids={"long": "long-z", "short": "short-z"},
+        )
+        contract["totalMargin"] = "1000"
+        source_id, source_result, _ = self._make_rejected_source(
+            contract=contract, rejected_order_indexes={0, 2}, accepted_as_canceled=True
+        )
+        status, candidates = self.request("GET", f"/v1/strategies/{source_id}/retry-candidates")
+        self.assertEqual(status, 200, candidates)
+        eligible = [row for row in candidates["candidates"] if row["eligible"]]
+        self.assertEqual(len(eligible), 2)
+        self.assertEqual({row["side"] for row in eligible}, {"long", "short"})
+        ids = [row["sourceClientOrderId"] for row in eligible]
+        source_by_id = {row["clientOrderId"]: row for row in source_result["orders"]}
+        review = {"sourceRevision": candidates["sourceRevision"], "sourceClientOrderIds": ids}
+        status, preview = self.request("POST", f"/v1/strategies/{source_id}/retry-preview", review)
+        self.assertEqual(status, 200, preview)
+        self.assertEqual({row["side"] for row in preview["orders"]}, {"long", "short"})
+        self.assertEqual(
+            {row["side"]: (row["limitPrice"], row["contracts"], row["role"]) for row in preview["orders"]},
+            {source_by_id[row_id]["side"]: (
+                source_by_id[row_id]["limitPrice"], source_by_id[row_id]["contracts"], source_by_id[row_id]["role"]
+            ) for row_id in ids},
+        )
+        status, child = self.request(
+            "POST", f"/v1/strategies/{source_id}/retry-drafts",
+            {**review, "previewHash": preview["previewHash"], "retryRequestId": "retry-hedge-subset-001"},
+        )
+        self.assertEqual(status, 200, child)
+        status, prepared = self.request("POST", f"/v1/strategies/{child['id']}/prepare-apply", {})
+        self.assertEqual(status, 200, prepared)
+        status, result = self.request(
+            "POST", f"/v1/strategies/{child['id']}/execute-apply",
+            {"confirmationToken": prepared["confirmationToken"]},
+        )
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["status"], "APPLIED")
+        submitted = {row["clOrdId"]: row for row in self.exchange.batch_writes[-1][2]}
+        self.assertEqual({row["posSide"] for row in submitted.values()}, {"long", "short"})
+        child_by_source = {row["sourceClientOrderId"]: row for row in child["orders"]}
+        for source_id_value in ids:
+            source_row = source_by_id[source_id_value]
+            child_row = child_by_source[source_id_value]
+            payload = submitted[child_row["clientOrderId"]]
+            self.assertEqual(payload["px"], source_row["limitPrice"])
+            self.assertEqual(payload["sz"], source_row["contracts"])
+            self.assertEqual(payload["posSide"], source_row["side"])
+
+    def test_green_retry_worker_resume_revalidates_fixed_hash_and_excludes_self_reservation(self) -> None:
+        contract = self.multi_order_contract(2)
+        source_id, source_result, _ = self._make_rejected_source(
+            contract=contract, rejected_order_indexes={0, 1}
+        )
+        status, candidates = self.request("GET", f"/v1/strategies/{source_id}/retry-candidates")
+        self.assertEqual(status, 200, candidates)
+        eligible = [row for row in candidates["candidates"] if row["eligible"]]
+        self.assertEqual(len(eligible), 2)
+        ids = [row["sourceClientOrderId"] for row in eligible]
+        review = {"sourceRevision": candidates["sourceRevision"], "sourceClientOrderIds": ids}
+        status, preview = self.request("POST", f"/v1/strategies/{source_id}/retry-preview", review)
+        self.assertEqual(status, 200, preview)
+        status, child = self.request(
+            "POST", f"/v1/strategies/{source_id}/retry-drafts",
+            {**review, "previewHash": preview["previewHash"], "retryRequestId": "retry-resume-child-001"},
+        )
+        self.assertEqual(status, 200, child)
+        status, setting = self.request(
+            "POST", "/v1/strategies/settings", {"limitOrderSubmissionMode": "sequential"}
+        )
+        self.assertEqual(status, 200, setting)
+        status, prepared = self.request("POST", f"/v1/strategies/{child['id']}/prepare-apply", {})
+        self.assertEqual(status, 200, prepared)
+        self.assertEqual(prepared["id"], child["id"])
+        self.assertEqual(prepared["resubmission"]["sourceStrategyId"], source_id)
+        self.assertEqual(prepared["resubmission"]["sourceClientOrderIds"], ids)
+        status, queued = self.request(
+            "POST", f"/v1/strategies/{child['id']}/execute-apply",
+            {"confirmationToken": prepared["confirmationToken"]},
+        )
+        self.assertEqual(status, 200, queued)
+        self.assertEqual(queued["queueStatus"], "pending")
+
+        with self.service.store.transaction() as connection:
+            persisted = connection.execute(
+                "SELECT queue_json, results_json FROM strategies WHERE strategy_id=?", (child["id"],)
+            ).fetchone()
+            queue = json.loads(persisted["queue_json"])
+            results = json.loads(persisted["results_json"])
+            queue.update({"phase": "sending", "cursor": 1, "inFlight": None})
+            results[0] = {
+                **results[0], "status": "accepted", "placementState": "accepted",
+                "exchangeOrderId": "accepted-before-restart",
+            }
+            connection.execute(
+                "UPDATE strategies SET queue_json=?, results_json=?, order_placement_attempted=1, "
+                "execution_lease_until=NULL, updated_at=? WHERE strategy_id=?",
+                (encode_json(queue), encode_json(results), self.now, child["id"]),
+            )
+        self.exchange.positions = [{"instId": INSTRUMENT, "pos": "1", "posSide": "net"}]
+        self.exchange.pending = [{"instId": INSTRUMENT, "clOrdId": "accepted-before-restart"}]
+        self.exchange.position_reads = 0
+        self.exchange.pending_reads = 0
+        with self.service.store.connection() as connection:
+            self.assertIsNotNone(connection.execute(
+                "SELECT 1 FROM strategy_reservations WHERE strategy_id=?", (child["id"],)
+            ).fetchone())
+
+        self.assertTrue(self._worker().run_once())
+        self.assertEqual(self.exchange.position_reads, 0)
+        self.assertEqual(self.exchange.pending_reads, 0)
+        status, result = self.request("GET", f"/v1/strategies/{child['id']}/result")
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["status"], "APPLIED")
+        posted = [
+            payload for method, path, payload in self.exchange.calls
+            if method == "POST" and path.split("?", 1)[0] == "/api/v5/trade/order"
+        ]
+        self.assertEqual([row["clOrdId"] for row in posted], [prepared["orders"][1]["clientOrderId"]])
+        self.assertEqual(posted[0]["px"], source_result["orders"][1]["limitPrice"])
+        self.assertEqual(posted[0]["sz"], source_result["orders"][1]["contracts"])
+
+    def test_green_stopped_sequential_leverage_rejection_allows_fixed_unsent_tail_retry(self) -> None:
+        status, setting = self.request(
+            "POST", "/v1/strategies/settings", {"limitOrderSubmissionMode": "sequential"}
+        )
+        self.assertEqual(status, 200, setting)
+        source_contract = self.multi_order_contract(2)
+        source_id, _ = self.save_draft(source_contract)
+        status, source_prepared = self.request(
+            "POST", f"/v1/strategies/{source_id}/prepare-apply", {}
+        )
+        self.assertEqual(status, 200, source_prepared)
+        status, queued_source = self.request(
+            "POST", f"/v1/strategies/{source_id}/execute-apply",
+            {"confirmationToken": source_prepared["confirmationToken"]},
+        )
+        self.assertEqual(status, 200, queued_source)
+        self.assertEqual(queued_source["queueStatus"], "pending")
+        self.exchange.leverage_response = {"code": "51008", "data": [{}]}
+        self.assertTrue(self._worker().run_once())
+        self.exchange.leverage_response = None
+        status, stopped = self.request("GET", f"/v1/strategies/{source_id}/result")
+        self.assertEqual(status, 200, stopped)
+        self.assertEqual(stopped["status"], "PARTIAL")
+        self.assertEqual(stopped["queueStatus"], "stopped")
+        self.assertEqual(stopped["leverageResults"][0]["status"], "rejected")
+        self.assertEqual([row["status"] for row in stopped["orders"]], ["not_submitted", "not_submitted"])
+        with self.service.store.connection() as connection:
+            queue_row = connection.execute(
+                "SELECT queue_json FROM strategies WHERE strategy_id=?", (source_id,)
+            ).fetchone()
+        stored_queue = json.loads(queue_row["queue_json"])
+        self.assertEqual(stored_queue["phase"], "stopped")
+        self.assertEqual(stored_queue["cursor"], 0)
+
+        status, candidates = self.request("GET", f"/v1/strategies/{source_id}/retry-candidates")
+        self.assertEqual(status, 200, candidates)
+        tail = stopped["orders"][-1]
+        row = next(item for item in candidates["candidates"] if item["sourceClientOrderId"] == tail["clientOrderId"])
+        self.assertTrue(row["eligible"], row)
+        self.assertEqual(row["priorOutcome"], "not_submitted")
+        review = {
+            "sourceRevision": candidates["sourceRevision"],
+            "sourceClientOrderIds": [tail["clientOrderId"]],
+        }
+        status, preview = self.request("POST", f"/v1/strategies/{source_id}/retry-preview", review)
+        self.assertEqual(status, 200, preview)
+        self.assertEqual(preview["orders"][0]["role"], tail["role"])
+        self.assertEqual(preview["orders"][0]["limitPrice"], tail["limitPrice"])
+        self.assertEqual(preview["orders"][0]["contracts"], tail["contracts"])
+        status, child = self.request(
+            "POST", f"/v1/strategies/{source_id}/retry-drafts",
+            {**review, "previewHash": preview["previewHash"], "retryRequestId": "retry-sequential-tail-001"},
+        )
+        self.assertEqual(status, 200, child)
+        status, prepared = self.request("POST", f"/v1/strategies/{child['id']}/prepare-apply", {})
+        self.assertEqual(status, 200, prepared)
+        self.assertEqual(prepared["id"], child["id"])
+        self.assertEqual(prepared["resubmission"]["sourceStrategyId"], source_id)
+        self.assertEqual(prepared["resubmission"]["sourceClientOrderIds"], [tail["clientOrderId"]])
+        status, child_queued = self.request(
+            "POST", f"/v1/strategies/{child['id']}/execute-apply",
+            {"confirmationToken": prepared["confirmationToken"]},
+        )
+        self.assertEqual(status, 200, child_queued)
+        self.assertTrue(self._worker().run_once())
+        status, applied = self.request("GET", f"/v1/strategies/{child['id']}/result")
+        self.assertEqual(status, 200, applied)
+        self.assertEqual(applied["status"], "APPLIED")
+        placed = [
+            payload for method, path, payload in self.exchange.calls
+            if method == "POST" and path.split("?", 1)[0] == "/api/v5/trade/order"
+        ]
+        self.assertEqual(len(placed), 1)
+        self.assertEqual(placed[0]["clOrdId"], prepared["orders"][0]["clientOrderId"])
+        self.assertEqual(placed[0]["px"], tail["limitPrice"])
+        self.assertEqual(placed[0]["sz"], tail["contracts"])
+
+    def test_red_retry_prepare_rejects_changed_mode_and_freezes_current_mode(self) -> None:
+        source_id, source_result, _ = self._make_rejected_source()
+        source_order = source_result["orders"][0]
+        status, candidates = self.request("GET", f"/v1/strategies/{source_id}/retry-candidates")
+        self.assertEqual(status, 200, candidates)
+        review = {
+            "sourceRevision": candidates["sourceRevision"],
+            "sourceClientOrderIds": [source_order["clientOrderId"]],
+        }
+        status, preview = self.request("POST", f"/v1/strategies/{source_id}/retry-preview", review)
+        self.assertEqual(status, 200, preview)
+        status, child = self.request(
+            "POST", f"/v1/strategies/{source_id}/retry-drafts",
+            {**review, "previewHash": preview["previewHash"], "retryRequestId": "retry-mode-review-001"},
+        )
+        self.assertEqual(status, 200, child)
+
+        writes_before = len(self.exchange.trade_writes)
+        self.exchange.pos_mode = "long_short_mode"
+        status, stale = self.request("POST", f"/v1/strategies/{child['id']}/prepare-apply", {})
+        self.assertEqual(status, 409, stale)
+        self.assertEqual(stale["error"], "strategy_stale")
+        self.assertEqual(len(self.exchange.trade_writes), writes_before)
+
+        self.exchange.pos_mode = "net_mode"
+        status, prepared = self.request("POST", f"/v1/strategies/{child['id']}/prepare-apply", {})
+        self.assertEqual(status, 200, prepared)
+        with self.service.store.connection() as connection:
+            stored = connection.execute(
+                "SELECT prepared_json FROM strategies WHERE strategy_id=?", (child["id"],)
+            ).fetchone()
+        self.assertEqual(json.loads(stored["prepared_json"])["_positionMode"], "net_mode")
+
+    def test_red_retry_claim_consumes_source_and_protects_child_and_parent(self) -> None:
+        source_id = self._make_legacy_never_sent_source()
+        status, candidates = self.request("GET", f"/v1/strategies/{source_id}/retry-candidates")
+        self.assertEqual(status, 200, candidates)
+        self.assertTrue(candidates["candidates"][0]["eligible"])
+        order_id = candidates["candidates"][0]["sourceClientOrderId"]
+        preview_body = {
+            "sourceRevision": candidates["sourceRevision"],
+            "sourceClientOrderIds": [order_id],
+        }
+        status, preview = self.request("POST", f"/v1/strategies/{source_id}/retry-preview", preview_body)
+        self.assertEqual(status, 200, preview)
+        draft_body = {
+            **preview_body, "previewHash": preview["previewHash"],
+            "retryRequestId": "retry-request-consume-001",
+        }
+        status, child = self.request("POST", f"/v1/strategies/{source_id}/retry-drafts", draft_body)
+        self.assertEqual(status, 200, child)
+
+        status, deleted_child = self.request("POST", f"/v1/strategies/{child['id']}/delete", {})
+        self.assertEqual(status, 200, deleted_child)
+        status, candidates_after_delete = self.request(
+            "GET", f"/v1/strategies/{source_id}/retry-candidates"
+        )
+        self.assertTrue(candidates_after_delete["candidates"][0]["eligible"])
+
+        draft_body["retryRequestId"] = "retry-request-consume-002"
+        status, child = self.request("POST", f"/v1/strategies/{source_id}/retry-drafts", draft_body)
+        self.assertEqual(status, 200, child)
+        status, setting = self.request("POST", "/v1/strategies/settings", {"limitOrderSubmissionMode": "sequential"})
+        self.assertEqual(status, 200, setting)
+        status, prepared = self.request("POST", f"/v1/strategies/{child['id']}/prepare-apply", {})
+        self.assertEqual(status, 200, prepared)
+        status, queued = self.request(
+            "POST", f"/v1/strategies/{child['id']}/execute-apply",
+            {"confirmationToken": prepared["confirmationToken"]},
+        )
+        self.assertEqual(status, 200, queued)
+        self.assertTrue(queued["queueStatus"] in {"pending", "sending"})
+        self.assertFalse(queued["orderPlacementAttempted"])
+
+        status, deleted_child = self.request("POST", f"/v1/strategies/{child['id']}/delete", {})
+        self.assertEqual(status, 409, deleted_child)
+        self.assertEqual(deleted_child["error"], "strategy_immutable")
+        status, deleted_source = self.request("POST", f"/v1/strategies/{source_id}/delete", {})
+        self.assertEqual(status, 409, deleted_source)
+        self.assertEqual(deleted_source["error"], "strategy_immutable")
+        status, duplicate_preview = self.request(
+            "POST", f"/v1/strategies/{source_id}/retry-preview", preview_body
+        )
+        self.assertEqual(status, 409, duplicate_preview)
+        self.assertEqual(duplicate_preview["error"], "retry_source_unavailable")
+
+        replacement_contract = self.one_sided_contract()
+        status, ordinary_preview = self.request("POST", "/v1/strategies/preview", replacement_contract)
+        self.assertEqual(status, 200, ordinary_preview)
+        status, replacement = self.request(
+            "POST", "/v1/strategies",
+            {**replacement_contract, "previewHash": ordinary_preview["previewHash"],
+             "replacementSourceId": source_id},
+        )
+        self.assertEqual(status, 409, replacement)
+        self.assertEqual(replacement["error"], "replacement_source_unavailable")
+        with self.service.store.connection() as connection:
+            self.assertIsNotNone(connection.execute(
+                "SELECT 1 FROM strategies WHERE strategy_id=?", (source_id,)
+            ).fetchone())
+
+    def test_green_retry_sequential_worker_revalidates_fixed_preview_with_self_reservation(self) -> None:
+        source_id, source_result, _ = self._make_rejected_source()
+        source_order = source_result["orders"][0]
+        status, candidates = self.request("GET", f"/v1/strategies/{source_id}/retry-candidates")
+        self.assertEqual(status, 200, candidates)
+        review = {
+            "sourceRevision": candidates["sourceRevision"],
+            "sourceClientOrderIds": [source_order["clientOrderId"]],
+        }
+        status, preview = self.request("POST", f"/v1/strategies/{source_id}/retry-preview", review)
+        self.assertEqual(status, 200, preview)
+        status, child = self.request(
+            "POST", f"/v1/strategies/{source_id}/retry-drafts",
+            {**review, "previewHash": preview["previewHash"], "retryRequestId": "retry-worker-green-01"},
+        )
+        self.assertEqual(status, 200, child)
+        status, setting = self.request(
+            "POST", "/v1/strategies/settings", {"limitOrderSubmissionMode": "sequential"}
+        )
+        self.assertEqual(status, 200, setting)
+        status, prepared = self.request("POST", f"/v1/strategies/{child['id']}/prepare-apply", {})
+        self.assertEqual(status, 200, prepared)
+        status, queued = self.request(
+            "POST", f"/v1/strategies/{child['id']}/execute-apply",
+            {"confirmationToken": prepared["confirmationToken"]},
+        )
+        self.assertEqual(status, 200, queued)
+        self.assertEqual(queued["queueStatus"], "pending")
+        writes_before_worker = len(self.exchange.trade_writes)
+
+        self.assertTrue(self._worker().run_once())
+        status, applied = self.request("GET", f"/v1/strategies/{child['id']}/result")
+        self.assertEqual(status, 200, applied)
+        self.assertEqual(applied["status"], "APPLIED")
+        self.assertEqual(len(self.exchange.trade_writes), writes_before_worker + 2)
+        placed = [
+            payload for method, path, payload in self.exchange.calls
+            if method == "POST" and path.split("?", 1)[0] == "/api/v5/trade/order"
+        ]
+        self.assertEqual(len(placed), 1)
+        self.assertEqual(placed[0]["clOrdId"], prepared["orders"][0]["clientOrderId"])
+        self.assertEqual(placed[0]["px"], source_order["limitPrice"])
+        self.assertEqual(placed[0]["sz"], source_order["contracts"])
+
+    def test_red_persisted_ordinary_replacement_blocks_retry_source(self) -> None:
+        source_id = self._make_legacy_never_sent_source()
+        replacement_id, _ = self.save_draft(replacement_source_id=source_id)
+        with self.service.store.transaction() as connection:
+            connection.execute(
+                "UPDATE strategies SET status='COMPLETED', attempt_started=1, batch_attempted=0, "
+                "order_placement_attempted=0 WHERE strategy_id=?",
+                (source_id,),
+            )
+        status, candidates = self.request("GET", f"/v1/strategies/{source_id}/retry-candidates")
+        self.assertEqual(status, 200, candidates)
+        self.assertEqual(candidates["blockedReason"], "ordinary_replacement_exists")
+        self.assertFalse(any(row["eligible"] for row in candidates["candidates"]))
+
+        status, child_draft = self.request("GET", f"/v1/strategies/{replacement_id}/result")
+        self.assertEqual(status, 200, child_draft)
+
+    def test_red_concurrent_retry_and_ordinary_replacement_claim_only_one_source(self) -> None:
+        source_id = self._make_legacy_never_sent_source()
+        status, candidates = self.request("GET", f"/v1/strategies/{source_id}/retry-candidates")
+        self.assertEqual(status, 200, candidates)
+        source_order_id = candidates["candidates"][0]["sourceClientOrderId"]
+        retry_selection = {
+            "sourceRevision": candidates["sourceRevision"],
+            "sourceClientOrderIds": [source_order_id],
+        }
+        status, retry_preview = self.request(
+            "POST", f"/v1/strategies/{source_id}/retry-preview", retry_selection
+        )
+        self.assertEqual(status, 200, retry_preview)
+        retry_body = {
+            **retry_selection,
+            "previewHash": retry_preview["previewHash"],
+            "retryRequestId": "retry-race-request-001",
+        }
+
+        replacement_contract = self.one_sided_contract()
+        status, replacement_preview = self.request("POST", "/v1/strategies/preview", replacement_contract)
+        self.assertEqual(status, 200, replacement_preview)
+        replacement_body = {
+            **replacement_contract,
+            "previewHash": replacement_preview["previewHash"],
+            "replacementSourceId": source_id,
+        }
+
+        barrier = threading.Barrier(2)
+        original_preview_contract = self.service.strategy._preview_contract
+        original_retry_guards = self.service.strategy._retry_review_guards
+
+        def wait_after_ordinary_preview(contract: dict[str, Any]) -> dict[str, Any]:
+            value = original_preview_contract(contract)
+            barrier.wait(timeout=5)
+            return value
+
+        def wait_after_retry_guards(context: dict[str, Any], preview: dict[str, Any]) -> None:
+            original_retry_guards(context, preview)
+            barrier.wait(timeout=5)
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            with patch.object(
+                self.service.strategy, "_preview_contract", side_effect=wait_after_ordinary_preview
+            ), patch.object(
+                self.service.strategy, "_retry_review_guards", side_effect=wait_after_retry_guards
+            ):
+                retry_future = executor.submit(
+                    self.request, "POST", f"/v1/strategies/{source_id}/retry-drafts", retry_body
+                )
+                replacement_future = executor.submit(
+                    self.request, "POST", "/v1/strategies", replacement_body
+                )
+                retry_result = retry_future.result(timeout=10)
+                replacement_result = replacement_future.result(timeout=10)
+
+        self.assertEqual(sorted((retry_result[0], replacement_result[0])), [200, 409])
+        account_fingerprint = token_digest(
+            "okx-account-uid:v1:" + self.exchange.account_uid, SIGNING_KEY
+        )
+        with self.service.store.connection() as connection:
+            rows = connection.execute(
+                "SELECT contract_json, replacement_source_id FROM strategies WHERE account_fingerprint=?",
+                (account_fingerprint,),
+            ).fetchall()
+        dependents = []
+        for row in rows:
+            contract = json.loads(row["contract_json"])
+            if (
+                row["replacement_source_id"] == source_id
+                or contract.get("resubmission", {}).get("sourceStrategyId") == source_id
+            ):
+                dependents.append(row)
+        self.assertEqual(len(dependents), 1)
+
+    def test_red_both_retry_claim_transactions_recheck_source_before_consumption(self) -> None:
+        for mode in ("batch", "sequential"):
+            with self.subTest(mode=mode):
+                source_id, source_result, _ = self._make_rejected_source()
+                source_order = source_result["orders"][0]
+                status, candidates = self.request(
+                    "GET", f"/v1/strategies/{source_id}/retry-candidates"
+                )
+                self.assertEqual(status, 200, candidates)
+                review = {
+                    "sourceRevision": candidates["sourceRevision"],
+                    "sourceClientOrderIds": [source_order["clientOrderId"]],
+                }
+                status, preview = self.request(
+                    "POST", f"/v1/strategies/{source_id}/retry-preview", review
+                )
+                self.assertEqual(status, 200, preview)
+                status, child = self.request(
+                    "POST", f"/v1/strategies/{source_id}/retry-drafts",
+                    {**review, "previewHash": preview["previewHash"],
+                     "retryRequestId": f"retry-claim-{mode}-request"},
+                )
+                self.assertEqual(status, 200, child)
+                status, setting = self.request(
+                    "POST", "/v1/strategies/settings", {"limitOrderSubmissionMode": mode}
+                )
+                self.assertEqual(status, 200, setting)
+                status, prepared = self.request(
+                    "POST", f"/v1/strategies/{child['id']}/prepare-apply", {}
+                )
+                self.assertEqual(status, 200, prepared)
+                writes_before_claim = len(self.exchange.trade_writes)
+                method_name = "_claim_queue" if mode == "sequential" else "_claim_execution"
+                original_claim = getattr(self.service.strategy, method_name)
+
+                def mutate_source_then_claim(*args: Any, **kwargs: Any) -> Any:
+                    with self.service.store.transaction() as connection:
+                        row = connection.execute(
+                            "SELECT results_json FROM strategies WHERE strategy_id=?", (source_id,)
+                        ).fetchone()
+                        results = json.loads(row["results_json"])
+                        results[0]["status"] = "unknown"
+                        results[0].pop("errorCode", None)
+                        connection.execute(
+                            "UPDATE strategies SET status='UNKNOWN', results_json=? WHERE strategy_id=?",
+                            (encode_json(results), source_id),
+                        )
+                    return original_claim(*args, **kwargs)
+
+                with patch.object(
+                    self.service.strategy, method_name, side_effect=mutate_source_then_claim
+                ):
+                    status, refusal = self.request(
+                        "POST", f"/v1/strategies/{child['id']}/execute-apply",
+                        {"confirmationToken": prepared["confirmationToken"]},
+                    )
+                self.assertEqual(status, 409, refusal)
+                self.assertEqual(refusal["error"], "retry_source_stale")
+                self.assertEqual(len(self.exchange.trade_writes), writes_before_claim)
+                with self.service.store.connection() as connection:
+                    current_child = connection.execute(
+                        "SELECT status, attempt_started FROM strategies WHERE strategy_id=?",
+                        (child["id"],),
+                    ).fetchone()
+                self.assertEqual(current_child["status"], "PREPARED")
+                self.assertEqual(current_child["attempt_started"], 0)
 
 
 if __name__ == "__main__":

@@ -112,9 +112,10 @@ class StrategySelection {
         'The reference swap price is invalid.',
       );
     }
-    if (selectedLevels.isEmpty || selectedLevels.length > 20) {
+    if (selectedLevels.isEmpty ||
+        selectedLevels.length > strategyNewSubmissionOrderLimit) {
       throw const StrategySelectionException(
-        'Select between 1 and 20 levels in total.',
+        'Select between 1 and 10 levels in total.',
       );
     }
 

@@ -68,7 +68,77 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('queue progress and stopped rows fit on a mobile screen', (
+  testWidgets(
+    'RED-002 disables an oversized unstarted draft and shows recreate guidance',
+    (tester) async {
+      final api = _FakeStrategyApi();
+      api.strategies.first['selectedLevels'] = List.generate(
+        11,
+        (index) => {
+          'side': 'long',
+          'price': '${99 - index}',
+          'levelId': 'long_$index',
+        },
+      );
+      api.strategies.add({
+        'id': 'prepared-old',
+        'instrumentId': 'ETH-USDT-SWAP',
+        'interval': '6Hutc',
+        'status': 'PREPARED',
+        'batchAttempted': false,
+        'canDelete': true,
+        'orders': List.generate(
+          11,
+          (index) => {
+            'side': 'long',
+            'role': 'entry',
+            'limitPrice': '${99 - index}',
+          },
+        ),
+      });
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            tradeSessionProvider.overrideWith(
+              (ref) => _AuthenticatedSessionController(),
+            ),
+            strategyApiProvider.overrideWithValue(api),
+            strategyMarketRepositoryProvider.overrideWithValue(
+              _FakeMarketRepository(),
+            ),
+          ],
+          child: const MaterialApp(home: StrategyScreen()),
+        ),
+      );
+      await _pumpFrames(tester);
+
+      final applyButton = find.ancestor(
+        of: find.text('Áp dụng bản nháp'),
+        matching: find.byType(FilledButton),
+      );
+      expect(tester.widget<FilledButton>(applyButton).onPressed, isNull);
+      expect(
+        find.textContaining('Bản nháp cũ vượt quá giới hạn 10 lệnh'),
+        findsOneWidget,
+      );
+      await tester.scrollUntilVisible(
+        find.text('ETH-USDT-SWAP'),
+        240,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(
+        find.textContaining('Bản nháp đã chuẩn bị vượt quá giới hạn 10 lệnh'),
+        findsOneWidget,
+      );
+      expect(find.text('Cập nhật trạng thái'), findsWidgets);
+      expect(find.text('Tạo lại'), findsOneWidget);
+      expect(api.prepareCalls, 0);
+      expect(api.executeCalls, 0);
+    },
+  );
+
+  testWidgets('GREEN-002 preserves historical 20-order queue progress', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(360, 800);
@@ -106,6 +176,7 @@ void main() {
       find.textContaining('3 đã thử, 1 đã nhận, 1 đang chờ'),
       findsOneWidget,
     );
+    expect(find.textContaining('16 chưa gửi / 20'), findsOneWidget);
     await tester.scrollUntilVisible(
       find.text('Đã dừng'),
       240,
@@ -436,6 +507,7 @@ class _AuthenticatedSessionController extends TradeSessionController {
 class _FakeStrategyApi implements StrategyApi {
   int quoteCalls = 0;
   int deleteCalls = 0;
+  int prepareCalls = 0;
   int executeCalls = 0;
   bool includeCompleted = false;
   bool includeNeverSent = false;
@@ -509,6 +581,30 @@ class _FakeStrategyApi implements StrategyApi {
   ];
 
   @override
+  Future<StrategyRetryCandidates> getRetryCandidates(
+    String token,
+    String sourceStrategyId,
+  ) async => throw UnimplementedError();
+
+  @override
+  Future<StrategyRetryPreview> previewRetry(
+    String token,
+    String sourceStrategyId, {
+    required String sourceRevision,
+    required List<String> sourceClientOrderIds,
+  }) async => throw UnimplementedError();
+
+  @override
+  Future<StrategyRetryDraft> createRetryDraft(
+    String token,
+    String sourceStrategyId, {
+    required String sourceRevision,
+    required List<String> sourceClientOrderIds,
+    required String previewHash,
+    required String retryRequestId,
+  }) async => throw UnimplementedError();
+
+  @override
   Future<Map<String, dynamic>> preview(
     String token,
     Map<String, dynamic> body,
@@ -521,8 +617,10 @@ class _FakeStrategyApi implements StrategyApi {
   ) async => {'id': 'draft-1'};
 
   @override
-  Future<Map<String, dynamic>> prepareApply(String token, String id) async =>
-      prepared;
+  Future<Map<String, dynamic>> prepareApply(String token, String id) async {
+    prepareCalls++;
+    return prepared;
+  }
 
   @override
   Future<Map<String, dynamic>> executeApply(
@@ -668,11 +766,11 @@ class _FakeStrategyApi implements StrategyApi {
           'submissionMode': 'sequential',
           'queueStatus': 'sending',
           'queueProgress': {
-            'totalCount': 5,
+            'totalCount': 20,
             'attemptedCount': 3,
             'acceptedCount': 1,
             'pendingCount': 1,
-            'notSubmittedCount': 1,
+            'notSubmittedCount': 16,
           },
           'orders': [
             {

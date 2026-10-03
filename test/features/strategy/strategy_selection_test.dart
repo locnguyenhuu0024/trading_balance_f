@@ -4,9 +4,9 @@ import 'package:trading_balance_f/features/strategy/domain/strategy_selection.da
 
 void main() {
   group('StrategySelection', () {
-    test('rejects more than 20 selected rows', () {
+    test('RED-002 rejects more than 10 selected rows', () {
       final levels = List.generate(
-        21,
+        11,
         (index) => StrategySelectedLevel(
           side: StrategySide.long,
           price: 99 - index.toDouble(),
@@ -25,6 +25,28 @@ void main() {
         ),
         throwsA(isA<StrategySelectionException>()),
       );
+    });
+
+    test('GREEN-002 accepts exactly 10 selected rows', () {
+      final levels = List.generate(
+        10,
+        (index) => StrategySelectedLevel(
+          side: StrategySide.long,
+          price: 99 - index.toDouble(),
+          levelId: 'long_$index',
+        ),
+      );
+
+      final selection = StrategySelection.validate(
+        instrumentId: 'BTC-USDT-SWAP',
+        interval: StrategyInterval.h6,
+        referencePrice: 100,
+        direction: StrategyDirection.long,
+        selectedLevels: levels,
+        entryLevelIdBySide: const {StrategySide.long: 'long_0'},
+      );
+
+      expect(selection.selectedLevels, hasLength(10));
     });
 
     test('rejects an entry farther from price than another selected level', () {

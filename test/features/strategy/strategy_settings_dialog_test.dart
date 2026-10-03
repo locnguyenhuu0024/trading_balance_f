@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/features/orders/data/trade_api_client.dart';
 import 'package:trading_balance_f/features/orders/presentation/providers/trade_session_provider.dart';
 import 'package:trading_balance_f/features/strategy/data/strategy_api_client.dart';
+import 'package:trading_balance_f/features/strategy/domain/strategy_models.dart';
 import 'package:trading_balance_f/features/strategy/presentation/providers/strategy_dashboard_provider.dart';
 import 'package:trading_balance_f/features/strategy/presentation/strategy_settings_dialog.dart';
 
@@ -357,6 +358,30 @@ class _FakeStrategyApi implements StrategyApi {
     preference = acknowledged;
     return acknowledged;
   }
+
+  @override
+  Future<StrategyRetryCandidates> getRetryCandidates(
+    String token,
+    String sourceStrategyId,
+  ) async => throw UnimplementedError();
+
+  @override
+  Future<StrategyRetryPreview> previewRetry(
+    String token,
+    String sourceStrategyId, {
+    required String sourceRevision,
+    required List<String> sourceClientOrderIds,
+  }) async => throw UnimplementedError();
+
+  @override
+  Future<StrategyRetryDraft> createRetryDraft(
+    String token,
+    String sourceStrategyId, {
+    required String sourceRevision,
+    required List<String> sourceClientOrderIds,
+    required String previewHash,
+    required String retryRequestId,
+  }) async => throw UnimplementedError();
 
   @override
   Future<Map<String, dynamic>> preview(

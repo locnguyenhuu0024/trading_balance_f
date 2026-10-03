@@ -192,8 +192,9 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
     );
     setState(() {
       if (selected) {
-        if (_selected.length >= 20) {
-          _workflowError = 'Một chiến thuật chỉ được chọn tối đa 20 mức giá.';
+        if (_selected.length >= strategyNewSubmissionOrderLimit) {
+          _workflowError =
+              'Một chiến thuật chỉ được chọn tối đa $strategyNewSubmissionOrderLimit lệnh.';
           return;
         }
         _selected[item.id] = item;
@@ -372,10 +373,13 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
       if (!mounted || !_isSessionCurrent) return;
       final hash = _text(preview['previewHash']);
       final orders = _list(preview['orders']);
-      if (hash.isEmpty || orders.isEmpty) {
+      if (hash.isEmpty ||
+          orders.isEmpty ||
+          orders.length > strategyNewSubmissionOrderLimit) {
         throw const StrategyApiException(
           code: 'invalid_response',
-          message: 'Máy chủ chưa trả về bản xem trước lệnh đầy đủ.',
+          message:
+              'Máy chủ chưa trả về bản xem trước hợp lệ trong giới hạn 10 lệnh.',
         );
       }
       if (requestGeneration != _inputGeneration) {
@@ -414,7 +418,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
 
   Map<String, dynamic> _saveBody() {
     final selection = _selectionOrNull();
-    if (selection == null || _previewHash == null) {
+    if (selection == null || !_hasValidNewSubmissionPreview) {
       throw StateError('The strategy preview is no longer available.');
     }
     final leverage = <StrategySide, int>{
@@ -639,7 +643,17 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
       _isSessionCurrent &&
       !_isSaving &&
       !_isRequestingPreview &&
-      _preview != null;
+      _hasValidNewSubmissionPreview;
+
+  bool get _hasValidNewSubmissionPreview {
+    final preview = _preview;
+    final hash = _previewHash;
+    if (preview == null || hash == null || hash.isEmpty) return false;
+    final orders = _list(preview['orders']);
+    return orders.isNotEmpty &&
+        orders.length <= strategyNewSubmissionOrderLimit &&
+        _selectionOrNull() != null;
+  }
 
   void _message(String message) {
     ScaffoldMessenger.of(
@@ -800,6 +814,11 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
           ),
         if (snapshot != null) ...[
           _quoteBanner(snapshot.ticker),
+          const SizedBox(height: 8),
+          Text(
+            'Đã chọn ${_selected.length}/$strategyNewSubmissionOrderLimit lệnh · Long ${_selected.values.where((item) => item.side == StrategySide.long).length} · Short ${_selected.values.where((item) => item.side == StrategySide.short).length}',
+            key: const Key('strategy-selection-count'),
+          ),
           const SizedBox(height: 8),
           Text('${snapshot.candles.length} nến UTC đã xác nhận · tối đa 500'),
           if (snapshot.candles.length < 5)
@@ -1460,7 +1479,7 @@ double? _positiveStrategyDecimal(String input) {
 }
 
 List<Map<String, dynamic>> _preparedOrders(Map<String, dynamic> prepared) {
-  return validatedStrategyOrders(prepared) ?? const [];
+  return validatedNewStrategyOrders(prepared) ?? const [];
 }
 
 List<Object?> _list(Object? value) =>
