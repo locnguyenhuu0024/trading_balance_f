@@ -10,7 +10,7 @@ from typing import Any
 from unittest.mock import patch
 
 from backend import diagnostics
-from backend.okx import OKXClient, OKXTransportError
+from backend.okx import OKXClient, OKXError, OKXTransportError
 from backend.service import APIError
 from backend.strategy import StrategyService
 from backend.strategy_worker import StrategyOrderWorker, WorkerSettings
@@ -177,6 +177,62 @@ class StrategyDiagnosticsTests(unittest.TestCase):
         self.assertEqual(preflight["outcome"], "failure")
         self.assertEqual(preflight["reason"], "account_changed")
         self.assertNotIn(exception_canary, json.dumps(records))
+
+    def test_red_rate_limited_preflight_keeps_safe_diagnostic_reason_and_api_code(self) -> None:
+        fixture = api_fixtures.StrategyApiTests(
+            "test_red_strategy_routes_require_bearer_before_exchange_reads"
+        )
+        fixture.setUp()
+        self.addCleanup(fixture.tearDown)
+        strategy_id, _ = fixture.save_draft()
+        error = OKXError(
+            "private upstream response", diagnostic_category="http_rejected", http_status=429
+        )
+
+        with _Capture() as capture:
+            headers: list[tuple[str, str]] = []
+            with patch.object(fixture.service.okx, "account_balance", side_effect=error):
+                status, payload = fixture.request(
+                    "POST", f"/v1/strategies/{strategy_id}/prepare-apply", {},
+                    captured_headers=headers,
+                )
+            records = capture.records()
+
+        self.assertEqual(status, 429, payload)
+        self.assertEqual(payload["error"], "exchange_rate_limited")
+        self.assertIn(("Retry-After", "2"), headers)
+        preflight = next(row for row in records if row["event"] == "preflight")
+        failure = next(row for row in records if row["event"] == "request_failure")
+        for record in (preflight, failure):
+            self.assertEqual(record["reason"], "exchange_rate_limited")
+            self.assertEqual(record["api_code"], "exchange_rate_limited")
+        self.assertNotIn("private upstream response", json.dumps(records))
+
+    def test_red_worker_rate_limit_is_diagnosed_but_stops_with_safe_queue_reason(self) -> None:
+        fixture, worker, _ = self._queue_fixture()
+        with _Capture() as capture:
+            strategy_id, _ = self._start_queue(fixture, count=1)
+            with patch.object(
+                worker.okx,
+                "account_balance",
+                side_effect=OKXError("private worker upstream response", http_status=429),
+            ):
+                self.assertTrue(worker.run_once())
+            records = capture.records()
+
+        preflight = next(
+            row for row in records
+            if row["event"] == "preflight"
+            and row.get("component") == "worker"
+            and row.get("stage") == "preflight_initial"
+        )
+        self.assertEqual(preflight["reason"], "exchange_rate_limited")
+        self.assertEqual(preflight["api_code"], "exchange_rate_limited")
+        self.assertNotIn("private worker upstream response", json.dumps(records))
+        strategy = self._read_strategy(fixture, strategy_id)
+        self.assertEqual(strategy["queue"]["stopReason"], "preflight_unavailable")
+        self.assertEqual(fixture.exchange.single_order_attempts, 0)
+        self.assertEqual(fixture.exchange.trade_writes, [])
 
     def test_red_retry_diagnostics_classify_get_and_post_methods(self) -> None:
         strategy_id = "retry-route-12345678"
