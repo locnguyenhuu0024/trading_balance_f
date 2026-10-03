@@ -17,7 +17,7 @@ from decimal import Decimal, InvalidOperation, ROUND_DOWN
 from typing import Any, Callable
 from urllib.parse import urlsplit
 
-from .okx import OKXClient, OKXError, OKXTransportError, Transport
+from .okx import OKXClient, OKXError, OKXTransportError, Transport, bounded_error_code
 from .security import (
     matching_totp_counter,
     new_bearer_token,
@@ -147,6 +147,8 @@ def mask_identifier(value: Any) -> str | None:
 
 
 def _identity_key(identity: dict[str, Any]) -> str:
+    if identity.get("ordId") and identity.get("instId"):
+        return encode_json({"instId": identity["instId"], "ordId": identity["ordId"]})
     return encode_json(identity)
 
 
@@ -833,15 +835,22 @@ class TradeService:
             and outcome.get("positionVerified") is True
         )
 
-    def _pending_target_conflict(self, target_identities: list[dict[str, Any]]) -> bool:
+    def _pending_target_conflict(
+        self,
+        target_identities: list[dict[str, Any]],
+        *,
+        exclude_operation_id: str | None = None,
+    ) -> bool:
         now = self.clock()
         wanted = {_identity_key(identity) for identity in target_identities}
         with self.store.connection() as connection:
             rows = connection.execute(
-                "SELECT status, expires_at, payload_json, results_json FROM operations "
+                "SELECT operation_id, status, expires_at, payload_json, results_json FROM operations "
                 "WHERE status IN ('PREPARED','IN_PROGRESS','UNKNOWN','PARTIAL')"
             ).fetchall()
         for row in rows:
+            if row["operation_id"] == exclude_operation_id:
+                continue
             if row["status"] == "PREPARED" and row["expires_at"] <= now:
                 continue
             payload = decode_json(row["payload_json"])
@@ -862,8 +871,161 @@ class TradeService:
                     return True
         return False
 
+    @staticmethod
+    def _cancel_identity(value: Any) -> dict[str, str]:
+        keys = ("instType", "instId", "ordId", "ordType", "side", "px", "sz")
+        if not isinstance(value, dict) or set(value) != set(keys):
+            raise APIError(400, "invalid_order_identity", "A complete selected order identity is required.")
+        if any(not isinstance(value[key], str) or not value[key] or len(value[key]) > 128
+               or value[key] != value[key].strip() for key in keys):
+            raise APIError(400, "invalid_order_identity", "The selected order identity is invalid.")
+        if (value["instType"] not in ("SPOT", "MARGIN", "SWAP", "FUTURES")
+                or value["ordType"] != "limit" or value["side"] not in ("buy", "sell")
+                or any(decimal_value(value[key]) is None or decimal_value(value[key]) <= 0
+                       for key in ("px", "sz"))):
+            raise APIError(400, "invalid_order_identity", "Only active limit orders can be canceled.")
+        return {key: value[key] for key in keys}
+
+    @staticmethod
+    def _cancel_order_matches(identity: dict[str, Any], order: Any) -> bool:
+        if not isinstance(order, dict):
+            return False
+        for key, expected in identity.items():
+            if key in ("px", "sz"):
+                if decimal_value(order.get(key)) != decimal_value(expected):
+                    return False
+            elif order.get(key) != expected:
+                return False
+        return True
+
+    @staticmethod
+    def _cancel_snapshot(order: dict[str, Any]) -> dict[str, Any] | None:
+        size, filled = decimal_value(order.get("sz")), decimal_value(order.get("accFillSz"))
+        if size is None or size <= 0 or filled is None or filled < 0 or filled >= size:
+            return None
+        if order.get("state") not in ("live", "partially_filled"):
+            return None
+        return {"state": order["state"], "filledSize": decimal_text(filled),
+                "remainingSize": decimal_text(size - filled)}
+
+    def _read_cancel_order(self, identity: dict[str, Any], fingerprint: str) -> dict[str, Any] | None:
+        # Bind both sides of the exchange read to the prepared account.
+        if not self._account_fingerprints_match(fingerprint, self._read_account_fingerprint()):
+            return None
+        order = self.okx.order_details_by_id(identity["instId"], identity["ordId"])
+        if (not self._account_fingerprints_match(fingerprint, self._read_account_fingerprint())
+                or not self._cancel_order_matches(identity, order)):
+            return None
+        return order
+
+    def _prepare_order_cancellation(self, body: dict[str, Any], source: str) -> dict[str, Any]:
+        identity = self._cancel_identity(body.get("targetIdentity"))
+        try:
+            account = self.okx.account_config()
+        except OKXError:
+            raise APIError(
+                502,
+                "account_identity_unavailable",
+                "The exchange account identity is unavailable.",
+            ) from None
+        fingerprint = self._account_fingerprint(account.get("uid"))
+        if not self._valid_account_fingerprint(fingerprint):
+            raise APIError(502, "account_identity_unavailable", "The exchange account identity is unavailable.")
+        try:
+            order = self._read_cancel_order(identity, fingerprint)
+        except OKXError:
+            raise APIError(502, "order_status_unavailable", "The selected order could not be verified.") from None
+        snapshot = None if order is None else self._cancel_snapshot(order)
+        if snapshot is None:
+            raise APIError(409, "stale_target", "The selected limit order is no longer current.")
+        if self._pending_target_conflict([identity]):
+            raise APIError(409, "operation_pending", "A prior action for this order still needs reconciliation.")
+        summary = {"identity": identity, "action": "cancel_order", "price": identity["px"],
+                   "originalSize": identity["sz"], "filledSize": snapshot["filledSize"],
+                   "remainingSize": snapshot["remainingSize"]}
+        target = {"identity": identity, "snapshot": snapshot,
+                  "request": {"instId": identity["instId"], "ordId": identity["ordId"]},
+                  "summary": summary, "status": "PENDING", "outcome": None}
+        now = self.clock()
+        operation_id, confirmation = new_operation_id(), new_confirmation_token()
+        expires_at = now + ACTION_TTL_SECONDS
+        payload = {"action": "cancel_order", "targets": [target],
+                   "accountIdentifier": mask_identifier(account.get("uid")),
+                   "accountFingerprint": fingerprint, "createdFrom": source}
+        results = [{"identity": identity, "status": "PENDING", "outcome": None}]
+        with self.store.transaction() as connection:
+            connection.execute(
+                "INSERT INTO operations(operation_id, action, confirmation_hash, expires_at, status, "
+                "payload_json, results_json, created_at, updated_at) VALUES (?, ?, ?, ?, 'PREPARED', ?, ?, ?, ?)",
+                (operation_id, "cancel_order", token_digest(confirmation, self.settings.session_signing_key),
+                 expires_at, encode_json(payload), encode_json(results), now, now),
+            )
+        return {"operationId": operation_id, "confirmationToken": confirmation, "status": "PREPARED",
+                "action": "cancel_order", "expiresAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(expires_at)),
+                "summary": {"targetCount": 1, "targets": [summary]}}
+
+    def _cancellation_outcome(self, operation: dict[str, Any], target: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+        try:
+            order = self._read_cancel_order(target["identity"], operation["payload"].get("accountFingerprint"))
+        except OKXError:
+            order = None
+        if order is None:
+            return "UNKNOWN", {"reason": "order_status_unavailable"}
+        size, filled = decimal_value(order.get("sz")), decimal_value(order.get("accFillSz"))
+        if size is None or filled is None or not (0 <= filled <= size):
+            return "UNKNOWN", {"reason": "order_status_unavailable"}
+        outcome = {"orderState": order.get("state"), "filledSize": decimal_text(filled),
+                   "remainingSize": decimal_text(size - filled), "orderId": target["identity"]["ordId"]}
+        if order.get("state") in ("canceled", "mmp_canceled"):
+            return "SUCCEEDED", {**outcome, "reason": "order_cancellation_verified"}
+        if order.get("state") == "filled":
+            return "FAILED", {**outcome, "reason": "order_filled_before_cancellation"}
+        return "UNKNOWN", {**outcome, "reason": "order_cancellation_not_confirmed"}
+
+    def _execute_order_cancellation(self, operation: dict[str, Any]) -> dict[str, Any]:
+        target = operation["payload"]["targets"][0]
+        result = operation["targets"][0]
+        if self._pending_target_conflict(
+            [target["identity"]], exclude_operation_id=operation["operationId"]
+        ):
+            result.update(status="CONFLICT", outcome={"reason": "order_action_pending"})
+        else:
+            try:
+                order = self._read_cancel_order(
+                    target["identity"], operation["payload"]["accountFingerprint"]
+                )
+            except OKXError:
+                order = None
+        if result.get("status") == "PENDING" and (
+            order is None or self._cancel_snapshot(order) != target["snapshot"]
+        ):
+            result.update(status="CONFLICT", outcome={"reason": "order_changed_before_cancellation"})
+        elif result.get("status") == "PENDING":
+            result.update(status="ATTEMPT_STARTED", outcome=None)
+            self._save_operation(operation)
+            try:
+                response = self.okx.cancel_order(target["request"])
+                accepted, code = self._mark_known_item_result(response)
+                if not accepted:
+                    status, outcome = self._write_ack_failure(bounded_error_code(code))
+                elif response["data"][0].get("ordId") != target["identity"]["ordId"]:
+                    status, outcome = "UNKNOWN", {"reason": "cancellation_acknowledgement_mismatch"}
+                else:
+                    status, outcome = self._cancellation_outcome(operation, target)
+            except OKXTransportError:
+                status, outcome = "UNKNOWN", {"reason": "exchange_outcome_unknown"}
+            except OKXError as error:
+                status, outcome = self._write_ack_failure(error.error_code)
+            result.update(status=status, outcome=outcome)
+        operation["status"] = self._overall_status(operation["targets"])
+        self._save_operation(operation)
+        return self._operation_response(operation)
+
     def _prepare(self, body: dict[str, Any], source: str) -> dict[str, Any]:
         action = body.get("action")
+        if action == "cancel_order":
+            with self._mutation_lock:
+                return self._prepare_order_cancellation(body, source)
         if action not in ("add_margin", "dca", "partial_close", "close_position", "close_all"):
             raise APIError(400, "invalid_action", "The requested action is not supported.")
         snapshot = self._fetch_snapshot()
@@ -1037,6 +1199,8 @@ class TradeService:
 
             operation["status"] = "IN_PROGRESS"
             self._save_operation(operation)
+            if operation["action"] == "cancel_order":
+                return self._execute_order_cancellation(operation)
             try:
                 current = self._fetch_snapshot()
             except APIError:
@@ -1484,6 +1648,8 @@ class TradeService:
         self, operation: dict[str, Any], journal_target: dict[str, Any]
     ) -> tuple[str, dict[str, Any]]:
         action = operation["action"]
+        if action == "cancel_order":
+            return self._cancellation_outcome(operation, journal_target)
         expected_fingerprint = operation.get("payload", {}).get("accountFingerprint")
         if not self._valid_account_fingerprint(expected_fingerprint):
             return "UNKNOWN", {"reason": "account_identity_unavailable"}

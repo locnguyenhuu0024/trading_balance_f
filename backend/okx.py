@@ -318,6 +318,18 @@ class OKXClient:
     def add_margin(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self.request("POST", "/api/v5/account/position/margin-balance", body=payload)
 
+    def order_details_by_id(self, instrument_id: str, order_id: str) -> dict[str, Any] | None:
+        response = self.request(
+            "GET", "/api/v5/trade/order", params={"instId": instrument_id, "ordId": order_id}
+        )
+        data = response.get("data")
+        if not isinstance(data, list) or len(data) != 1 or not isinstance(data[0], dict):
+            return None
+        return data[0]
+
+    def cancel_order(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self.request("POST", "/api/v5/trade/cancel-order", body=payload)
+
     def place_order(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self.request("POST", "/api/v5/trade/order", body=payload)
 

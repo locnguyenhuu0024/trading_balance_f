@@ -228,6 +228,10 @@ mixin _$OkxOrder {
       throw _privateConstructorUsedError; // Cặp giao dịch (VD: BTC-USDT)
   String get instType =>
       throw _privateConstructorUsedError; // Loại (SPOT, MARGIN, SWAP, FUTURES)
+  String get ordId =>
+      throw _privateConstructorUsedError; // Mã lệnh duy nhất trên OKX
+  String get ordType =>
+      throw _privateConstructorUsedError; // Loại lệnh (limit, market)
   String get side =>
       throw _privateConstructorUsedError; // Chiều giao dịch (buy, sell)
   String get px => throw _privateConstructorUsedError; // Giá đặt lệnh
@@ -268,6 +272,8 @@ abstract class $OkxOrderCopyWith<$Res> {
   $Res call({
     String instId,
     String instType,
+    String ordId,
+    String ordType,
     String side,
     String px,
     String sz,
@@ -300,6 +306,8 @@ class _$OkxOrderCopyWithImpl<$Res, $Val extends OkxOrder>
   $Res call({
     Object? instId = null,
     Object? instType = null,
+    Object? ordId = null,
+    Object? ordType = null,
     Object? side = null,
     Object? px = null,
     Object? sz = null,
@@ -322,6 +330,14 @@ class _$OkxOrderCopyWithImpl<$Res, $Val extends OkxOrder>
             instType: null == instType
                 ? _value.instType
                 : instType // ignore: cast_nullable_to_non_nullable
+                      as String,
+            ordId: null == ordId
+                ? _value.ordId
+                : ordId // ignore: cast_nullable_to_non_nullable
+                      as String,
+            ordType: null == ordType
+                ? _value.ordType
+                : ordType // ignore: cast_nullable_to_non_nullable
                       as String,
             side: null == side
                 ? _value.side
@@ -389,6 +405,8 @@ abstract class _$$OkxOrderImplCopyWith<$Res>
   $Res call({
     String instId,
     String instType,
+    String ordId,
+    String ordType,
     String side,
     String px,
     String sz,
@@ -420,6 +438,8 @@ class __$$OkxOrderImplCopyWithImpl<$Res>
   $Res call({
     Object? instId = null,
     Object? instType = null,
+    Object? ordId = null,
+    Object? ordType = null,
     Object? side = null,
     Object? px = null,
     Object? sz = null,
@@ -442,6 +462,14 @@ class __$$OkxOrderImplCopyWithImpl<$Res>
         instType: null == instType
             ? _value.instType
             : instType // ignore: cast_nullable_to_non_nullable
+                  as String,
+        ordId: null == ordId
+            ? _value.ordId
+            : ordId // ignore: cast_nullable_to_non_nullable
+                  as String,
+        ordType: null == ordType
+            ? _value.ordType
+            : ordType // ignore: cast_nullable_to_non_nullable
                   as String,
         side: null == side
             ? _value.side
@@ -502,6 +530,8 @@ class _$OkxOrderImpl implements _OkxOrder {
   const _$OkxOrderImpl({
     this.instId = '',
     this.instType = '',
+    this.ordId = '',
+    this.ordType = '',
     this.side = '',
     this.px = '',
     this.sz = '',
@@ -527,6 +557,14 @@ class _$OkxOrderImpl implements _OkxOrder {
   @JsonKey()
   final String instType;
   // Loại (SPOT, MARGIN, SWAP, FUTURES)
+  @override
+  @JsonKey()
+  final String ordId;
+  // Mã lệnh duy nhất trên OKX
+  @override
+  @JsonKey()
+  final String ordType;
+  // Loại lệnh (limit, market)
   @override
   @JsonKey()
   final String side;
@@ -577,7 +615,7 @@ class _$OkxOrderImpl implements _OkxOrder {
 
   @override
   String toString() {
-    return 'OkxOrder(instId: $instId, instType: $instType, side: $side, px: $px, sz: $sz, notionalUsd: $notionalUsd, fillNotionalUsd: $fillNotionalUsd, avgPx: $avgPx, accFillSz: $accFillSz, tradeQuoteCcy: $tradeQuoteCcy, state: $state, lever: $lever, cTime: $cTime, pnl: $pnl)';
+    return 'OkxOrder(instId: $instId, instType: $instType, ordId: $ordId, ordType: $ordType, side: $side, px: $px, sz: $sz, notionalUsd: $notionalUsd, fillNotionalUsd: $fillNotionalUsd, avgPx: $avgPx, accFillSz: $accFillSz, tradeQuoteCcy: $tradeQuoteCcy, state: $state, lever: $lever, cTime: $cTime, pnl: $pnl)';
   }
 
   @override
@@ -588,6 +626,8 @@ class _$OkxOrderImpl implements _OkxOrder {
             (identical(other.instId, instId) || other.instId == instId) &&
             (identical(other.instType, instType) ||
                 other.instType == instType) &&
+            (identical(other.ordId, ordId) || other.ordId == ordId) &&
+            (identical(other.ordType, ordType) || other.ordType == ordType) &&
             (identical(other.side, side) || other.side == side) &&
             (identical(other.px, px) || other.px == px) &&
             (identical(other.sz, sz) || other.sz == sz) &&
@@ -612,6 +652,8 @@ class _$OkxOrderImpl implements _OkxOrder {
     runtimeType,
     instId,
     instType,
+    ordId,
+    ordType,
     side,
     px,
     sz,
@@ -644,6 +686,8 @@ abstract class _OkxOrder implements OkxOrder {
   const factory _OkxOrder({
     final String instId,
     final String instType,
+    final String ordId,
+    final String ordType,
     final String side,
     final String px,
     final String sz,
@@ -665,6 +709,10 @@ abstract class _OkxOrder implements OkxOrder {
   String get instId; // Cặp giao dịch (VD: BTC-USDT)
   @override
   String get instType; // Loại (SPOT, MARGIN, SWAP, FUTURES)
+  @override
+  String get ordId; // Mã lệnh duy nhất trên OKX
+  @override
+  String get ordType; // Loại lệnh (limit, market)
   @override
   String get side; // Chiều giao dịch (buy, sell)
   @override

@@ -24,6 +24,8 @@ class OkxOrder with _$OkxOrder {
   const factory OkxOrder({
     @Default('') String instId, // Cặp giao dịch (VD: BTC-USDT)
     @Default('') String instType, // Loại (SPOT, MARGIN, SWAP, FUTURES)
+    @Default('') String ordId, // Mã lệnh duy nhất trên OKX
+    @Default('') String ordType, // Loại lệnh (limit, market)
     @Default('') String side, // Chiều giao dịch (buy, sell)
     @Default('') String px, // Giá đặt lệnh
     @Default('') String sz, // Kích thước/Số lượng lệnh

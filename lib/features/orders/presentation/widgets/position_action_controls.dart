@@ -109,23 +109,17 @@ class PositionActionControls extends ConsumerWidget {
                     entry.allowed &&
                     !isBusy &&
                     !hasUnresolvedOperation;
-                return OutlinedButton(
+                return IconButton(
+                  tooltip: action.label,
                   onPressed: canRun
                       ? () => _startAction(context, ref, action)
                       : null,
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: AppTokens.space3,
-                      vertical: AppTokens.space2,
-                    ),
-                    foregroundColor: action.destructive
-                        ? palette.negative
-                        : null,
+                  color: action.destructive ? palette.negative : null,
+                  constraints: const BoxConstraints(
+                    minWidth: 48,
+                    minHeight: 48,
                   ),
-                  child: Text(
-                    action.label,
-                    style: const TextStyle(fontSize: 12),
-                  ),
+                  icon: Icon(action.icon),
                 );
               })
               .toList(growable: false),
@@ -137,13 +131,7 @@ class PositionActionControls extends ConsumerWidget {
         if (disabledReasons.isNotEmpty) ...[
           const SizedBox(height: 6),
           for (final reason in disabledReasons)
-            Text(
-              reason,
-              style: TextStyle(
-                color: palette.muted,
-                fontSize: 12,
-              ),
-            ),
+            Text(reason, style: TextStyle(color: palette.muted, fontSize: 12)),
         ],
         if (flowState?.statusMessage case final statusMessage?) ...[
           const SizedBox(height: 6),
@@ -224,6 +212,13 @@ class _PositionAction {
   final String eligibilityKey;
   final String? inputKind;
   final bool destructive;
+
+  IconData get icon => switch (apiName) {
+    'add_margin' => Icons.add_card_outlined,
+    'dca' => Icons.trending_up,
+    'partial_close' => Icons.pie_chart_outline,
+    _ => Icons.close_rounded,
+  };
 
   String get inputTitle => switch (inputKind) {
     'amount' => 'Nhập số tiền ký quỹ',

@@ -30,6 +30,8 @@ _$OkxOrderImpl _$$OkxOrderImplFromJson(Map<String, dynamic> json) =>
     _$OkxOrderImpl(
       instId: json['instId'] as String? ?? '',
       instType: json['instType'] as String? ?? '',
+      ordId: json['ordId'] as String? ?? '',
+      ordType: json['ordType'] as String? ?? '',
       side: json['side'] as String? ?? '',
       px: json['px'] as String? ?? '',
       sz: json['sz'] as String? ?? '',
@@ -48,6 +50,8 @@ Map<String, dynamic> _$$OkxOrderImplToJson(_$OkxOrderImpl instance) =>
     <String, dynamic>{
       'instId': instance.instId,
       'instType': instance.instType,
+      'ordId': instance.ordId,
+      'ordType': instance.ordType,
       'side': instance.side,
       'px': instance.px,
       'sz': instance.sz,

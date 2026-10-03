@@ -62,7 +62,10 @@ void main() {
       expect(api.createSourceOrderIds, ['source-order-1']);
       expect(api.createPreviewHash, 'retry-hash-1');
       expect(api.retryRequestId, matches(RegExp(r'^[A-Za-z0-9_-]{32}$')));
-      expect(find.textContaining('Bản gửi lại retry-child-1'), findsOneWidget);
+      expect(
+        find.textContaining('Đã tạo bản gửi lại retry-child-1'),
+        findsOneWidget,
+      );
 
       await tester.tap(find.byKey(const Key('strategy-retry-prepare')));
       await _pumpFrames(tester);
@@ -91,6 +94,13 @@ void main() {
       expect(api.createCalls, 1);
       expect(api.prepareCalls, 1);
       expect(api.executeCalls, 1);
+      await _openStrategyDetails(tester, 'retry-child-1');
+      expect(
+        find.textContaining(
+          'Bản gửi lại retry-child-1 liên kết với nguồn source-1 · source-order-1',
+        ),
+        findsOneWidget,
+      );
       expect(tester.takeException(), isNull);
     },
   );
@@ -127,10 +137,16 @@ void main() {
     api.linkedChildListed = true;
     api.createCompleter!.complete(_retryDraft());
     await _pumpFrames(tester, 10);
+    await _openStrategyDetails(tester, 'retry-child-1');
     expect(api.createCalls, 1);
     expect(api.prepareCalls, 0);
     expect(api.executeCalls, 0);
-    expect(find.textContaining('retry-child-1'), findsWidgets);
+    expect(
+      find.textContaining(
+        'Bản gửi lại retry-child-1 liên kết với nguồn source-1 · source-order-1',
+      ),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
 
@@ -211,6 +227,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(api.executeCalls, 0);
+    await _openStrategyDetails(tester, 'retry-child-1');
     expect(
       find.textContaining(
         'Bản gửi lại retry-child-1 liên kết với nguồn source-1 · source-order-1',
@@ -243,6 +260,17 @@ Future<void> _openRetryDialog(WidgetTester tester) async {
   await tester.ensureVisible(retry);
   await _pumpFrames(tester);
   await tester.tap(retry);
+  await _pumpFrames(tester);
+}
+
+Future<void> _openStrategyDetails(
+  WidgetTester tester,
+  String strategyId,
+) async {
+  final summary = find.byKey(Key('strategy-summary-$strategyId'));
+  await tester.ensureVisible(summary);
+  await tester.pump();
+  await tester.tap(summary);
   await _pumpFrames(tester);
 }
 

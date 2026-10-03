@@ -10,6 +10,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/timezone/app_time_zone.dart';
 import '../../../core/widgets/crypto_icon.dart';
 import 'providers/order_provider.dart';
+import 'providers/order_cancellation_flow_provider.dart';
 import '../data/okx_order_model.dart';
 import '../data/okx_position_model.dart';
 import 'providers/position_action_flow_provider.dart';
@@ -21,6 +22,7 @@ import '../../settings/presentation/settings_screen.dart'
     show currencyProvider, vndExchangeRateProvider;
 import 'widgets/order_filter_controls.dart';
 import 'widgets/order_notional.dart';
+import 'widgets/order_cancellation_control.dart';
 import 'widgets/responsive_order_grid.dart';
 import 'widgets/position_action_controls.dart';
 import 'widgets/trade_account_controls.dart';
@@ -327,7 +329,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       );
     } else {
       final ordersAsyncValue = ref.watch(ordersFutureProvider);
-      return RefreshIndicator(
+      final orderList = RefreshIndicator(
         color: palette.ink,
         backgroundColor: palette.raised,
         onRefresh: () async => ref.invalidate(ordersFutureProvider),
@@ -369,6 +371,15 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
           },
         ),
       );
+      if (currentTab == OrderTab.pending) {
+        return Column(
+          children: [
+            const TradeAccountControls(showCloseAll: false),
+            Expanded(child: orderList),
+          ],
+        );
+      }
+      return orderList;
     }
   }
 
@@ -940,6 +951,8 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
               textColor: textColor,
               subtitleColor: subtitleColor,
             ),
+            if (currentTab == OrderTab.pending && isActiveLimitOrder(order))
+              OrderCancellationControl(order: order),
           ],
         ),
       ),

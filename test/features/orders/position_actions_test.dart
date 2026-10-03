@@ -337,8 +337,9 @@ Widget _tradeApp({
   );
 }
 
-Finder _actionButton(String label) =>
-    find.widgetWithText(OutlinedButton, label);
+Finder _actionButton(String label) => find
+    .ancestor(of: find.byTooltip(label), matching: find.byType(IconButton))
+    .first;
 
 Future<void> _pumpActiveDialog(WidgetTester tester) async {
   // Position and account actions deliberately keep an indeterminate progress
@@ -349,6 +350,22 @@ Future<void> _pumpActiveDialog(WidgetTester tester) async {
 
 void main() {
   group('RED-002 position action safety', () {
+    testWidgets('RED-001 long press on an action icon never prepares it', (
+      tester,
+    ) async {
+      final api = _FakeTradeApi();
+      await tester.pumpWidget(_tradeApp(api: api, positions: [_position()]));
+      await tester.pumpAndSettle();
+
+      await tester.longPress(_actionButton('Đóng 100%'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Đóng 100%'), findsOneWidget);
+      expect(api.prepareCalls, 0);
+      expect(api.executeCalls, 0);
+      expect(find.text('Xác nhận đóng vị thế 100%'), findsNothing);
+    });
+
     testWidgets('RED-INPUT-CANCEL before prepare sends no request', (
       tester,
     ) async {
@@ -404,7 +421,7 @@ void main() {
       await tester.pumpWidget(_tradeApp(api: api, positions: [incomplete]));
       await tester.pumpAndSettle();
 
-      final button = tester.widget<OutlinedButton>(_actionButton('DCA'));
+      final button = tester.widget<IconButton>(_actionButton('DCA'));
       expect(button.onPressed, isNull);
       expect(api.prepareCalls, 0);
       expect(api.executeCalls, 0);
@@ -662,7 +679,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('Đóng tất cả vị thế'));
+      await tester.tap(find.byTooltip('Đóng tất cả vị thế'));
       await _pumpActiveDialog(tester);
       expect(api.lastAction, 'close_all');
       expect(api.lastIdentity, isNull);
@@ -699,7 +716,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('Đóng tất cả vị thế'));
+      await tester.tap(find.byTooltip('Đóng tất cả vị thế'));
       await tester.pumpAndSettle();
 
       expect(api.lastAction, isNull);
@@ -733,12 +750,9 @@ void main() {
       await tester.pumpWidget(_tradeApp(api: api, positions: [margin]));
       await tester.pumpAndSettle();
 
+      expect(tester.widget<IconButton>(_actionButton('DCA')).onPressed, isNull);
       expect(
-        tester.widget<OutlinedButton>(_actionButton('DCA')).onPressed,
-        isNull,
-      );
-      expect(
-        tester.widget<OutlinedButton>(_actionButton('Đóng một phần')).onPressed,
+        tester.widget<IconButton>(_actionButton('Đóng một phần')).onPressed,
         isNull,
       );
       expect(
@@ -851,7 +865,7 @@ void main() {
       await tester.pumpAndSettle();
       final initialReads = api.positionReads;
 
-      await tester.tap(find.text('Đóng tất cả vị thế'));
+      await tester.tap(find.byTooltip('Đóng tất cả vị thế'));
       await _pumpActiveDialog(tester);
       expect(find.text('Đóng 2 vị thế'), findsOneWidget);
       expect(find.textContaining('ETH-USDT'), findsOneWidget);
@@ -1066,7 +1080,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.textContaining('operation-12345678'), findsOneWidget);
       expect(
-        tester.widget<OutlinedButton>(_actionButton('Đóng 100%')).onPressed,
+        tester.widget<IconButton>(_actionButton('Đóng 100%')).onPressed,
         isNull,
       );
       expect(api.executeCalls, 1);
@@ -1082,7 +1096,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('operation-12345678'), findsNothing);
       expect(
-        tester.widget<OutlinedButton>(_actionButton('Đóng 100%')).onPressed,
+        tester.widget<IconButton>(_actionButton('Đóng 100%')).onPressed,
         isNotNull,
       );
     });
@@ -1131,7 +1145,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('Đóng tất cả vị thế'));
+      await tester.tap(find.byTooltip('Đóng tất cả vị thế'));
       await _pumpActiveDialog(tester);
       await tester.tap(find.text('Đóng 2 vị thế'));
       await _pumpActiveDialog(tester);
@@ -1155,8 +1169,13 @@ void main() {
       expect(find.textContaining('operation-12345678'), findsNothing);
       expect(
         tester
-            .widget<OutlinedButton>(
-              find.widgetWithText(OutlinedButton, 'Đóng tất cả vị thế'),
+            .widget<IconButton>(
+              find
+                  .ancestor(
+                    of: find.byTooltip('Đóng tất cả vị thế'),
+                    matching: find.byType(IconButton),
+                  )
+                  .first,
             )
             .onPressed,
         isNotNull,

@@ -8,11 +8,40 @@ import 'package:trading_balance_f/features/portfolio/data/risk/risk_request_coor
 import 'package:trading_balance_f/features/strategy/data/strategy_api_client.dart';
 import 'package:trading_balance_f/features/strategy/data/strategy_market_repository.dart';
 import 'package:trading_balance_f/features/strategy/domain/strategy_models.dart';
+import 'package:trading_balance_f/features/strategy/presentation/providers/strategy_dashboard_provider.dart';
 import 'package:trading_balance_f/features/strategy/presentation/strategy_screen.dart';
 import 'package:trading_balance_f/features/strategy/presentation/strategy_wizard_dialog.dart';
 
 void main() {
-  testWidgets('saved draft confirmation displays its frozen submission mode', (
+  testWidgets('RED-00 strategy action long press only reveals its tooltip', (
+    tester,
+  ) async {
+    final api = _FakeStrategyApi();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          tradeSessionProvider.overrideWith(
+            (ref) => _AuthenticatedSessionController(),
+          ),
+          strategyApiProvider.overrideWithValue(api),
+          strategyMarketRepositoryProvider.overrideWithValue(
+            _FakeMarketRepository(),
+          ),
+        ],
+        child: const MaterialApp(home: StrategyScreen()),
+      ),
+    );
+    await _pumpFrames(tester);
+
+    await tester.longPress(find.byKey(const Key('strategy-apply-draft-1')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Áp dụng bản nháp'), findsOneWidget);
+    expect(api.prepareCalls, 0);
+    expect(api.executeCalls, 0);
+  });
+
+  testWidgets('GREEN-001 summary icon action preserves frozen confirmation', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(1200, 1600);
@@ -52,7 +81,7 @@ void main() {
       ),
     );
     await _pumpFrames(tester);
-    await tester.tap(find.text('Áp dụng bản nháp'));
+    await tester.tap(find.byTooltip('Áp dụng bản nháp'));
     await _pumpFrames(tester);
 
     expect(find.text('Cơ chế gửi đã cố định: Gửi theo lô'), findsOneWidget);
@@ -113,28 +142,87 @@ void main() {
       );
       await _pumpFrames(tester);
 
-      final applyButton = find.ancestor(
-        of: find.text('Áp dụng bản nháp'),
-        matching: find.byType(FilledButton),
-      );
-      expect(tester.widget<FilledButton>(applyButton).onPressed, isNull);
+      final applyButton = find.byKey(const Key('strategy-apply-draft-1'));
+      expect(tester.widget<IconButton>(applyButton).onPressed, isNull);
+      await _openStrategyDetails(tester, 'draft-1');
       expect(
         find.textContaining('Bản nháp cũ vượt quá giới hạn 10 lệnh'),
         findsOneWidget,
       );
-      await tester.scrollUntilVisible(
-        find.text('ETH-USDT-SWAP'),
-        240,
-        scrollable: find.byType(Scrollable).first,
-      );
+      await tester.tap(find.byTooltip('Đóng chi tiết'));
+      await tester.pumpAndSettle();
+      await _openStrategyDetails(tester, 'prepared-old');
+      final preparedDetails = find
+          .ancestor(of: find.text('ETH-USDT-SWAP'), matching: find.byType(Card))
+          .first;
       expect(
         find.textContaining('Bản nháp đã chuẩn bị vượt quá giới hạn 10 lệnh'),
         findsOneWidget,
       );
-      expect(find.text('Cập nhật trạng thái'), findsWidgets);
-      expect(find.text('Tạo lại'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: preparedDetails,
+          matching: find.byTooltip('Cập nhật trạng thái'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: preparedDetails,
+          matching: find.byTooltip('Tạo lại'),
+        ),
+        findsOneWidget,
+      );
       expect(api.prepareCalls, 0);
       expect(api.executeCalls, 0);
+    },
+  );
+
+  testWidgets(
+    'RED-001 account session change hides captured strategy details and actions',
+    (tester) async {
+      final api = _FakeStrategyApi();
+      final session = _AuthenticatedSessionController();
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            tradeSessionProvider.overrideWith((ref) => session),
+            strategyApiProvider.overrideWithValue(api),
+            strategyMarketRepositoryProvider.overrideWithValue(
+              _FakeMarketRepository(),
+            ),
+          ],
+          child: const MaterialApp(home: StrategyScreen()),
+        ),
+      );
+      await _pumpFrames(tester);
+      await _openStrategyDetails(tester, 'started-1');
+
+      expect(find.text('BTC-USDT-SWAP'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(Dialog),
+          matching: find.byTooltip('Gửi lại lệnh limit'),
+        ),
+        findsOneWidget,
+      );
+
+      session.state = const TradeSessionState();
+      await _pumpFrames(tester);
+
+      expect(find.text('BTC-USDT-SWAP'), findsNothing);
+      expect(
+        find.textContaining('Phiên giao dịch đã thay đổi'),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byType(Dialog),
+          matching: find.byTooltip('Gửi lại lệnh limit'),
+        ),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
     },
   );
 
@@ -162,10 +250,11 @@ void main() {
       ),
     );
     await _pumpFrames(tester);
+    await _openStrategyDetails(tester, 'applying-queue-1');
     await tester.scrollUntilVisible(
       find.text('Chưa rõ kết quả gửi'),
       240,
-      scrollable: find.byType(Scrollable).first,
+      scrollable: find.byType(Scrollable).last,
     );
 
     expect(find.text('Đang gửi'), findsWidgets);
@@ -177,22 +266,18 @@ void main() {
       findsOneWidget,
     );
     expect(find.textContaining('16 chưa gửi / 20'), findsOneWidget);
-    await tester.scrollUntilVisible(
-      find.text('Đã dừng'),
-      240,
-      scrollable: find.byType(Scrollable).first,
-    );
+    await tester.tap(find.byTooltip('Đóng chi tiết'));
+    await tester.pumpAndSettle();
+    await _openStrategyDetails(tester, 'stopped-queue-1');
     expect(find.text('Đã dừng'), findsOneWidget);
-    await tester.scrollUntilVisible(
-      find.text('Tiến độ hàng đợi chưa khả dụng.'),
-      240,
-      scrollable: find.byType(Scrollable).first,
-    );
+    await tester.tap(find.byTooltip('Đóng chi tiết'));
+    await tester.pumpAndSettle();
+    await _openStrategyDetails(tester, 'malformed-queue-1');
     expect(find.text('Tiến độ hàng đợi chưa khả dụng.'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('started cards use backend quotes and show order freshness', (
+  testWidgets('GREEN-001 compact summary counts all rows and opens details', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(1200, 1600);
@@ -201,6 +286,27 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     final market = _FakeMarketRepository();
     final api = _FakeStrategyApi();
+    api.strategies[1]['totalMargin'] = '123.45';
+    api.strategies[1]['filledMargin'] = '999';
+    final startedOrders = List<Map<String, dynamic>>.from(
+      api.strategies[1]['orders'] as List,
+    );
+    startedOrders.addAll([
+      for (var index = 0; index < 8; index++)
+        {
+          'side': 'long',
+          'role': 'entry',
+          'limitPrice': '${58000 - index}',
+          'contracts': '1',
+          'status': const [
+            'canceled',
+            'queued',
+            'not_submitted',
+            'rejected',
+          ][index % 4],
+        },
+    ]);
+    api.strategies[1]['orders'] = startedOrders;
 
     await tester.pumpWidget(
       ProviderScope(
@@ -221,13 +327,42 @@ void main() {
 
     expect(api.quoteCalls, 1);
     expect(market.tickerCalls, 0);
-    expect(find.text('BTC-USDT-SWAP'), findsNWidgets(2));
-    final draftCard = find.ancestor(
-      of: find.text('Bản nháp'),
-      matching: find.byType(Card),
+    expect(find.text('BTC'), findsNWidgets(2));
+    expect(find.text('BTC-USDT-SWAP'), findsNothing);
+    final summary = find.byKey(const Key('strategy-summary-started-1'));
+    expect(
+      find.descendant(of: summary, matching: find.text('Vốn: 123.45 USDT')),
+      findsOneWidget,
     );
+    expect(
+      find.descendant(of: summary, matching: find.text('Tổng lệnh: 12')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: summary, matching: find.text('Chưa khớp: 1')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: summary, matching: find.text('Đã khớp: 1')),
+      findsOneWidget,
+    );
+    final statusTooltip = find.descendant(
+      of: summary,
+      matching: find.byWidgetPredicate(
+        (widget) =>
+            widget is Tooltip &&
+            widget.message?.contains('Trạng thái lệnh đã cũ.') == true,
+      ),
+    );
+    expect(statusTooltip, findsOneWidget);
+    expect(
+      tester.widget<Tooltip>(statusTooltip).message,
+      contains('Hai nhóm có thể không bằng tổng'),
+    );
+    await _openStrategyDetails(tester, 'started-1');
+    final draftSummary = find.byKey(const Key('strategy-summary-draft-1'));
     final startedCard = find.ancestor(
-      of: find.text('Đã gửi'),
+      of: find.text('BTC-USDT-SWAP'),
       matching: find.byType(Card),
     );
     expect(
@@ -239,14 +374,14 @@ void main() {
     );
     expect(
       find.descendant(
-        of: draftCard.first,
+        of: draftSummary,
         matching: find.textContaining('Giá SWAP 65000'),
       ),
       findsNothing,
     );
     expect(find.text('Khớp một phần'), findsOneWidget);
     expect(find.text('Đã khớp'), findsOneWidget);
-    expect(find.text('Đã hủy'), findsOneWidget);
+    expect(find.text('Đã hủy'), findsNWidgets(3));
     expect(find.text('Chưa xác định'), findsOneWidget);
     expect(
       find.descendant(
@@ -264,6 +399,187 @@ void main() {
     );
     expect(find.textContaining('Lần quét lệnh đã cũ'), findsOneWidget);
   });
+
+  testWidgets(
+    'GREEN-001 open details track dashboard updates and action eligibility',
+    (tester) async {
+      final api = _FakeStrategyApi();
+      final session = _AuthenticatedSessionController();
+      StrategyDashboardController? dashboard;
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            tradeSessionProvider.overrideWith((ref) => session),
+            strategyApiProvider.overrideWithValue(api),
+            strategyMarketRepositoryProvider.overrideWithValue(
+              _FakeMarketRepository(),
+            ),
+          ],
+          child: MaterialApp(
+            home: Consumer(
+              builder: (context, ref, child) {
+                dashboard = ref.watch(
+                  strategyDashboardProvider(session.state.session!.bearerToken),
+                );
+                return const StrategyScreen();
+              },
+            ),
+          ),
+        ),
+      );
+      await _pumpFrames(tester);
+      await _openStrategyDetails(tester, 'started-1');
+
+      expect(
+        find.descendant(
+          of: find.byType(Dialog),
+          matching: find.byTooltip('Gửi lại lệnh limit'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byType(Dialog),
+          matching: find.byTooltip('Áp dụng bản nháp'),
+        ),
+        findsNothing,
+      );
+
+      api.strategies[1]
+        ..['status'] = 'DRAFT'
+        ..['canDelete'] = true
+        ..['orders'] = [
+          {'status': 'live'},
+          {'status': 'filled'},
+        ];
+      await dashboard!.load();
+      await _pumpFrames(tester);
+
+      expect(find.text('Bản nháp'), findsOneWidget);
+      final liveSummary = find.byKey(const Key('strategy-summary-started-1'));
+      expect(
+        find.descendant(of: liveSummary, matching: find.text('Tổng lệnh: 2')),
+        findsOneWidget,
+      );
+      final details = find.byType(Dialog);
+      expect(
+        find.descendant(
+          of: details,
+          matching: find.byTooltip('Gửi lại lệnh limit'),
+        ),
+        findsNothing,
+      );
+      for (final label in ['Áp dụng bản nháp', 'Tạo lại', 'Xóa chiến thuật']) {
+        expect(
+          find.descendant(of: details, matching: find.byTooltip(label)),
+          findsOneWidget,
+        );
+      }
+      expect(
+        find.descendant(
+          of: details,
+          matching: find.byTooltip('Cập nhật trạng thái'),
+        ),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'GREEN-001 missing rows and invalid total capital stay unavailable',
+    (tester) async {
+      final api = _FakeStrategyApi();
+      api.strategies.first['filledMargin'] = '88.50';
+      api.strategies.addAll([
+        {
+          'id': 'empty-orders-1',
+          'instrumentId': 'LTC-USDT-SWAP',
+          'status': 'COMPLETED',
+          'totalMargin': '-4',
+          'orders': <Map<String, dynamic>>[],
+        },
+        {
+          'id': 'malformed-margin-1',
+          'instrumentId': 'DOGE-USDT-SWAP',
+          'status': 'COMPLETED',
+          'totalMargin': 'not-a-number',
+          'orders': [
+            {'status': 'live'},
+          ],
+        },
+        {
+          'id': 'nonfinite-margin-1',
+          'instrumentId': 'XLM-USDT-SWAP',
+          'status': 'COMPLETED',
+          'totalMargin': '1e999',
+          'orders': <Map<String, dynamic>>[],
+        },
+      ]);
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            tradeSessionProvider.overrideWith(
+              (ref) => _AuthenticatedSessionController(),
+            ),
+            strategyApiProvider.overrideWithValue(api),
+            strategyMarketRepositoryProvider.overrideWithValue(
+              _FakeMarketRepository(),
+            ),
+          ],
+          child: const MaterialApp(home: StrategyScreen()),
+        ),
+      );
+      await _pumpFrames(tester);
+
+      for (final id in [
+        'draft-1',
+        'empty-orders-1',
+        'malformed-margin-1',
+        'nonfinite-margin-1',
+      ]) {
+        final summary = find.byKey(Key('strategy-summary-$id'));
+        await tester.ensureVisible(summary);
+        await tester.pump();
+        expect(
+          find.descendant(of: summary, matching: find.text('Vốn: --')),
+          findsOneWidget,
+        );
+        if (id == 'draft-1') {
+          for (final label in [
+            'Tổng lệnh: --',
+            'Chưa khớp: --',
+            'Đã khớp: --',
+          ]) {
+            expect(
+              find.descendant(of: summary, matching: find.text(label)),
+              findsOneWidget,
+            );
+          }
+        }
+        if (id == 'empty-orders-1') {
+          for (final label in ['Tổng lệnh: 0', 'Chưa khớp: 0', 'Đã khớp: 0']) {
+            expect(
+              find.descendant(of: summary, matching: find.text(label)),
+              findsOneWidget,
+            );
+          }
+        }
+        if (id == 'malformed-margin-1') {
+          expect(
+            find.descendant(of: summary, matching: find.text('Tổng lệnh: 1')),
+            findsOneWidget,
+          );
+          expect(
+            find.descendant(of: summary, matching: find.text('Chưa khớp: 1')),
+            findsOneWidget,
+          );
+        }
+      }
+    },
+  );
 
   testWidgets('completed strategy status is distinct', (tester) async {
     tester.view.physicalSize = const Size(1200, 1600);
@@ -289,11 +605,7 @@ void main() {
     for (var frame = 0; frame < 5; frame++) {
       await tester.pump(const Duration(milliseconds: 20));
     }
-    await tester.scrollUntilVisible(
-      find.text('Hoàn tất'),
-      300,
-      scrollable: find.byType(Scrollable).first,
-    );
+    await _openStrategyDetails(tester, 'completed-1');
 
     expect(find.text('Hoàn tất'), findsOneWidget);
     final completedCard = find.ancestor(
@@ -332,6 +644,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 20));
     }
 
+    await _openStrategyDetails(tester, 'never-sent-1');
     final eligibleCard = find
         .ancestor(of: find.text('ETH-USDT-SWAP'), matching: find.byType(Card))
         .first;
@@ -358,44 +671,36 @@ void main() {
       findsNothing,
     );
     expect(
-      find.descendant(of: eligibleCard, matching: find.text('Tạo lại')),
-      findsOneWidget,
-    );
-    expect(
-      find.descendant(of: eligibleCard, matching: find.text('Xóa chiến thuật')),
-      findsOneWidget,
-    );
-    expect(
-      find.textContaining('OKX đã chấp nhận đầy đủ lệnh thay thế'),
-      findsOneWidget,
-    );
-    final draftCard = find
-        .ancestor(of: find.text('Bản nháp'), matching: find.byType(Card))
-        .first;
-    expect(
-      find.descendant(of: draftCard, matching: find.text('Tạo lại')),
+      find.descendant(of: eligibleCard, matching: find.byTooltip('Tạo lại')),
       findsOneWidget,
     );
     expect(
       find.descendant(
-        of: draftCard,
+        of: eligibleCard,
+        matching: find.byTooltip('Xóa chiến thuật'),
+      ),
+      findsOneWidget,
+    );
+    final summaryCard = find
+        .ancestor(
+          of: find.byKey(const Key('strategy-summary-never-sent-1')),
+          matching: find.byType(Card),
+        )
+        .first;
+    expect(
+      find.descendant(of: summaryCard, matching: find.byTooltip('Tạo lại')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: summaryCard,
         matching: find.textContaining('Không có lệnh nào được gửi lên OKX'),
       ),
       findsNothing,
     );
-    expect(find.text('Tạo lại'), findsNWidgets(2));
-    expect(
-      find.textContaining('Không có lệnh nào được gửi lên OKX'),
-      findsOneWidget,
-    );
     final replaceButton = find.descendant(
       of: eligibleCard,
-      matching: find.text('Tạo lại'),
-    );
-    await tester.scrollUntilVisible(
-      replaceButton,
-      300,
-      scrollable: find.byType(Scrollable).first,
+      matching: find.byKey(const Key('strategy-replace-never-sent-1')),
     );
     await tester.tap(replaceButton);
     await tester.pumpAndSettle();
@@ -415,12 +720,7 @@ void main() {
 
     final deleteButton = find.descendant(
       of: eligibleCard,
-      matching: find.text('Xóa chiến thuật'),
-    );
-    await tester.scrollUntilVisible(
-      deleteButton,
-      300,
-      scrollable: find.byType(Scrollable).first,
+      matching: find.byKey(const Key('strategy-delete-never-sent-1')),
     );
     await tester.tap(deleteButton);
     await tester.pumpAndSettle();
@@ -437,11 +737,29 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(api.deleteCalls, 1);
-    await tester.scrollUntilVisible(
-      find.text('ADA-USDT-SWAP'),
-      300,
-      scrollable: find.byType(Scrollable).first,
+    expect(
+      find.textContaining('không còn trong danh sách hiện tại'),
+      findsOneWidget,
     );
+    expect(
+      find.descendant(
+        of: find.byType(Dialog),
+        matching: find.byTooltip('Xóa chiến thuật'),
+      ),
+      findsNothing,
+    );
+    await tester.tap(find.byTooltip('Đóng chi tiết'));
+    await tester.pumpAndSettle();
+
+    await _openStrategyDetails(tester, 'started-1');
+    expect(
+      find.textContaining('OKX đã chấp nhận đầy đủ lệnh thay thế'),
+      findsOneWidget,
+    );
+    await tester.tap(find.byTooltip('Đóng chi tiết'));
+    await tester.pumpAndSettle();
+
+    await _openStrategyDetails(tester, 'never-sent-other-failure');
     final genericFailureCard = find
         .ancestor(of: find.text('ADA-USDT-SWAP'), matching: find.byType(Card))
         .first;
@@ -453,7 +771,10 @@ void main() {
       findsOneWidget,
     );
     expect(
-      find.descendant(of: genericFailureCard, matching: find.text('Tạo lại')),
+      find.descendant(
+        of: genericFailureCard,
+        matching: find.byTooltip('Tạo lại'),
+      ),
       findsOneWidget,
     );
     expect(
@@ -464,23 +785,29 @@ void main() {
       findsNothing,
     );
 
-    for (final instrument in ['SOL-USDT-SWAP', 'XRP-USDT-SWAP']) {
-      await tester.scrollUntilVisible(
-        find.text(instrument),
-        300,
-        scrollable: find.byType(Scrollable).first,
-      );
+    await tester.tap(find.byTooltip('Đóng chi tiết'));
+    await tester.pumpAndSettle();
+    for (final scenario in [
+      (id: 'not-eligible-1', instrument: 'SOL-USDT-SWAP'),
+      (id: 'attempted-1', instrument: 'XRP-USDT-SWAP'),
+    ]) {
+      await _openStrategyDetails(tester, scenario.id);
       final card = find
-          .ancestor(of: find.text(instrument), matching: find.byType(Card))
+          .ancestor(
+            of: find.text(scenario.instrument),
+            matching: find.byType(Card),
+          )
           .first;
       expect(
-        find.descendant(of: card, matching: find.text('Tạo lại')),
+        find.descendant(of: card, matching: find.byTooltip('Tạo lại')),
         findsNothing,
       );
       expect(
-        find.descendant(of: card, matching: find.text('Xóa chiến thuật')),
+        find.descendant(of: card, matching: find.byTooltip('Xóa chiến thuật')),
         findsNothing,
       );
+      await tester.tap(find.byTooltip('Đóng chi tiết'));
+      await tester.pumpAndSettle();
     }
   });
 }
@@ -489,6 +816,21 @@ Future<void> _pumpFrames(WidgetTester tester, [int count = 5]) async {
   for (var frame = 0; frame < count; frame++) {
     await tester.pump(const Duration(milliseconds: 20));
   }
+}
+
+Future<void> _openStrategyDetails(
+  WidgetTester tester,
+  String strategyId,
+) async {
+  final summary = find.byKey(Key('strategy-summary-$strategyId'));
+  await tester.scrollUntilVisible(
+    summary,
+    240,
+    scrollable: find.byType(Scrollable).first,
+  );
+  await tester.pump();
+  await tester.tap(summary);
+  await _pumpFrames(tester);
 }
 
 class _AuthenticatedSessionController extends TradeSessionController {
@@ -509,6 +851,7 @@ class _FakeStrategyApi implements StrategyApi {
   int deleteCalls = 0;
   int prepareCalls = 0;
   int executeCalls = 0;
+  final deletedIds = <String>{};
   bool includeCompleted = false;
   bool includeNeverSent = false;
   bool includeQueues = false;
@@ -658,6 +1001,7 @@ class _FakeStrategyApi implements StrategyApi {
   @override
   Future<void> deleteDraft(String token, String id) async {
     deleteCalls++;
+    deletedIds.add(id);
   }
 
   List<Map<String, dynamic>> get strategiesForTest {
@@ -864,7 +1208,9 @@ class _FakeStrategyApi implements StrategyApi {
         },
       ]);
     }
-    return result;
+    return result
+        .where((strategy) => !deletedIds.contains(strategy['id']))
+        .toList(growable: false);
   }
 
   @override
