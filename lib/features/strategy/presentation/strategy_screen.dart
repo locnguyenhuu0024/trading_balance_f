@@ -4,6 +4,8 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/theme/app_theme.dart';
+import '../../../core/theme/pnl_color.dart';
 import '../../orders/data/trade_api_client.dart';
 import '../../orders/presentation/providers/trade_session_provider.dart';
 import '../domain/strategy_models.dart';
@@ -106,11 +108,9 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
                 112,
               ),
               children: [
-                _introCard(context, session),
                 if (!sessionState.isAuthenticated || session == null)
                   const _SignedOutCard()
                 else ...[
-                  const SizedBox(height: 16),
                   Row(
                     children: [
                       Expanded(
@@ -119,13 +119,17 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
                           style: Theme.of(context).textTheme.titleLarge,
                         ),
                       ),
-                      FilledButton.icon(
+                      IconButton(
                         key: const Key('strategy-create-button'),
+                        tooltip: 'Dựng chiến thuật',
                         onPressed: dashboard == null
                             ? null
                             : () => _openWizard(context, session, dashboard),
+                        constraints: const BoxConstraints(
+                          minWidth: 48,
+                          minHeight: 48,
+                        ),
                         icon: const Icon(Icons.add),
-                        label: const Text('Dựng chiến thuật'),
                       ),
                     ],
                   ),
@@ -145,63 +149,7 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
                     const _EmptyStrategiesCard()
                   else
                     for (final strategy in dashboard!.strategies)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: _StrategyCard(
-                          strategy: strategy,
-                          quote: _hasStartedStatus(strategy['status'])
-                              ? dashboard.quoteFor(
-                                  _text(strategy['instrumentId']).toUpperCase(),
-                                )
-                              : null,
-                          quoteIsFresh:
-                              _hasStartedStatus(strategy['status']) &&
-                              dashboard.quoteIsFresh(
-                                _text(strategy['instrumentId']).toUpperCase(),
-                              ),
-                          metricsAreStale: dashboard.metricsAreStale,
-                          metricsStaleAt: dashboard.metricsStaleAt,
-                          actionBusy: dashboard.isActionInFlight(
-                            _text(strategy['id']),
-                          ),
-                          onReplace: strategy['canDelete'] == true
-                              ? () => _openWizard(
-                                  context,
-                                  session,
-                                  dashboard,
-                                  replacementSourceId: _text(strategy['id']),
-                                )
-                              : null,
-                          onApply:
-                              _text(strategy['status']).toUpperCase() == 'DRAFT'
-                              ? () => _applySaved(context, dashboard, strategy)
-                              : null,
-                          onRetry:
-                              const {'DRAFT', 'PREPARED'}.contains(
-                                _text(strategy['status']).toUpperCase(),
-                              )
-                              ? null
-                              : () => _retryLimitOrders(
-                                  context,
-                                  session,
-                                  dashboard,
-                                  strategy,
-                                ),
-                          onDelete: strategy['canDelete'] == true
-                              ? () => _deleteStrategy(
-                                  context,
-                                  dashboard,
-                                  strategy,
-                                )
-                              : null,
-                          onRefresh:
-                              _text(strategy['status']).toUpperCase() == 'DRAFT'
-                              ? null
-                              : () => dashboard.refreshResult(
-                                  _text(strategy['id']),
-                                ),
-                        ),
-                      ),
+                      _buildStrategyCard(context, session, dashboard, strategy),
                   if (dashboard?.actionError != null)
                     _InlineNotice(message: dashboard!.actionError!),
                   if (dashboard?.deleteError != null)
@@ -215,31 +163,106 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
     );
   }
 
-  Widget _introCard(BuildContext context, TradeSession? session) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Tạo kế hoạch lệnh từ các vùng hỗ trợ và kháng cự của hợp đồng USDT.',
-              style: Theme.of(context).textTheme.bodyLarge,
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Lệnh chỉ được gửi sau khi bạn xem và xác nhận danh sách chính xác từ máy chủ.',
-            ),
-            if (session != null) ...[
-              const SizedBox(height: 8),
-              Text(
-                'Phiên giao dịch: ${session.accountIdentifier.isEmpty ? 'đang đăng nhập' : session.accountIdentifier}',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ],
-          ],
-        ),
+  Widget _buildStrategyCard(
+    BuildContext context,
+    TradeSession session,
+    StrategyDashboardController dashboard,
+    Map<String, dynamic> strategy,
+  ) {
+    final id = _text(strategy['id']);
+    _StrategyActions actionsFor(Map<String, dynamic> current) =>
+        _strategyActionsFor(context, session, dashboard, current);
+    final actions = actionsFor(strategy);
+    final openDetails = () => showDialog<void>(
+      context: context,
+      builder: (dialogContext) => _StrategyDetailsDialog(
+        dashboard: dashboard,
+        bearerToken: session.bearerToken,
+        strategyId: id,
+        actionsForStrategy: actionsFor,
       ),
+    );
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: _StrategyCard(
+        strategy: strategy,
+        actions: actions,
+        metricsAreStale: dashboard.metricsAreStale,
+        onOpenDetails: openDetails,
+      ),
+    );
+  }
+
+  _StrategyActions _strategyActionsFor(
+    BuildContext context,
+    TradeSession session,
+    StrategyDashboardController dashboard,
+    Map<String, dynamic> strategy,
+  ) {
+    final id = _text(strategy['id']);
+    final status = _text(strategy['status']).toUpperCase();
+    final currentStrategy = () =>
+        dashboard.ownsSession ? dashboard.strategyById(id) : null;
+    final oversizedDraft =
+        (status == 'DRAFT' ||
+            (status == 'PREPARED' && strategy['canDelete'] == true)) &&
+        hasOversizedNewStrategyOrderPayload(strategy);
+
+    return _StrategyActions(
+      actionBusy: dashboard.isActionInFlight(id),
+      blockApply: oversizedDraft,
+      onReplace: _canReplaceStrategy(strategy)
+          ? () {
+              final current = currentStrategy();
+              if (current != null && _canReplaceStrategy(current)) {
+                _openWizard(
+                  context,
+                  session,
+                  dashboard,
+                  replacementSourceId: id,
+                );
+              }
+            }
+          : null,
+      onApply: status == 'DRAFT'
+          ? () {
+              final current = currentStrategy();
+              if (!oversizedDraft &&
+                  _text(current?['status']).toUpperCase() == 'DRAFT') {
+                _applySaved(context, dashboard, current!);
+              }
+            }
+          : null,
+      onRetry: const {'DRAFT', 'PREPARED'}.contains(status)
+          ? null
+          : () {
+              final current = currentStrategy();
+              if (current != null &&
+                  !const {
+                    'DRAFT',
+                    'PREPARED',
+                  }.contains(_text(current['status']).toUpperCase())) {
+                _retryLimitOrders(context, session, dashboard, current);
+              }
+            },
+      onDelete: strategy['canDelete'] == true
+          ? () {
+              final current = currentStrategy();
+              if (current?['canDelete'] == true) {
+                _deleteStrategy(context, dashboard, current!);
+              }
+            }
+          : null,
+      onRefresh: status == 'DRAFT'
+          ? null
+          : () {
+              final current = currentStrategy();
+              if (current != null &&
+                  _text(current['status']).toUpperCase() != 'DRAFT') {
+                dashboard.refreshResult(id);
+              }
+            },
     );
   }
 
@@ -483,14 +506,10 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
   }
 }
 
-class _StrategyCard extends StatelessWidget {
-  const _StrategyCard({
-    required this.strategy,
-    required this.quote,
-    required this.quoteIsFresh,
-    required this.metricsAreStale,
-    required this.metricsStaleAt,
+class _StrategyActions {
+  const _StrategyActions({
     required this.actionBusy,
+    required this.blockApply,
     required this.onReplace,
     required this.onApply,
     required this.onRetry,
@@ -498,17 +517,173 @@ class _StrategyCard extends StatelessWidget {
     required this.onRefresh,
   });
 
-  final Map<String, dynamic> strategy;
-  final StrategyTicker? quote;
-  final bool quoteIsFresh;
-  final bool metricsAreStale;
-  final DateTime? metricsStaleAt;
   final bool actionBusy;
+  final bool blockApply;
   final VoidCallback? onReplace;
   final VoidCallback? onApply;
   final VoidCallback? onRetry;
   final VoidCallback? onDelete;
   final VoidCallback? onRefresh;
+}
+
+class _StrategyCard extends StatelessWidget {
+  const _StrategyCard({
+    required this.strategy,
+    required this.actions,
+    required this.metricsAreStale,
+    required this.onOpenDetails,
+  });
+
+  final Map<String, dynamic> strategy;
+  final _StrategyActions actions;
+  final bool metricsAreStale;
+  final VoidCallback onOpenDetails;
+
+  @override
+  Widget build(BuildContext context) {
+    final id = _text(strategy['id']);
+    final instrument = _text(strategy['instrumentId']);
+    final coin = instrument
+        .split('-')
+        .firstWhere((part) => part.isNotEmpty, orElse: () => instrument);
+    final orderRows = strategy['orders'] is List
+        ? strategy['orders'] as List
+        : null;
+    var awaiting = 0;
+    var filled = 0;
+    if (orderRows != null) {
+      for (final value in orderRows) {
+        if (value is! Map) continue;
+        final status = _text(value['status']).toLowerCase();
+        if (status == 'live' || status == 'partially_filled') {
+          awaiting++;
+        } else if (status == 'filled') {
+          filled++;
+        }
+      }
+    }
+    final statusLabel = _summaryStatusLabel(strategy);
+    final tooltipLines = <String>[];
+    if (metricsAreStale) {
+      tooltipLines.add('Dữ liệu vốn có thể đã cũ.');
+    }
+    if (orderRows == null) {
+      tooltipLines.add('Danh sách lệnh chưa khả dụng.');
+    }
+    final syncState = _text(strategy['orderSyncState']).toLowerCase();
+    if (syncState == 'stale') {
+      tooltipLines.add('Trạng thái lệnh đã cũ.');
+    } else if (syncState == 'error' || syncState == 'unavailable') {
+      tooltipLines.add('Trạng thái lệnh hiện chưa khả dụng.');
+    }
+    tooltipLines.add(
+      'Chỉ trạng thái live / khớp một phần được tính là chưa khớp; lệnh xếp hàng, chưa gửi, đã hủy, bị từ chối và chưa xác định không được tính. Hai nhóm có thể không bằng tổng lệnh.',
+    );
+
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          InkWell(
+            key: Key('strategy-summary-$id'),
+            onTap: onOpenDetails,
+            child: Semantics(
+              button: true,
+              label: 'Mở chi tiết chiến thuật $coin',
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            coin,
+                            style: Theme.of(context).textTheme.titleLarge,
+                          ),
+                        ),
+                        Tooltip(
+                          message: tooltipLines.join('\n'),
+                          child: Icon(
+                            Icons.info_outline,
+                            size: 18,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Chip(
+                      label: Text(statusLabel),
+                      visualDensity: VisualDensity.compact,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Vốn: ${_summaryTotalMargin(strategy['totalMargin'])}',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 16,
+                      runSpacing: 6,
+                      children: [
+                        _StrategySummaryCount(
+                          label: 'Tổng lệnh',
+                          value: orderRows?.length.toString() ?? '--',
+                        ),
+                        _StrategySummaryCount(
+                          label: 'Chưa khớp',
+                          value: orderRows == null ? '--' : '$awaiting',
+                        ),
+                        _StrategySummaryCount(
+                          label: 'Đã khớp',
+                          value: orderRows == null ? '--' : '$filled',
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          _StrategyActionFooter(strategyId: id, actions: actions),
+        ],
+      ),
+    );
+  }
+}
+
+class _StrategySummaryCount extends StatelessWidget {
+  const _StrategySummaryCount({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) => Text('$label: $value');
+}
+
+class _StrategyDetailContent extends StatelessWidget {
+  const _StrategyDetailContent({
+    required this.strategy,
+    required this.quote,
+    required this.quoteIsFresh,
+    required this.metricsAreStale,
+    required this.metricsStaleAt,
+    required this.actions,
+  });
+
+  final Map<String, dynamic> strategy;
+  final StrategyTicker? quote;
+  final bool quoteIsFresh;
+  final bool metricsAreStale;
+  final DateTime? metricsStaleAt;
+  final _StrategyActions actions;
 
   @override
   Widget build(BuildContext context) {
@@ -567,6 +742,7 @@ class _StrategyCard extends StatelessWidget {
     final leverageErrorCode = _safeLeverageErrorCode(
       _mapList(strategy['leverageResults']),
     );
+    final pnlPalette = AppPalette.of(context);
 
     return Card(
       child: Padding(
@@ -662,9 +838,20 @@ class _StrategyCard extends StatelessWidget {
               spacing: 20,
               runSpacing: 8,
               children: [
-                _Metric(label: 'PnL chưa thực hiện', value: pnl),
+                _Metric(
+                  label: 'PnL chưa thực hiện',
+                  value: pnl,
+                  valueColor: resolvePnlColor(_finiteNumber(pnl), pnlPalette),
+                ),
                 _Metric(label: 'Vốn đã khớp', value: usedMargin),
-                _Metric(label: '% trên vốn đã khớp', value: pnlPercent),
+                _Metric(
+                  label: '% trên vốn đã khớp',
+                  value: pnlPercent,
+                  valueColor: resolvePnlColor(
+                    _finiteNumber(pnlPercent),
+                    pnlPalette,
+                  ),
+                ),
                 _Metric(
                   label: 'Giá vào',
                   value: _first(position, ['avgPx', 'entryPrice']),
@@ -718,55 +905,205 @@ class _StrategyCard extends StatelessWidget {
                 _AppliedOrderRow(index: index + 1, order: orderRows[index]),
             ],
             const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                if (onReplace != null)
-                  FilledButton.tonalIcon(
-                    onPressed: actionBusy ? null : onReplace,
-                    icon: const Icon(Icons.replay),
-                    label: const Text('Tạo lại'),
-                  ),
-                if (onApply != null)
-                  FilledButton.tonalIcon(
-                    onPressed: actionBusy || oversizedUnstartedDraft
-                        ? null
-                        : onApply,
-                    icon: actionBusy
-                        ? const SizedBox.square(
-                            dimension: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.play_arrow),
-                    label: const Text('Áp dụng bản nháp'),
-                  ),
-                if (onRetry != null)
-                  OutlinedButton.icon(
-                    key: Key('strategy-retry-${_text(strategy['id'])}'),
-                    onPressed: actionBusy ? null : onRetry,
-                    icon: const Icon(Icons.replay_circle_filled_outlined),
-                    label: const Text('Gửi lại lệnh limit'),
-                  ),
-                if (onDelete != null)
-                  OutlinedButton.icon(
-                    onPressed: actionBusy ? null : onDelete,
-                    icon: const Icon(Icons.delete_outline),
-                    label: const Text('Xóa chiến thuật'),
-                  ),
-                if (onRefresh != null)
-                  OutlinedButton.icon(
-                    onPressed: actionBusy ? null : onRefresh,
-                    icon: const Icon(Icons.sync),
-                    label: const Text('Cập nhật trạng thái'),
-                  ),
-              ],
+            _StrategyActionFooter(
+              strategyId: _text(strategy['id']),
+              actions: actions,
             ),
           ],
         ),
       ),
     );
   }
+}
+
+class _StrategyActionFooter extends StatelessWidget {
+  const _StrategyActionFooter({
+    required this.strategyId,
+    required this.actions,
+  });
+
+  final String strategyId;
+  final _StrategyActions actions;
+
+  @override
+  Widget build(BuildContext context) {
+    final children = <Widget>[
+      if (actions.onReplace != null)
+        _button(
+          key: Key('strategy-replace-$strategyId'),
+          tooltip: 'Tạo lại',
+          icon: Icons.replay,
+          onPressed: actions.onReplace,
+        ),
+      if (actions.onApply != null)
+        _button(
+          key: Key('strategy-apply-$strategyId'),
+          tooltip: 'Áp dụng bản nháp',
+          icon: Icons.play_arrow,
+          onPressed: actions.onApply,
+          busy: actions.actionBusy,
+          disabled: actions.blockApply,
+        ),
+      if (actions.onRetry != null)
+        _button(
+          key: Key('strategy-retry-$strategyId'),
+          tooltip: 'Gửi lại lệnh limit',
+          icon: Icons.replay_circle_filled_outlined,
+          onPressed: actions.onRetry,
+        ),
+      if (actions.onDelete != null)
+        _button(
+          key: Key('strategy-delete-$strategyId'),
+          tooltip: 'Xóa chiến thuật',
+          icon: Icons.delete_outline,
+          onPressed: actions.onDelete,
+        ),
+      if (actions.onRefresh != null)
+        _button(
+          key: Key('strategy-refresh-$strategyId'),
+          tooltip: 'Cập nhật trạng thái',
+          icon: Icons.sync,
+          onPressed: actions.onRefresh,
+        ),
+    ];
+    if (children.isEmpty) return const SizedBox.shrink();
+    return Wrap(spacing: 4, runSpacing: 0, children: children);
+  }
+
+  Widget _button({
+    required Key key,
+    required String tooltip,
+    required IconData icon,
+    required VoidCallback? onPressed,
+    bool busy = false,
+    bool disabled = false,
+  }) => IconButton(
+    key: key,
+    tooltip: tooltip,
+    onPressed: actions.actionBusy || disabled ? null : onPressed,
+    constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+    icon: busy
+        ? const SizedBox.square(
+            dimension: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          )
+        : Icon(icon),
+  );
+}
+
+class _StrategyDetailsDialog extends StatelessWidget {
+  const _StrategyDetailsDialog({
+    required this.dashboard,
+    required this.bearerToken,
+    required this.strategyId,
+    required this.actionsForStrategy,
+  });
+
+  final StrategyDashboardController dashboard;
+  final String bearerToken;
+  final String strategyId;
+  final _StrategyActions Function(Map<String, dynamic> strategy)
+  actionsForStrategy;
+
+  @override
+  Widget build(BuildContext context) {
+    final screenSize = MediaQuery.sizeOf(context);
+    return Consumer(
+      builder: (context, ref, child) {
+        final sessionState = ref.watch(tradeSessionProvider);
+        return Dialog(
+          insetPadding: const EdgeInsets.all(16),
+          child: SizedBox(
+            width: math.min(screenSize.width - 32, 760),
+            height: math.min(screenSize.height - 32, 720),
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 8, 4),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Chi tiết chiến thuật',
+                          style: Theme.of(context).textTheme.titleLarge,
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Đóng chi tiết',
+                        onPressed: () => Navigator.of(context).pop(),
+                        constraints: const BoxConstraints(
+                          minWidth: 48,
+                          minHeight: 48,
+                        ),
+                        icon: const Icon(Icons.close),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: AnimatedBuilder(
+                    animation: dashboard,
+                    builder: (context, child) {
+                      final ownsCapturedSession =
+                          sessionState.isAuthenticated &&
+                          sessionState.session?.bearerToken == bearerToken &&
+                          dashboard.ownsSession;
+                      if (!ownsCapturedSession) {
+                        return const _UnavailableStrategyDetail(
+                          message:
+                              'Phiên giao dịch đã thay đổi. Chi tiết và thao tác của phiên cũ đã được ẩn.',
+                        );
+                      }
+                      final strategy = dashboard.strategyById(strategyId);
+                      if (strategy == null) {
+                        return const _UnavailableStrategyDetail(
+                          message:
+                              'Chiến thuật này không còn trong danh sách hiện tại.',
+                        );
+                      }
+                      final actions = actionsForStrategy(strategy);
+                      final instrument = _text(
+                        strategy['instrumentId'],
+                      ).toUpperCase();
+                      final started = _hasStartedStatus(strategy['status']);
+                      return SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(12, 4, 12, 16),
+                        child: _StrategyDetailContent(
+                          strategy: strategy,
+                          quote: started
+                              ? dashboard.quoteFor(instrument)
+                              : null,
+                          quoteIsFresh:
+                              started && dashboard.quoteIsFresh(instrument),
+                          metricsAreStale: dashboard.metricsAreStale,
+                          metricsStaleAt: dashboard.metricsStaleAt,
+                          actions: actions,
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _UnavailableStrategyDetail extends StatelessWidget {
+  const _UnavailableStrategyDetail({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(24),
+      child: Semantics(liveRegion: true, child: Text(message)),
+    ),
+  );
 }
 
 class _OrderSummaryRow extends StatelessWidget {
@@ -856,10 +1193,11 @@ class _AppliedOrderRow extends StatelessWidget {
 }
 
 class _Metric extends StatelessWidget {
-  const _Metric({required this.label, required this.value});
+  const _Metric({required this.label, required this.value, this.valueColor});
 
   final String label;
   final Object? value;
+  final Color? valueColor;
 
   @override
   Widget build(BuildContext context) => SizedBox(
@@ -868,7 +1206,12 @@ class _Metric extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(label, style: Theme.of(context).textTheme.labelSmall),
-        Text(_display(value), style: Theme.of(context).textTheme.bodyMedium),
+        Text(
+          _display(value),
+          style: Theme.of(
+            context,
+          ).textTheme.bodyMedium?.copyWith(color: valueColor),
+        ),
       ],
     ),
   );
@@ -1020,10 +1363,80 @@ Object? _first(Map<String, dynamic> values, List<String> keys) {
 
 String _text(Object? value) => value == null ? '' : value.toString();
 
+double? _finiteNumber(Object? value) {
+  final number = value is num
+      ? value.toDouble()
+      : double.tryParse(_text(value));
+  return number?.isFinite == true ? number : null;
+}
+
+String _summaryStatusLabel(Map<String, dynamic> strategy) {
+  if (_isAllCanceledStrategy(strategy)) return 'Đã hủy';
+  if (_isNeverSentStrategy(strategy)) return 'Chưa gửi';
+  return _statusLabel(_text(strategy['status']).toUpperCase());
+}
+
+bool _isAllCanceledStrategy(Map<String, dynamic> strategy) {
+  if (const {
+    'DRAFT',
+    'PREPARED',
+    'APPLYING',
+  }.contains(_text(strategy['status']).toUpperCase())) {
+    return false;
+  }
+  final orders = strategy['orders'];
+  if (orders is! List || orders.isEmpty) return false;
+  for (final row in orders) {
+    if (row is! Map) return false;
+    final status = _text(row['status']).toLowerCase();
+    if (status != 'canceled' && status != 'mmp_canceled') return false;
+  }
+
+  final queueStatus = _text(strategy['queueStatus']).toLowerCase();
+  if (queueStatus.isNotEmpty &&
+      !const {'stopped', 'submitted'}.contains(queueStatus)) {
+    return false;
+  }
+  final orderSyncState = _text(strategy['orderSyncState']).toLowerCase();
+  if (const {'stale', 'error', 'unavailable'}.contains(orderSyncState)) {
+    return false;
+  }
+  final hasQueueEvidence =
+      queueStatus.isNotEmpty ||
+      _text(strategy['submissionMode']).toLowerCase() == 'sequential';
+  if (hasQueueEvidence || strategy['queueProgress'] != null) {
+    final progress = validatedStrategyQueueProgress(strategy['queueProgress']);
+    if (progress == null ||
+        progress.pendingCount != 0 ||
+        progress.notSubmittedCount != 0 ||
+        progress.totalCount != orders.length) {
+      return false;
+    }
+  }
+  if (_text(strategy['executionId']).isNotEmpty) {
+    return false;
+  }
+  return true;
+}
+
+bool _canReplaceStrategy(Map<String, dynamic> strategy) {
+  final serverValue = strategy['canReplace'];
+  if (serverValue is bool) return serverValue;
+  // Older servers only exposed the original never-sent deletion predicate.
+  if (_text(strategy['status']).toUpperCase() == 'DRAFT') {
+    return strategy['canDelete'] == true &&
+        strategy['batchAttempted'] != true &&
+        strategy['orderPlacementAttempted'] != true;
+  }
+  return _isNeverSentStrategy(strategy);
+}
+
 bool _isNeverSentStrategy(Map<String, dynamic> strategy) =>
     _text(strategy['status']).toUpperCase() != 'DRAFT' &&
     strategy['canDelete'] == true &&
-    strategy['batchAttempted'] == false;
+    strategy['batchAttempted'] == false &&
+    strategy['orderPlacementAttempted'] != true &&
+    strategy['canReplace'] != false;
 
 String? _safeLeverageErrorCode(List<Map<String, dynamic>> results) {
   for (final result in results) {
@@ -1042,6 +1455,14 @@ bool _hasStartedStatus(Object? status) => const {
 String _display(Object? value) => value == null || value.toString().isEmpty
     ? 'Chưa có dữ liệu'
     : value.toString();
+
+String _summaryTotalMargin(Object? value) {
+  final text = value?.toString().trim();
+  if (text == null || text.isEmpty) return '--';
+  final amount = double.tryParse(text);
+  if (amount == null || !amount.isFinite || amount < 0) return '--';
+  return '$text USDT';
+}
 
 String _time(DateTime timestamp) {
   final local = timestamp.toLocal();

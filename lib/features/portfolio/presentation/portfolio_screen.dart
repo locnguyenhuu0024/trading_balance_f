@@ -9,6 +9,7 @@ import '../../../core/currency/currency_display_mode.dart';
 import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/platform_brightness_provider.dart';
+import '../../../core/theme/pnl_color.dart';
 import '../../../core/widgets/crypto_icon.dart';
 import 'providers/portfolio_provider.dart';
 import '../../settings/presentation/settings_screen.dart';
@@ -190,12 +191,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
           exchangeRate: exchangeRate,
         ),
 
-        Divider(
-          height: 1,
-          indent: 16,
-          endIndent: 16,
-          color: palette.border,
-        ),
+        Divider(height: 1, indent: 16, endIndent: 16, color: palette.border),
 
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -337,7 +333,8 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
     final palette = AppPalette.forBrightness(isDark);
     final textColor = palette.ink;
     final labelColor = palette.muted;
-    final pnlColor = unrealizedPnl >= 0 ? palette.positive : palette.negative;
+    final pnlColor = resolvePnlColor(unrealizedPnl, palette, hidden: isHidden);
+    final pnlRatioColor = resolvePnlColor(pnlRatio, palette, hidden: isHidden);
     final pnlSign = unrealizedPnl >= 0 ? '+' : '';
 
     final totalBlock = Column(
@@ -424,10 +421,12 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Icon(
-              unrealizedPnl >= 0
+              pnlColor == palette.muted
+                  ? Icons.remove_rounded
+                  : unrealizedPnl > 0
                   ? Icons.arrow_upward_rounded
                   : Icons.arrow_downward_rounded,
-              color: isHidden ? palette.muted : pnlColor,
+              color: pnlColor,
               size: 14,
             ),
             const SizedBox(width: 4),
@@ -439,12 +438,12 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
                 hidden: isHidden,
                 showPositiveSign: true,
                 primaryStyle: TextStyle(
-                  color: isHidden ? palette.muted : pnlColor,
+                  color: pnlColor,
                   fontSize: 13,
                   fontWeight: FontWeight.w700,
                 ),
                 secondaryStyle: TextStyle(
-                  color: isHidden ? palette.muted : pnlColor,
+                  color: pnlColor,
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
                 ),
@@ -456,7 +455,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
         Text(
           _obfuscate('($pnlSign${pnlRatio.toStringAsFixed(2)}%)', isHidden),
           style: TextStyle(
-            color: isHidden ? palette.muted : pnlColor,
+            color: pnlRatioColor,
             fontSize: 12,
             fontWeight: FontWeight.w600,
           ),

@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import '../../../core/currency/currency_display_mode.dart';
 import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/theme/pnl_color.dart';
 import '../../../core/widgets/crypto_icon.dart';
 import '../../market/presentation/providers/market_provider.dart';
 import '../../settings/presentation/settings_screen.dart';
@@ -273,7 +274,12 @@ class _PnlBlock extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = AppPalette.of(context);
-    final color = pnl >= 0 ? palette.positive : palette.negative;
+    final color = resolvePnlColor(pnl, palette, hidden: hidden);
+    final ratioColor = resolvePnlColor(
+      ratio == null ? null : ratio! * 100,
+      palette,
+      hidden: hidden,
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -293,12 +299,12 @@ class _PnlBlock extends StatelessWidget {
           hidden: hidden,
           showPositiveSign: true,
           primaryStyle: TextStyle(
-            color: hidden ? palette.muted : color,
+            color: color,
             fontSize: 16,
             fontWeight: FontWeight.w800,
           ),
           secondaryStyle: TextStyle(
-            color: hidden ? palette.muted : color,
+            color: color,
             fontSize: 12,
             fontWeight: FontWeight.w600,
           ),
@@ -308,10 +314,7 @@ class _PnlBlock extends StatelessWidget {
           hidden || ratio == null
               ? '******'
               : '(${ratio! >= 0 ? '+' : ''}${(ratio! * 100).toStringAsFixed(2)}%)',
-          style: TextStyle(
-            color: hidden ? palette.muted : color,
-            fontSize: 12,
-          ),
+          style: TextStyle(color: ratioColor, fontSize: 12),
         ),
       ],
     );

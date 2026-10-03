@@ -3,12 +3,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/app_theme.dart';
 import '../../data/trade_api_client.dart';
+import '../providers/order_cancellation_flow_provider.dart';
+import '../providers/order_provider.dart';
 import '../providers/position_action_flow_provider.dart';
 import '../providers/trade_session_provider.dart';
 import 'trade_action_confirmation_dialog.dart';
 
 class TradeAccountControls extends ConsumerStatefulWidget {
-  const TradeAccountControls({super.key});
+  const TradeAccountControls({super.key, this.showCloseAll = true});
+
+  final bool showCloseAll;
 
   @override
   ConsumerState<TradeAccountControls> createState() =>
@@ -17,7 +21,9 @@ class TradeAccountControls extends ConsumerStatefulWidget {
 
 class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
   bool _busy = false;
+  TradeSession? _busyOwnerSession;
   String? _statusMessage;
+  TradeSession? _statusOwnerSession;
 
   @override
   Widget build(BuildContext context) {
@@ -28,6 +34,12 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
     final isAuthenticated = sessionState.isAuthenticated;
     final pendingOperations = sessionState.pendingOperations;
     final hasUnresolvedOperation = pendingOperations.isNotEmpty;
+    ref.watch(orderCancellationFlowProvider);
+    final cancellationFlows = ref.read(orderCancellationFlowProvider.notifier);
+    final canShowOperationDetails =
+        sessionState.isAuthenticated &&
+        session != null &&
+        sessionState.operationAccountIdentifier == session.accountIdentifier;
     final activePositionAction = session == null
         ? false
         : ref
@@ -49,36 +61,32 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (api.isConfigured && isAuthenticated)
+          if (widget.showCloseAll && api.isConfigured && isAuthenticated)
             Align(
               alignment: Alignment.centerLeft,
-              child: OutlinedButton.icon(
+              child: IconButton(
+                tooltip: 'Đóng tất cả vị thế',
                 onPressed:
                     _busy || hasUnresolvedOperation || activePositionAction
                     ? null
                     : _closeAll,
-                icon: Icon(
-                  Icons.warning_amber_rounded,
-                  size: 18,
-                  color: palette.warning,
-                ),
-                label: const Text('Đóng tất cả vị thế'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: palette.negative,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: AppTokens.space3,
-                  ),
-                ),
+                constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                color: palette.warning,
+                icon: const Icon(Icons.warning_amber_rounded, size: 20),
               ),
             ),
           if (!api.isConfigured)
-            const Text(
-              'Chỉ xem vị thế. Hãy cấu hình API khi build rồi đăng nhập trong Cài đặt để bật thao tác.',
-              style: TextStyle(fontSize: 12),
+            Text(
+              widget.showCloseAll
+                  ? 'Chỉ xem vị thế. Hãy cấu hình API khi build rồi đăng nhập trong Cài đặt để bật thao tác.'
+                  : 'Lệnh chờ vẫn chỉ được xem. Cấu hình API và đăng nhập trong Cài đặt để tra cứu thao tác.',
+              style: const TextStyle(fontSize: 12),
             )
           else if (!isAuthenticated) ...[
             Text(
-              'Vị thế chỉ đọc vẫn được hiển thị. Đăng nhập trong Cài đặt để bật thao tác.',
+              widget.showCloseAll
+                  ? 'Vị thế chỉ đọc vẫn được hiển thị. Đăng nhập trong Cài đặt để bật thao tác.'
+                  : 'Lệnh chờ vẫn được hiển thị. Đăng nhập trong Cài đặt để bật thao tác và tra cứu.',
               style: Theme.of(context).textTheme.bodySmall,
             ),
             if (sessionState.isLoading) ...[
@@ -90,14 +98,12 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
             const SizedBox(height: AppTokens.space1),
             Text(
               sessionState.errorMessage!,
-              style: TextStyle(
-                color: palette.negative,
-                fontSize: 12,
-              ),
+              style: TextStyle(color: palette.negative, fontSize: 12),
             ),
           ],
-          if (_busy) const LinearProgressIndicator(minHeight: 2),
-          if (pendingOperations.isNotEmpty) ...[
+          if (_busy && identical(_busyOwnerSession, session))
+            const LinearProgressIndicator(minHeight: 2),
+          if (hasUnresolvedOperation) ...[
             const SizedBox(height: AppTokens.space3),
             Card(
               margin: EdgeInsets.zero,
@@ -106,63 +112,79 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Thao tác cần tra cứu',
-                      style: TextStyle(
+                    Text(
+                      canShowOperationDetails
+                          ? 'Thao tác cần tra cứu'
+                          : 'Cần đăng nhập lại để tra cứu thao tác',
+                      style: const TextStyle(
                         fontWeight: FontWeight.w700,
                         fontSize: 12,
                       ),
                     ),
                     const SizedBox(height: AppTokens.space1),
-                    for (final operation in pendingOperations)
-                      Padding(
-                        padding: const EdgeInsets.symmetric(
-                          vertical: AppTokens.space1,
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Text(
-                              '${operation.targetLabel} · ${_actionLabel(operation.action)} · ${operation.status}\n${operation.operationId}',
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                            const SizedBox(height: AppTokens.space1),
-                            Align(
-                              alignment: Alignment.centerRight,
-                              child: OutlinedButton(
-                                onPressed: _busy || !isAuthenticated
-                                    ? null
-                                    : () => _lookupPendingOperation(operation),
-                                style: OutlinedButton.styleFrom(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: AppTokens.space2,
-                                  ),
-                                ),
-                                child: const Text(
-                                  'Tra cứu trạng thái',
+                    if (canShowOperationDetails)
+                      for (final operation in pendingOperations)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                            vertical: AppTokens.space1,
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              if (cancellationFlows.operationBelongsToSession(
+                                operation,
+                                session,
+                              ))
+                                Text(
+                                  '${operation.targetLabel} · ${_actionLabel(operation.action)} · ${operation.status}\n${operation.operationId}',
+                                  style: const TextStyle(fontSize: 12),
+                                )
+                              else
+                                const Text(
+                                  'Có thao tác cần tra cứu.',
                                   style: TextStyle(fontSize: 12),
                                 ),
+                              const SizedBox(height: AppTokens.space1),
+                              Align(
+                                alignment: Alignment.centerRight,
+                                child: OutlinedButton(
+                                  onPressed: _busy || !isAuthenticated
+                                      ? null
+                                      : () =>
+                                            _lookupPendingOperation(operation),
+                                  style: OutlinedButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: AppTokens.space2,
+                                    ),
+                                  ),
+                                  child: const Text(
+                                    'Tra cứu trạng thái',
+                                    style: TextStyle(fontSize: 12),
+                                  ),
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
-                      ),
-                    if (hasUnresolvedOperation)
+                    if (!canShowOperationDetails)
+                      Text(
+                        'Thao tác và trạng thái chỉ hiện khi đăng nhập đúng tài khoản đã gửi yêu cầu.',
+                        style: TextStyle(color: palette.muted, fontSize: 12),
+                      )
+                    else if (hasUnresolvedOperation)
                       Text(
                         isAuthenticated
                             ? 'Các thao tác mới đang tạm khóa cho đến khi tra cứu xong.'
                             : 'Đăng nhập lại cùng tài khoản để tiếp tục tra cứu.',
-                        style: TextStyle(
-                          color: palette.muted,
-                          fontSize: 12,
-                        ),
+                        style: TextStyle(color: palette.muted, fontSize: 12),
                       ),
                   ],
                 ),
               ),
             ),
           ],
-          if (_statusMessage != null) ...[
+          if (_statusMessage != null &&
+              identical(_statusOwnerSession, session)) ...[
             const SizedBox(height: 6),
             Semantics(
               liveRegion: true,
@@ -199,23 +221,30 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
     }
     setState(() {
       _busy = true;
+      _busyOwnerSession = session;
       _statusMessage = null;
+      _statusOwnerSession = session;
     });
     try {
       // The private API intentionally receives no display filter here.
       final prepared = await ref
           .read(tradeApiProvider)
           .prepare(session.bearerToken, action: 'close_all');
+      if (!_isCurrentSession(session)) return;
       final targetCount = prepared.summary['targetCount'];
       if (targetCount is! int || targetCount != prepared.targets.length) {
         ref.invalidate(tradePositionsProvider);
         _setStatus(
           'Danh sách đóng tất cả không đầy đủ; không có lệnh nào được gửi.',
+          sessionOwner: session,
         );
         return;
       }
       if (targetCount == 0) {
-        _setStatus('Máy chủ không tìm thấy vị thế đủ điều kiện để đóng.');
+        _setStatus(
+          'Máy chủ không tìm thấy vị thế đủ điều kiện để đóng.',
+          sessionOwner: session,
+        );
         return;
       }
 
@@ -226,11 +255,16 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
         confirmLabel: 'Đóng $targetCount vị thế',
         destructive: true,
         accountWide: true,
+        sessionOwner: session,
       );
-      if (!confirmed) return;
+      if (!confirmed || !_isCurrentSession(session)) return;
 
       final api = ref.read(tradeApiProvider);
       final sessionController = ref.read(tradeSessionProvider.notifier);
+      if (!_isCurrentSession(session) ||
+          ref.read(tradeSessionProvider).pendingOperations.isNotEmpty) {
+        return;
+      }
       sessionController.rememberOperation(
         PendingTradeOperation(
           operationId: prepared.operationId,
@@ -257,7 +291,10 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
       } on TradeApiException catch (error) {
         if (error.isUnauthorized ||
             (error.statusCode != null && error.statusCode! < 500)) {
-          sessionController.resolveOperation(prepared.operationId);
+          if (_isCurrentSession(session)) {
+            if (error.isUnauthorized) sessionController.expire();
+            sessionController.resolveOperation(prepared.operationId);
+          }
           rethrow;
         }
         try {
@@ -268,7 +305,7 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
           );
         } on TradeApiException catch (lookupFailure) {
           lookupError = lookupFailure.message;
-          if (lookupFailure.isUnauthorized) {
+          if (lookupFailure.isUnauthorized && _isCurrentSession(session)) {
             ref.read(tradeSessionProvider.notifier).expire();
           }
         }
@@ -282,10 +319,11 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
           );
         } on TradeApiException catch (error) {
           lookupError ??= error.message;
-          if (error.isUnauthorized)
+          if (error.isUnauthorized && _isCurrentSession(session))
             ref.read(tradeSessionProvider.notifier).expire();
         }
       }
+      if (!_isCurrentSession(session)) return;
       if (tradeOperationNeedsStatusLookup(finalResult)) {
         sessionController.updateOperation(
           PendingTradeOperation(
@@ -305,41 +343,87 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
           finalResult.operationId,
           action: finalResult.action,
         ),
+        sessionOwner: session,
       );
-      await _showResult(finalResult, lookupError: lookupError);
+      await _showResult(
+        finalResult,
+        sessionOwner: session,
+        lookupError: lookupError,
+      );
     } on TradeApiException catch (error) {
-      if (error.isUnauthorized)
+      if (error.isUnauthorized && _isCurrentSession(session))
         ref.read(tradeSessionProvider.notifier).expire();
       if (error.isStale || error.statusCode == 409) {
         ref.invalidate(tradePositionsProvider);
       }
-      _setStatus(_formatError(error));
+      _setStatus(_formatError(error), sessionOwner: session);
     } catch (_) {
       _setStatus(
         'Chưa xác nhận được kết quả. Tra cứu trạng thái trước khi thao tác lại.',
+        sessionOwner: session,
       );
     } finally {
       actionFlows.releaseAccountAction(session.accountIdentifier);
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _busyOwnerSession = null;
+        });
+      }
     }
   }
 
   Future<void> _lookupPendingOperation(PendingTradeOperation operation) async {
     if (_busy) return;
     final session = ref.read(tradeSessionProvider).session;
+    final sessionState = ref.read(tradeSessionProvider);
     if (session == null || !session.isActive) {
       ref.read(tradeSessionProvider.notifier).expire();
-      _setStatus('Phiên giao dịch không hoạt động. Hãy đăng nhập lại.');
+      _setStatus(
+        'Phiên giao dịch không hoạt động. Hãy đăng nhập lại.',
+        sessionOwner: session,
+      );
+      return;
+    }
+    if (sessionState.operationAccountIdentifier != session.accountIdentifier ||
+        !sessionState.pendingOperations.any(
+          (pending) => pending.operationId == operation.operationId,
+        )) {
+      _setStatus(
+        'Hãy đăng nhập đúng tài khoản để tra cứu thao tác này.',
+        sessionOwner: session,
+      );
       return;
     }
     setState(() {
       _busy = true;
+      _busyOwnerSession = session;
       _statusMessage = null;
+      _statusOwnerSession = session;
     });
     try {
       final result = await ref
           .read(tradeApiProvider)
           .getResult(session.bearerToken, operation.operationId);
+      final currentSession = ref.read(tradeSessionProvider);
+      if (!identical(currentSession.session, session) ||
+          currentSession.session?.bearerToken != session.bearerToken ||
+          currentSession.session?.accountIdentifier !=
+              session.accountIdentifier ||
+          !currentSession.isAuthenticated) {
+        return;
+      }
+      if (result.operationId != operation.operationId ||
+          result.action != operation.action) {
+        _setStatus(
+          'Kết quả tra cứu không khớp thao tác đã lưu; thao tác vẫn chờ xác minh.',
+          sessionOwner: session,
+        );
+        return;
+      }
+      ref
+          .read(orderCancellationFlowProvider.notifier)
+          .associateOperationWithSession(operation.operationId, session);
       final controller = ref.read(tradeSessionProvider.notifier);
       if (tradeOperationNeedsStatusLookup(result)) {
         controller.updateOperation(
@@ -354,23 +438,32 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
         controller.resolveOperation(operation.operationId);
       }
       ref.invalidate(tradePositionsProvider);
-      await _showResult(result);
+      ref.invalidate(ordersFutureProvider);
+      await _showResult(result, sessionOwner: session);
       _setStatus(
         _headline(result.status, result.operationId, action: result.action),
+        sessionOwner: session,
       );
     } on TradeApiException catch (error) {
-      if (error.isUnauthorized) {
+      if (error.isUnauthorized && _isCurrentSession(session)) {
         ref.read(tradeSessionProvider.notifier).expire();
       }
       _setStatus(
         'Chưa tra cứu được ${operation.operationId}: ${error.message}',
+        sessionOwner: session,
       );
     } catch (_) {
       _setStatus(
         'Chưa tra cứu được ${operation.operationId}. Hãy thử tra cứu lại sau.',
+        sessionOwner: session,
       );
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _busyOwnerSession = null;
+        });
+      }
     }
   }
 
@@ -380,11 +473,27 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
     'partial_close' => 'Đóng một phần',
     'close_position' => 'Đóng 100%',
     'close_all' => 'Đóng tất cả',
+    'cancel_order' => 'Hủy lệnh limit',
     _ => action,
   };
 
-  void _setStatus(String message) {
-    if (mounted) setState(() => _statusMessage = message);
+  void _setStatus(String message, {TradeSession? sessionOwner}) {
+    final currentSession = ref.read(tradeSessionProvider).session;
+    final owner = sessionOwner ?? currentSession;
+    if (!identical(currentSession, owner)) return;
+    if (mounted) {
+      setState(() {
+        _statusMessage = message;
+        _statusOwnerSession = owner;
+      });
+    }
+  }
+
+  bool _isCurrentSession(TradeSession expected) {
+    final current = ref.read(tradeSessionProvider);
+    return current.isAuthenticated &&
+        identical(current.session, expected) &&
+        expected.isActive;
   }
 
   String _formatError(TradeApiException error) {
@@ -402,36 +511,18 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
 
   Future<void> _showResult(
     TradeOperationResult result, {
+    required TradeSession sessionOwner,
     String? lookupError,
   }) async {
     if (!mounted) return;
     await showDialog<void>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(
-          _headline(result.status, result.operationId, action: result.action),
-        ),
-        content: SizedBox(
-          width: 420,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 360),
-            child: ListView(
-              shrinkWrap: true,
-              children: [
-                Text('Mã thao tác: ${result.operationId}'),
-                for (final target in result.targets) _targetOutcome(target),
-                if (lookupError != null)
-                  Text('Lỗi tra cứu trạng thái: $lookupError'),
-              ],
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Đóng'),
-          ),
-        ],
+      builder: (context) => _TradeOperationResultDialog(
+        result: result,
+        lookupError: lookupError,
+        sessionOwner: sessionOwner,
+        targetOutcome: _targetOutcome,
+        headline: _headline,
       ),
     );
   }
@@ -439,6 +530,34 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
   Widget _targetOutcome(Map<String, dynamic> target) {
     final identity = tradeJsonMap(target['identity']);
     final outcome = tradeJsonMap(target['outcome']);
+    if (identity['ordId'] != null) {
+      final instrument = identity['instId']?.toString() ?? 'Lệnh';
+      final orderId = identity['ordId']?.toString() ?? '--';
+      return Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '$instrument · ${target['status']?.toString().toUpperCase() ?? 'UNKNOWN'}',
+            ),
+            Text('Mã lệnh: $orderId'),
+            Text(
+              'Giá: ${_cancelValue(target, outcome, 'price', identity['px'])} · '
+              'Tổng khối lượng: ${_cancelValue(target, outcome, 'originalSize', identity['sz'])}',
+            ),
+            Text(
+              'Đã khớp: ${_cancelValue(target, outcome, 'filledSize')} · '
+              'Còn lại: ${_cancelValue(target, outcome, 'remainingSize')}',
+            ),
+            if (outcome['reason'] != null)
+              Text(
+                'Lý do: ${outcome['reason'].toString().replaceAll('_', ' ')}',
+              ),
+          ],
+        ),
+      );
+    }
     final instrument = identity['instrumentId']?.toString() ?? 'Vị thế';
     final status = target['status']?.toString().toUpperCase() ?? 'UNKNOWN';
     final reason = outcome['reason']?.toString();
@@ -450,26 +569,93 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
     );
   }
 
+  String _cancelValue(
+    Map<String, dynamic> target,
+    Map<String, dynamic> outcome,
+    String key, [
+    Object? fallback,
+  ]) => (target[key] ?? outcome[key] ?? fallback)?.toString() ?? '--';
+
   String _headline(String status, String operationId, {String? action}) =>
       switch (status) {
-        'SUCCEEDED' =>
-          action == 'close_all'
-              ? 'Đã hoàn tất đóng tất cả vị thế'
-              : 'Đã hoàn tất thao tác',
+        'SUCCEEDED' => switch (action) {
+          'close_all' => 'Đã hoàn tất đóng tất cả vị thế',
+          'cancel_order' => 'Đã hủy lệnh limit',
+          _ => 'Đã hoàn tất thao tác',
+        },
         'PARTIAL' =>
-          action == 'close_all'
+          action == 'cancel_order'
+              ? 'Lệnh đã khớp một phần trước khi hủy'
+              : action == 'close_all'
               ? 'Kết quả đóng một phần'
               : 'Thao tác chỉ hoàn tất một phần',
         'UNKNOWN' =>
-          action == 'close_all'
+          action == 'cancel_order'
+              ? 'Chưa rõ kết quả hủy lệnh'
+              : action == 'close_all'
               ? 'Chưa rõ kết quả đóng tất cả'
               : 'Chưa rõ kết quả thao tác',
         'CONFLICT' => 'Danh sách vị thế đã thay đổi',
-        'FAILED' =>
-          action == 'close_all' ? 'Đóng tất cả thất bại' : 'Thao tác thất bại',
+        'FAILED' => switch (action) {
+          'close_all' => 'Đóng tất cả thất bại',
+          'cancel_order' => 'Hủy lệnh limit thất bại',
+          _ => 'Thao tác thất bại',
+        },
         'EXPIRED' => 'Xác nhận đã hết hạn',
         _ => 'Trạng thái $status · $operationId',
       };
+}
+
+class _TradeOperationResultDialog extends ConsumerWidget {
+  const _TradeOperationResultDialog({
+    required this.result,
+    required this.lookupError,
+    required this.sessionOwner,
+    required this.targetOutcome,
+    required this.headline,
+  });
+
+  final TradeOperationResult result;
+  final String? lookupError;
+  final TradeSession sessionOwner;
+  final Widget Function(Map<String, dynamic>) targetOutcome;
+  final String Function(String, String, {String? action}) headline;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final currentSession = ref.watch(tradeSessionProvider).session;
+    final ownsResult = identical(currentSession, sessionOwner);
+    return AlertDialog(
+      title: Text(
+        ownsResult
+            ? headline(result.status, result.operationId, action: result.action)
+            : 'Phiên giao dịch đã thay đổi',
+      ),
+      content: SizedBox(
+        width: 420,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 360),
+          child: ownsResult
+              ? ListView(
+                  shrinkWrap: true,
+                  children: [
+                    Text('Mã thao tác: ${result.operationId}'),
+                    for (final target in result.targets) targetOutcome(target),
+                    if (lookupError != null)
+                      Text('Lỗi tra cứu trạng thái: $lookupError'),
+                  ],
+                )
+              : const Text('Nội dung thao tác đã được ẩn.'),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Đóng'),
+        ),
+      ],
+    );
+  }
 }
 
 class TradeSessionControls extends ConsumerStatefulWidget {
@@ -553,17 +739,14 @@ class _TradeSessionControlsState extends ConsumerState<TradeSessionControls> {
               const SizedBox(height: 8),
               Text(
                 sessionState.errorMessage!,
-                style: TextStyle(
-                color: palette.negative,
-                  fontSize: 12,
-                ),
+                style: TextStyle(color: palette.negative, fontSize: 12),
               ),
             ],
             if (api.supportsSessionRestoration &&
                 !isAuthenticated &&
                 !sessionState.isLoading &&
                 sessionState.errorMessage != null) ...[
-      const SizedBox(height: AppTokens.space2),
+              const SizedBox(height: AppTokens.space2),
               OutlinedButton(
                 onPressed: _busy ? null : _restore,
                 child: const Text('Thử khôi phục phiên'),

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/currency/currency_display_mode.dart';
+import 'package:trading_balance_f/core/theme/app_theme.dart';
 import 'package:trading_balance_f/core/typography/app_text_scale.dart';
 import 'package:trading_balance_f/features/orders/data/okx_order_model.dart';
 import 'package:trading_balance_f/features/orders/data/okx_position_model.dart';
@@ -43,6 +44,8 @@ OkxPosition _position({
   required String liqPx,
   String notionalUsd = '',
   String instId = 'BTC-USDT-SWAP',
+  String upl = '0',
+  String uplRatio = '0',
 }) {
   return OkxPosition(
     instId: instId,
@@ -51,8 +54,8 @@ OkxPosition _position({
     avgPx: '0.09117',
     markPx: '0.09118',
     liqPx: liqPx,
-    upl: '0',
-    uplRatio: '0',
+    upl: upl,
+    uplRatio: uplRatio,
     notionalUsd: notionalUsd,
   );
 }
@@ -114,6 +117,73 @@ Finder _cardContainingPrice(String price) {
 }
 
 void main() {
+  testWidgets('T72 GREEN near-zero position PnL uses muted gray', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _ordersApp(
+        positions: [
+          _position(liqPx: '1000', upl: '0.001', uplRatio: '0.00001'),
+        ],
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    final nearZeroAmount = tester.widget<Text>(find.text('+0.00 '));
+    final nearZeroRatio = tester.widget<Text>(find.text('+0.00%'));
+    expect(nearZeroAmount.style?.color, AppPalette.light.muted);
+    expect(nearZeroRatio.style?.color, AppPalette.light.muted);
+  });
+
+  test('T69 RED-003 order parsing retains cancellation identity', () {
+    final order = OkxOrder.fromJson({
+      'instId': 'BTC-USDT-SWAP',
+      'instType': 'SWAP',
+      'ordId': 'order-99',
+      'ordType': 'limit',
+      'side': 'buy',
+      'px': '65000',
+      'sz': '2',
+      'state': 'live',
+    });
+
+    expect(order.toJson()['ordId'], 'order-99');
+    expect(order.toJson()['ordType'], 'limit');
+  });
+
+  testWidgets('T69 RED-003 pending active limit order exposes cancel icon', (
+    tester,
+  ) async {
+    final order = OkxOrder.fromJson({
+      'instId': 'BTC-USDT-SWAP',
+      'instType': 'SWAP',
+      'ordId': 'order-99',
+      'ordType': 'limit',
+      'side': 'buy',
+      'px': '65000',
+      'sz': '2',
+      'state': 'live',
+      'cTime': '1750000000000',
+    });
+
+    await tester.pumpWidget(
+      _ordersApp(
+        positions: const [],
+        selectedTab: OrderTab.pending,
+        orders: [order],
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    final cancelIcon = find.byTooltip('Hủy lệnh limit');
+    expect(cancelIcon, findsOneWidget);
+    await tester.longPress(cancelIcon);
+    await tester.pumpAndSettle();
+    expect(find.text('Hủy lệnh limit'), findsOneWidget);
+  });
+
   testWidgets('shows an accessible signed-out status beside the trade title', (
     tester,
   ) async {
@@ -157,7 +227,7 @@ void main() {
     await tester.pump();
 
     expect(find.bySemanticsLabel(RegExp('Đã đăng nhập')), findsOneWidget);
-    final closeAll = find.widgetWithText(OutlinedButton, 'Đóng tất cả vị thế');
+    final closeAll = find.byTooltip('Đóng tất cả vị thế');
     expect(closeAll, findsOneWidget);
     expect(tester.getSize(closeAll).width, lessThan(390 * 0.8));
     expect(
@@ -263,7 +333,7 @@ void main() {
       final actionReasonRect = tester.getRect(actionReason);
       expect(cardRect.bottom - actionReasonRect.bottom, closeTo(12, 0.5));
       expect(
-        cardRect.contains(tester.getRect(find.text('Đóng 100%')).center),
+        cardRect.contains(tester.getRect(find.byTooltip('Đóng 100%')).center),
         isTrue,
       );
       expect(actionReasonRect.top, greaterThan(liquidationRect.bottom));
@@ -359,7 +429,9 @@ void main() {
           expect(cardRect.contains(actionReason.center), isTrue);
           expect(cardRect.bottom - actionReason.bottom, closeTo(12, 0.5));
           expect(
-            cardRect.contains(tester.getRect(find.text('Đóng 100%')).center),
+            cardRect.contains(
+              tester.getRect(find.byTooltip('Đóng 100%')).center,
+            ),
             isTrue,
           );
           expect(tester.takeException(), isNull);

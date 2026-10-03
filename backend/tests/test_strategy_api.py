@@ -34,6 +34,8 @@ class FakeStrategyExchange:
         self.pos_mode = "net_mode"
         self.account_uid = "123456789"
         self.positions: list[dict[str, Any]] = []
+        self.position_response_override = False
+        self.position_response: Any = None
         self.fail_position_reads = False
         self.pending: list[dict[str, Any]] = []
         self.available_balance = "100000"
@@ -83,6 +85,9 @@ class FakeStrategyExchange:
         self.monotonic: Any = None
         self.order_detail_reads = 0
         self.order_detail_client_ids: list[str] = []
+        self.after_order_detail_read: Any = None
+        self.order_detail_response_override = False
+        self.order_detail_response: Any = None
         self.leverage_response: dict[str, Any] | None = None
         self.quote_account_barrier: threading.Barrier | None = None
         self.pause_ticker = False
@@ -118,6 +123,8 @@ class FakeStrategyExchange:
             if self.position_read_barrier is not None and self.position_barrier_reads < 2:
                 self.position_barrier_reads += 1
                 self.position_read_barrier.wait(timeout=3)
+            if self.position_response_override:
+                return deepcopy(self.position_response)
             return {"code": "0", "data": [dict(row) for row in self.positions]}
         if method == "GET" and parsed.path == "/api/v5/trade/orders-pending":
             self.pending_reads += 1
@@ -149,7 +156,12 @@ class FakeStrategyExchange:
             client_id = params.get("clOrdId", "")
             self.order_detail_client_ids.append(client_id)
             row = self.orders.get(client_id)
-            return {"code": "0", "data": [] if row is None else [dict(row)]}
+            details = None if row is None else dict(row)
+            if self.after_order_detail_read is not None:
+                self.after_order_detail_read(client_id, details)
+            if self.order_detail_response_override:
+                return deepcopy(self.order_detail_response)
+            return {"code": "0", "data": [] if details is None else [details]}
         if method == "POST" and parsed.path == "/api/v5/account/set-leverage":
             if self.leverage_response is not None:
                 return dict(self.leverage_response)
@@ -468,6 +480,24 @@ class StrategyApiTests(unittest.TestCase):
                 (source_id,),
             )
         return source_id
+
+    def _make_canceled_terminal_strategy(self) -> tuple[str, dict[str, Any]]:
+        strategy_id = self.apply_strategy()
+        for row in self.exchange.orders.values():
+            row["state"] = "canceled"
+            row["accFillSz"] = "0"
+            row["avgPx"] = "0"
+        with self.service.store.transaction() as connection:
+            connection.execute(
+                "UPDATE strategy_sync_state SET last_success_at=?, last_error=NULL, next_scan_at=? "
+                "WHERE strategy_id=?",
+                (self.now - 60, self.now - 60, strategy_id),
+            )
+        status, result = self.request("GET", f"/v1/strategies/{strategy_id}/result")
+        self.assertEqual(status, 200, result)
+        self.assertTrue(result["orders"])
+        self.assertTrue(all(row["status"] == "canceled" for row in result["orders"]), result)
+        return strategy_id, result
 
     def test_red_strategy_routes_require_bearer_before_exchange_reads(self) -> None:
         status, result = self.request("GET", "/v1/strategies", authenticated=False)
@@ -1155,7 +1185,7 @@ class StrategyApiTests(unittest.TestCase):
         self.assertEqual(expired["status"], "DRAFT")
         self.assertEqual(self.exchange.trade_writes, [])
 
-    def test_red_partial_batch_ack_is_immutable_and_not_resubmitted(self) -> None:
+    def test_green_rejected_batch_ack_is_deletable_but_never_resubmitted(self) -> None:
         strategy_id, _ = self.save_draft()
         status, prepared = self.request("POST", f"/v1/strategies/{strategy_id}/prepare-apply", {})
         self.assertEqual(status, 200, prepared)
@@ -1168,8 +1198,14 @@ class StrategyApiTests(unittest.TestCase):
         status, duplicate = self.request("POST", f"/v1/strategies/{strategy_id}/execute-apply", command)
         self.assertEqual(status, 200, duplicate)
         self.assertEqual(duplicate["status"], "PARTIAL")
+        self.assertFalse(duplicate["canDelete"])
+        self.assertFalse(duplicate["canReplace"])
+        status, terminal = self.request("GET", f"/v1/strategies/{strategy_id}/result")
+        self.assertEqual(status, 200, terminal)
+        self.assertTrue(terminal["canDelete"])
         status, deleted = self.request("POST", f"/v1/strategies/{strategy_id}/delete", {})
-        self.assertEqual(status, 409, deleted)
+        self.assertEqual(status, 200, deleted)
+        self.assertEqual(deleted["status"], "DELETED")
         self.assertEqual(len(self.exchange.batch_writes), 1)
 
     def test_red_unknown_batch_and_duplicate_execute_are_durable_and_never_retried(self) -> None:
@@ -1664,6 +1700,7 @@ class StrategyApiTests(unittest.TestCase):
         self.assertEqual(result["failureReason"], "leverage_rejected")
         self.assertFalse(result["batchAttempted"])
         self.assertTrue(result["canDelete"])
+        self.assertTrue(result["canReplace"])
         self.assertFalse(result["replacementCleanupConflict"])
         with self.service.store.connection() as connection:
             persisted = connection.execute(
@@ -1718,6 +1755,321 @@ class StrategyApiTests(unittest.TestCase):
         self.assertFalse(applying["canDelete"])
         status, conflict = self.request("POST", f"/v1/strategies/{applying_id}/delete", {})
         self.assertEqual(status, 409, conflict)
+
+    def test_red_terminal_delete_rechecks_cached_orders_and_rejects_live_or_unknown_state(self) -> None:
+        strategy_id, result = self._make_canceled_terminal_strategy()
+        client_id = result["orders"][0]["clientOrderId"]
+        reads_before = self.exchange.order_detail_reads
+        self.exchange.calls.clear()
+
+        original = deepcopy(self.exchange.orders[client_id])
+        bad_details = (
+            {"state": "live"},
+            {"state": "unknown"},
+            {"instId": "ETH-USDT-SWAP"},
+            {"clOrdId": "different-client-id"},
+            {"ordId": "different-exchange-id"},
+            {"sz": "6"},
+            {"side": "sell"},
+            {"accFillSz": "6"},
+        )
+        for changes in bad_details:
+            self.exchange.orders[client_id] = {**original, **changes}
+            status, rejected = self.request("POST", f"/v1/strategies/{strategy_id}/delete", {})
+            self.assertEqual(status, 409, rejected)
+            self.assertEqual(rejected["error"], "strategy_immutable")
+
+        self.assertEqual(self.exchange.order_detail_reads - reads_before, len(bad_details))
+        self.assertEqual(self.exchange.trade_writes, [])
+        with self.service.store.connection() as connection:
+            self.assertIsNotNone(connection.execute(
+                "SELECT 1 FROM strategies WHERE strategy_id=?", (strategy_id,)
+            ).fetchone())
+
+    def test_red_terminal_delete_rejects_malformed_or_incomplete_local_order_identity(self) -> None:
+        strategy_id, result = self._make_canceled_terminal_strategy()
+        saved = result["orders"][0]
+        saved.pop("exchangeOrderId")
+        with self.service.store.transaction() as connection:
+            connection.execute(
+                "UPDATE strategies SET results_json=?, updated_at=updated_at+1 WHERE strategy_id=?",
+                (encode_json(result["orders"]), strategy_id),
+            )
+        reads_before = self.exchange.order_detail_reads
+        self.exchange.calls.clear()
+
+        status, rejected = self.request("POST", f"/v1/strategies/{strategy_id}/delete", {})
+
+        self.assertEqual(status, 409, rejected)
+        self.assertEqual(rejected["error"], "strategy_immutable")
+        self.assertEqual(self.exchange.order_detail_reads, reads_before)
+        self.assertEqual(self.exchange.trade_writes, [])
+        with self.service.store.connection() as connection:
+            self.assertIsNotNone(connection.execute(
+                "SELECT 1 FROM strategies WHERE strategy_id=?", (strategy_id,)
+            ).fetchone())
+
+    def test_red_terminal_delete_rejects_position_presence_and_uncertain_size(self) -> None:
+        strategy_id, _ = self._make_canceled_terminal_strategy()
+        self.exchange.calls.clear()
+
+        for position in (
+            {"instId": INSTRUMENT, "pos": "1", "posSide": "net"},
+            {"instId": INSTRUMENT, "pos": "invalid", "posSide": "long"},
+        ):
+            self.exchange.positions = [position]
+            status, rejected = self.request("POST", f"/v1/strategies/{strategy_id}/delete", {})
+            self.assertEqual(status, 409, rejected)
+            self.assertEqual(rejected["error"], "strategy_immutable")
+
+        self.assertEqual(self.exchange.trade_writes, [])
+        with self.service.store.connection() as connection:
+            self.assertIsNotNone(connection.execute(
+                "SELECT 1 FROM strategies WHERE strategy_id=?", (strategy_id,)
+            ).fetchone())
+
+    def test_red_terminal_delete_fails_closed_on_position_read_error(self) -> None:
+        strategy_id, _ = self._make_canceled_terminal_strategy()
+        self.exchange.fail_position_reads = True
+        self.exchange.calls.clear()
+
+        status, rejected = self.request("POST", f"/v1/strategies/{strategy_id}/delete", {})
+
+        self.assertEqual(status, 502, rejected)
+        self.assertEqual(rejected["error"], "exchange_unavailable")
+        self.assertEqual(self.exchange.trade_writes, [])
+        with self.service.store.connection() as connection:
+            self.assertIsNotNone(connection.execute(
+                "SELECT 1 FROM strategies WHERE strategy_id=?", (strategy_id,)
+            ).fetchone())
+
+    def test_red_terminal_delete_rejects_account_change_during_fresh_reads(self) -> None:
+        strategy_id, _ = self._make_canceled_terminal_strategy()
+        self.exchange.after_order_detail_read = lambda _client_id, _details: setattr(
+            self.exchange, "account_uid", "987654321"
+        )
+        self.exchange.calls.clear()
+
+        status, rejected = self.request("POST", f"/v1/strategies/{strategy_id}/delete", {})
+
+        self.assertEqual(status, 409, rejected)
+        self.assertEqual(rejected["error"], "account_changed")
+        self.assertEqual(self.exchange.trade_writes, [])
+        with self.service.store.connection() as connection:
+            self.assertIsNotNone(connection.execute(
+                "SELECT 1 FROM strategies WHERE strategy_id=?", (strategy_id,)
+            ).fetchone())
+
+    def test_red_terminal_delete_rejects_concurrent_strategy_revision_change(self) -> None:
+        strategy_id, _ = self._make_canceled_terminal_strategy()
+
+        def change_revision(_client_id: str, _details: dict[str, Any] | None) -> None:
+            self.exchange.after_order_detail_read = None
+            with self.service.store.transaction() as connection:
+                connection.execute(
+                    "UPDATE strategies SET updated_at=updated_at+1 WHERE strategy_id=?",
+                    (strategy_id,),
+                )
+
+        self.exchange.after_order_detail_read = change_revision
+        self.exchange.calls.clear()
+
+        status, rejected = self.request("POST", f"/v1/strategies/{strategy_id}/delete", {})
+
+        self.assertEqual(status, 409, rejected)
+        self.assertEqual(rejected["error"], "strategy_immutable")
+        self.assertEqual(self.exchange.trade_writes, [])
+        with self.service.store.connection() as connection:
+            self.assertIsNotNone(connection.execute(
+                "SELECT 1 FROM strategies WHERE strategy_id=?", (strategy_id,)
+            ).fetchone())
+
+    def test_red_terminal_delete_rejects_corrupt_queue_or_active_lease_before_reads(self) -> None:
+        strategy_id, _ = self._make_canceled_terminal_strategy()
+        with self.service.store.transaction() as connection:
+            connection.execute(
+                "UPDATE strategies SET submission_mode='sequential', queue_json='not-json', "
+                "updated_at=updated_at+1 WHERE strategy_id=?",
+                (strategy_id,),
+            )
+        reads_before = self.exchange.order_detail_reads
+        self.exchange.calls.clear()
+
+        status, rejected = self.request("POST", f"/v1/strategies/{strategy_id}/delete", {})
+
+        self.assertEqual(status, 409, rejected)
+        self.assertEqual(self.exchange.order_detail_reads, reads_before)
+        self.assertEqual(self.exchange.trade_writes, [])
+        with self.service.store.transaction() as connection:
+            connection.execute(
+                "UPDATE strategies SET submission_mode='batch', queue_json=NULL, execution_id='active-run', "
+                "execution_lease_until=?, updated_at=updated_at+1 WHERE strategy_id=?",
+                (self.now + 30, strategy_id),
+            )
+        status, rejected = self.request("POST", f"/v1/strategies/{strategy_id}/delete", {})
+        self.assertEqual(status, 409, rejected)
+        self.assertEqual(self.exchange.order_detail_reads, reads_before)
+        self.assertEqual(self.exchange.trade_writes, [])
+
+    def test_red_t73_terminal_delete_rejects_malformed_raw_positions_for_hint_and_delete(self) -> None:
+        valid_position = {"instId": INSTRUMENT, "pos": "0", "posSide": "net"}
+        invalid_responses = (
+            ("missing_data", {"code": "0"}),
+            ("null_data", {"code": "0", "data": None}),
+            ("scalar_data", {"code": "0", "data": "invalid"}),
+            ("nonobject_response", []),
+            ("nonobject_row", {"code": "0", "data": [None]}),
+            ("mixed_rows", {"code": "0", "data": [valid_position, None]}),
+        )
+        for name, response in invalid_responses:
+            with self.subTest(response=name):
+                self.exchange.position_response_override = False
+                strategy_id, _ = self._make_canceled_terminal_strategy()
+                self.exchange.position_response_override = True
+                self.exchange.position_response = response
+
+                status, result = self.request("GET", f"/v1/strategies/{strategy_id}/result")
+
+                self.assertEqual(status, 200, result)
+                self.assertFalse(result["canDelete"], result)
+                self.assertEqual(result["positionStatus"], "unavailable", result)
+                self.exchange.calls.clear()
+
+                status, rejected = self.request("POST", f"/v1/strategies/{strategy_id}/delete", {})
+
+                expected_status = 409 if name in {"nonobject_row", "mixed_rows"} else 502
+                expected_error = "strategy_immutable" if expected_status == 409 else "exchange_unavailable"
+                self.assertEqual(status, expected_status, rejected)
+                self.assertEqual(rejected["error"], expected_error)
+                self.assertEqual(self.exchange.trade_writes, [])
+                with self.service.store.connection() as connection:
+                    self.assertIsNotNone(connection.execute(
+                        "SELECT 1 FROM strategies WHERE strategy_id=?", (strategy_id,)
+                    ).fetchone())
+        self.exchange.position_response_override = False
+
+    def test_red_t73_terminal_delete_rejects_ambiguous_raw_order_responses(self) -> None:
+        responses = (
+            ("missing_data", lambda details: {"code": "0"}),
+            ("null_data", lambda details: {"code": "0", "data": None}),
+            ("nonlist_data", lambda details: {"code": "0", "data": {}}),
+            ("nonobject_response", lambda details: []),
+            ("nonobject_row", lambda details: {"code": "0", "data": [None]}),
+            (
+                "multiple_rows",
+                lambda details: {"code": "0", "data": [details, {**details, "state": "live"}]},
+            ),
+        )
+        for name, response_factory in responses:
+            with self.subTest(response=name):
+                self.exchange.order_detail_response_override = False
+                strategy_id, result = self._make_canceled_terminal_strategy()
+                client_id = result["orders"][0]["clientOrderId"]
+                details = deepcopy(self.exchange.orders[client_id])
+                self.exchange.order_detail_response_override = True
+                self.exchange.order_detail_response = response_factory(details)
+                self.exchange.calls.clear()
+
+                status, rejected = self.request("POST", f"/v1/strategies/{strategy_id}/delete", {})
+
+                expected_status = 502 if name in {"nonlist_data", "nonobject_response"} else 409
+                expected_error = "exchange_unavailable" if expected_status == 502 else "strategy_immutable"
+                self.assertEqual(status, expected_status, rejected)
+                self.assertEqual(rejected["error"], expected_error)
+                self.assertEqual(self.exchange.trade_writes, [])
+                with self.service.store.connection() as connection:
+                    self.assertIsNotNone(connection.execute(
+                        "SELECT 1 FROM strategies WHERE strategy_id=?", (strategy_id,)
+                    ).fetchone())
+        self.exchange.order_detail_response_override = False
+
+    def test_red_t73_submitted_batch_delete_rejects_not_submitted_rows(self) -> None:
+        strategy_id, result = self._make_canceled_terminal_strategy()
+        orders = deepcopy(result["orders"])
+        orders[0]["status"] = "not_submitted"
+        orders[0]["placementState"] = "not_submitted"
+        orders[0]["exchangeOrderId"] = None
+        orders[0]["filledContracts"] = "0"
+        with self.service.store.transaction() as connection:
+            connection.execute(
+                "UPDATE strategies SET results_json=?, updated_at=updated_at+1 WHERE strategy_id=?",
+                (encode_json(orders), strategy_id),
+            )
+
+        status, projected = self.request("GET", f"/v1/strategies/{strategy_id}/result")
+        self.assertEqual(status, 200, projected)
+        self.assertFalse(projected["canDelete"], projected)
+        self.exchange.calls.clear()
+        reads_before = self.exchange.order_detail_reads
+
+        status, rejected = self.request("POST", f"/v1/strategies/{strategy_id}/delete", {})
+
+        self.assertEqual(status, 409, rejected)
+        self.assertEqual(rejected["error"], "strategy_immutable")
+        self.assertEqual(self.exchange.order_detail_reads, reads_before)
+        self.assertEqual(self.exchange.trade_writes, [])
+        with self.service.store.connection() as connection:
+            self.assertIsNotNone(connection.execute(
+                "SELECT 1 FROM strategies WHERE strategy_id=?", (strategy_id,)
+            ).fetchone())
+
+    def test_green_t73_stopped_sequential_not_submitted_rows_remain_deletable(self) -> None:
+        status, setting = self.request(
+            "POST", "/v1/strategies/settings", {"limitOrderSubmissionMode": "sequential"}
+        )
+        self.assertEqual(status, 200, setting)
+        strategy_id, _ = self.save_draft(self.multi_order_contract(2))
+        status, prepared = self.request(
+            "POST", f"/v1/strategies/{strategy_id}/prepare-apply", {}
+        )
+        self.assertEqual(status, 200, prepared)
+        status, queued = self.request(
+            "POST", f"/v1/strategies/{strategy_id}/execute-apply",
+            {"confirmationToken": prepared["confirmationToken"]},
+        )
+        self.assertEqual(status, 200, queued)
+        self.assertEqual(queued["queueStatus"], "pending")
+        self.exchange.leverage_response = {"code": "51008", "data": [{}]}
+        self.assertTrue(self._worker().run_once())
+        self.exchange.leverage_response = None
+
+        status, stopped = self.request("GET", f"/v1/strategies/{strategy_id}/result")
+        self.assertEqual(status, 200, stopped)
+        self.assertEqual(stopped["queueStatus"], "stopped")
+        self.assertEqual([row["status"] for row in stopped["orders"]], ["not_submitted", "not_submitted"])
+        self.assertTrue(stopped["canDelete"], stopped)
+        reads_before = self.exchange.order_detail_reads
+        self.exchange.calls.clear()
+
+        status, deleted = self.request("POST", f"/v1/strategies/{strategy_id}/delete", {})
+
+        self.assertEqual(status, 200, deleted)
+        self.assertEqual(deleted["status"], "DELETED")
+        self.assertEqual(self.exchange.order_detail_reads, reads_before)
+        self.assertEqual(self.exchange.trade_writes, [])
+
+    def test_green_canceled_terminal_orders_can_be_deleted_without_replacement_eligibility(self) -> None:
+        strategy_id, result = self._make_canceled_terminal_strategy()
+        self.assertTrue(result["canDelete"])
+        self.assertFalse(result["canReplace"])
+        reads_before = self.exchange.order_detail_reads
+        self.exchange.calls.clear()
+
+        status, deleted = self.request("POST", f"/v1/strategies/{strategy_id}/delete", {})
+
+        self.assertEqual(status, 200, deleted)
+        self.assertEqual(self.exchange.order_detail_reads - reads_before, len(result["orders"]))
+        self.assertEqual(self.exchange.trade_writes, [])
+        with self.service.store.connection() as connection:
+            self.assertIsNone(connection.execute(
+                "SELECT 1 FROM strategies WHERE strategy_id=?", (strategy_id,)
+            ).fetchone())
+            self.assertIsNone(connection.execute(
+                "SELECT 1 FROM strategy_reservations WHERE strategy_id=?", (strategy_id,)
+            ).fetchone())
+            self.assertIsNone(connection.execute(
+                "SELECT 1 FROM strategy_sync_state WHERE strategy_id=?", (strategy_id,)
+            ).fetchone())
 
     def test_red_replacement_source_must_be_eligible_when_saved_and_before_execute(self) -> None:
         source_id, _ = self.save_draft()

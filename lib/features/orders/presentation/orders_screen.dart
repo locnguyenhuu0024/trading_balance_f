@@ -7,9 +7,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/formatting/adaptive_number_format.dart';
 import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/theme/pnl_color.dart';
 import '../../../core/timezone/app_time_zone.dart';
 import '../../../core/widgets/crypto_icon.dart';
 import 'providers/order_provider.dart';
+import 'providers/order_cancellation_flow_provider.dart';
 import '../data/okx_order_model.dart';
 import '../data/okx_position_model.dart';
 import 'providers/position_action_flow_provider.dart';
@@ -21,6 +23,7 @@ import '../../settings/presentation/settings_screen.dart'
     show currencyProvider, vndExchangeRateProvider;
 import 'widgets/order_filter_controls.dart';
 import 'widgets/order_notional.dart';
+import 'widgets/order_cancellation_control.dart';
 import 'widgets/responsive_order_grid.dart';
 import 'widgets/position_action_controls.dart';
 import 'widgets/trade_account_controls.dart';
@@ -327,7 +330,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       );
     } else {
       final ordersAsyncValue = ref.watch(ordersFutureProvider);
-      return RefreshIndicator(
+      final orderList = RefreshIndicator(
         color: palette.ink,
         backgroundColor: palette.raised,
         onRefresh: () async => ref.invalidate(ordersFutureProvider),
@@ -369,6 +372,15 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
           },
         ),
       );
+      if (currentTab == OrderTab.pending) {
+        return Column(
+          children: [
+            const TradeAccountControls(showCloseAll: false),
+            Expanded(child: orderList),
+          ],
+        );
+      }
+      return orderList;
     }
   }
 
@@ -480,9 +492,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     final sideText = posSide == 'NET' ? 'VỊ THẾ' : (isLong ? 'LONG' : 'SHORT');
 
     final pnl = double.tryParse(position.upl);
-    final pnlColor = pnl == null
-        ? palette.muted
-        : (pnl >= 0 ? palette.positive : palette.negative);
+    final pnlColor = resolvePnlColor(pnl, palette, hidden: isBalanceHidden);
     final pnlSign = pnl == null ? '' : (pnl >= 0 ? '+' : '');
     final pnlFormatted = pnl == null
         ? '--'
@@ -492,9 +502,11 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     final pnlRatioPercent = pnlRatio == null
         ? '--'
         : '${pnlRatio >= 0 ? '+' : ''}${(pnlRatio * 100).toStringAsFixed(2)}%';
-    final pnlRatioColor = pnlRatio == null
-        ? palette.muted
-        : (pnlRatio >= 0 ? palette.positive : palette.negative);
+    final pnlRatioColor = resolvePnlColor(
+      pnlRatio == null ? null : pnlRatio * 100,
+      palette,
+      hidden: isBalanceHidden,
+    );
 
     final String baseCoin = position.instId.split('-').isNotEmpty
         ? position.instId.split('-').first
@@ -940,6 +952,8 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
               textColor: textColor,
               subtitleColor: subtitleColor,
             ),
+            if (currentTab == OrderTab.pending && isActiveLimitOrder(order))
+              OrderCancellationControl(order: order),
           ],
         ),
       ),
