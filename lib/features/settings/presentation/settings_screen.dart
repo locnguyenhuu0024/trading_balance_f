@@ -12,6 +12,7 @@ import '../../../core/navigation/navigation_destination_data.dart';
 import '../../../core/navigation/navigation_preferences.dart';
 import '../../../core/navigation/navigation_preferences_provider.dart';
 import '../../../core/security/secure_storage_helper.dart';
+import '../../../core/theme/app_theme.dart';
 import '../../../core/timezone/app_time_zone.dart';
 import '../../../core/typography/app_text_scale.dart';
 import '../../fractal_tracker/presentation/providers/fractal_provider.dart';
@@ -129,9 +130,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       if (mounted) {
         ref.read(appTimeZoneProvider.notifier).state = previousTimeZoneId;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
+          SnackBar(
             content: Text('Không lưu được múi giờ. Vui lòng thử lại.'),
-            backgroundColor: Colors.redAccent,
+            backgroundColor: AppPalette.of(context).negative,
           ),
         );
       }
@@ -157,9 +158,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       if (mounted) {
         ref.read(appTextScaleProvider.notifier).state = previousScale;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
+          SnackBar(
             content: Text('Không lưu được cỡ chữ ứng dụng. Vui lòng thử lại.'),
-            backgroundColor: Colors.redAccent,
+            backgroundColor: AppPalette.of(context).negative,
           ),
         );
       }
@@ -209,18 +210,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final appTextScale = ref.watch(appTextScaleProvider);
     final navigationState = ref.watch(navigationPreferencesProvider);
 
-    final isSysDark =
-        MediaQuery.of(context).platformBrightness == Brightness.dark;
-    final isDark =
-        themeMode == ThemeMode.dark ||
-        (themeMode == ThemeMode.system && isSysDark);
-
-    final bgColor = isDark ? const Color(0xFF121212) : Colors.grey.shade50;
-    final textColor = isDark ? Colors.white : Colors.black;
-    final cardColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
-    final sectionTitleColor = isDark
-        ? Colors.grey.shade400
-        : Colors.grey.shade600;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final palette = AppPalette.forBrightness(isDark);
+    final bgColor = palette.background;
+    final textColor = palette.ink;
+    final cardColor = palette.raised;
+    final sectionTitleColor = palette.muted;
 
     return Scaffold(
       backgroundColor: bgColor,
@@ -257,9 +252,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 color: cardColor,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(16),
-                  side: BorderSide(
-                    color: isDark ? Colors.grey.shade800 : Colors.grey.shade200,
-                  ),
+                  side: BorderSide(color: palette.border),
                 ),
                 child: Column(
                   children: [
@@ -315,13 +308,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         ),
                       ),
                     ),
-                    Divider(
-                      height: 1,
-                      color: isDark
-                          ? Colors.grey.shade800
-                          : Colors.grey.shade100,
-                      indent: 52,
-                    ),
+                    Divider(height: 1, color: palette.border, indent: 52),
                     ListTile(
                       leading: Icon(
                         Icons.schedule_outlined,
@@ -342,11 +329,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           IconButton(
                             key: const Key('settings-timezone-info-button'),
                             tooltip: 'Thông tin múi giờ',
-                            visualDensity: VisualDensity.compact,
+                            visualDensity: VisualDensity.standard,
                             padding: EdgeInsets.zero,
                             constraints: const BoxConstraints(
-                              minWidth: 28,
-                              minHeight: 28,
+                              minWidth: AppTokens.minimumTouchTarget,
+                              minHeight: AppTokens.minimumTouchTarget,
                             ),
                             icon: Icon(
                               Icons.help_outline_rounded,
@@ -391,9 +378,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ),
                     Divider(
                       height: 1,
-                      color: isDark
-                          ? Colors.grey.shade800
-                          : Colors.grey.shade100,
+                      color: isDark ? palette.border : palette.surface,
                       indent: 52,
                     ),
                     ListTile(
@@ -414,9 +399,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           ? exchangeRateAsync.when(
                               data: (rate) => Text(
                                 '1 USDT ≈ ${NumberFormat("#,##0", "en_US").format(rate)} đ',
-                                style: const TextStyle(
-                                  color: Colors.green,
-                                  fontSize: 11,
+                                style: TextStyle(
+                                  color: palette.positive,
+                                  fontSize: 12,
                                   fontWeight: FontWeight.w500,
                                 ),
                               ),
@@ -424,14 +409,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                 'Đang cập nhật tỷ giá...',
                                 style: TextStyle(
                                   color: sectionTitleColor,
-                                  fontSize: 11,
+                                  fontSize: 12,
                                 ),
                               ),
-                              error: (_, __) => const Text(
+                              error: (_, __) => Text(
                                 'Lỗi tải tỷ giá (Dùng giá chuẩn)',
                                 style: TextStyle(
-                                  color: Colors.redAccent,
-                                  fontSize: 11,
+                                  color: palette.negative,
+                                  fontSize: 12,
                                 ),
                               ),
                             )
@@ -471,9 +456,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ),
                     Divider(
                       height: 1,
-                      color: isDark
-                          ? Colors.grey.shade800
-                          : Colors.grey.shade100,
+                      color: isDark ? palette.border : palette.surface,
                       indent: 52,
                     ),
                     ListTile(
@@ -495,7 +478,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         'Kiểu hiển thị, vị trí, kích thước và độ trong suốt.',
                         style: TextStyle(
                           color: sectionTitleColor,
-                          fontSize: 11,
+                          fontSize: 12,
                         ),
                       ),
                       trailing: Icon(
@@ -508,9 +491,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ),
                     Divider(
                       height: 1,
-                      color: isDark
-                          ? Colors.grey.shade800
-                          : Colors.grey.shade100,
+                      color: isDark ? palette.border : palette.surface,
                       indent: 52,
                     ),
                     ListTile(
@@ -532,7 +513,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         'Chọn những trang xuất hiện trong điều hướng chính.',
                         style: TextStyle(
                           color: sectionTitleColor,
-                          fontSize: 11,
+                          fontSize: 12,
                         ),
                       ),
                       trailing: Icon(
@@ -545,9 +526,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ),
                     Divider(
                       height: 1,
-                      color: isDark
-                          ? Colors.grey.shade800
-                          : Colors.grey.shade100,
+                      color: isDark ? palette.border : palette.border,
                       indent: 52,
                     ),
                     ListTile(
@@ -603,9 +582,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
                         child: Text(
                           navigationState.errorMessage!,
-                          style: const TextStyle(
-                            color: Colors.redAccent,
-                            fontSize: 11,
+                          style: TextStyle(
+                            color: palette.negative,
+                            fontSize: 12,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
@@ -633,14 +612,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 color: cardColor,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(16),
-                  side: BorderSide(
-                    color: isDark ? Colors.grey.shade800 : Colors.grey.shade200,
-                  ),
+                  side: BorderSide(color: palette.border),
                 ),
                 child: Column(
                   children: [
                     SwitchListTile(
-                      activeColor: Colors.blueAccent,
                       secondary: Icon(
                         Icons.visibility_off,
                         color: textColor,
@@ -658,7 +634,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         'Che tài sản khi vừa mở ứng dụng',
                         style: TextStyle(
                           color: sectionTitleColor,
-                          fontSize: 11,
+                          fontSize: 12,
                         ),
                       ),
                       value: hideBalanceDefault,
@@ -672,13 +648,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ),
                     Divider(
                       height: 1,
-                      color: isDark
-                          ? Colors.grey.shade800
-                          : Colors.grey.shade100,
+                      color: isDark ? palette.border : palette.surface,
                       indent: 52,
                     ),
                     SwitchListTile(
-                      activeColor: Colors.blueAccent,
                       secondary: Icon(
                         Icons.fingerprint,
                         color: textColor,
@@ -696,7 +669,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         'Yêu cầu vân tay / FaceID khi mở app',
                         style: TextStyle(
                           color: sectionTitleColor,
-                          fontSize: 11,
+                          fontSize: 12,
                         ),
                       ),
                       value: bioAuth,
@@ -716,9 +689,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 color: cardColor,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(16),
-                  side: BorderSide(
-                    color: isDark ? Colors.grey.shade800 : Colors.grey.shade200,
-                  ),
+                  side: BorderSide(color: palette.border),
                 ),
                 child: ListTile(
                   key: const Key('settings-trade-access-button'),
@@ -813,8 +784,8 @@ class _NavigationVisibilityDialog extends ConsumerWidget {
                         child: Icon(
                           Icons.drag_handle_rounded,
                           color: state.isSaving
-                              ? Colors.grey
-                              : Colors.grey.shade600,
+                              ? AppPalette.of(context).border
+                              : AppPalette.of(context).muted,
                         ),
                       ),
                       onChanged:
@@ -847,7 +818,10 @@ class _NavigationVisibilityDialog extends ConsumerWidget {
                 padding: const EdgeInsets.only(top: 8),
                 child: Text(
                   state.errorMessage!,
-                  style: const TextStyle(color: Colors.redAccent, fontSize: 12),
+                  style: TextStyle(
+                    color: AppPalette.of(context).negative,
+                    fontSize: 12,
+                  ),
                 ),
               ),
           ],
@@ -988,8 +962,8 @@ class _NavigationAppearanceDialog extends ConsumerWidget {
                   padding: const EdgeInsets.only(top: 8),
                   child: Text(
                     state.errorMessage!,
-                    style: const TextStyle(
-                      color: Colors.redAccent,
+                    style: TextStyle(
+                      color: AppPalette.of(context).negative,
                       fontSize: 12,
                     ),
                   ),

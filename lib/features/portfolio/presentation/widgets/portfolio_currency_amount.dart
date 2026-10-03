@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:trading_balance_f/core/currency/currency_display_mode.dart';
 
+import '../../../../core/theme/app_theme.dart';
+
 @immutable
 class PortfolioCurrencyLines {
   const PortfolioCurrencyLines({required this.primary, this.secondary});
@@ -100,7 +102,7 @@ class PortfolioCurrencyAmount extends StatelessWidget {
           style: primaryStyle,
         ),
         if (lines.secondary != null) ...[
-          const SizedBox(height: 2),
+          const SizedBox(height: AppTokens.space1),
           Text(lines.secondary!, textAlign: textAlign, style: secondaryStyle),
         ],
       ],

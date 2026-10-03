@@ -9,6 +9,7 @@ import '../../features/portfolio/presentation/risk_dashboard_screen.dart';
 import '../../features/settings/presentation/settings_screen.dart';
 import '../../features/support_resistance/presentation/support_resistance_screen.dart';
 import '../../features/strategy/presentation/strategy_screen.dart';
+import '../theme/app_theme.dart';
 import 'navigation_destination_data.dart';
 import 'navigation_preferences.dart';
 import 'navigation_preferences_provider.dart';
@@ -72,7 +73,7 @@ class _MainNavigationShellState extends ConsumerState<MainNavigationShell> {
   @override
   Widget build(BuildContext context) {
     final isDark = ref.watch(isDarkModeProvider);
-    final backgroundColor = isDark ? const Color(0xFF121212) : Colors.white;
+    final backgroundColor = AppPalette.forBrightness(isDark).background;
     final navigationPreferences = ref.watch(
       navigationPreferencesProvider.select((state) => state.preferences),
     );

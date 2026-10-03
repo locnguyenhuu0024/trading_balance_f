@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../../core/network/dio_client.dart';
 import '../../../core/navigation/navigation_content_frame.dart';
+import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/crypto_icon.dart';
 import '../../portfolio/presentation/portfolio_screen.dart'; // Lấy trạng thái Dark Mode
 import '../../market/presentation/providers/market_provider.dart';
@@ -94,12 +95,12 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
     // Thêm theo dõi giá realtime từ WebSocket
     final livePrices = ref.watch(livePriceProvider);
 
-    // Bảng màu
-    final bgColor = isDark ? const Color(0xFF121212) : Colors.white;
-    final textColor = isDark ? Colors.white : Colors.black;
-    final cardColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
-    final borderColor = isDark ? Colors.grey.shade800 : Colors.grey.shade200;
-    final iconBgColor = isDark ? Colors.grey.shade800 : Colors.grey.shade100;
+    final palette = AppPalette.forBrightness(isDark);
+    final bgColor = palette.background;
+    final textColor = palette.ink;
+    final cardColor = palette.raised;
+    final borderColor = palette.border;
+    final iconBgColor = palette.surface;
 
     return Scaffold(
       backgroundColor: bgColor,
@@ -116,8 +117,8 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
       ),
       body: NavigationContentFrame(
         child: RefreshIndicator(
-          color: isDark ? Colors.black : Colors.black,
-          backgroundColor: isDark ? Colors.white : Colors.white,
+          color: palette.ink,
+          backgroundColor: palette.raised,
           onRefresh: () async {
             _isWsSubscribed = false; // Reset trạng thái để đăng ký lại WS
             return ref.invalidate(marketListProvider);
@@ -129,7 +130,7 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
               child: Text(
                 'Lỗi tải dữ liệu:\n$err',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: isDark ? Colors.redAccent : Colors.red),
+                style: TextStyle(color: palette.negative),
               ),
             ),
             data: (tickers) {
@@ -144,8 +145,8 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
 
               return ListView.builder(
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 8,
+                  horizontal: AppTokens.space4,
+                  vertical: AppTokens.space2,
                 ),
                 itemCount: tickers.length,
                 itemBuilder: (context, index) {
@@ -165,8 +166,8 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
 
                   final isPositive = currentChangePercent >= 0;
                   final changeColor = isPositive
-                      ? Colors.green
-                      : Colors.redAccent;
+                      ? palette.positive
+                      : palette.negative;
                   final changeSign = isPositive ? '+' : '';
                   final volFormatted =
                       '\$${(t.vol24h / 1000000).toStringAsFixed(2)}M';
@@ -188,55 +189,56 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
                   return Card(
                     elevation: 0,
                     color: cardColor,
-                    margin: const EdgeInsets.only(bottom: 8),
+                    margin: const EdgeInsets.only(bottom: AppTokens.space2),
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      side: BorderSide(color: borderColor, width: 1.2),
+                      borderRadius: BorderRadius.circular(
+                        AppTokens.radiusMedium,
+                      ),
+                      side: BorderSide(color: borderColor),
                     ),
                     child: Padding(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 12,
+                        horizontal: AppTokens.space3,
+                        vertical: AppTokens.space3,
                       ),
-                      child: Row(
-                        children: [
-                          // Cột 1: Logo và Tên Coin
-                          CryptoIcon(
-                            symbol: t.coinSymbol,
-                            size: 36,
-                            backgroundColor: iconBgColor,
-                            textColor: textColor,
-                            textSize: 14,
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  t.coinSymbol,
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 15,
-                                    color: textColor,
-                                  ),
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          final coinIdentity = Row(
+                            children: [
+                              CryptoIcon(
+                                symbol: t.coinSymbol,
+                                size: 36,
+                                backgroundColor: iconBgColor,
+                                textColor: textColor,
+                                textSize: 14,
+                              ),
+                              const SizedBox(width: AppTokens.space3),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      t.coinSymbol,
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 15,
+                                        color: textColor,
+                                      ),
+                                    ),
+                                    const SizedBox(height: AppTokens.space1),
+                                    Text(
+                                      'Vol 24h: $volFormatted',
+                                      style: TextStyle(
+                                        color: palette.muted,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
                                 ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  'Vol 24h: $volFormatted',
-                                  style: TextStyle(
-                                    color: isDark
-                                        ? Colors.grey.shade400
-                                        : Colors.grey.shade600,
-                                    fontSize: 11,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-
-                          // Cột 2: Giá và Khối % Biến động
-                          Column(
+                              ),
+                            ],
+                          );
+                          final quote = Column(
                             crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
                               Text(
@@ -247,28 +249,52 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
                                   color: textColor,
                                 ),
                               ),
-                              const SizedBox(height: 6),
+                              const SizedBox(height: AppTokens.space2),
                               Container(
                                 padding: const EdgeInsets.symmetric(
-                                  horizontal: 6,
-                                  vertical: 3,
+                                  horizontal: AppTokens.space2,
+                                  vertical: AppTokens.space1,
                                 ),
                                 decoration: BoxDecoration(
                                   color: changeColor,
-                                  borderRadius: BorderRadius.circular(6),
+                                  borderRadius: BorderRadius.circular(
+                                    AppTokens.radiusSmall,
+                                  ),
                                 ),
                                 child: Text(
                                   '$changeSign${currentChangePercent.toStringAsFixed(2)}%',
-                                  style: const TextStyle(
-                                    color: Colors.white,
+                                  style: TextStyle(
+                                    color: palette.onStrong,
                                     fontWeight: FontWeight.bold,
-                                    fontSize: 11,
+                                    fontSize: 12,
                                   ),
                                 ),
                               ),
                             ],
-                          ),
-                        ],
+                          );
+
+                          if (constraints.maxWidth < 400) {
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                coinIdentity,
+                                const SizedBox(height: AppTokens.space2),
+                                Align(
+                                  alignment: Alignment.centerRight,
+                                  child: quote,
+                                ),
+                              ],
+                            );
+                          }
+
+                          return Row(
+                            children: [
+                              Expanded(child: coinIdentity),
+                              const SizedBox(width: AppTokens.space3),
+                              quote,
+                            ],
+                          );
+                        },
                       ),
                     ),
                   );

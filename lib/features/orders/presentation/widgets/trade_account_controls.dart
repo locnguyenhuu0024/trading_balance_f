@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/theme/app_theme.dart';
 import '../../data/trade_api_client.dart';
 import '../providers/position_action_flow_provider.dart';
 import '../providers/trade_session_provider.dart';
@@ -20,6 +21,7 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = AppPalette.of(context);
     final api = ref.watch(tradeApiProvider);
     final sessionState = ref.watch(tradeSessionProvider);
     final session = sessionState.session;
@@ -38,7 +40,12 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
               );
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 6, 12, 4),
+      padding: const EdgeInsets.fromLTRB(
+        AppTokens.space3,
+        AppTokens.space2,
+        AppTokens.space3,
+        AppTokens.space1,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -50,19 +57,24 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
                     _busy || hasUnresolvedOperation || activePositionAction
                     ? null
                     : _closeAll,
-                icon: const Icon(Icons.warning_amber_rounded, size: 18),
+                icon: Icon(
+                  Icons.warning_amber_rounded,
+                  size: 18,
+                  color: palette.warning,
+                ),
                 label: const Text('Đóng tất cả vị thế'),
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.redAccent,
-                  visualDensity: VisualDensity.compact,
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  foregroundColor: palette.negative,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppTokens.space3,
+                  ),
                 ),
               ),
             ),
           if (!api.isConfigured)
             const Text(
               'Chỉ xem vị thế. Hãy cấu hình API khi build rồi đăng nhập trong Cài đặt để bật thao tác.',
-              style: TextStyle(fontSize: 11),
+              style: TextStyle(fontSize: 12),
             )
           else if (!isAuthenticated) ...[
             Text(
@@ -75,22 +87,22 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
             ],
           ],
           if (sessionState.errorMessage != null && api.isConfigured) ...[
-            const SizedBox(height: 4),
+            const SizedBox(height: AppTokens.space1),
             Text(
               sessionState.errorMessage!,
               style: TextStyle(
-                color: Theme.of(context).colorScheme.error,
-                fontSize: 11,
+                color: palette.negative,
+                fontSize: 12,
               ),
             ),
           ],
           if (_busy) const LinearProgressIndicator(minHeight: 2),
           if (pendingOperations.isNotEmpty) ...[
-            const SizedBox(height: 10),
+            const SizedBox(height: AppTokens.space3),
             Card(
               margin: EdgeInsets.zero,
               child: Padding(
-                padding: const EdgeInsets.all(10),
+                padding: const EdgeInsets.all(AppTokens.space3),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -101,33 +113,35 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
                         fontSize: 12,
                       ),
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: AppTokens.space1),
                     for (final operation in pendingOperations)
                       Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 3),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                        padding: const EdgeInsets.symmetric(
+                          vertical: AppTokens.space1,
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            Expanded(
-                              child: Text(
-                                '${operation.targetLabel} · ${_actionLabel(operation.action)} · ${operation.status}\n${operation.operationId}',
-                                style: const TextStyle(fontSize: 10),
-                              ),
+                            Text(
+                              '${operation.targetLabel} · ${_actionLabel(operation.action)} · ${operation.status}\n${operation.operationId}',
+                              style: const TextStyle(fontSize: 12),
                             ),
-                            const SizedBox(width: 8),
-                            OutlinedButton(
-                              onPressed: _busy || !isAuthenticated
-                                  ? null
-                                  : () => _lookupPendingOperation(operation),
-                              style: OutlinedButton.styleFrom(
-                                visualDensity: VisualDensity.compact,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
+                            const SizedBox(height: AppTokens.space1),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: OutlinedButton(
+                                onPressed: _busy || !isAuthenticated
+                                    ? null
+                                    : () => _lookupPendingOperation(operation),
+                                style: OutlinedButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: AppTokens.space2,
+                                  ),
                                 ),
-                              ),
-                              child: const Text(
-                                'Tra cứu trạng thái',
-                                style: TextStyle(fontSize: 10),
+                                child: const Text(
+                                  'Tra cứu trạng thái',
+                                  style: TextStyle(fontSize: 12),
+                                ),
                               ),
                             ),
                           ],
@@ -139,8 +153,8 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
                             ? 'Các thao tác mới đang tạm khóa cho đến khi tra cứu xong.'
                             : 'Đăng nhập lại cùng tài khoản để tiếp tục tra cứu.',
                         style: TextStyle(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                          fontSize: 10,
+                          color: palette.muted,
+                          fontSize: 12,
                         ),
                       ),
                   ],
@@ -472,6 +486,7 @@ class _TradeSessionControlsState extends ConsumerState<TradeSessionControls> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = AppPalette.of(context);
     final api = ref.watch(tradeApiProvider);
     final sessionState = ref.watch(tradeSessionProvider);
     final session = sessionState.session;
@@ -481,7 +496,7 @@ class _TradeSessionControlsState extends ConsumerState<TradeSessionControls> {
     return Card(
       margin: EdgeInsets.zero,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(AppTokens.space4),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -539,7 +554,7 @@ class _TradeSessionControlsState extends ConsumerState<TradeSessionControls> {
               Text(
                 sessionState.errorMessage!,
                 style: TextStyle(
-                  color: Theme.of(context).colorScheme.error,
+                color: palette.negative,
                   fontSize: 12,
                 ),
               ),
@@ -548,7 +563,7 @@ class _TradeSessionControlsState extends ConsumerState<TradeSessionControls> {
                 !isAuthenticated &&
                 !sessionState.isLoading &&
                 sessionState.errorMessage != null) ...[
-              const SizedBox(height: 8),
+      const SizedBox(height: AppTokens.space2),
               OutlinedButton(
                 onPressed: _busy ? null : _restore,
                 child: const Text('Thử khôi phục phiên'),
@@ -649,7 +664,7 @@ class _TradeLoginDialogState extends State<_TradeLoginDialog> {
             const SizedBox(height: 8),
             Text(
               _error!,
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
+              style: TextStyle(color: AppPalette.of(context).negative),
             ),
           ],
         ],

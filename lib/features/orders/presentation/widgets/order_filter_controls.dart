@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../../core/theme/app_theme.dart';
 import '../providers/order_provider.dart';
 
 class OrderFilterControls extends StatelessWidget {
@@ -22,9 +23,10 @@ class OrderFilterControls extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final surfaceColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
-    final textColor = isDark ? Colors.white : Colors.black;
-    final borderColor = isDark ? Colors.grey.shade800 : Colors.grey.shade300;
+    final palette = AppPalette.forBrightness(isDark);
+    final surfaceColor = palette.raised;
+    final textColor = palette.ink;
+    final borderColor = palette.border;
 
     final tabSelect = DropdownButtonFormField<OrderTab>(
       key: const Key('order-tab-select'),
@@ -84,7 +86,7 @@ class OrderFilterControls extends StatelessWidget {
           return Row(
             children: [
               Expanded(child: tabSelect),
-              const SizedBox(width: 8),
+              const SizedBox(width: AppTokens.space2),
               Expanded(child: filterSelect),
             ],
           );
@@ -93,7 +95,7 @@ class OrderFilterControls extends StatelessWidget {
         return Row(
           children: [
             Expanded(child: tabSelect),
-            const SizedBox(width: 12),
+            const SizedBox(width: AppTokens.space3),
             Expanded(child: filterSelect),
           ],
         );
@@ -113,13 +115,16 @@ class OrderFilterControls extends StatelessWidget {
       filled: true,
       fillColor: surfaceColor,
       isDense: true,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 13),
+      contentPadding: const EdgeInsets.symmetric(
+        horizontal: AppTokens.space3,
+        vertical: AppTokens.space3,
+      ),
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(AppTokens.radiusMedium),
         borderSide: BorderSide(color: borderColor),
       ),
       enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(AppTokens.radiusMedium),
         borderSide: BorderSide(color: borderColor),
       ),
     );

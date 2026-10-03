@@ -3,11 +3,12 @@
 
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../../core/currency/currency_display_mode.dart';
 import '../../../core/navigation/navigation_content_frame.dart';
+import '../../../core/theme/app_theme.dart';
+import '../../../core/theme/platform_brightness_provider.dart';
 import '../../../core/widgets/crypto_icon.dart';
 import 'providers/portfolio_provider.dart';
 import '../../settings/presentation/settings_screen.dart';
@@ -22,8 +23,9 @@ final isDarkModeProvider = Provider<bool>((ref) {
   final mode = ref.watch(themeModeProvider);
   if (mode == ThemeMode.dark) return true;
   if (mode == ThemeMode.light) return false;
-  return SchedulerBinding.instance.platformDispatcher.platformBrightness ==
-      Brightness.dark;
+  return ref.watch(
+    platformBrightnessProvider.select((observer) => observer.isDark),
+  );
 });
 
 class PortfolioScreen extends ConsumerStatefulWidget {
@@ -64,8 +66,9 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
     final exchangeRateAsync = ref.watch(vndExchangeRateProvider);
     final exchangeRate = exchangeRateAsync.value ?? 25400.0;
 
-    final bgColor = isDark ? const Color(0xFF121212) : Colors.white;
-    final textColor = isDark ? Colors.white : Colors.black;
+    final palette = AppPalette.of(context);
+    final bgColor = palette.background;
+    final textColor = palette.ink;
 
     return Scaffold(
       backgroundColor: bgColor,
@@ -89,8 +92,8 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
       ),
       body: NavigationContentFrame(
         child: RefreshIndicator(
-          color: isDark ? Colors.black : Colors.white,
-          backgroundColor: isDark ? Colors.white : Colors.black,
+          color: palette.ink,
+          backgroundColor: palette.raised,
           onRefresh: () async {
             _isWsSubscribed = false;
             ref.invalidate(vndExchangeRateProvider);
@@ -166,11 +169,12 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
         ? (totalUnrealizedPnl / baseEquity) * 100
         : 0.0;
 
-    final textColor = isDark ? Colors.white : Colors.black;
-    final cardColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
-    final borderColor = isDark ? Colors.grey.shade800 : Colors.grey.shade200;
-    final subtitleColor = isDark ? Colors.grey.shade400 : Colors.grey.shade600;
-    final iconBgColor = isDark ? Colors.grey.shade800 : Colors.grey.shade100;
+    final palette = AppPalette.forBrightness(isDark);
+    final textColor = palette.ink;
+    final cardColor = palette.raised;
+    final borderColor = palette.border;
+    final subtitleColor = palette.muted;
+    final iconBgColor = palette.surface;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -190,7 +194,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
           height: 1,
           indent: 16,
           endIndent: 16,
-          color: isDark ? Colors.grey.shade800 : Colors.grey.shade200,
+          color: palette.border,
         ),
 
         Padding(
@@ -200,7 +204,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
             style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.bold,
-              color: isDark ? Colors.white70 : Colors.grey.shade800,
+              color: textColor,
             ),
           ),
         ),
@@ -241,8 +245,10 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
                       color: cardColor,
                       margin: const EdgeInsets.only(bottom: 6),
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        side: BorderSide(color: borderColor, width: 1.2),
+                        borderRadius: BorderRadius.circular(
+                          AppTokens.radiusMedium,
+                        ),
+                        side: BorderSide(color: borderColor),
                       ),
                       child: ListTile(
                         contentPadding: const EdgeInsets.symmetric(
@@ -275,7 +281,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
                               ),
                               style: TextStyle(
                                 color: subtitleColor,
-                                fontSize: 11,
+                                fontSize: 12,
                               ),
                             ),
                             if (realtimePriceStr != null) ...[
@@ -283,10 +289,8 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
                               Text(
                                 '\$$realtimePriceStr',
                                 style: TextStyle(
-                                  color: isDark
-                                      ? Colors.white70
-                                      : Colors.grey.shade800,
-                                  fontSize: 11,
+                                  color: textColor,
+                                  fontSize: 12,
                                   fontWeight: FontWeight.w500,
                                 ),
                               ),
@@ -307,7 +311,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
                           ),
                           secondaryStyle: TextStyle(
                             fontWeight: FontWeight.w600,
-                            fontSize: 10,
+                            fontSize: 12,
                             color: subtitleColor,
                           ),
                         ),
@@ -330,9 +334,10 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
     required String currency,
     required double exchangeRate,
   }) {
-    final textColor = isDark ? Colors.white : Colors.black;
-    final labelColor = isDark ? Colors.grey.shade400 : Colors.grey.shade600;
-    final pnlColor = unrealizedPnl >= 0 ? Colors.green : Colors.redAccent;
+    final palette = AppPalette.forBrightness(isDark);
+    final textColor = palette.ink;
+    final labelColor = palette.muted;
+    final pnlColor = unrealizedPnl >= 0 ? palette.positive : palette.negative;
     final pnlSign = unrealizedPnl >= 0 ? '+' : '';
 
     final totalBlock = Column(
@@ -342,7 +347,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
           'Tổng tài sản (${CurrencyDisplayMode.labelFor(currency)})',
           style: TextStyle(
             color: labelColor,
-            fontSize: 11,
+            fontSize: 12,
             fontWeight: FontWeight.w600,
           ),
         ),
@@ -378,7 +383,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
           'Vốn gốc',
           style: TextStyle(
             color: labelColor,
-            fontSize: 10,
+            fontSize: 12,
             fontWeight: FontWeight.w600,
           ),
         ),
@@ -395,7 +400,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
           ),
           secondaryStyle: TextStyle(
             color: labelColor,
-            fontSize: 10,
+            fontSize: 12,
             fontWeight: FontWeight.w600,
           ),
         ),
@@ -409,7 +414,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
           'Lãi / lỗ chưa thực hiện',
           style: TextStyle(
             color: labelColor,
-            fontSize: 10,
+            fontSize: 12,
             fontWeight: FontWeight.w600,
           ),
         ),
@@ -422,7 +427,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
               unrealizedPnl >= 0
                   ? Icons.arrow_upward_rounded
                   : Icons.arrow_downward_rounded,
-              color: isHidden ? Colors.grey : pnlColor,
+              color: isHidden ? palette.muted : pnlColor,
               size: 14,
             ),
             const SizedBox(width: 4),
@@ -434,13 +439,13 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
                 hidden: isHidden,
                 showPositiveSign: true,
                 primaryStyle: TextStyle(
-                  color: isHidden ? Colors.grey : pnlColor,
+                  color: isHidden ? palette.muted : pnlColor,
                   fontSize: 13,
                   fontWeight: FontWeight.w700,
                 ),
                 secondaryStyle: TextStyle(
-                  color: isHidden ? Colors.grey : pnlColor,
-                  fontSize: 10,
+                  color: isHidden ? palette.muted : pnlColor,
+                  fontSize: 12,
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -451,8 +456,8 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
         Text(
           _obfuscate('($pnlSign${pnlRatio.toStringAsFixed(2)}%)', isHidden),
           style: TextStyle(
-            color: isHidden ? Colors.grey : pnlColor,
-            fontSize: 10,
+            color: isHidden ? palette.muted : pnlColor,
+            fontSize: 12,
             fontWeight: FontWeight.w600,
           ),
         ),
@@ -473,7 +478,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
                   width: 1,
                   height: 56,
                   margin: const EdgeInsets.symmetric(horizontal: 20),
-                  color: isDark ? Colors.grey.shade800 : Colors.grey.shade200,
+                  color: palette.border,
                 ),
                 Expanded(child: capitalBlock),
                 const SizedBox(width: 20),
@@ -510,7 +515,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
     return Center(
       child: Text(
         'Lỗi kết nối: $errorMessage',
-        style: TextStyle(color: isDark ? Colors.white : Colors.black),
+        style: TextStyle(color: AppPalette.of(context).ink),
       ),
     );
   }
