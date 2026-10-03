@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/currency/currency_display_mode.dart';
 import 'package:trading_balance_f/core/typography/app_text_scale.dart';
+import 'package:trading_balance_f/features/orders/data/okx_order_model.dart';
 import 'package:trading_balance_f/features/orders/data/okx_position_model.dart';
 import 'package:trading_balance_f/features/orders/data/trade_api_client.dart';
 import 'package:trading_balance_f/features/orders/presentation/orders_screen.dart';
@@ -60,6 +61,9 @@ Widget _ordersApp({
   required List<OkxPosition> positions,
   String currency = CurrencyDisplayMode.usd,
   double appTextScale = AppTextScale.defaultScale,
+  double? contentTextScale,
+  OrderTab selectedTab = OrderTab.positions,
+  List<OkxOrder> orders = const [],
   bool authenticated = false,
   bool apiConfigured = false,
 }) {
@@ -81,16 +85,26 @@ Widget _ordersApp({
         ),
       ),
       orderFilterProvider.overrideWith((ref) => 'SWAP'),
-      orderTabProvider.overrideWith((ref) => OrderTab.positions),
+      orderTabProvider.overrideWith((ref) => selectedTab),
+      ordersFutureProvider.overrideWith((ref) async => orders),
       positionsFutureProvider.overrideWith((ref) async => positions),
       themeModeProvider.overrideWith((ref) => ThemeMode.light),
       currencyProvider.overrideWith((ref) => currency),
       vndExchangeRateProvider.overrideWith((ref) async => 25400),
       appTextScaleProvider.overrideWith((ref) => appTextScale),
     ],
-    child: const TradingBalanceApp(
+    child: TradingBalanceApp(
       requireBiometrics: false,
-      home: OrdersScreen(),
+      home: contentTextScale == null
+          ? const OrdersScreen()
+          : Builder(
+              builder: (context) => MediaQuery(
+                data: MediaQuery.of(
+                  context,
+                ).copyWith(textScaler: TextScaler.linear(contentTextScale)),
+                child: const OrdersScreen(),
+              ),
+            ),
     ),
   );
 }
@@ -191,11 +205,14 @@ void main() {
       findsOneWidget,
     );
 
-    final notionalRow = find
-        .ancestor(of: find.text('Giá trị vị thế:'), matching: find.byType(Row))
+    final notionalLayout = find
+        .ancestor(
+          of: find.text('Giá trị vị thế:'),
+          matching: find.byType(LayoutBuilder),
+        )
         .first;
     expect(
-      find.descendant(of: notionalRow, matching: find.text('--')),
+      find.descendant(of: notionalLayout, matching: find.text('--')),
       findsOneWidget,
     );
     final pricesRow = find
@@ -336,7 +353,10 @@ void main() {
           final actionReason = tester.getRect(
             find.text('Chưa cấu hình TRADE_API_BASE_URL; chỉ xem vị thế.'),
           );
-          expect(cardRect.height, lessThan(700));
+          // Dual-currency rows may grow with larger text; every value and action
+          // must remain inside the card instead of being clipped to a fixed cap.
+          expect(cardRect.contains(liquidationRect.center), isTrue);
+          expect(cardRect.contains(actionReason.center), isTrue);
           expect(cardRect.bottom - actionReason.bottom, closeTo(12, 0.5));
           expect(
             cardRect.contains(tester.getRect(find.text('Đóng 100%')).center),
@@ -346,6 +366,88 @@ void main() {
 
           await tester.pumpWidget(const SizedBox.shrink());
         }
+      }
+    },
+  );
+
+  testWidgets(
+    'pending and history orders follow content at narrow and wide widths',
+    (tester) async {
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      tester.view.devicePixelRatio = 1;
+
+      for (final tab in [OrderTab.pending, OrderTab.history]) {
+        double? compactDefaultCardHeight;
+        double? compactLargeTextCardHeight;
+        const scenarios = [
+          (width: 320.0, textScale: 1.0),
+          (width: 320.0, textScale: 2.0),
+          (width: 1200.0, textScale: 1.5),
+        ];
+
+        for (final scenario in scenarios) {
+          tester.view.physicalSize = Size(scenario.width, 900);
+          final order = OkxOrder(
+            instId: 'BTC-USDT-SWAP',
+            instType: 'SWAP',
+            side: 'buy',
+            px: '9876543.21',
+            sz: '0.123456789',
+            notionalUsd: '10000',
+            fillNotionalUsd: tab == OrderTab.history ? '8000' : '',
+            state: tab == OrderTab.pending ? 'live' : 'filled',
+            cTime: '1767225600000',
+          );
+
+          await tester.pumpWidget(
+            _ordersApp(
+              positions: const [],
+              currency: CurrencyDisplayMode.usdtVnd,
+              contentTextScale: scenario.textScale,
+              selectedTab: tab,
+              orders: [order],
+            ),
+          );
+          await tester.pump();
+          await tester.pump();
+
+          final card = find
+              .ancestor(
+                of: find.text('BTC-USDT-SWAP'),
+                matching: find.byType(Card),
+              )
+              .first;
+          final cardRect = tester.getRect(card);
+          final price = find.textContaining('Giá:');
+          final size = find.textContaining('KL:');
+          final vndAmount = find.descendant(
+            of: card,
+            matching: find.textContaining(RegExp(r'\d.*đ$')),
+          );
+
+          expect(find.text('BTC-USDT-SWAP'), findsOneWidget);
+          expect(price, findsOneWidget);
+          expect(size, findsOneWidget);
+          expect(vndAmount, findsOneWidget);
+          if (scenario.width == 320 && scenario.textScale == 1.0) {
+            compactDefaultCardHeight = cardRect.height;
+          }
+          if (scenario.width == 320 && scenario.textScale == 2.0) {
+            compactLargeTextCardHeight = cardRect.height;
+          }
+          expect(cardRect.contains(tester.getRect(price).center), isTrue);
+          expect(cardRect.contains(tester.getRect(size).center), isTrue);
+          expect(cardRect.contains(tester.getRect(vndAmount).center), isTrue);
+          expect(tester.takeException(), isNull);
+
+          await tester.pumpWidget(const SizedBox.shrink());
+        }
+
+        expect(
+          compactLargeTextCardHeight,
+          greaterThan(compactDefaultCardHeight!),
+        );
       }
     },
   );

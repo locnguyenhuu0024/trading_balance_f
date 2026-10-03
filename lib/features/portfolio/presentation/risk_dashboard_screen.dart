@@ -105,11 +105,8 @@ class _RiskDashboardScreenState extends ConsumerState<RiskDashboardScreen> {
     bool hidden,
   ) {
     final theme = Theme.of(context);
-    final isDark = ref.watch(isDarkModeProvider);
-    final background = isDark
-        ? const Color(0xFF121212)
-        : theme.colorScheme.surface;
-    final foreground = isDark ? Colors.white : theme.colorScheme.onSurface;
+    final background = theme.colorScheme.surface;
+    final foreground = theme.colorScheme.onSurface;
     final useWidgetFallbacks = widget.bridge == null;
     final statePlan =
         state.plan ??

@@ -1,6 +1,8 @@
 // File Name: main.dart
 // File Path: lib/main.dart
 
+import 'dart:ui' show FontFeature;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart'; // Dùng kIsWeb
@@ -14,6 +16,7 @@ import 'core/navigation/navigation_preferences.dart';
 import 'core/navigation/navigation_preferences_provider.dart';
 import 'core/security/secure_storage_helper.dart';
 import 'core/services/background_service.dart';
+import 'core/theme/app_theme.dart';
 import 'core/timezone/app_time_zone.dart';
 import 'core/typography/app_text_scale.dart';
 import 'features/portfolio/presentation/portfolio_screen.dart'
@@ -132,6 +135,9 @@ class TradingBalanceApp extends ConsumerWidget {
     return MaterialApp(
       title: 'Crypto Portfolio',
       debugShowCheckedModeBanner: false,
+      theme: AppTheme.light,
+      darkTheme: AppTheme.dark,
+      themeMode: ref.watch(themeModeProvider),
       builder: (context, child) {
         final mediaQuery = MediaQuery.maybeOf(context);
         final appChild = child ?? const SizedBox.shrink();
@@ -144,17 +150,14 @@ class TradingBalanceApp extends ConsumerWidget {
               appTextScale,
             ),
           ),
-          child: appChild,
+          child: DefaultTextStyle.merge(
+            style: const TextStyle(
+              fontFeatures: [FontFeature.tabularFigures()],
+            ),
+            child: appChild,
+          ),
         );
       },
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.blueAccent,
-          brightness: Brightness.light,
-        ),
-        useMaterial3: true,
-        appBarTheme: const AppBarTheme(centerTitle: true, elevation: 0),
-      ),
       home:
           home ??
           (requireBiometrics
@@ -226,71 +229,90 @@ class _BiometricAuthScreenState extends State<BiometricAuthScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = AppPalette.of(context);
     if (_isAuthenticated) {
       return const MainNavigationShell();
     }
 
     return Scaffold(
-      backgroundColor: Colors.white,
-      body: Center(
-        child: _isChecking
-            ? const CircularProgressIndicator(color: Colors.black)
-            : Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.lock_outline, size: 80, color: Colors.black),
-                  const SizedBox(height: 24),
-                  const Text(
-                    'Ứng dụng đã bị khoá',
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Vui lòng xác thực để bảo vệ tài sản',
-                    style: TextStyle(color: Colors.grey),
-                  ),
-                  const SizedBox(height: 32),
+      backgroundColor: palette.background,
+      body: SafeArea(
+        child: LayoutBuilder(
+          builder: (context, constraints) => SingleChildScrollView(
+            padding: const EdgeInsets.all(AppTokens.space4),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minHeight: constraints.maxHeight),
+              child: Center(
+                child: _isChecking
+                    ? CircularProgressIndicator(color: palette.ink)
+                    : Column(
+                        mainAxisSize: MainAxisSize.min,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.lock_outline,
+                            size: 80,
+                            color: palette.ink,
+                          ),
+                          const SizedBox(height: 24),
+                          const Text(
+                            'Ứng dụng đã bị khoá',
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Vui lòng xác thực để bảo vệ tài sản',
+                            style: TextStyle(color: palette.muted),
+                          ),
+                          const SizedBox(height: 32),
 
-                  if (_errorMessage != null)
-                    Padding(
-                      padding: const EdgeInsets.only(
-                        bottom: 24,
-                        left: 32,
-                        right: 32,
-                      ),
-                      child: Text(
-                        _errorMessage!,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: Colors.redAccent,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
+                          if (_errorMessage != null)
+                            Padding(
+                              padding: const EdgeInsets.only(
+                                bottom: 24,
+                                left: 32,
+                                right: 32,
+                              ),
+                              child: Text(
+                                _errorMessage!,
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: palette.warning,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
 
-                  ElevatedButton.icon(
-                    onPressed: _authenticate,
-                    icon: const Icon(Icons.fingerprint),
-                    label: const Text(
-                      'Mở khoá',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.black,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 24,
-                        vertical: 12,
+                          ElevatedButton.icon(
+                            onPressed: _authenticate,
+                            icon: const Icon(Icons.fingerprint),
+                            label: const Text(
+                              'Mở khoá',
+                              style: TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: palette.ink,
+                              foregroundColor: palette.onStrong,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 24,
+                                vertical: 12,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              elevation: 0,
+                            ),
+                          ),
+                        ],
                       ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      elevation: 0,
-                    ),
-                  ),
-                ],
               ),
+            ),
+          ),
+        ),
       ),
     );
   }

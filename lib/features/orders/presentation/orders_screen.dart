@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/formatting/adaptive_number_format.dart';
 import '../../../core/navigation/navigation_content_frame.dart';
+import '../../../core/theme/app_theme.dart';
 import '../../../core/timezone/app_time_zone.dart';
 import '../../../core/widgets/crypto_icon.dart';
 import 'providers/order_provider.dart';
@@ -104,8 +105,14 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
         .watch(tradeSessionProvider)
         .isAuthenticated;
 
-    final bgColor = isDark ? const Color(0xFF121212) : Colors.white;
-    final textColor = isDark ? Colors.white : Colors.black;
+    final palette = AppPalette.of(context);
+    final bgColor = palette.background;
+    final textColor = palette.ink;
+    final textScale = MediaQuery.textScalerOf(context).scale(1.0);
+    final toolbarHeight =
+        MediaQuery.sizeOf(context).width <= 400 && textScale > 1
+        ? kToolbarHeight + (textScale - 1) * 24
+        : kToolbarHeight;
 
     return Scaffold(
       backgroundColor: bgColor,
@@ -114,12 +121,17 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
         foregroundColor: textColor,
         elevation: 0,
         centerTitle: true,
+        toolbarHeight: toolbarHeight,
         title: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
-              'Quản lý Giao dịch',
-              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+            const Flexible(
+              child: Text(
+                'Quản lý Giao dịch',
+                maxLines: 2,
+                softWrap: true,
+                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+              ),
             ),
             const SizedBox(width: 6),
             Tooltip(
@@ -132,7 +144,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                       : Icons.lock_outline,
                   size: 18,
                   color: isTradeAuthenticated
-                      ? Colors.green.shade700
+                      ? palette.positive
                       : Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
               ),
@@ -158,10 +170,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
               ),
             ),
 
-            Divider(
-              height: 16,
-              color: isDark ? Colors.grey.shade800 : Colors.grey.shade200,
-            ),
+            Divider(height: 16, color: palette.border),
 
             // --- Nội dung chính ---
             Expanded(
@@ -192,6 +201,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     bool isBalanceHidden,
     String timeZoneId,
   ) {
+    final palette = AppPalette.forBrightness(isDark);
     if (currentTab == OrderTab.positions) {
       final hasTradeSession = ref.watch(tradeSessionProvider).isAuthenticated;
       if (filter == 'SPOT') {
@@ -202,10 +212,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
               child: Center(
                 child: Text(
                   'Giao dịch SPOT không hỗ trợ Vị thế mở.',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
-                  ),
+                  style: TextStyle(fontSize: 12, color: palette.muted),
                 ),
               ),
             ),
@@ -220,24 +227,19 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
             const TradeAccountControls(),
             Expanded(
               child: RefreshIndicator(
-                color: isDark ? Colors.black : Colors.black,
-                backgroundColor: isDark ? Colors.white : Colors.white,
+                color: palette.ink,
+                backgroundColor: palette.raised,
                 onRefresh: () async => ref.invalidate(tradePositionsProvider),
                 child: positionsAsyncValue.when(
                   skipLoadingOnReload: true,
                   loading: () => Center(
-                    child: CircularProgressIndicator(
-                      color: isDark ? Colors.white : Colors.black,
-                    ),
+                    child: CircularProgressIndicator(color: palette.ink),
                   ),
                   error: (error, stack) => Center(
                     child: Text(
                       'Lỗi: $error',
                       textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: isDark ? Colors.redAccent : Colors.red,
-                      ),
+                      style: TextStyle(fontSize: 12, color: palette.negative),
                     ),
                   ),
                   data: (snapshot) {
@@ -282,24 +284,19 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
           const TradeAccountControls(),
           Expanded(
             child: RefreshIndicator(
-              color: isDark ? Colors.black : Colors.black,
-              backgroundColor: isDark ? Colors.white : Colors.white,
+              color: palette.ink,
+              backgroundColor: palette.raised,
               onRefresh: () async => ref.invalidate(positionsFutureProvider),
               child: positionsAsyncValue.when(
                 skipLoadingOnReload: true,
                 loading: () => Center(
-                  child: CircularProgressIndicator(
-                    color: isDark ? Colors.white : Colors.black,
-                  ),
+                  child: CircularProgressIndicator(color: palette.ink),
                 ),
                 error: (error, stack) => Center(
                   child: Text(
                     'Lỗi: $error',
                     textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: isDark ? Colors.redAccent : Colors.red,
-                    ),
+                    style: TextStyle(fontSize: 12, color: palette.negative),
                   ),
                 ),
                 data: (positions) {
@@ -331,24 +328,18 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     } else {
       final ordersAsyncValue = ref.watch(ordersFutureProvider);
       return RefreshIndicator(
-        color: isDark ? Colors.black : Colors.black,
-        backgroundColor: isDark ? Colors.white : Colors.white,
+        color: palette.ink,
+        backgroundColor: palette.raised,
         onRefresh: () async => ref.invalidate(ordersFutureProvider),
         child: ordersAsyncValue.when(
           skipLoadingOnReload: true,
-          loading: () => Center(
-            child: CircularProgressIndicator(
-              color: isDark ? Colors.white : Colors.black,
-            ),
-          ),
+          loading: () =>
+              Center(child: CircularProgressIndicator(color: palette.ink)),
           error: (error, stack) => Center(
             child: Text(
               'Lỗi: $error',
               textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 12,
-                color: isDark ? Colors.redAccent : Colors.red,
-              ),
+              style: TextStyle(fontSize: 12, color: palette.negative),
             ),
           ),
           data: (orders) {
@@ -361,7 +352,6 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
               );
             }
             return ResponsiveOrderGrid(
-              cardExtent: 190,
               children: orders
                   .map(
                     (order) => _buildOrderCard(
@@ -383,16 +373,14 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
   }
 
   Widget _buildEmptyState(String message, bool isDark) {
+    final palette = AppPalette.forBrightness(isDark);
     return ListView(
       children: [
         const SizedBox(height: 100),
         Center(
           child: Text(
             message,
-            style: TextStyle(
-              color: isDark ? Colors.grey.shade400 : Colors.grey.shade500,
-              fontSize: 12,
-            ),
+            style: TextStyle(color: palette.muted, fontSize: 12),
           ),
         ),
       ],
@@ -408,44 +396,69 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     required Color textColor,
     required Color subtitleColor,
   }) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('$label:', style: TextStyle(color: subtitleColor, fontSize: 10)),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Align(
-            alignment: Alignment.centerRight,
-            child: notional == null
-                ? Text(
-                    '--',
-                    style: TextStyle(
-                      color: subtitleColor,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 12,
-                    ),
-                  )
-                : PortfolioCurrencyAmount(
-                    usdtAmount: notional.usdAmount,
-                    currencyMode: currency,
-                    vndRate: exchangeRate,
-                    hidden: isHidden,
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    textAlign: TextAlign.right,
-                    primaryStyle: TextStyle(
-                      color: textColor,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 12,
-                    ),
-                    secondaryStyle: TextStyle(
-                      color: subtitleColor,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 9,
-                    ),
-                  ),
-          ),
-        ),
-      ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final effectiveWidth =
+            constraints.maxWidth / MediaQuery.textScalerOf(context).scale(1);
+        final labelWidget = Text(
+          '$label:',
+          softWrap: true,
+          style: TextStyle(color: subtitleColor, fontSize: 12),
+        );
+        final amountWidget = notional == null
+            ? Text(
+                '--',
+                style: TextStyle(
+                  color: subtitleColor,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 12,
+                ),
+              )
+            : PortfolioCurrencyAmount(
+                usdtAmount: notional.usdAmount,
+                currencyMode: currency,
+                vndRate: exchangeRate,
+                hidden: isHidden,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                textAlign: TextAlign.right,
+                primaryStyle: TextStyle(
+                  color: textColor,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12,
+                ),
+                secondaryStyle: TextStyle(
+                  color: subtitleColor,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 12,
+                ),
+              );
+
+        if (effectiveWidth < 380) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              labelWidget,
+              const SizedBox(height: AppTokens.space2),
+              Align(alignment: Alignment.centerRight, child: amountWidget),
+            ],
+          );
+        }
+
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(flex: 2, child: labelWidget),
+            const SizedBox(width: AppTokens.space3),
+            Expanded(
+              flex: 3,
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: amountWidget,
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -457,18 +470,19 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     double exchangeRate,
     bool isBalanceHidden,
   ) {
+    final palette = AppPalette.forBrightness(isDark);
     final posSide = position.posSide.toUpperCase();
     final isLong = posSide == 'LONG';
 
     final sideColor = posSide == 'NET'
-        ? (isDark ? Colors.white : Colors.black)
-        : (isLong ? Colors.green : Colors.redAccent);
+        ? palette.ink
+        : (isLong ? palette.positive : palette.negative);
     final sideText = posSide == 'NET' ? 'VỊ THẾ' : (isLong ? 'LONG' : 'SHORT');
 
     final pnl = double.tryParse(position.upl);
     final pnlColor = pnl == null
-        ? Colors.grey
-        : (pnl >= 0 ? Colors.green : Colors.redAccent);
+        ? palette.muted
+        : (pnl >= 0 ? palette.positive : palette.negative);
     final pnlSign = pnl == null ? '' : (pnl >= 0 ? '+' : '');
     final pnlFormatted = pnl == null
         ? '--'
@@ -479,19 +493,19 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
         ? '--'
         : '${pnlRatio >= 0 ? '+' : ''}${(pnlRatio * 100).toStringAsFixed(2)}%';
     final pnlRatioColor = pnlRatio == null
-        ? Colors.grey
-        : (pnlRatio >= 0 ? Colors.green : Colors.redAccent);
+        ? palette.muted
+        : (pnlRatio >= 0 ? palette.positive : palette.negative);
 
     final String baseCoin = position.instId.split('-').isNotEmpty
         ? position.instId.split('-').first
         : '?';
 
     // Bảng màu cho Card
-    final cardColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
-    final borderColor = isDark ? Colors.grey.shade800 : Colors.grey.shade200;
-    final textColor = isDark ? Colors.white : Colors.black;
-    final subtitleColor = isDark ? Colors.grey.shade400 : Colors.grey.shade500;
-    final iconBgColor = isDark ? Colors.grey.shade800 : Colors.grey.shade100;
+    final cardColor = palette.raised;
+    final borderColor = palette.border;
+    final textColor = palette.ink;
+    final subtitleColor = palette.muted;
+    final iconBgColor = palette.surface;
 
     return Card(
       key: ValueKey(positionActionIdentityKey(position.identity)),
@@ -499,8 +513,8 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       color: cardColor,
       margin: EdgeInsets.zero,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(10),
-        side: BorderSide(color: borderColor, width: 1),
+        borderRadius: BorderRadius.circular(AppTokens.radiusMedium),
+        side: BorderSide(color: borderColor),
       ),
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -545,13 +559,15 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                       ),
                       decoration: BoxDecoration(
                         color: sideColor.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(4),
+                        borderRadius: BorderRadius.circular(
+                          AppTokens.radiusSmall,
+                        ),
                       ),
                       child: Text(
                         sideText,
                         style: TextStyle(
                           color: sideColor,
-                          fontSize: 9,
+                          fontSize: 12,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
@@ -563,16 +579,16 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                         vertical: 2,
                       ),
                       decoration: BoxDecoration(
-                        color: isDark
-                            ? Colors.grey.shade800
-                            : Colors.grey.shade100,
-                        borderRadius: BorderRadius.circular(4),
+                        color: palette.surface,
+                        borderRadius: BorderRadius.circular(
+                          AppTokens.radiusSmall,
+                        ),
                       ),
                       child: Text(
                         position.lever.isEmpty ? '--' : '${position.lever}x',
                         style: TextStyle(
-                          color: isDark ? Colors.white70 : Colors.black87,
-                          fontSize: 9,
+                          color: palette.ink,
+                          fontSize: 12,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
@@ -589,31 +605,28 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                 children: [
                   Text(
                     '${position.direction.toUpperCase()} · ${position.size}',
-                    style: TextStyle(color: subtitleColor, fontSize: 10),
+                    style: TextStyle(color: subtitleColor, fontSize: 12),
                   ),
                   Text(
                     '${position.instType} · ${position.mgnMode.toUpperCase()}',
-                    style: TextStyle(color: subtitleColor, fontSize: 10),
+                    style: TextStyle(color: subtitleColor, fontSize: 12),
                   ),
                   if (position.marginCurrency.isNotEmpty)
                     Text(
                       'Ký quỹ ${position.marginCurrency}',
-                      style: TextStyle(color: subtitleColor, fontSize: 10),
+                      style: TextStyle(color: subtitleColor, fontSize: 12),
                     ),
                 ],
               ),
             ],
-            Divider(
-              height: 16,
-              color: isDark ? Colors.grey.shade800 : Colors.grey.shade100,
-            ),
+            Divider(height: 16, color: palette.border),
 
             Row(
               children: [
                 Expanded(
                   child: Text(
                     'Lãi / Lỗ chưa thực hiện:',
-                    style: TextStyle(color: subtitleColor, fontSize: 11),
+                    style: TextStyle(color: subtitleColor, fontSize: 12),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -636,7 +649,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                       pnlRatioPercent,
                       style: TextStyle(
                         color: pnlRatioColor,
-                        fontSize: 10,
+                        fontSize: 12,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
@@ -655,10 +668,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
               textColor: textColor,
               subtitleColor: subtitleColor,
             ),
-            Divider(
-              height: 16,
-              color: isDark ? Colors.grey.shade800 : Colors.grey.shade100,
-            ),
+            Divider(height: 16, color: palette.border),
 
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -669,14 +679,14 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                     children: [
                       Text(
                         'Giá vào',
-                        style: TextStyle(color: subtitleColor, fontSize: 9),
+                        style: TextStyle(color: subtitleColor, fontSize: 12),
                       ),
                       const SizedBox(height: 2),
                       Text(
                         formatAdaptiveNumber(position.avgPx),
                         style: TextStyle(
                           fontWeight: FontWeight.w600,
-                          fontSize: 11,
+                          fontSize: 12,
                           color: textColor,
                         ),
                       ),
@@ -689,14 +699,14 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                     children: [
                       Text(
                         'Giá mark',
-                        style: TextStyle(color: subtitleColor, fontSize: 9),
+                        style: TextStyle(color: subtitleColor, fontSize: 12),
                       ),
                       const SizedBox(height: 2),
                       Text(
                         formatAdaptiveNumber(position.markPx),
                         style: TextStyle(
                           fontWeight: FontWeight.w600,
-                          fontSize: 11,
+                          fontSize: 12,
                           color: textColor,
                         ),
                       ),
@@ -707,9 +717,9 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      const Text(
+                      Text(
                         'Thanh lý',
-                        style: TextStyle(color: Colors.redAccent, fontSize: 9),
+                        style: TextStyle(color: palette.warning, fontSize: 12),
                       ),
                       const SizedBox(height: 2),
                       Text(
@@ -718,7 +728,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                             : formatAdaptiveNumber(position.liqPx),
                         style: TextStyle(
                           fontWeight: FontWeight.w600,
-                          fontSize: 11,
+                          fontSize: 12,
                           color: textColor,
                         ),
                       ),
@@ -744,8 +754,9 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     bool isBalanceHidden,
     String timeZoneId,
   ) {
+    final palette = AppPalette.forBrightness(isDark);
     final isBuy = order.side.toLowerCase() == 'buy';
-    final sideColor = isBuy ? Colors.green : Colors.redAccent;
+    final sideColor = isBuy ? palette.positive : palette.negative;
     final sideText = isBuy ? 'MUA' : 'BÁN';
 
     final timeString = formatOrderTimestamp(order.cTime, timeZoneId);
@@ -755,11 +766,11 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
         : '?';
 
     // Bảng màu
-    final cardColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
-    final borderColor = isDark ? Colors.grey.shade800 : Colors.grey.shade200;
-    final textColor = isDark ? Colors.white : Colors.black;
-    final subtitleColor = isDark ? Colors.grey.shade400 : Colors.grey.shade500;
-    final iconBgColor = isDark ? Colors.grey.shade800 : Colors.grey.shade100;
+    final cardColor = palette.raised;
+    final borderColor = palette.border;
+    final textColor = palette.ink;
+    final subtitleColor = palette.muted;
+    final iconBgColor = palette.surface;
     final notional = resolveOrderNotional(order);
 
     return Card(
@@ -767,8 +778,8 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       color: cardColor,
       margin: EdgeInsets.zero,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(10),
-        side: BorderSide(color: borderColor, width: 1),
+        borderRadius: BorderRadius.circular(AppTokens.radiusMedium),
+        side: BorderSide(color: borderColor),
       ),
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -808,16 +819,16 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                             vertical: 2,
                           ),
                           decoration: BoxDecoration(
-                            color: isDark
-                                ? Colors.grey.shade800
-                                : Colors.grey.shade100,
-                            borderRadius: BorderRadius.circular(4),
+                            color: palette.surface,
+                            borderRadius: BorderRadius.circular(
+                              AppTokens.radiusSmall,
+                            ),
                           ),
                           child: Text(
                             '${order.lever}x',
                             style: TextStyle(
-                              color: isDark ? Colors.white70 : Colors.black87,
-                              fontSize: 8,
+                              color: palette.ink,
+                              fontSize: 12,
                               fontWeight: FontWeight.bold,
                             ),
                           ),
@@ -832,27 +843,26 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                     vertical: 2,
                   ),
                   decoration: BoxDecoration(
-                    color: isDark ? Colors.grey.shade800 : Colors.grey.shade100,
-                    borderRadius: BorderRadius.circular(4),
+                    color: palette.surface,
+                    borderRadius: BorderRadius.circular(AppTokens.radiusSmall),
                   ),
                   child: Text(
                     order.state.toUpperCase(),
                     style: TextStyle(
                       color: currentTab == OrderTab.pending
-                          ? (isDark ? Colors.white : Colors.black87)
+                          ? palette.ink
                           : subtitleColor,
                       fontWeight: FontWeight.bold,
-                      fontSize: 9,
+                      fontSize: 12,
                     ),
                   ),
                 ),
               ],
             ),
             const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Column(
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final sideAndTime = Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
@@ -860,39 +870,63 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                       style: TextStyle(
                         color: sideColor,
                         fontWeight: FontWeight.bold,
-                        fontSize: 11,
+                        fontSize: 12,
                       ),
                     ),
-                    const SizedBox(height: 2),
+                    const SizedBox(height: AppTokens.space1),
                     Text(
                       timeString,
-                      style: TextStyle(color: subtitleColor, fontSize: 9),
+                      style: TextStyle(color: subtitleColor, fontSize: 12),
                     ),
                   ],
-                ),
-                Column(
+                );
+                final values = Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     Text(
                       'Giá: ${formatAdaptiveNumber(order.px)}',
                       style: TextStyle(
                         fontWeight: FontWeight.w500,
-                        fontSize: 11,
+                        fontSize: 12,
                         color: textColor,
                       ),
                     ),
-                    const SizedBox(height: 2),
+                    const SizedBox(height: AppTokens.space1),
                     Text(
                       'KL: ${formatAdaptiveNumber(order.sz)}',
                       style: TextStyle(
                         fontWeight: FontWeight.w500,
-                        fontSize: 11,
+                        fontSize: 12,
                         color: textColor,
                       ),
                     ),
                   ],
-                ),
-              ],
+                );
+
+                if (constraints.maxWidth < 380) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      sideAndTime,
+                      const SizedBox(height: AppTokens.space2),
+                      Align(alignment: Alignment.centerRight, child: values),
+                    ],
+                  );
+                }
+
+                return Row(
+                  children: [
+                    Expanded(child: sideAndTime),
+                    const SizedBox(width: AppTokens.space2),
+                    Expanded(
+                      child: Align(
+                        alignment: Alignment.centerRight,
+                        child: values,
+                      ),
+                    ),
+                  ],
+                );
+              },
             ),
             const SizedBox(height: 10),
             _buildNotionalRow(

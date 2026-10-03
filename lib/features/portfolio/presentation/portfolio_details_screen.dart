@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 
 import '../../../core/currency/currency_display_mode.dart';
 import '../../../core/navigation/navigation_content_frame.dart';
+import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/crypto_icon.dart';
 import '../../market/presentation/providers/market_provider.dart';
 import '../../settings/presentation/settings_screen.dart';
@@ -30,12 +31,12 @@ class _PortfolioDetailsScreenState
   @override
   Widget build(BuildContext context) {
     final async = ref.watch(portfolioFutureProvider);
-    final isDark = ref.watch(isDarkModeProvider);
     final hidden = ref.watch(hideBalanceProvider);
     final currency = ref.watch(currencyProvider);
     final rate = ref.watch(vndExchangeRateProvider).value ?? 25400.0;
-    final background = isDark ? const Color(0xFF121212) : Colors.white;
-    final foreground = isDark ? Colors.white : Colors.black;
+    final palette = AppPalette.of(context);
+    final background = palette.background;
+    final foreground = palette.ink;
     return Scaffold(
       backgroundColor: background,
       appBar: AppBar(
@@ -67,7 +68,6 @@ class _PortfolioDetailsScreenState
             hidden: hidden,
             pnlRevealed: _pnlRevealed,
             onRevealPnl: () => setState(() => _pnlRevealed = true),
-            isDark: isDark,
           ),
         ),
       ),
@@ -84,7 +84,6 @@ class _DetailsContent extends StatelessWidget {
     required this.hidden,
     required this.pnlRevealed,
     required this.onRevealPnl,
-    required this.isDark,
   });
 
   final OkxAccountData account;
@@ -94,7 +93,6 @@ class _DetailsContent extends StatelessWidget {
   final bool hidden;
   final bool pnlRevealed;
   final VoidCallback onRevealPnl;
-  final bool isDark;
 
   @override
   Widget build(BuildContext context) {
@@ -122,9 +120,12 @@ class _DetailsContent extends StatelessWidget {
     }
     final base = total - pnl;
     final ratio = base > 0 ? pnl / base : null;
-    final textColor = isDark ? Colors.white : Colors.black;
-    final subtitle = isDark ? Colors.grey.shade400 : Colors.grey.shade600;
+    final palette = AppPalette.of(context);
+    final textColor = palette.ink;
+    final subtitle = palette.muted;
     return RefreshIndicator(
+      color: palette.ink,
+      backgroundColor: palette.raised,
       onRefresh: () async => refetchPortfolio(context),
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
@@ -134,8 +135,8 @@ class _DetailsContent extends StatelessWidget {
             elevation: 0,
             margin: EdgeInsets.zero,
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-              side: BorderSide(color: Theme.of(context).dividerColor),
+              borderRadius: BorderRadius.circular(AppTokens.radiusMedium),
+              side: BorderSide(color: palette.border),
             ),
             child: Padding(
               padding: const EdgeInsets.all(16),
@@ -197,7 +198,7 @@ class _DetailsContent extends StatelessWidget {
                     ),
                     secondaryStyle: TextStyle(
                       color: subtitle,
-                      fontSize: 11,
+                      fontSize: 12,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -216,7 +217,6 @@ class _DetailsContent extends StatelessWidget {
                       currency: currency,
                       exchangeRate: exchangeRate,
                       hidden: hidden,
-                      isDark: isDark,
                     ),
                 ],
               ),
@@ -240,7 +240,6 @@ class _DetailsContent extends StatelessWidget {
                 currency: currency,
                 exchangeRate: exchangeRate,
                 hidden: hidden,
-                isDark: isDark,
               ),
         ],
       ),
@@ -263,7 +262,6 @@ class _PnlBlock extends StatelessWidget {
     required this.currency,
     required this.exchangeRate,
     required this.hidden,
-    required this.isDark,
   });
 
   final double pnl;
@@ -271,18 +269,18 @@ class _PnlBlock extends StatelessWidget {
   final String currency;
   final double exchangeRate;
   final bool hidden;
-  final bool isDark;
 
   @override
   Widget build(BuildContext context) {
-    final color = pnl >= 0 ? Colors.green : Colors.redAccent;
+    final palette = AppPalette.of(context);
+    final color = pnl >= 0 ? palette.positive : palette.negative;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           'Unrealized PnL',
           style: TextStyle(
-            color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
+            color: palette.muted,
             fontSize: 12,
             fontWeight: FontWeight.w600,
           ),
@@ -295,13 +293,13 @@ class _PnlBlock extends StatelessWidget {
           hidden: hidden,
           showPositiveSign: true,
           primaryStyle: TextStyle(
-            color: hidden ? Colors.grey : color,
+            color: hidden ? palette.muted : color,
             fontSize: 16,
             fontWeight: FontWeight.w800,
           ),
           secondaryStyle: TextStyle(
-            color: hidden ? Colors.grey : color,
-            fontSize: 11,
+            color: hidden ? palette.muted : color,
+            fontSize: 12,
             fontWeight: FontWeight.w600,
           ),
         ),
@@ -310,7 +308,10 @@ class _PnlBlock extends StatelessWidget {
           hidden || ratio == null
               ? '******'
               : '(${ratio! >= 0 ? '+' : ''}${(ratio! * 100).toStringAsFixed(2)}%)',
-          style: TextStyle(color: hidden ? Colors.grey : color, fontSize: 11),
+          style: TextStyle(
+            color: hidden ? palette.muted : color,
+            fontSize: 12,
+          ),
         ),
       ],
     );
@@ -324,7 +325,6 @@ class _BalanceTile extends StatelessWidget {
     required this.currency,
     required this.exchangeRate,
     required this.hidden,
-    required this.isDark,
   });
 
   final OkxCoinDetail coin;
@@ -332,25 +332,25 @@ class _BalanceTile extends StatelessWidget {
   final String currency;
   final double exchangeRate;
   final bool hidden;
-  final bool isDark;
 
   @override
   Widget build(BuildContext context) {
-    final subtitle = isDark ? Colors.grey.shade400 : Colors.grey.shade600;
-    final color = isDark ? Colors.white : Colors.black;
+    final palette = AppPalette.of(context);
+    final subtitle = palette.muted;
+    final color = palette.ink;
     final eq = double.tryParse(coin.eq);
     return Card(
       elevation: 0,
       margin: const EdgeInsets.only(bottom: 7),
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(10),
-        side: BorderSide(color: Theme.of(context).dividerColor),
+        borderRadius: BorderRadius.circular(AppTokens.radiusMedium),
+        side: BorderSide(color: palette.border),
       ),
       child: ListTile(
         leading: CryptoIcon(
           symbol: coin.ccy,
           size: 32,
-          backgroundColor: isDark ? Colors.grey.shade800 : Colors.grey.shade100,
+          backgroundColor: palette.surface,
           textColor: color,
           textSize: 13,
         ),
@@ -362,7 +362,7 @@ class _BalanceTile extends StatelessWidget {
           hidden
               ? '******'
               : 'Qty ${NumberFormat('#,##0.########', 'en_US').format(eq ?? 0)}',
-          style: TextStyle(color: subtitle, fontSize: 11),
+          style: TextStyle(color: subtitle, fontSize: 12),
         ),
         trailing: value == null
             ? const Text('-')
@@ -376,7 +376,7 @@ class _BalanceTile extends StatelessWidget {
                   color: color,
                   fontWeight: FontWeight.w800,
                 ),
-                secondaryStyle: TextStyle(color: subtitle, fontSize: 10),
+                secondaryStyle: TextStyle(color: subtitle, fontSize: 12),
               ),
       ),
     );

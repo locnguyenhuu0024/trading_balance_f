@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/theme/app_theme.dart';
 import '../../data/okx_position_model.dart';
 import '../../data/trade_api_client.dart';
 import '../providers/position_action_flow_provider.dart';
@@ -35,6 +36,7 @@ class PositionActionControls extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final palette = AppPalette.of(context);
     final api = ref.watch(tradeApiProvider);
     final sessionState = ref.watch(tradeSessionProvider);
     final session = sessionState.session;
@@ -112,18 +114,17 @@ class PositionActionControls extends ConsumerWidget {
                       ? () => _startAction(context, ref, action)
                       : null,
                   style: OutlinedButton.styleFrom(
-                    visualDensity: VisualDensity.compact,
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 9,
-                      vertical: 6,
+                      horizontal: AppTokens.space3,
+                      vertical: AppTokens.space2,
                     ),
                     foregroundColor: action.destructive
-                        ? Colors.redAccent
+                        ? palette.negative
                         : null,
                   ),
                   child: Text(
                     action.label,
-                    style: const TextStyle(fontSize: 11),
+                    style: const TextStyle(fontSize: 12),
                   ),
                 );
               })
@@ -139,8 +140,8 @@ class PositionActionControls extends ConsumerWidget {
             Text(
               reason,
               style: TextStyle(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-                fontSize: 10,
+                color: palette.muted,
+                fontSize: 12,
               ),
             ),
         ],
@@ -152,9 +153,9 @@ class PositionActionControls extends ConsumerWidget {
               statusMessage,
               style: TextStyle(
                 color: statusMessage.startsWith('Đã hoàn tất')
-                    ? Colors.green.shade700
-                    : Theme.of(context).colorScheme.error,
-                fontSize: 11,
+                    ? palette.positive
+                    : palette.negative,
+                fontSize: 12,
                 fontWeight: FontWeight.w600,
               ),
             ),

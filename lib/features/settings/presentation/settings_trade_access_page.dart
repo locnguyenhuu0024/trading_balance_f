@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/security/secure_storage_helper.dart';
+import '../../../core/theme/app_theme.dart';
 import '../../orders/presentation/widgets/trade_account_controls.dart';
 
 class SettingsTradeAccessPage extends ConsumerStatefulWidget {
@@ -62,9 +63,9 @@ class _SettingsTradeAccessPageState
           );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
+        SnackBar(
           content: Text('Đã lưu cấu hình API thành công!'),
-          backgroundColor: Colors.green,
+          backgroundColor: AppPalette.of(context).positive,
         ),
       );
     } finally {

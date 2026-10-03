@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../../../core/theme/app_theme.dart';
 
 import '../../../application/risk_monitor_bridge.dart';
 import '../../../domain/risk/action_plan.dart';
@@ -141,9 +142,10 @@ Color riskQualitySeverityColor(
   if (riskQualityIsCurrent(quality)) {
     return riskSeverityColor(context, severity);
   }
+  final palette = AppPalette.of(context);
   return switch (quality.status) {
-    RiskQualityStatus.partial => Colors.amber.shade800,
-    RiskQualityStatus.stale => Colors.orange.shade800,
+    RiskQualityStatus.partial => palette.warning,
+    RiskQualityStatus.stale => palette.negative,
     RiskQualityStatus.error => Theme.of(context).colorScheme.error,
     _ => Theme.of(context).colorScheme.onSurfaceVariant,
   };
@@ -155,15 +157,16 @@ String riskAssessmentLabel(RiskAssessment? assessment) {
 }
 
 Color riskSeverityColor(BuildContext context, RiskSeverity? severity) {
+  final palette = AppPalette.of(context);
   switch (severity) {
     case RiskSeverity.normal:
-      return Colors.green.shade700;
+      return palette.positive;
     case RiskSeverity.watch:
-      return Colors.amber.shade800;
+      return palette.warning;
     case RiskSeverity.high:
-      return Colors.deepOrange.shade700;
+      return palette.negative;
     case RiskSeverity.critical:
-      return Colors.red.shade700;
+      return palette.ink;
     case null:
       return Theme.of(context).colorScheme.onSurfaceVariant;
   }
@@ -708,10 +711,11 @@ class _QualityChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = AppPalette.of(context);
     final color = switch (quality.status) {
-      RiskQualityStatus.complete => Colors.green.shade700,
-      RiskQualityStatus.partial => Colors.amber.shade800,
-      RiskQualityStatus.stale => Colors.orange.shade800,
+      RiskQualityStatus.complete => palette.positive,
+      RiskQualityStatus.partial => palette.warning,
+      RiskQualityStatus.stale => palette.negative,
       _ => Theme.of(context).colorScheme.onSurfaceVariant,
     };
     return Semantics(
@@ -731,7 +735,7 @@ class _QualityChip extends StatelessWidget {
           textAlign: TextAlign.center,
           style: TextStyle(
             color: color,
-            fontSize: 11,
+            fontSize: 12,
             fontWeight: FontWeight.w700,
           ),
         ),
@@ -929,11 +933,13 @@ class _AnswerCard extends StatelessWidget {
   }
 }
 
-String _answerKey(String label) => const <String, String>{
-  'Xu hướng': 'Trend',
-  'Đòn bẩy hiệu quả': 'Effective leverage',
-  'Nợ': 'Debt',
-  'True Exit': 'True Exit',
-  '-10% kịch bản': '-10% scenario',
-  'Kế hoạch': 'Plan status',
-}[label] ?? label;
+String _answerKey(String label) =>
+    const <String, String>{
+      'Xu hướng': 'Trend',
+      'Đòn bẩy hiệu quả': 'Effective leverage',
+      'Nợ': 'Debt',
+      'True Exit': 'True Exit',
+      '-10% kịch bản': '-10% scenario',
+      'Kế hoạch': 'Plan status',
+    }[label] ??
+    label;

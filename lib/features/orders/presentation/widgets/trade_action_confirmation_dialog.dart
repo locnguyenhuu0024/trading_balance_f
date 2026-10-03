@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../../core/theme/app_theme.dart';
 import '../../data/trade_api_client.dart';
 
 Future<bool> showTradeActionConfirmation(
@@ -50,6 +51,7 @@ class _TradeActionConfirmationDialogState
 
   @override
   Widget build(BuildContext context) {
+    final palette = AppPalette.of(context);
     final targets = widget.prepared.targets;
     final targetCount =
         widget.prepared.summary['targetCount'] ?? targets.length;
@@ -67,12 +69,12 @@ class _TradeActionConfirmationDialogState
                     ? 'Lệnh này bao gồm toàn bộ $targetCount vị thế được máy chủ xác nhận, không phụ thuộc bộ lọc đang chọn.'
                     : 'Xác nhận đúng vị thế và giá trị mà máy chủ đã chuẩn bị. Giá thị trường không được đảm bảo.',
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: AppTokens.space3),
               if (targets.isEmpty)
                 const Text('Máy chủ không trả về danh sách mục tiêu.')
               else
                 ...targets.map(_buildTarget),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppTokens.space2),
               Text(
                 'Xác nhận hết hạn: ${widget.prepared.expiresAt}',
                 style: Theme.of(context).textTheme.bodySmall,
@@ -96,7 +98,10 @@ class _TradeActionConfirmationDialogState
                   Navigator.of(context).pop(true);
                 },
           style: widget.destructive
-              ? FilledButton.styleFrom(backgroundColor: Colors.red.shade700)
+              ? FilledButton.styleFrom(
+                  backgroundColor: palette.negative,
+                  foregroundColor: palette.onStrong,
+                )
               : null,
           child: Text(widget.confirmLabel),
         ),
@@ -115,9 +120,9 @@ class _TradeActionConfirmationDialogState
         .toList(growable: false);
 
     return Card(
-      margin: const EdgeInsets.only(bottom: 8),
+      margin: const EdgeInsets.only(bottom: AppTokens.space2),
       child: Padding(
-        padding: const EdgeInsets.all(10),
+        padding: const EdgeInsets.all(AppTokens.space3),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [

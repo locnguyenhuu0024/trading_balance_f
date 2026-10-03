@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../../core/theme/app_theme.dart';
+
 int orderGridColumnCountForWidth(double width) {
   if (width < 600) return 1;
   if (width < 900) return 2;
@@ -22,14 +24,15 @@ class ResponsiveOrderGrid extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final columnCount = orderGridColumnCountForWidth(constraints.maxWidth);
-        const padding = EdgeInsets.all(12);
+        const padding = EdgeInsets.all(AppTokens.space3);
 
         if (columnCount == 1) {
           return ListView.separated(
             padding: padding,
             itemCount: children.length,
             itemBuilder: (context, index) => children[index],
-            separatorBuilder: (context, index) => const SizedBox(height: 8),
+            separatorBuilder: (context, index) =>
+                const SizedBox(height: AppTokens.space2),
           );
         }
 
@@ -43,7 +46,9 @@ class ResponsiveOrderGrid extends StatelessWidget {
               return Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: List.generate(columnCount * 2 - 1, (index) {
-                  if (index.isOdd) return const SizedBox(width: 12);
+                  if (index.isOdd) {
+                    return const SizedBox(width: AppTokens.space3);
+                  }
 
                   final columnIndex = index ~/ 2;
                   final childIndex = firstChildIndex + columnIndex;
@@ -55,7 +60,8 @@ class ResponsiveOrderGrid extends StatelessWidget {
                 }),
               );
             },
-            separatorBuilder: (context, index) => const SizedBox(height: 12),
+            separatorBuilder: (context, index) =>
+                const SizedBox(height: AppTokens.space3),
           );
         }
 
@@ -64,8 +70,8 @@ class ResponsiveOrderGrid extends StatelessWidget {
           itemCount: children.length,
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: columnCount,
-            mainAxisSpacing: 12,
-            crossAxisSpacing: 12,
+            mainAxisSpacing: AppTokens.space3,
+            crossAxisSpacing: AppTokens.space3,
             mainAxisExtent: cardExtent,
           ),
           itemBuilder: (context, index) => children[index],

@@ -220,22 +220,46 @@ class _CryptoIconState extends State<CryptoIcon> {
       clipBehavior: Clip.antiAlias,
       child: urls.isEmpty
           ? _buildFallbackText()
-          : Image.network(
-              urls[sourceIndex],
-              key: ValueKey(urls[sourceIndex]),
-              width: widget.size,
-              height: widget.size,
-              fit: BoxFit.cover,
-              errorBuilder: (context, error, stackTrace) {
-                if (sourceIndex < urls.length - 1) {
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    if (!mounted || _sourceIndex != sourceIndex) return;
-                    setState(() => _sourceIndex += 1);
-                  });
-                }
+          : ColorFiltered(
+              colorFilter: const ColorFilter.matrix([
+                0.2126,
+                0.7152,
+                0.0722,
+                0,
+                0,
+                0.2126,
+                0.7152,
+                0.0722,
+                0,
+                0,
+                0.2126,
+                0.7152,
+                0.0722,
+                0,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+              ]),
+              child: Image.network(
+                urls[sourceIndex],
+                key: ValueKey(urls[sourceIndex]),
+                width: widget.size,
+                height: widget.size,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) {
+                  if (sourceIndex < urls.length - 1) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (!mounted || _sourceIndex != sourceIndex) return;
+                      setState(() => _sourceIndex += 1);
+                    });
+                  }
 
-                return _buildFallbackText();
-              },
+                  return _buildFallbackText();
+                },
+              ),
             ),
     );
   }
