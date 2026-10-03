@@ -2,6 +2,8 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:trading_balance_f/core/theme/app_theme.dart';
+import 'package:trading_balance_f/core/theme/pnl_color.dart';
 import 'package:trading_balance_f/features/orders/data/trade_api_client.dart';
 import 'package:trading_balance_f/features/orders/presentation/providers/trade_session_provider.dart';
 import 'package:trading_balance_f/features/portfolio/data/risk/risk_request_coordinator.dart';
@@ -13,6 +15,342 @@ import 'package:trading_balance_f/features/strategy/presentation/strategy_screen
 import 'package:trading_balance_f/features/strategy/presentation/strategy_wizard_dialog.dart';
 
 void main() {
+  testWidgets('T72 compact strategy cards show current status and omit intro', (
+    tester,
+  ) async {
+    final api = _FakeStrategyApi();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          tradeSessionProvider.overrideWith(
+            (ref) => _AuthenticatedSessionController(),
+          ),
+          strategyApiProvider.overrideWithValue(api),
+          strategyMarketRepositoryProvider.overrideWithValue(
+            _FakeMarketRepository(),
+          ),
+        ],
+        child: const MaterialApp(home: StrategyScreen()),
+      ),
+    );
+    await _pumpFrames(tester);
+
+    expect(
+      find.text(
+        'Tạo kế hoạch lệnh từ các vùng hỗ trợ và kháng cự của hợp đồng USDT.',
+      ),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('strategy-summary-draft-1')),
+        matching: find.text('Bản nháp'),
+      ),
+      findsOneWidget,
+    );
+    final draftCard = find
+        .ancestor(
+          of: find.byKey(const Key('strategy-summary-draft-1')),
+          matching: find.byType(Card),
+        )
+        .first;
+    expect(
+      find.descendant(of: draftCard, matching: find.byTooltip('Tạo lại')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('T72 canDelete does not grant replacement eligibility', (
+    tester,
+  ) async {
+    final api = _FakeStrategyApi();
+    api.strategies[0]
+      ..['status'] = 'PARTIAL'
+      ..['batchAttempted'] = true
+      ..['canDelete'] = true
+      ..['canReplace'] = false;
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          tradeSessionProvider.overrideWith(
+            (ref) => _AuthenticatedSessionController(),
+          ),
+          strategyApiProvider.overrideWithValue(api),
+          strategyMarketRepositoryProvider.overrideWithValue(
+            _FakeMarketRepository(),
+          ),
+        ],
+        child: const MaterialApp(home: StrategyScreen()),
+      ),
+    );
+    await _pumpFrames(tester);
+    final summary = find.byKey(const Key('strategy-summary-draft-1'));
+    await tester.ensureVisible(summary);
+    await tester.pump();
+    final card = find.ancestor(of: summary, matching: find.byType(Card)).first;
+
+    expect(
+      find.descendant(of: card, matching: find.byTooltip('Tạo lại')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: card, matching: find.byTooltip('Xóa chiến thuật')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('T72 summary follows live lifecycle and all-canceled orders', (
+    tester,
+  ) async {
+    final api = _FakeStrategyApi();
+    final session = _AuthenticatedSessionController();
+    StrategyDashboardController? dashboard;
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          tradeSessionProvider.overrideWith((ref) => session),
+          strategyApiProvider.overrideWithValue(api),
+          strategyMarketRepositoryProvider.overrideWithValue(
+            _FakeMarketRepository(),
+          ),
+        ],
+        child: MaterialApp(
+          home: Consumer(
+            builder: (context, ref, child) {
+              dashboard = ref.watch(
+                strategyDashboardProvider(session.state.session!.bearerToken),
+              );
+              return const StrategyScreen();
+            },
+          ),
+        ),
+      ),
+    );
+    await _pumpFrames(tester);
+
+    final summary = find.byKey(const Key('strategy-summary-started-1'));
+    await tester.ensureVisible(summary);
+    await tester.pump();
+    expect(
+      find.descendant(of: summary, matching: find.text('Đã gửi')),
+      findsOneWidget,
+    );
+
+    api.strategies[1]
+      ..['orders'] = [
+        {'status': 'canceled'},
+        {'status': 'mmp_canceled'},
+      ]
+      ..['queueStatus'] = 'stopped'
+      ..['queueProgress'] = {
+        'totalCount': 2,
+        'attemptedCount': 2,
+        'acceptedCount': 2,
+        'pendingCount': 0,
+        'notSubmittedCount': 0,
+      }
+      ..['orderSyncState'] = 'fresh'
+      ..['canDelete'] = true
+      ..['canReplace'] = false
+      ..['batchAttempted'] = false
+      ..['orderPlacementAttempted'] = true;
+    await dashboard!.load();
+    await _pumpFrames(tester);
+
+    expect(
+      find.descendant(of: summary, matching: find.text('Đã hủy')),
+      findsOneWidget,
+    );
+    await _openStrategyDetails(tester, 'started-1');
+    expect(find.text('Đã gửi'), findsOneWidget);
+    expect(find.text('Chưa gửi'), findsNothing);
+    expect(
+      find.textContaining('Không có lệnh nào được gửi lên OKX'),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: find.byType(Dialog),
+        matching: find.byTooltip('Tạo lại'),
+      ),
+      findsNothing,
+    );
+    await tester.tap(find.byTooltip('Đóng chi tiết'));
+    await tester.pumpAndSettle();
+
+    api.strategies[1]
+      ..['orders'] = [
+        {'status': 'canceled'},
+      ]
+      ..['queueStatus'] = 'submitted'
+      ..['queueProgress'] = {
+        'totalCount': 2,
+        'attemptedCount': 1,
+        'acceptedCount': 1,
+        'pendingCount': 1,
+        'notSubmittedCount': 0,
+      };
+    await dashboard!.load();
+    await _pumpFrames(tester);
+    expect(
+      find.descendant(of: summary, matching: find.text('Đã hủy')),
+      findsNothing,
+    );
+
+    api.strategies[1]['queueStatus'] = 'sending';
+    await dashboard!.load();
+    await _pumpFrames(tester);
+    expect(
+      find.descendant(of: summary, matching: find.text('Đã hủy')),
+      findsNothing,
+    );
+  });
+
+  testWidgets('RED-004 sequential canceled summary requires complete queue evidence', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(360, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = _FakeStrategyApi();
+    final session = _AuthenticatedSessionController();
+    StrategyDashboardController? dashboard;
+    api.strategies[1]
+      ..['status'] = 'PARTIAL'
+      ..['orders'] = [
+        {'status': 'canceled'},
+        {'status': 'mmp_canceled'},
+      ]
+      ..['submissionMode'] = 'sequential'
+      ..['queueStatus'] = 'stopped'
+      ..['queueProgress'] = null
+      ..['orderSyncState'] = 'fresh';
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          tradeSessionProvider.overrideWith((ref) => session),
+          strategyApiProvider.overrideWithValue(api),
+          strategyMarketRepositoryProvider.overrideWithValue(
+            _FakeMarketRepository(),
+          ),
+        ],
+        child: MediaQuery(
+          data: const MediaQueryData(
+            size: Size(360, 800),
+            textScaler: TextScaler.linear(1.5),
+          ),
+          child: MaterialApp(
+            home: Consumer(
+              builder: (context, ref, child) {
+                dashboard = ref.watch(
+                  strategyDashboardProvider(session.state.session!.bearerToken),
+                );
+                return const StrategyScreen();
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+    await _pumpFrames(tester);
+    final summary = find.byKey(const Key('strategy-summary-started-1'));
+    await tester.ensureVisible(summary);
+    await tester.pump();
+
+    expect(
+      find.descendant(of: summary, matching: find.text('Đã hủy')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: summary,
+        matching: find.text('Một phần / cần kiểm tra'),
+      ),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+
+    api.strategies[1]
+      ..remove('queueStatus')
+      ..remove('queueProgress');
+    await dashboard!.load();
+    await _pumpFrames(tester);
+    expect(
+      find.descendant(of: summary, matching: find.text('Đã hủy')),
+      findsNothing,
+    );
+
+    api.strategies[1]['queueProgress'] = {'totalCount': 2};
+    await dashboard!.load();
+    await _pumpFrames(tester);
+    expect(
+      find.descendant(of: summary, matching: find.text('Đã hủy')),
+      findsNothing,
+    );
+
+    api.strategies[1]
+      ..['submissionMode'] = 'batch'
+      ..remove('queueStatus')
+      ..remove('queueProgress');
+    await dashboard!.load();
+    await _pumpFrames(tester);
+    expect(
+      find.descendant(of: summary, matching: find.text('Đã hủy')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('T72 strategy detail PnL amount and percent have sign colors', (
+    tester,
+  ) async {
+    final api = _FakeStrategyApi();
+    api.strategies[1]
+      ..['unrealizedPnl'] = '1.25'
+      ..['pnlPercent'] = '-0.006';
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          tradeSessionProvider.overrideWith(
+            (ref) => _AuthenticatedSessionController(),
+          ),
+          strategyApiProvider.overrideWithValue(api),
+          strategyMarketRepositoryProvider.overrideWithValue(
+            _FakeMarketRepository(),
+          ),
+        ],
+        child: const MaterialApp(home: StrategyScreen()),
+      ),
+    );
+    await _pumpFrames(tester);
+    await _openStrategyDetails(tester, 'started-1');
+
+    final pnlMetric = find.ancestor(
+      of: find.text('PnL chưa thực hiện'),
+      matching: find.byWidgetPredicate(
+        (widget) => widget is SizedBox && widget.width == 175,
+      ),
+    );
+    final pnlText = find.descendant(of: pnlMetric, matching: find.text('1.25'));
+    expect(tester.widget<Text>(pnlText).style?.color, PnlColors.lightPositive);
+
+    final percentMetric = find.ancestor(
+      of: find.text('% trên vốn đã khớp'),
+      matching: find.byWidgetPredicate(
+        (widget) => widget is SizedBox && widget.width == 175,
+      ),
+    );
+    final percentText = find.descendant(
+      of: percentMetric,
+      matching: find.text('-0.006'),
+    );
+    expect(
+      tester.widget<Text>(percentText).style?.color,
+      PnlColors.lightNegative,
+    );
+  });
+
   testWidgets('RED-00 strategy action long press only reveals its tooltip', (
     tester,
   ) async {
@@ -456,7 +794,13 @@ void main() {
       await dashboard!.load();
       await _pumpFrames(tester);
 
-      expect(find.text('Bản nháp'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(Dialog),
+          matching: find.text('Bản nháp'),
+        ),
+        findsOneWidget,
+      );
       final liveSummary = find.byKey(const Key('strategy-summary-started-1'));
       expect(
         find.descendant(of: liveSummary, matching: find.text('Tổng lệnh: 2')),
@@ -607,9 +951,13 @@ void main() {
     }
     await _openStrategyDetails(tester, 'completed-1');
 
-    expect(find.text('Hoàn tất'), findsOneWidget);
+    final detailStatus = find.descendant(
+      of: find.byType(Dialog),
+      matching: find.text('Hoàn tất'),
+    );
+    expect(detailStatus, findsOneWidget);
     final completedCard = find.ancestor(
-      of: find.text('Hoàn tất'),
+      of: detailStatus,
       matching: find.byType(Card),
     );
     expect(

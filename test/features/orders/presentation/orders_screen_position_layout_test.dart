@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/currency/currency_display_mode.dart';
+import 'package:trading_balance_f/core/theme/app_theme.dart';
 import 'package:trading_balance_f/core/typography/app_text_scale.dart';
 import 'package:trading_balance_f/features/orders/data/okx_order_model.dart';
 import 'package:trading_balance_f/features/orders/data/okx_position_model.dart';
@@ -43,6 +44,8 @@ OkxPosition _position({
   required String liqPx,
   String notionalUsd = '',
   String instId = 'BTC-USDT-SWAP',
+  String upl = '0',
+  String uplRatio = '0',
 }) {
   return OkxPosition(
     instId: instId,
@@ -51,8 +54,8 @@ OkxPosition _position({
     avgPx: '0.09117',
     markPx: '0.09118',
     liqPx: liqPx,
-    upl: '0',
-    uplRatio: '0',
+    upl: upl,
+    uplRatio: uplRatio,
     notionalUsd: notionalUsd,
   );
 }
@@ -114,6 +117,25 @@ Finder _cardContainingPrice(String price) {
 }
 
 void main() {
+  testWidgets('T72 GREEN near-zero position PnL uses muted gray', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _ordersApp(
+        positions: [
+          _position(liqPx: '1000', upl: '0.001', uplRatio: '0.00001'),
+        ],
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    final nearZeroAmount = tester.widget<Text>(find.text('+0.00 '));
+    final nearZeroRatio = tester.widget<Text>(find.text('+0.00%'));
+    expect(nearZeroAmount.style?.color, AppPalette.light.muted);
+    expect(nearZeroRatio.style?.color, AppPalette.light.muted);
+  });
+
   test('T69 RED-003 order parsing retains cancellation identity', () {
     final order = OkxOrder.fromJson({
       'instId': 'BTC-USDT-SWAP',

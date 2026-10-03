@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac
+import math
 import re
 import secrets
 import sqlite3
@@ -46,6 +47,8 @@ _QUOTE_MAX_AGE_MS = 15_000
 _ORDER_SCAN_INTERVAL_SECONDS = 5
 _ORDER_SCAN_FRESH_SECONDS = 15
 _ORDER_TERMINAL_STATES = frozenset({"rejected", "filled", "canceled", "mmp_canceled", "not_submitted"})
+_DELETABLE_SUBMITTED_ORDER_STATES = frozenset({"filled", "canceled", "mmp_canceled"})
+_DELETABLE_ORDER_STATES = _DELETABLE_SUBMITTED_ORDER_STATES | {"rejected", "not_submitted"}
 _STRATEGY_ID = re.compile(r"[A-Za-z0-9_-]{8,64}\Z")
 
 
@@ -524,6 +527,256 @@ class StrategyService:
             (strategy["id"], fingerprint),
         ).fetchone()
         return active_replacement is None
+
+    @staticmethod
+    def _valid_position_rows(rows: Any) -> bool:
+        if not isinstance(rows, list):
+            return False
+        for row in rows:
+            if not isinstance(row, dict):
+                return False
+            instrument_id = row.get("instId")
+            side = row.get("posSide")
+            if (
+                not isinstance(instrument_id, str) or not instrument_id.strip()
+                or side not in ("net", "long", "short")
+                or _decimal(row.get("pos")) is None
+            ):
+                return False
+        return True
+
+    @classmethod
+    def _positions_clear_for_instrument(cls, rows: Any, instrument_id: str) -> bool:
+        return cls._valid_position_rows(rows) and all(
+            row["instId"] != instrument_id or _decimal(row["pos"]) == 0
+            for row in rows
+        )
+
+    def _terminal_delete_position_rows(self) -> tuple[list[Any] | None, bool]:
+        response = self.okx.request(
+            "GET", "/api/v5/account/positions", params={"instType": "SWAP"}
+        )
+        if (
+            not isinstance(response, dict)
+            or response.get("code") != "0"
+            or not isinstance(response.get("data"), list)
+        ):
+            return None, False
+        rows = response["data"]
+        return rows, self._valid_position_rows(rows)
+
+    @staticmethod
+    def _terminal_delete_order_pairs(
+        strategy: dict[str, Any]
+    ) -> list[tuple[dict[str, Any], dict[str, Any]]] | None:
+        orders = strategy.get("orders")
+        results = strategy.get("results")
+        if (
+            not isinstance(orders, list) or not orders
+            or not isinstance(results, list) or len(results) != len(orders)
+        ):
+            return None
+
+        orders_by_client: dict[str, dict[str, Any]] = {}
+        results_by_client: dict[str, dict[str, Any]] = {}
+        for order in orders:
+            if not isinstance(order, dict):
+                return None
+            client_id = order.get("clientOrderId")
+            size = _positive(order.get("contracts"))
+            side = order.get("side")
+            if (
+                not isinstance(client_id, str) or not client_id.strip()
+                or client_id in orders_by_client
+                or size is None or side not in ("long", "short")
+            ):
+                return None
+            orders_by_client[client_id] = order
+        for result in results:
+            if not isinstance(result, dict):
+                return None
+            client_id = result.get("clientOrderId")
+            if (
+                not isinstance(client_id, str) or not client_id.strip()
+                or client_id in results_by_client
+            ):
+                return None
+            results_by_client[client_id] = result
+        if set(orders_by_client) != set(results_by_client):
+            return None
+
+        pairs: list[tuple[dict[str, Any], dict[str, Any]]] = []
+        for client_id, order in orders_by_client.items():
+            result = results_by_client[client_id]
+            size = _positive(order.get("contracts"))
+            result_size = _positive(result.get("contracts"))
+            state = result.get("status")
+            if (
+                result.get("side") != order.get("side")
+                or result_size is None or result_size != size
+                or state not in _DELETABLE_ORDER_STATES
+            ):
+                return None
+
+            placement_state = result.get("placementState")
+            exchange_id = result.get("exchangeOrderId")
+            if state in _DELETABLE_SUBMITTED_ORDER_STATES:
+                filled = _decimal(result.get("filledContracts"))
+                if (
+                    not isinstance(exchange_id, str) or not exchange_id.strip()
+                    or filled is None or filled < 0 or filled > size
+                    or placement_state not in (None, "accepted")
+                ):
+                    return None
+            elif state == "rejected":
+                code = bounded_error_code(result.get("errorCode"))
+                if (
+                    code is None or code == "0"
+                    or (exchange_id is not None and exchange_id != "")
+                    or placement_state not in (None, "rejected")
+                ):
+                    return None
+            else:
+                if (
+                    placement_state != "not_submitted"
+                    or (exchange_id is not None and exchange_id != "")
+                ):
+                    return None
+            pairs.append((order, result))
+        return pairs
+
+    @classmethod
+    def _eligible_terminal_delete_record(
+        cls,
+        connection: Any,
+        strategy: dict[str, Any],
+        fingerprint: str,
+        now: float,
+    ) -> bool:
+        lease_until = strategy.get("executionLeaseUntil")
+        if lease_until is not None and (
+            isinstance(lease_until, bool)
+            or not isinstance(lease_until, (int, float))
+            or not math.isfinite(float(lease_until))
+            or lease_until > now
+        ):
+            return False
+        contract = strategy.get("contract")
+        if (
+            not isinstance(strategy.get("accountFingerprint"), str)
+            or not hmac.compare_digest(strategy["accountFingerprint"], fingerprint)
+            or strategy.get("status") not in {"APPLIED", "PARTIAL", "COMPLETED"}
+            or not strategy.get("orderPlacementAttempted")
+            or strategy.get("status") == "APPLYING"
+            or strategy.get("executionId") is not None
+            or strategy.get("submissionModeInvalid")
+            or not isinstance(contract, dict)
+            or not isinstance(contract.get("instrumentId"), str)
+            or not contract["instrumentId"].strip()
+            or cls._terminal_delete_order_pairs(strategy) is None
+        ):
+            return False
+
+        if strategy.get("submissionMode") == "sequential":
+            queue = strategy.get("queue")
+            if (
+                strategy.get("queueCorrupt")
+                or not isinstance(queue, dict)
+                or queue.get("phase") not in ("stopped", "submitted")
+                or queue.get("inFlight") is not None
+                or queue.get("totalCount") != len(strategy["orders"])
+            ):
+                return False
+            if any(
+                result.get("status") == "not_submitted"
+                for result in strategy["results"]
+            ) and queue.get("phase") != "stopped":
+                return False
+        elif (
+            strategy.get("submissionMode") != "batch"
+            or strategy.get("queueCorrupt")
+            or strategy.get("queue") is not None
+            or strategy.get("queueJsonRaw") is not None
+            or any(result.get("status") == "not_submitted" for result in strategy["results"])
+        ):
+            return False
+
+        try:
+            metadata = _retry_metadata(contract)
+        except RetryDataError:
+            return False
+        if metadata is not None and strategy.get("attemptStarted"):
+            return False
+        children, unsafe = cls._retry_children_in_connection(
+            connection, fingerprint, strategy["id"], contract.get("instrumentId")
+        )
+        if unsafe or children:
+            return False
+        active_replacement = connection.execute(
+            "SELECT 1 FROM strategies WHERE replacement_source_id=? AND account_fingerprint=? "
+            "AND status='APPLYING' LIMIT 1",
+            (strategy["id"], fingerprint),
+        ).fetchone()
+        if active_replacement is not None:
+            return False
+        reservation = connection.execute(
+            "SELECT 1 FROM strategy_reservations WHERE strategy_id=? LIMIT 1",
+            (strategy["id"],),
+        ).fetchone()
+        return reservation is None
+
+    @staticmethod
+    def _verified_terminal_order(
+        instrument_id: str,
+        position_mode: Any,
+        order: dict[str, Any],
+        result: dict[str, Any],
+        details: Any,
+    ) -> bool:
+        if result.get("status") in {"rejected", "not_submitted"}:
+            return True
+        if not isinstance(details, dict):
+            return False
+        client_id = order.get("clientOrderId")
+        exchange_id = result.get("exchangeOrderId")
+        expected_size = _positive(order.get("contracts"))
+        side = order.get("side")
+        expected_side = "buy" if side == "long" else "sell" if side == "short" else None
+        expected_position_side = (
+            side if position_mode == "long_short_mode"
+            else "net" if position_mode == "net_mode" else None
+        )
+        size = _decimal(details.get("sz"))
+        filled = _decimal(details.get("accFillSz"))
+        state = details.get("state")
+        return (
+            isinstance(client_id, str) and bool(client_id.strip())
+            and isinstance(exchange_id, str) and bool(exchange_id.strip())
+            and details.get("instId") == instrument_id
+            and details.get("clOrdId") == client_id
+            and details.get("ordId") == exchange_id
+            and details.get("side") == expected_side
+            and details.get("posSide") == expected_position_side
+            and expected_size is not None and size == expected_size
+            and filled is not None and 0 <= filled <= size
+            and isinstance(state, str)
+            and state.lower() in _DELETABLE_SUBMITTED_ORDER_STATES
+        )
+
+    def _terminal_delete_order_details(
+        self, instrument_id: str, client_order_id: str
+    ) -> dict[str, Any] | None:
+        response = self.okx.request(
+            "GET",
+            "/api/v5/trade/order",
+            params={"instId": instrument_id, "clOrdId": client_order_id},
+        )
+        if not isinstance(response, dict) or response.get("code") != "0":
+            return None
+        rows = response.get("data")
+        if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict):
+            return None
+        return rows[0]
 
     @classmethod
     def _retry_children_in_connection(
@@ -2903,7 +3156,7 @@ class StrategyService:
             raise APIError(404, "strategy_not_found", "The strategy was not found.")
         return self._decode_row(row)
 
-    def _can_delete_hint(self, strategy: dict[str, Any]) -> bool:
+    def _can_replace_hint(self, strategy: dict[str, Any]) -> bool:
         fingerprint = strategy["accountFingerprint"]
         with self.store.connection() as connection:
             row = connection.execute(
@@ -2912,6 +3165,38 @@ class StrategyService:
             ).fetchone()
             return row is not None and self._eligible_never_sent_record(
                 connection, self._decode_row(row), fingerprint, self.clock()
+            )
+
+    def _can_delete_hint(
+        self,
+        strategy: dict[str, Any],
+        *,
+        terminal_positions: Any = None,
+        terminal_positions_available: bool = False,
+        order_sync_state: str | None = None,
+    ) -> bool:
+        fingerprint = strategy["accountFingerprint"]
+        with self.store.connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM strategies WHERE strategy_id=? AND account_fingerprint=?",
+                (strategy["id"], fingerprint),
+            ).fetchone()
+            if row is None:
+                return False
+            current = self._decode_row(row)
+            now = self.clock()
+            if self._eligible_never_sent_record(connection, current, fingerprint, now):
+                return True
+            if (
+                not terminal_positions_available
+                or order_sync_state != "fresh"
+                or not self._eligible_terminal_delete_record(
+                    connection, current, fingerprint, now
+                )
+            ):
+                return False
+            return self._positions_clear_for_instrument(
+                terminal_positions, current["contract"]["instrumentId"]
             )
 
     def _replacement_cleanup_conflict(self, strategy: dict[str, Any]) -> bool:
@@ -2935,7 +3220,14 @@ class StrategyService:
                 connection, replacement_id, self.clock()
             )
 
-    def _basic_result(self, strategy: dict[str, Any]) -> dict[str, Any]:
+    def _basic_result(
+        self,
+        strategy: dict[str, Any],
+        *,
+        terminal_positions: Any = None,
+        terminal_positions_available: bool = False,
+        order_sync_state: str | None = None,
+    ) -> dict[str, Any]:
         status = strategy["status"]
         failure_reason = strategy["failureReason"]
         if self._legacy_never_sent(strategy):
@@ -2977,7 +3269,13 @@ class StrategyService:
             "queueStatus": queue_status,
             "queueProgress": queue_counts,
             "applyOutcome": apply_outcome,
-            "canDelete": self._can_delete_hint(strategy),
+            "canDelete": self._can_delete_hint(
+                strategy,
+                terminal_positions=terminal_positions,
+                terminal_positions_available=terminal_positions_available,
+                order_sync_state=order_sync_state,
+            ),
+            "canReplace": self._can_replace_hint(strategy),
             "replacementCleanupConflict": self._replacement_cleanup_conflict(strategy),
             "createdAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(strategy["createdAt"])),
             "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(strategy["updatedAt"])),
@@ -3019,14 +3317,17 @@ class StrategyService:
         position_status = "available"
         position_rows: list[dict[str, Any]] = []
         try:
-            raw_positions = self.okx.positions("SWAP")
+            raw_positions, valid_position_rows = self._terminal_delete_position_rows()
         except OKXError:
+            raw_positions = None
+            valid_position_rows = False
+        if raw_positions is None or not valid_position_rows:
             raw_positions = []
             position_status = "unavailable"
-        actual = [
+        actual = [] if position_status == "unavailable" else [
             row for row in raw_positions
-            if row.get("instId") == strategy["contract"]["instrumentId"]
-            and (_decimal(row.get("pos")) is None or _decimal(row.get("pos")) != 0)
+            if row["instId"] == strategy["contract"]["instrumentId"]
+            and _decimal(row["pos"]) != 0
         ]
         if position_status == "available" and actual:
             position_status = "present"
@@ -3090,7 +3391,13 @@ class StrategyService:
             actual_by_side[side] != expected_by_side[side] for side in actual_by_side
         ):
             attribution_changed = True
-        result = self._basic_result(strategy)
+        sync_fields = self._order_sync_fields(strategy["id"])
+        result = self._basic_result(
+            strategy,
+            terminal_positions=raw_positions,
+            terminal_positions_available=position_status != "unavailable",
+            order_sync_state=sync_fields["orderSyncState"],
+        )
         result.update({
             "orders": strategy["results"],
             "positionStatus": position_status,
@@ -3102,7 +3409,7 @@ class StrategyService:
             "attributionChanged": attribution_changed,
             "observedAt": observed,
             "positionMode": account.get("posMode"),
-            **self._order_sync_fields(strategy["id"]),
+            **sync_fields,
         })
         return result
 
@@ -3268,6 +3575,7 @@ class StrategyService:
 
     def _delete(self, strategy_id: str) -> dict[str, Any]:
         strategy, _, fingerprint = self._current_strategy(strategy_id)
+        now = self.clock()
         with self.store.transaction() as connection:
             current_row = connection.execute(
                 "SELECT * FROM strategies WHERE strategy_id=?", (strategy_id,)
@@ -3277,11 +3585,102 @@ class StrategyService:
             current = self._decode_row(current_row)
             if not hmac.compare_digest(current["accountFingerprint"], fingerprint):
                 raise APIError(409, "account_changed", "This strategy belongs to a different OKX account.")
-            if not self._eligible_never_sent_record(connection, current, fingerprint, self.clock()):
+            if self._eligible_never_sent_record(connection, current, fingerprint, now):
+                self._delete_strategy_with_dependents(connection, strategy_id)
+                return {"id": strategy_id, "status": "DELETED"}
+            if not self._eligible_terminal_delete_record(connection, current, fingerprint, now):
                 raise APIError(
                     409,
                     "strategy_immutable",
-                    "Only a strategy with no order placement attempt can be deleted.",
+                    "Order placement and lifecycle state are not safe for deletion.",
+                )
+
+            snapshot_row = dict(current_row)
+            order_pairs = self._terminal_delete_order_pairs(current)
+            if order_pairs is None:
+                raise APIError(
+                    409,
+                    "strategy_immutable",
+                    "Saved order evidence is incomplete or inconsistent.",
+                )
+
+        instrument_id = current["contract"]["instrumentId"]
+        prepared = current.get("prepared")
+        position_mode = (
+            prepared.get("_positionMode")
+            if isinstance(prepared, dict) and prepared.get("_positionMode") is not None
+            else current["snapshot"].get("_positionMode")
+        )
+        order_evidence_valid = True
+        exchange_read_failed = False
+        for order, result in order_pairs:
+            if result.get("status") in {"rejected", "not_submitted"}:
+                continue
+            try:
+                details = self._terminal_delete_order_details(
+                    instrument_id, order["clientOrderId"]
+                )
+            except OKXError:
+                details = None
+                exchange_read_failed = True
+            if not self._verified_terminal_order(
+                instrument_id, position_mode, order, result, details
+            ):
+                order_evidence_valid = False
+
+        try:
+            positions, valid_position_rows = self._terminal_delete_position_rows()
+        except OKXError:
+            positions = None
+            valid_position_rows = False
+            exchange_read_failed = True
+        if positions is None:
+            exchange_read_failed = True
+
+        _, current_fingerprint = self._account()
+        if not hmac.compare_digest(fingerprint, current_fingerprint):
+            raise APIError(409, "account_changed", "The active OKX account changed during deletion checks.")
+        if exchange_read_failed:
+            raise APIError(
+                502,
+                "exchange_unavailable",
+                "Current order or position data is unavailable; the strategy was not deleted.",
+            )
+        if not order_evidence_valid:
+            raise APIError(
+                409,
+                "strategy_immutable",
+                "Current exchange order evidence is incomplete or no longer terminal.",
+            )
+        if not valid_position_rows or not self._positions_clear_for_instrument(positions, instrument_id):
+            raise APIError(
+                409,
+                "strategy_immutable",
+                "A current position or uncertain position row prevents deletion.",
+            )
+
+        with self.store.transaction() as connection:
+            latest_row = connection.execute(
+                "SELECT * FROM strategies WHERE strategy_id=?", (strategy_id,)
+            ).fetchone()
+            if latest_row is None:
+                raise APIError(404, "strategy_not_found", "The strategy was not found.")
+            if dict(latest_row) != snapshot_row:
+                raise APIError(
+                    409,
+                    "strategy_immutable",
+                    "The strategy changed while deletion checks were running.",
+                )
+            latest = self._decode_row(latest_row)
+            if not hmac.compare_digest(latest["accountFingerprint"], fingerprint):
+                raise APIError(409, "account_changed", "This strategy belongs to a different OKX account.")
+            if not self._eligible_terminal_delete_record(
+                connection, latest, fingerprint, self.clock()
+            ):
+                raise APIError(
+                    409,
+                    "strategy_immutable",
+                    "Order placement and lifecycle state changed during deletion checks.",
                 )
             self._delete_strategy_with_dependents(connection, strategy_id)
         return {"id": strategy_id, "status": "DELETED"}

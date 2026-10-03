@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/formatting/adaptive_number_format.dart';
 import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/theme/pnl_color.dart';
 import '../../../core/timezone/app_time_zone.dart';
 import '../../../core/widgets/crypto_icon.dart';
 import 'providers/order_provider.dart';
@@ -491,9 +492,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     final sideText = posSide == 'NET' ? 'VỊ THẾ' : (isLong ? 'LONG' : 'SHORT');
 
     final pnl = double.tryParse(position.upl);
-    final pnlColor = pnl == null
-        ? palette.muted
-        : (pnl >= 0 ? palette.positive : palette.negative);
+    final pnlColor = resolvePnlColor(pnl, palette, hidden: isBalanceHidden);
     final pnlSign = pnl == null ? '' : (pnl >= 0 ? '+' : '');
     final pnlFormatted = pnl == null
         ? '--'
@@ -503,9 +502,11 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     final pnlRatioPercent = pnlRatio == null
         ? '--'
         : '${pnlRatio >= 0 ? '+' : ''}${(pnlRatio * 100).toStringAsFixed(2)}%';
-    final pnlRatioColor = pnlRatio == null
-        ? palette.muted
-        : (pnlRatio >= 0 ? palette.positive : palette.negative);
+    final pnlRatioColor = resolvePnlColor(
+      pnlRatio == null ? null : pnlRatio * 100,
+      palette,
+      hidden: isBalanceHidden,
+    );
 
     final String baseCoin = position.instId.split('-').isNotEmpty
         ? position.instId.split('-').first

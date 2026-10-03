@@ -4,6 +4,8 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/theme/app_theme.dart';
+import '../../../core/theme/pnl_color.dart';
 import '../../orders/data/trade_api_client.dart';
 import '../../orders/presentation/providers/trade_session_provider.dart';
 import '../domain/strategy_models.dart';
@@ -106,11 +108,9 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
                 112,
               ),
               children: [
-                _introCard(context, session),
                 if (!sessionState.isAuthenticated || session == null)
                   const _SignedOutCard()
                 else ...[
-                  const SizedBox(height: 16),
                   Row(
                     children: [
                       Expanded(
@@ -212,9 +212,10 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
     return _StrategyActions(
       actionBusy: dashboard.isActionInFlight(id),
       blockApply: oversizedDraft,
-      onReplace: strategy['canDelete'] == true
+      onReplace: _canReplaceStrategy(strategy)
           ? () {
-              if (currentStrategy()?['canDelete'] == true) {
+              final current = currentStrategy();
+              if (current != null && _canReplaceStrategy(current)) {
                 _openWizard(
                   context,
                   session,
@@ -262,34 +263,6 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
                 dashboard.refreshResult(id);
               }
             },
-    );
-  }
-
-  Widget _introCard(BuildContext context, TradeSession? session) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Tạo kế hoạch lệnh từ các vùng hỗ trợ và kháng cự của hợp đồng USDT.',
-              style: Theme.of(context).textTheme.bodyLarge,
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Lệnh chỉ được gửi sau khi bạn xem và xác nhận danh sách chính xác từ máy chủ.',
-            ),
-            if (session != null) ...[
-              const SizedBox(height: 8),
-              Text(
-                'Phiên giao dịch: ${session.accountIdentifier.isEmpty ? 'đang đăng nhập' : session.accountIdentifier}',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ],
-          ],
-        ),
-      ),
     );
   }
 
@@ -589,6 +562,7 @@ class _StrategyCard extends StatelessWidget {
         }
       }
     }
+    final statusLabel = _summaryStatusLabel(strategy);
     final tooltipLines = <String>[];
     if (metricsAreStale) {
       tooltipLines.add('Dữ liệu vốn có thể đã cũ.');
@@ -641,6 +615,12 @@ class _StrategyCard extends StatelessWidget {
                           ),
                         ),
                       ],
+                    ),
+                    const SizedBox(height: 6),
+                    Chip(
+                      label: Text(statusLabel),
+                      visualDensity: VisualDensity.compact,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     ),
                     const SizedBox(height: 4),
                     Text(
@@ -762,6 +742,7 @@ class _StrategyDetailContent extends StatelessWidget {
     final leverageErrorCode = _safeLeverageErrorCode(
       _mapList(strategy['leverageResults']),
     );
+    final pnlPalette = AppPalette.of(context);
 
     return Card(
       child: Padding(
@@ -857,9 +838,20 @@ class _StrategyDetailContent extends StatelessWidget {
               spacing: 20,
               runSpacing: 8,
               children: [
-                _Metric(label: 'PnL chưa thực hiện', value: pnl),
+                _Metric(
+                  label: 'PnL chưa thực hiện',
+                  value: pnl,
+                  valueColor: resolvePnlColor(_finiteNumber(pnl), pnlPalette),
+                ),
                 _Metric(label: 'Vốn đã khớp', value: usedMargin),
-                _Metric(label: '% trên vốn đã khớp', value: pnlPercent),
+                _Metric(
+                  label: '% trên vốn đã khớp',
+                  value: pnlPercent,
+                  valueColor: resolvePnlColor(
+                    _finiteNumber(pnlPercent),
+                    pnlPalette,
+                  ),
+                ),
                 _Metric(
                   label: 'Giá vào',
                   value: _first(position, ['avgPx', 'entryPrice']),
@@ -1201,10 +1193,11 @@ class _AppliedOrderRow extends StatelessWidget {
 }
 
 class _Metric extends StatelessWidget {
-  const _Metric({required this.label, required this.value});
+  const _Metric({required this.label, required this.value, this.valueColor});
 
   final String label;
   final Object? value;
+  final Color? valueColor;
 
   @override
   Widget build(BuildContext context) => SizedBox(
@@ -1213,7 +1206,12 @@ class _Metric extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(label, style: Theme.of(context).textTheme.labelSmall),
-        Text(_display(value), style: Theme.of(context).textTheme.bodyMedium),
+        Text(
+          _display(value),
+          style: Theme.of(
+            context,
+          ).textTheme.bodyMedium?.copyWith(color: valueColor),
+        ),
       ],
     ),
   );
@@ -1365,10 +1363,80 @@ Object? _first(Map<String, dynamic> values, List<String> keys) {
 
 String _text(Object? value) => value == null ? '' : value.toString();
 
+double? _finiteNumber(Object? value) {
+  final number = value is num
+      ? value.toDouble()
+      : double.tryParse(_text(value));
+  return number?.isFinite == true ? number : null;
+}
+
+String _summaryStatusLabel(Map<String, dynamic> strategy) {
+  if (_isAllCanceledStrategy(strategy)) return 'Đã hủy';
+  if (_isNeverSentStrategy(strategy)) return 'Chưa gửi';
+  return _statusLabel(_text(strategy['status']).toUpperCase());
+}
+
+bool _isAllCanceledStrategy(Map<String, dynamic> strategy) {
+  if (const {
+    'DRAFT',
+    'PREPARED',
+    'APPLYING',
+  }.contains(_text(strategy['status']).toUpperCase())) {
+    return false;
+  }
+  final orders = strategy['orders'];
+  if (orders is! List || orders.isEmpty) return false;
+  for (final row in orders) {
+    if (row is! Map) return false;
+    final status = _text(row['status']).toLowerCase();
+    if (status != 'canceled' && status != 'mmp_canceled') return false;
+  }
+
+  final queueStatus = _text(strategy['queueStatus']).toLowerCase();
+  if (queueStatus.isNotEmpty &&
+      !const {'stopped', 'submitted'}.contains(queueStatus)) {
+    return false;
+  }
+  final orderSyncState = _text(strategy['orderSyncState']).toLowerCase();
+  if (const {'stale', 'error', 'unavailable'}.contains(orderSyncState)) {
+    return false;
+  }
+  final hasQueueEvidence =
+      queueStatus.isNotEmpty ||
+      _text(strategy['submissionMode']).toLowerCase() == 'sequential';
+  if (hasQueueEvidence || strategy['queueProgress'] != null) {
+    final progress = validatedStrategyQueueProgress(strategy['queueProgress']);
+    if (progress == null ||
+        progress.pendingCount != 0 ||
+        progress.notSubmittedCount != 0 ||
+        progress.totalCount != orders.length) {
+      return false;
+    }
+  }
+  if (_text(strategy['executionId']).isNotEmpty) {
+    return false;
+  }
+  return true;
+}
+
+bool _canReplaceStrategy(Map<String, dynamic> strategy) {
+  final serverValue = strategy['canReplace'];
+  if (serverValue is bool) return serverValue;
+  // Older servers only exposed the original never-sent deletion predicate.
+  if (_text(strategy['status']).toUpperCase() == 'DRAFT') {
+    return strategy['canDelete'] == true &&
+        strategy['batchAttempted'] != true &&
+        strategy['orderPlacementAttempted'] != true;
+  }
+  return _isNeverSentStrategy(strategy);
+}
+
 bool _isNeverSentStrategy(Map<String, dynamic> strategy) =>
     _text(strategy['status']).toUpperCase() != 'DRAFT' &&
     strategy['canDelete'] == true &&
-    strategy['batchAttempted'] == false;
+    strategy['batchAttempted'] == false &&
+    strategy['orderPlacementAttempted'] != true &&
+    strategy['canReplace'] != false;
 
 String? _safeLeverageErrorCode(List<Map<String, dynamic>> results) {
   for (final result in results) {
