@@ -93,12 +93,49 @@ An unclaimed, never-sent retry draft can be deleted to release its selected rows
 
 ### Strategy submission diagnostics
 
-The API and strategy worker emit best-effort, bounded JSON lines to their container stderr. Read the recent logs with:
+The API and strategy worker emit best-effort, bounded JSON lines to their container stderr. Run these commands on the Docker host. Read up to 300 recent lines from the last ten minutes:
 
 ```sh
-sudo docker logs --since 10m trading-balance-trade-api
-sudo docker logs --since 10m trading-balance-strategy-worker
+sudo docker logs --since 10m --tail 300 trading-balance-trade-api
+sudo docker logs --since 10m --tail 300 trading-balance-strategy-worker
 ```
+
+#### Follow logs while submitting limit orders
+
+Open two SSH terminals. Follow the API in the first and the worker in the second:
+
+```sh
+# Terminal 1: preparation, confirmation, enqueue and batch submission.
+sudo docker logs -f --since 10m --tail 300 trading-balance-trade-api
+
+# Terminal 2: sequential order submission and monitoring.
+sudo docker logs -f --since 10m --tail 300 trading-balance-strategy-worker
+```
+
+Press `Ctrl+C` to stop following logs; this does not stop the container. Change `10m` to `1h` when investigating an earlier attempt.
+
+1. Start both log views before confirming the strategy in the UI.
+2. For sequential mode, find the API's `enqueue_result`, then match its `strategy_ref` in the worker events. For batch mode, inspect the API's placement events and `batch_summary`.
+3. Inspect `preflight`, `write_attempt`, `ack_observed` and `commit`. Record the event, stage, outcome, reason, numeric exchange codes when present, and whether the commit was persisted.
+4. If an outcome is unknown, refresh the strategy and reconcile its exchange state before another submission. Logs do not authorize resending an uncertain order.
+
+#### Save or filter an investigation window
+
+Capture both stdout and stderr so diagnostic JSON lines are included. These commands save the last hour to files in the current host directory:
+
+```sh
+sudo docker logs --since 1h trading-balance-trade-api > trade-api.log 2>&1
+sudo docker logs --since 1h trading-balance-strategy-worker > strategy-worker.log 2>&1
+```
+
+To inspect one strategy, replace the illustrative reference below with the actual `strategy_ref` from its log event. Filter both streams; do not use the raw strategy or exchange order ID:
+
+```sh
+sudo docker logs --since 1h trading-balance-trade-api 2>&1 | grep -F 's_0123456789abcdef'
+sudo docker logs --since 1h trading-balance-strategy-worker 2>&1 | grep -F 's_0123456789abcdef'
+```
+
+The investigation files may also contain ordinary server messages. Review them before sharing; share only the relevant diagnostic lines.
 
 Each event uses fixed stage, outcome, endpoint, and reason labels. `strategy_ref` (`s_…`) and `order_ref` (`o_…`) are separate SHA-256 references; match the same reference across the API and worker logs. Events never include request bodies, credentials, account identifiers, raw exchange IDs, prices, sizes, or exception text. `top_code` and `item_code` appear only when they pass numeric validation.
 
