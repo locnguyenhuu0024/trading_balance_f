@@ -474,6 +474,63 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     );
   }
 
+  Widget _buildInstrumentHeaderContents({
+    required String baseCoin,
+    required String instrumentLabel,
+    required String instrumentType,
+    required double instrumentFontSize,
+    required Color iconBackgroundColor,
+    required Color textColor,
+    required Color badgeBackgroundColor,
+    Key? instrumentTypeKey,
+  }) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        CryptoIcon(
+          symbol: baseCoin,
+          size: 20,
+          backgroundColor: iconBackgroundColor,
+          textColor: textColor,
+          textSize: 10,
+        ),
+        const SizedBox(width: 6),
+        Text(
+          instrumentLabel,
+          maxLines: 1,
+          softWrap: false,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontSize: instrumentFontSize,
+            fontWeight: FontWeight.bold,
+            color: textColor,
+          ),
+        ),
+        if (instrumentType.isNotEmpty) ...[
+          const SizedBox(width: 4),
+          Container(
+            key: instrumentTypeKey,
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: badgeBackgroundColor,
+              borderRadius: BorderRadius.circular(AppTokens.radiusSmall),
+            ),
+            child: Text(
+              instrumentType,
+              maxLines: 1,
+              softWrap: false,
+              style: TextStyle(
+                color: textColor,
+                fontWeight: FontWeight.bold,
+                fontSize: 12,
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
   // --- Thẻ hiển thị VỊ THẾ MỞ ---
   Widget _buildPositionCard(
     OkxPosition position,
@@ -511,6 +568,8 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     final String baseCoin = position.instId.split('-').isNotEmpty
         ? position.instId.split('-').first
         : '?';
+    final instrumentLabel = position.instId.split('-').take(2).join();
+    final instrumentType = position.instType.toUpperCase();
 
     // Bảng màu cho Card
     final cardColor = palette.raised;
@@ -535,77 +594,91 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              key: const Key('position-card-header'),
               children: [
                 Expanded(
-                  child: Row(
-                    children: [
-                      CryptoIcon(
-                        symbol: baseCoin,
-                        size: 20,
-                        backgroundColor: iconBgColor,
+                  flex: 5,
+                  child: Align(
+                    key: const Key('position-card-header-left'),
+                    alignment: Alignment.centerLeft,
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: _buildInstrumentHeaderContents(
+                        baseCoin: baseCoin,
+                        instrumentLabel: instrumentLabel,
+                        instrumentType: instrumentType,
+                        instrumentFontSize: 14,
+                        iconBackgroundColor: iconBgColor,
                         textColor: textColor,
-                        textSize: 10,
-                      ),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: Text(
-                          position.instId,
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                            color: textColor,
-                          ),
-                          overflow: TextOverflow.ellipsis,
+                        badgeBackgroundColor: palette.surface,
+                        instrumentTypeKey: const Key(
+                          'position-card-instrument-type',
                         ),
                       ),
-                    ],
+                    ),
                   ),
                 ),
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: sideColor.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(
-                          AppTokens.radiusSmall,
-                        ),
-                      ),
-                      child: Text(
-                        sideText,
-                        style: TextStyle(
-                          color: sideColor,
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                        ),
+                const SizedBox(width: AppTokens.space2),
+                Expanded(
+                  flex: 3,
+                  child: Align(
+                    key: const Key('position-card-header-right'),
+                    alignment: Alignment.centerRight,
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerRight,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: sideColor.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(
+                                AppTokens.radiusSmall,
+                              ),
+                            ),
+                            child: Text(
+                              sideText,
+                              style: TextStyle(
+                                color: sideColor,
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          Container(
+                            key: const Key('position-card-leverage'),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 4,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: palette.surface,
+                              borderRadius: BorderRadius.circular(
+                                AppTokens.radiusSmall,
+                              ),
+                            ),
+                            child: Text(
+                              position.lever.isEmpty
+                                  ? '--'
+                                  : '${position.lever}x',
+                              style: TextStyle(
+                                color: palette.ink,
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(width: 4),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 4,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: palette.surface,
-                        borderRadius: BorderRadius.circular(
-                          AppTokens.radiusSmall,
-                        ),
-                      ),
-                      child: Text(
-                        position.lever.isEmpty ? '--' : '${position.lever}x',
-                        style: TextStyle(
-                          color: palette.ink,
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ],
             ),
@@ -837,62 +910,13 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 Expanded(
-                  flex: 2,
-                  child: FittedBox(
-                    key: const Key('pending-order-header-left'),
-                    fit: BoxFit.scaleDown,
-                    alignment: Alignment.centerLeft,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          sideText,
-                          maxLines: 1,
-                          softWrap: false,
-                          style: TextStyle(
-                            color: sideColor,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 12,
-                          ),
-                        ),
-                        if (leverage != null) ...[
-                          const SizedBox(width: 4),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 4,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color: palette.surface,
-                              borderRadius: BorderRadius.circular(
-                                AppTokens.radiusSmall,
-                              ),
-                            ),
-                            child: Text(
-                              '${leverage}x',
-                              maxLines: 1,
-                              softWrap: false,
-                              style: TextStyle(
-                                color: palette.ink,
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(width: AppTokens.space2),
-                Expanded(
                   flex: 5,
                   child: Align(
-                    key: const Key('pending-order-header-right'),
-                    alignment: Alignment.centerRight,
+                    key: const Key('pending-order-header-left'),
+                    alignment: Alignment.centerLeft,
                     child: FittedBox(
                       fit: BoxFit.scaleDown,
-                      alignment: Alignment.centerRight,
+                      alignment: Alignment.centerLeft,
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -936,6 +960,59 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                                   color: palette.ink,
                                   fontWeight: FontWeight.bold,
                                   fontSize: 12,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: AppTokens.space2),
+                Expanded(
+                  flex: 2,
+                  child: Align(
+                    key: const Key('pending-order-header-right'),
+                    alignment: Alignment.centerRight,
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerRight,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            sideText,
+                            maxLines: 1,
+                            softWrap: false,
+                            style: TextStyle(
+                              color: sideColor,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                            ),
+                          ),
+                          if (leverage != null) ...[
+                            const SizedBox(width: 4),
+                            Container(
+                              key: const Key('pending-order-leverage'),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 4,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: palette.surface,
+                                borderRadius: BorderRadius.circular(
+                                  AppTokens.radiusSmall,
+                                ),
+                              ),
+                              child: Text(
+                                '${leverage}x',
+                                maxLines: 1,
+                                softWrap: false,
+                                style: TextStyle(
+                                  color: palette.ink,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
                                 ),
                               ),
                             ),
@@ -1084,6 +1161,11 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     final String baseCoin = order.instId.split('-').isNotEmpty
         ? order.instId.split('-').first
         : '?';
+    final instrumentLabel = order.instId.split('-').take(2).join();
+    final instrumentType = order.instType.toUpperCase();
+    final leverage = order.lever.isNotEmpty && order.lever != '0'
+        ? order.lever
+        : null;
 
     // Bảng màu
     final cardColor = palette.raised;
@@ -1107,73 +1189,81 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              key: const Key('history-order-header'),
               children: [
                 Expanded(
-                  child: Row(
-                    children: [
-                      CryptoIcon(
-                        symbol: baseCoin,
-                        size: 20,
-                        backgroundColor: iconBgColor,
+                  flex: 5,
+                  child: Align(
+                    key: const Key('history-order-header-left'),
+                    alignment: Alignment.centerLeft,
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: _buildInstrumentHeaderContents(
+                        baseCoin: baseCoin,
+                        instrumentLabel: instrumentLabel,
+                        instrumentType: instrumentType,
+                        instrumentFontSize: 12,
+                        iconBackgroundColor: iconBgColor,
                         textColor: textColor,
-                        textSize: 10,
-                      ),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: Text(
-                          order.instId,
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: textColor,
-                          ),
-                          overflow: TextOverflow.ellipsis,
+                        badgeBackgroundColor: palette.surface,
+                        instrumentTypeKey: const Key(
+                          'history-order-instrument-type',
                         ),
                       ),
-                      if (order.lever.isNotEmpty && order.lever != '0') ...[
-                        const SizedBox(width: 4),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 4,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: palette.surface,
-                            borderRadius: BorderRadius.circular(
-                              AppTokens.radiusSmall,
-                            ),
-                          ),
-                          child: Text(
-                            '${order.lever}x',
-                            style: TextStyle(
-                              color: palette.ink,
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
+                    ),
                   ),
                 ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 2,
-                  ),
-                  decoration: BoxDecoration(
-                    color: palette.surface,
-                    borderRadius: BorderRadius.circular(AppTokens.radiusSmall),
-                  ),
-                  child: Text(
-                    order.state.toUpperCase(),
-                    style: TextStyle(
-                      color: currentTab == OrderTab.pending
-                          ? palette.ink
-                          : subtitleColor,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 12,
+                const SizedBox(width: AppTokens.space2),
+                Expanded(
+                  flex: 2,
+                  child: Align(
+                    key: const Key('history-order-header-right'),
+                    alignment: Alignment.centerRight,
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerRight,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            sideText,
+                            maxLines: 1,
+                            softWrap: false,
+                            style: TextStyle(
+                              color: sideColor,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                            ),
+                          ),
+                          if (leverage != null) ...[
+                            const SizedBox(width: 4),
+                            Container(
+                              key: const Key('history-order-leverage'),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 4,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: palette.surface,
+                                borderRadius: BorderRadius.circular(
+                                  AppTokens.radiusSmall,
+                                ),
+                              ),
+                              child: Text(
+                                '${leverage}x',
+                                maxLines: 1,
+                                softWrap: false,
+                                style: TextStyle(
+                                  color: palette.ink,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -1186,9 +1276,9 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      sideText,
+                      order.state.toUpperCase(),
                       style: TextStyle(
-                        color: sideColor,
+                        color: subtitleColor,
                         fontWeight: FontWeight.bold,
                         fontSize: 12,
                       ),

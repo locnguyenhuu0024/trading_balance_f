@@ -201,14 +201,12 @@ void main() {
                 closeTo(headerRect.right, 1),
               );
               expect(
-                tester.getRect(find.text('MUA')).left,
+                tester.getRect(find.byType(CryptoIcon)).left,
                 closeTo(headerRect.left, 1),
               );
               expect(
                 tester
-                    .getRect(
-                      find.byKey(const Key('pending-order-instrument-type')),
-                    )
+                    .getRect(find.byKey(const Key('pending-order-leverage')))
                     .right,
                 closeTo(headerRect.right, 1),
               );
@@ -310,12 +308,12 @@ void main() {
         closeTo(tester.getRect(desktopHeader).right, 1),
       );
       expect(
-        tester.getRect(find.text('MUA')).left,
+        tester.getRect(find.byType(CryptoIcon)).left,
         closeTo(tester.getRect(desktopHeader).left, 1),
       );
       expect(
         tester
-            .getRect(find.byKey(const Key('pending-order-instrument-type')))
+            .getRect(find.byKey(const Key('pending-order-leverage')))
             .right,
         closeTo(tester.getRect(desktopHeader).right, 1),
       );

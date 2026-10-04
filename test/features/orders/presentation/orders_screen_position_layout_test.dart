@@ -46,17 +46,21 @@ OkxPosition _position({
   String instId = 'BTC-USDT-SWAP',
   String upl = '0',
   String uplRatio = '0',
+  String posSide = 'long',
+  String instType = '',
+  String lever = '5',
 }) {
   return OkxPosition(
     instId: instId,
-    posSide: 'long',
-    lever: '5',
+    posSide: posSide,
+    lever: lever,
     avgPx: '0.09117',
     markPx: '0.09118',
     liqPx: liqPx,
     upl: upl,
     uplRatio: uplRatio,
     notionalUsd: notionalUsd,
+    instType: instType,
   );
 }
 
@@ -484,9 +488,7 @@ void main() {
           await tester.pump();
           await tester.pump();
 
-          final expectedInstrumentLabel = tab == OrderTab.pending
-              ? 'BTCUSDT'
-              : 'BTC-USDT-SWAP';
+          final expectedInstrumentLabel = 'BTCUSDT';
           final card = find
               .ancestor(
                 of: find.text(expectedInstrumentLabel),
@@ -524,6 +526,118 @@ void main() {
           greaterThan(compactDefaultCardHeight!),
         );
       }
+    },
+  );
+
+  testWidgets(
+    'position headers group compact instrument, type, direction, and leverage across phone sizes and scales',
+    (tester) async {
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      tester.view.devicePixelRatio = 1;
+
+      const scenarios = [
+        (width: 320.0, textScale: 1.0),
+        (width: 375.0, textScale: 1.3),
+        (width: 430.0, textScale: 2.0),
+      ];
+      const directions = [
+        (posSide: 'long', label: 'LONG'),
+        (posSide: 'short', label: 'SHORT'),
+        (posSide: 'net', label: 'VỊ THẾ'),
+      ];
+
+      for (final scenario in scenarios) {
+        for (final direction in directions) {
+          tester.view.physicalSize = Size(scenario.width, 900);
+          await tester.pumpWidget(
+            _ordersApp(
+              positions: [
+                _position(
+                  liqPx: '1000',
+                  posSide: direction.posSide,
+                  instType: 'SWAP',
+                ),
+              ],
+              contentTextScale: scenario.textScale,
+            ),
+          );
+          await tester.pump();
+          await tester.pump();
+
+          final header = find.byKey(const Key('position-card-header'));
+          final left = find.byKey(const Key('position-card-header-left'));
+          final right = find.byKey(const Key('position-card-header-right'));
+          final pair = find.descendant(
+            of: header,
+            matching: find.text('BTCUSDT'),
+          );
+          final type = find.byKey(const Key('position-card-instrument-type'));
+          final side = find.descendant(
+            of: header,
+            matching: find.text(direction.label),
+          );
+          final leverage = find.descendant(
+            of: header,
+            matching: find.text('5x'),
+          );
+
+          expect(header, findsOneWidget);
+          expect(left, findsOneWidget);
+          expect(right, findsOneWidget);
+          expect(pair, findsOneWidget);
+          expect(type, findsOneWidget);
+          expect(side, findsOneWidget);
+          expect(leverage, findsOneWidget);
+          final headerRect = tester.getRect(header);
+          expect(tester.getRect(left).left, closeTo(headerRect.left, 1));
+          expect(tester.getRect(right).right, closeTo(headerRect.right, 1));
+          for (final finder in [pair, type, side, leverage]) {
+            expect(headerRect.contains(tester.getRect(finder).center), isTrue);
+          }
+          expect(
+            tester.getRect(pair).center.dx,
+            lessThan(tester.getRect(type).center.dx),
+          );
+          expect(
+            tester.getRect(side).center.dx,
+            lessThan(tester.getRect(leverage).center.dx),
+          );
+          expect(find.text('BTC-USDT-SWAP'), findsNothing);
+          expect(
+            tester.takeException(),
+            isNull,
+            reason:
+                'position header should fit at ${scenario.width}/${scenario.textScale}/${direction.posSide}',
+          );
+
+          await tester.pumpWidget(const SizedBox.shrink());
+        }
+      }
+
+      tester.view.physicalSize = const Size(320, 900);
+      await tester.pumpWidget(
+        _ordersApp(
+          positions: [
+            _position(liqPx: '1000', posSide: 'net', instType: '', lever: ''),
+          ],
+          contentTextScale: 1.3,
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      final header = find.byKey(const Key('position-card-header'));
+      expect(
+        find.descendant(of: header, matching: find.text('SWAP')),
+        findsNothing,
+      );
+      expect(
+        find.descendant(of: header, matching: find.text('--')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
     },
   );
 }
