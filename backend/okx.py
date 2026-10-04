@@ -284,7 +284,10 @@ class OKXClient:
 
     def account_balance(self) -> list[dict[str, Any]]:
         response = self.request("GET", "/api/v5/account/balance", params={"ccy": "USDT"})
-        return [item for item in response.get("data", []) if isinstance(item, dict)]
+        data = response.get("data", [])
+        if not isinstance(data, list) or any(not isinstance(item, dict) for item in data):
+            raise OKXTransportError("exchange balance data is unavailable")
+        return data
 
     def trade_fee(self, instrument_family: str) -> dict[str, Any]:
         response = self.request(

@@ -72,6 +72,7 @@ _ENUMS: dict[str, frozenset[str]] = {
         "preflight_changed_after_leverage", "preflight_failed_after_leverage",
         "retry_source_unavailable", "retry_selection_invalid", "retry_source_stale",
         "retry_selection_in_use", "retry_request_conflict", "retry_preview_stale",
+        "exchange_rate_limited",
     }),
     "endpoint": frozenset({
         "account_config", "positions", "pending_orders", "account_balance",
@@ -108,6 +109,7 @@ _API_CODES = frozenset({
         "strategy_result_unavailable", "strategy_state_unavailable", "strategy_rate_limited",
     "retry_source_unavailable", "retry_selection_invalid", "retry_source_stale",
     "retry_selection_in_use", "retry_request_conflict", "retry_preview_stale",
+    "exchange_rate_limited",
 })
 _NUMERIC_CODE = re.compile(r"[0-9]{1,12}\Z")
 _ENDPOINTS = {

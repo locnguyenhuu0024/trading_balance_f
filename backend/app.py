@@ -154,6 +154,8 @@ class WSGIApplication:
                     "strategy_stale": "strategy_stale",
                     "account_changed": "account_changed",
                     "account_mode_unsupported": "account_mode_unsupported",
+                    "exchange_rate_limited": "exchange_rate_limited",
+                    "account_preflight_unavailable": "preflight_unavailable",
                     "instrument_position_exists": "position_exists",
                     "pending_order_exists": "pending_order_exists",
                     "insufficient_balance": "insufficient_balance",

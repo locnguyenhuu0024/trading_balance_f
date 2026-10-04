@@ -10,6 +10,7 @@ import '../../orders/data/trade_api_client.dart';
 import '../../orders/presentation/providers/trade_session_provider.dart';
 import '../domain/strategy_models.dart';
 import 'providers/strategy_dashboard_provider.dart';
+import 'strategy_number_formatter.dart';
 import 'strategy_retry_dialog.dart';
 import 'strategy_settings_dialog.dart';
 import 'strategy_wizard_dialog.dart';
@@ -700,7 +701,7 @@ class _StrategyDetailContent extends StatelessWidget {
         : positions.first;
     final quoteLabel = quote == null
         ? 'Giá SWAP chưa sẵn sàng'
-        : 'Giá SWAP ${quote!.priceText}${quoteIsFresh ? '' : ' · đã cũ'}';
+        : 'Giá SWAP ${StrategyNumberFormatter.amount(quote!.priceText)}${quoteIsFresh ? '' : ' · đã cũ'}';
     final quoteStyle = Theme.of(context).textTheme.bodySmall?.copyWith(
       color: quoteIsFresh ? null : Theme.of(context).colorScheme.error,
     );
@@ -847,6 +848,7 @@ class _StrategyDetailContent extends StatelessWidget {
                 _Metric(
                   label: '% trên vốn đã khớp',
                   value: pnlPercent,
+                  isPercent: true,
                   valueColor: resolvePnlColor(
                     _finiteNumber(pnlPercent),
                     pnlPalette,
@@ -1120,10 +1122,10 @@ class _OrderSummaryRow extends StatelessWidget {
       contentPadding: EdgeInsets.zero,
       leading: CircleAvatar(radius: 14, child: Text('$index')),
       title: Text(
-        '$side · ${_text(order['role'])} · ${_text(order['limitPrice'])}',
+        '$side · ${_text(order['role'])} · ${StrategyNumberFormatter.amount(order['limitPrice'], placeholder: '—')}',
       ),
       subtitle: Text(
-        'Contr: ${_text(order['contracts'])} · Margin: ${_text(order['margin'])} · Fee: ${_text(order['openingFeeEstimate'])} · ${_text(order['leverage'])}x',
+        'Contr: ${StrategyNumberFormatter.amount(order['contracts'], placeholder: '—')} · Margin: ${StrategyNumberFormatter.amount(order['margin'], placeholder: '—')} · Fee: ${StrategyNumberFormatter.amount(order['openingFeeEstimate'], placeholder: '—')} · ${_text(order['leverage'])}x',
       ),
     );
   }
@@ -1142,7 +1144,10 @@ class _AppliedOrderRow extends StatelessWidget {
     final status = _orderStatusLabel(_text(order['status']).toLowerCase());
     final placementState = _text(order['placementState']).toLowerCase();
     final placementLabel = strategyPlacementStateLabel(placementState);
-    final averageFill = _text(order['averageFillPrice']);
+    final averageFill = StrategyNumberFormatter.amount(
+      order['averageFillPrice'],
+      placeholder: '',
+    );
     final fillSummary =
         'Khớp: ${_display(order['filledContracts'])} / ${_display(order['contracts'])} hợp đồng';
     final subtitle = averageFill.isEmpty
@@ -1158,7 +1163,9 @@ class _AppliedOrderRow extends StatelessWidget {
               CircleAvatar(radius: 14, child: Text('$index')),
               const SizedBox(width: 10),
               Expanded(
-                child: Text('$side · $role · ${_text(order['limitPrice'])}'),
+                child: Text(
+                  '$side · $role · ${StrategyNumberFormatter.amount(order['limitPrice'], placeholder: '—')}',
+                ),
               ),
             ],
           ),
@@ -1193,11 +1200,17 @@ class _AppliedOrderRow extends StatelessWidget {
 }
 
 class _Metric extends StatelessWidget {
-  const _Metric({required this.label, required this.value, this.valueColor});
+  const _Metric({
+    required this.label,
+    required this.value,
+    this.valueColor,
+    this.isPercent = false,
+  });
 
   final String label;
   final Object? value;
   final Color? valueColor;
+  final bool isPercent;
 
   @override
   Widget build(BuildContext context) => SizedBox(
@@ -1207,7 +1220,12 @@ class _Metric extends StatelessWidget {
       children: [
         Text(label, style: Theme.of(context).textTheme.labelSmall),
         Text(
-          _display(value),
+          isPercent
+              ? StrategyNumberFormatter.percent(
+                  value,
+                  placeholder: 'Chưa có dữ liệu',
+                )
+              : _display(value),
           style: Theme.of(
             context,
           ).textTheme.bodyMedium?.copyWith(color: valueColor),
@@ -1230,10 +1248,14 @@ class _PreparedFinancialSummary extends StatelessWidget {
         spacing: 16,
         runSpacing: 6,
         children: [
-          Text('Ký quỹ dự kiến: ${_text(prepared['plannedMargin'])} USDT'),
-          Text('Phần dư: ${_text(prepared['unallocatedMargin'])} USDT'),
           Text(
-            'Phí mở ước tính: ${_text(prepared['estimatedOpeningFees'])} USDT · tính riêng',
+            'Ký quỹ dự kiến: ${StrategyNumberFormatter.amount(prepared['plannedMargin'], placeholder: '—')} USDT',
+          ),
+          Text(
+            'Phần dư: ${StrategyNumberFormatter.amount(prepared['unallocatedMargin'], placeholder: '—')} USDT',
+          ),
+          Text(
+            'Phí mở ước tính: ${StrategyNumberFormatter.amount(prepared['estimatedOpeningFees'], placeholder: '—')} USDT · tính riêng',
           ),
         ],
       ),
@@ -1452,16 +1474,14 @@ bool _hasStartedStatus(Object? status) => const {
   'UNKNOWN',
 }.contains(_text(status).toUpperCase());
 
-String _display(Object? value) => value == null || value.toString().isEmpty
-    ? 'Chưa có dữ liệu'
-    : value.toString();
+String _display(Object? value) =>
+    StrategyNumberFormatter.amount(value, placeholder: 'Chưa có dữ liệu');
 
 String _summaryTotalMargin(Object? value) {
-  final text = value?.toString().trim();
-  if (text == null || text.isEmpty) return '--';
-  final amount = double.tryParse(text);
-  if (amount == null || !amount.isFinite || amount < 0) return '--';
-  return '$text USDT';
+  final parsed = double.tryParse(value?.toString().trim() ?? '');
+  if (parsed == null || !parsed.isFinite || parsed < 0) return '--';
+  final amount = StrategyNumberFormatter.amount(value);
+  return amount == '--' ? amount : '$amount USDT';
 }
 
 String _time(DateTime timestamp) {

@@ -589,6 +589,7 @@ class StrategyOrderWorker:
             "instrument_position_exists": "position_exists",
             "pending_order_exists": "pending_order_exists",
             "insufficient_balance": "insufficient_balance",
+            "exchange_rate_limited": "preflight_unavailable",
             "quote_stale": "preview_changed",
             "preview_inputs_unavailable": "preflight_unavailable",
             "account_preflight_unavailable": "preflight_unavailable",
@@ -848,7 +849,10 @@ class StrategyOrderWorker:
             diagnostics.emit_event(
                 "preflight", component="worker",
                 stage="preflight_resume" if resume else "preflight_initial", outcome="failure",
-                reason=diagnostics.safe_reason(reason), status=strategy.get("status"),
+                reason=diagnostics.safe_reason(
+                    "exchange_rate_limited" if exc.code == "exchange_rate_limited" else reason
+                ),
+                api_code=exc.code, status=strategy.get("status"),
                 submission_mode="sequential",
             )
             self._stop_queue_without_marker(strategy, fence, reason)
@@ -970,7 +974,10 @@ class StrategyOrderWorker:
                 reason = self._queue_validation_reason(exc, resume=False)
                 diagnostics.emit_event(
                     "preflight", component="worker", stage="preflight_post_leverage", outcome="failure",
-                    reason=diagnostics.safe_reason(reason), status=strategy.get("status"),
+                    reason=diagnostics.safe_reason(
+                        "exchange_rate_limited" if exc.code == "exchange_rate_limited" else reason
+                    ),
+                    api_code=exc.code, status=strategy.get("status"),
                     submission_mode="sequential",
                 )
                 self._stop_queue_without_marker(

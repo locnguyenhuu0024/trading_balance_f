@@ -496,6 +496,37 @@ class StrategyQueueTests(unittest.TestCase):
         self.assertEqual(strategy["queue"]["stopReason"], "resume_validation_failed")
         self.assertEqual(self.api.exchange.single_order_attempts, 0)
 
+    def test_post_leverage_account_or_mode_change_stops_before_order_placement(self) -> None:
+        mutations = (
+            ("account", "987654321", "account_changed"),
+            ("mode", "unsupported_mode", "account_mode_unsupported"),
+        )
+        for kind, value, expected_reason in mutations:
+            with self.subTest(kind=kind):
+                self.api.exchange.account_uid = "123456789"
+                self.api.exchange.pos_mode = "net_mode"
+                self.api.exchange.after_leverage_write = None
+                strategy_id, _ = self._start_queue(count=1)
+                if kind == "account":
+                    self.api.exchange.after_leverage_write = lambda _payload, _response: setattr(
+                        self.api.exchange, "account_uid", value
+                    )
+                else:
+                    self.api.exchange.after_leverage_write = lambda _payload, _response: setattr(
+                        self.api.exchange, "pos_mode", value
+                    )
+
+                self.assertTrue(self._worker().run_once())
+
+                strategy = self._read_strategy(strategy_id)
+                self.assertEqual(strategy["queue"]["phase"], "stopped")
+                self.assertEqual(strategy["queue"]["stopReason"], expected_reason)
+                self.assertEqual(self.api.exchange.single_order_attempts, 0)
+                self.assertFalse(any(
+                    method == "POST" and path.split("?", 1)[0] == "/api/v5/trade/order"
+                    for method, path, _ in self.api.exchange.trade_writes
+                ))
+
     def test_ambiguous_leverage_ack_stops_before_any_order_placement(self) -> None:
         strategy_id, _ = self._start_queue()
         self.api.exchange.leverage_response = {

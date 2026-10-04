@@ -453,6 +453,45 @@ void main() {
     expect(api.previewBodies[1], api.previewBodies[0]);
   });
 
+  testWidgets('rounds preview numbers while preserving the request values', (
+    tester,
+  ) async {
+    final market = _FakeStrategyMarketRepository();
+    final api = _FakeStrategyApi()
+      ..previewCurrentPrice = '12345.67891'
+      ..previewTotalMargin = '1234.56789'
+      ..previewUnallocatedMargin = '0.000000004'
+      ..previewEstimatedOpeningFees = '0.000000003'
+      ..previewOrderPrice = '12345.67891'
+      ..previewOrderContracts = '0.000000004'
+      ..previewOrderMargin = '1.23456789'
+      ..previewOrderFee = '0.000000003';
+    final dashboard = _dashboard(api, market);
+    addTearDown(dashboard.dispose);
+    await _pumpWizard(tester, market, api, dashboard);
+
+    await tester.tap(find.byType(CheckboxListTile).first);
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('strategy-next-step-one')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('strategy-margin-input')),
+      '100.123456789',
+    );
+    await tester.tap(find.byKey(const Key('strategy-request-preview')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Giá thị trường lúc xem: 12,345.68'), findsOneWidget);
+    expect(find.text('totalMargin: 1,234.57'), findsOneWidget);
+    expect(find.text('unallocatedMargin: 4e-9'), findsOneWidget);
+    expect(
+      find.textContaining('Giá giới hạn 12,345.68 · Hợp đồng 4e-9'),
+      findsOneWidget,
+    );
+    expect(find.text('Ký quỹ 1.2346 · Đòn bẩy 5x'), findsOneWidget);
+    expect(api.previewBodies.single['totalMargin'], '100.123456789');
+  });
+
   testWidgets('quote between five and fifteen seconds remains usable', (
     tester,
   ) async {
@@ -850,6 +889,14 @@ class _FakeStrategyApi implements StrategyApi {
   final previewBodies = <Map<String, dynamic>>[];
   final saveBodies = <Map<String, dynamic>>[];
   StrategyApiException? nextPreviewError;
+  String? previewCurrentPrice;
+  String? previewTotalMargin;
+  String? previewUnallocatedMargin;
+  String? previewEstimatedOpeningFees;
+  String? previewOrderPrice;
+  String? previewOrderContracts;
+  String? previewOrderMargin;
+  String? previewOrderFee;
   int previewOrderCount = 1;
   int preparedOrderCount = 1;
   int prepareCalls = 0;
@@ -892,14 +939,21 @@ class _FakeStrategyApi implements StrategyApi {
     if (error != null) throw error;
     return {
       'previewHash': 'preview-hash',
+      if (previewCurrentPrice != null) 'currentPrice': previewCurrentPrice,
+      if (previewTotalMargin != null) 'totalMargin': previewTotalMargin,
+      if (previewUnallocatedMargin != null)
+        'unallocatedMargin': previewUnallocatedMargin,
+      if (previewEstimatedOpeningFees != null)
+        'estimatedOpeningFees': previewEstimatedOpeningFees,
       'orders': List.generate(
         previewOrderCount,
         (index) => {
           'side': 'long',
           'role': 'entry',
-          'limitPrice': (90 - index).toStringAsFixed(1),
-          'contracts': '1',
-          'margin': '100.0',
+          'limitPrice': previewOrderPrice ?? (90 - index).toStringAsFixed(1),
+          'contracts': previewOrderContracts ?? '1',
+          'margin': previewOrderMargin ?? '100.0',
+          'openingFeeEstimate': previewOrderFee ?? '0.03',
           'leverage': '5',
         },
       ),

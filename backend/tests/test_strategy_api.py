@@ -14,6 +14,7 @@ from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
 from backend.app import create_application
+from backend.okx import OKXError
 from backend.security import token_digest
 from backend.service import APIError, RuntimeSettings, TradeService
 from backend.store import encode_json
@@ -39,6 +40,8 @@ class FakeStrategyExchange:
         self.fail_position_reads = False
         self.pending: list[dict[str, Any]] = []
         self.available_balance = "100000"
+        self.account_balance_response_override = False
+        self.account_balance_response: Any = None
         self.pending_reads = 0
         self.position_reads = 0
         self.fee_data: list[dict[str, Any]] = [
@@ -89,6 +92,7 @@ class FakeStrategyExchange:
         self.order_detail_response_override = False
         self.order_detail_response: Any = None
         self.leverage_response: dict[str, Any] | None = None
+        self.after_leverage_write: Any = None
         self.quote_account_barrier: threading.Barrier | None = None
         self.pause_ticker = False
         self.ticker_started = threading.Event()
@@ -115,6 +119,8 @@ class FakeStrategyExchange:
                 self.quote_account_barrier.wait(timeout=3)
             return {"code": "0", "data": [{"uid": self.account_uid, "posMode": self.pos_mode}]}
         if method == "GET" and parsed.path == "/api/v5/account/balance":
+            if self.account_balance_response_override:
+                return deepcopy(self.account_balance_response)
             return {"code": "0", "data": [{"details": [{"ccy": "USDT", "availBal": self.available_balance}]}]}
         if method == "GET" and parsed.path == "/api/v5/account/positions":
             self.position_reads += 1
@@ -164,14 +170,18 @@ class FakeStrategyExchange:
             return {"code": "0", "data": [] if details is None else [details]}
         if method == "POST" and parsed.path == "/api/v5/account/set-leverage":
             if self.leverage_response is not None:
-                return dict(self.leverage_response)
-            return {
-                "code": "0",
-                "data": [{
-                    "instId": payload["instId"], "mgnMode": payload["mgnMode"],
-                    "lever": payload["lever"], "posSide": payload["posSide"],
-                }],
-            }
+                response = dict(self.leverage_response)
+            else:
+                response = {
+                    "code": "0",
+                    "data": [{
+                        "instId": payload["instId"], "mgnMode": payload["mgnMode"],
+                        "lever": payload["lever"], "posSide": payload["posSide"],
+                    }],
+                }
+            if self.after_leverage_write is not None:
+                self.after_leverage_write(payload, response)
+            return response
         if method == "POST" and parsed.path == "/api/v5/trade/order":
             attempt = self.single_order_attempts
             self.single_order_attempts += 1
@@ -243,7 +253,13 @@ class StrategyApiTests(unittest.TestCase):
         self.db_path.unlink(missing_ok=True)
 
     def request(
-        self, method: str, path: str, body: dict[str, Any] | None = None, *, authenticated: bool = True
+        self,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None = None,
+        *,
+        authenticated: bool = True,
+        captured_headers: list[tuple[str, str]] | None = None,
     ) -> tuple[int, dict[str, Any]]:
         raw = b"" if body is None else json.dumps(body).encode("utf-8")
         environ: dict[str, Any] = {
@@ -257,6 +273,8 @@ class StrategyApiTests(unittest.TestCase):
 
         def start_response(status: str, headers: list[tuple[str, str]]) -> None:
             response["status"] = int(status.split(" ", 1)[0])
+            if captured_headers is not None:
+                captured_headers.extend(headers)
 
         chunks = self.app(environ, start_response)
         payload = b"".join(chunks)
@@ -2402,6 +2420,333 @@ class StrategyApiTests(unittest.TestCase):
         with self.service.store.transaction() as connection:
             connection.execute("DELETE FROM strategy_reservations WHERE strategy_id=?", (source_id,))
         self.assertEqual(len(self.exchange.trade_writes), writes_before)
+
+    def test_red_prepare_rejects_unavailable_or_ambiguous_usdt_balance(self) -> None:
+        malformed_responses = (
+            [],
+            [{"details": [{"ccy": "BTC", "availBal": "100000"}]}],
+            [{"details": [{"ccy": "USDT", "availBal": "NaN"}]}],
+            [{"details": [{"ccy": "USDT", "availBal": "Infinity"}]}],
+            [{"details": [
+                {"ccy": "USDT", "availBal": "100000"},
+                {"ccy": "USDT", "availBal": "100000"},
+            ]}],
+            [None, {"details": [{"ccy": "USDT", "availBal": "100000"}]}],
+            [
+                {"details": "malformed"},
+                {"details": [{"ccy": "USDT", "availBal": "100000"}]},
+            ],
+        )
+        for response in malformed_responses:
+            with self.subTest(response=response):
+                strategy_id, _ = self.save_draft()
+                with patch.object(self.service.okx, "account_balance", return_value=response):
+                    status, refusal = self.request(
+                        "POST", f"/v1/strategies/{strategy_id}/prepare-apply", {}
+                    )
+                self.assertEqual(status, 502, refusal)
+                self.assertEqual(refusal["error"], "account_preflight_unavailable")
+                self.assertEqual(self.exchange.trade_writes, [])
+
+    def test_red_prepare_maps_rate_limited_exchange_reads_to_safe_429(self) -> None:
+        methods = (
+            "account_config", "positions", "pending_orders", "instruments",
+            "ticker", "trade_fee", "position_tiers", "account_balance",
+        )
+        for method in methods:
+            with self.subTest(method=method):
+                strategy_id, _ = self.save_draft()
+                error = OKXError(
+                    "upstream response must not leak", diagnostic_category="http_rejected",
+                    http_status=429,
+                )
+                response_headers: list[tuple[str, str]] = []
+                with patch.object(self.service.okx, method, side_effect=error):
+                    status, refusal = self.request(
+                        "POST", f"/v1/strategies/{strategy_id}/prepare-apply", {},
+                        captured_headers=response_headers,
+                    )
+                self.assertEqual(status, 429, refusal)
+                self.assertEqual(refusal["error"], "exchange_rate_limited")
+                self.assertNotIn("upstream response", json.dumps(refusal))
+                self.assertIn(("Retry-After", "2"), response_headers)
+                self.assertEqual(self.exchange.trade_writes, [])
+
+    def test_red_prepare_preserves_non_rate_limit_read_fallbacks(self) -> None:
+        fallbacks = {
+            "account_config": "exchange_unavailable",
+            "positions": "account_preflight_unavailable",
+            "pending_orders": "account_preflight_unavailable",
+            "instruments": "preview_inputs_unavailable",
+            "ticker": "preview_inputs_unavailable",
+            "trade_fee": "preview_inputs_unavailable",
+            "position_tiers": "preview_inputs_unavailable",
+            "account_balance": "account_preflight_unavailable",
+        }
+        for method, expected_code in fallbacks.items():
+            with self.subTest(method=method):
+                strategy_id, _ = self.save_draft()
+                error = OKXError(
+                    "private upstream response", diagnostic_category="http_rejected",
+                    http_status=503,
+                )
+                with patch.object(self.service.okx, method, side_effect=error):
+                    status, refusal = self.request(
+                        "POST", f"/v1/strategies/{strategy_id}/prepare-apply", {}
+                    )
+                self.assertEqual(status, 502, refusal)
+                self.assertEqual(refusal["error"], expected_code)
+                self.assertNotIn("private upstream response", json.dumps(refusal))
+                self.assertEqual(self.exchange.trade_writes, [])
+
+    def test_red_retry_balance_guard_shares_strict_avail_bal_semantics(self) -> None:
+        source_id, source_result, _ = self._make_rejected_source()
+        status, candidates = self.request("GET", f"/v1/strategies/{source_id}/retry-candidates")
+        self.assertEqual(status, 200, candidates)
+        review = {
+            "sourceRevision": candidates["sourceRevision"],
+            "sourceClientOrderIds": [source_result["orders"][0]["clientOrderId"]],
+        }
+        writes_before = len(self.exchange.trade_writes)
+
+        malformed = (
+            [{"details": [{"ccy": "USDT", "availBal": "NaN"}]}],
+            [{"details": [
+                {"ccy": "USDT", "availBal": "100000"},
+                {"ccy": "USDT", "availBal": "100000"},
+            ]}],
+        )
+        for response in malformed:
+            with self.subTest(response=response):
+                with patch.object(self.service.okx, "account_balance", return_value=response):
+                    status, refusal = self.request(
+                        "POST", f"/v1/strategies/{source_id}/retry-preview", review
+                    )
+                self.assertEqual(status, 502, refusal)
+                self.assertEqual(refusal["error"], "account_preflight_unavailable")
+
+        for available in ("-1", "0"):
+            with self.subTest(available=available):
+                rows = [{"details": [{"ccy": "USDT", "availBal": available}]}]
+                with patch.object(self.service.okx, "account_balance", return_value=rows):
+                    status, refusal = self.request(
+                        "POST", f"/v1/strategies/{source_id}/retry-preview", review
+                    )
+                self.assertEqual(status, 422, refusal)
+                self.assertEqual(refusal["error"], "insufficient_balance")
+                self.assertEqual(refusal["available"], available)
+
+        with patch.object(
+            self.service.okx,
+            "account_balance",
+            return_value=[{"details": [{"ccy": "USDT", "availBal": "100000"}]}],
+        ):
+            status, preview = self.request(
+                "POST", f"/v1/strategies/{source_id}/retry-preview", review
+            )
+        self.assertEqual(status, 200, preview)
+        required = Decimal(preview["totalMargin"]) + Decimal(preview["estimatedOpeningFees"] or "0")
+        rows = [{"details": [{"ccy": "USDT", "availBal": format(required, "f")}]}]
+        with patch.object(self.service.okx, "account_balance", return_value=rows):
+            status, equal_preview = self.request(
+                "POST", f"/v1/strategies/{source_id}/retry-preview", review
+            )
+        self.assertEqual(status, 200, equal_preview)
+        self.assertEqual(len(self.exchange.trade_writes), writes_before)
+
+    def test_red_retry_review_maps_rate_limited_account_reads(self) -> None:
+        source_id, source_result, _ = self._make_rejected_source()
+        status, candidates = self.request("GET", f"/v1/strategies/{source_id}/retry-candidates")
+        self.assertEqual(status, 200, candidates)
+        review = {
+            "sourceRevision": candidates["sourceRevision"],
+            "sourceClientOrderIds": [source_result["orders"][0]["clientOrderId"]],
+        }
+        writes_before = len(self.exchange.trade_writes)
+        for method in ("account_config", "positions", "pending_orders", "account_balance"):
+            with self.subTest(method=method):
+                error = OKXError("private upstream response", http_status=429)
+                headers: list[tuple[str, str]] = []
+                with patch.object(self.service.okx, method, side_effect=error):
+                    status, refusal = self.request(
+                        "POST", f"/v1/strategies/{source_id}/retry-preview", review,
+                        captured_headers=headers,
+                    )
+                self.assertEqual(status, 429, refusal)
+                self.assertEqual(refusal["error"], "exchange_rate_limited")
+                self.assertIn(("Retry-After", "2"), headers)
+                self.assertNotIn("private upstream response", json.dumps(refusal))
+                self.assertEqual(len(self.exchange.trade_writes), writes_before)
+
+    def test_red_balance_transport_rejects_malformed_rows_before_balance_parser(self) -> None:
+        strategy_id, _ = self.save_draft()
+        self.exchange.account_balance_response_override = True
+        self.exchange.account_balance_response = {
+            "code": "0",
+            "data": [None, {"details": [{"ccy": "USDT", "availBal": "100000"}]}],
+        }
+
+        status, refusal = self.request(
+            "POST", f"/v1/strategies/{strategy_id}/prepare-apply", {}
+        )
+
+        self.assertEqual(status, 502, refusal)
+        self.assertEqual(refusal["error"], "account_preflight_unavailable")
+        self.assertEqual(self.exchange.trade_writes, [])
+
+    def test_green_prepare_reuses_one_fresh_account_snapshot_per_request(self) -> None:
+        strategy_id, _ = self.save_draft()
+        original = self.service.okx.account_config
+        reads = 0
+
+        def reject_second_read() -> dict[str, Any]:
+            nonlocal reads
+            reads += 1
+            if reads > 1:
+                raise OKXError("second account read rejected", http_status=429)
+            return original()
+
+        with patch.object(self.service.okx, "account_config", side_effect=reject_second_read):
+            status, prepared = self.request(
+                "POST", f"/v1/strategies/{strategy_id}/prepare-apply", {}
+            )
+        self.assertEqual(status, 200, prepared)
+        self.assertEqual(reads, 1)
+
+        second_id, _ = self.save_draft()
+        start = len(self.exchange.calls)
+        status, second_prepared = self.request(
+            "POST", f"/v1/strategies/{second_id}/prepare-apply", {}
+        )
+        self.assertEqual(status, 200, second_prepared)
+        config_reads = sum(
+            method == "GET" and urlsplit(path).path == "/api/v5/account/config"
+            for method, path, _ in self.exchange.calls[start:]
+        )
+        self.assertEqual(config_reads, 1)
+
+    def test_green_prepare_balance_boundary_includes_fees_and_accepts_equality(self) -> None:
+        contract = self.one_sided_contract()
+        _, draft_preview = self.save_draft(contract)
+        required = Decimal(contract["totalMargin"]) + Decimal(draft_preview["estimatedOpeningFees"])
+        insufficient_values = (Decimal("-1"), Decimal("0"), required - Decimal("0.0001"))
+
+        for available in insufficient_values:
+            with self.subTest(available=available):
+                strategy_id, _ = self.save_draft(contract)
+                self.exchange.available_balance = format(available, "f")
+                status, refusal = self.request(
+                    "POST", f"/v1/strategies/{strategy_id}/prepare-apply", {}
+                )
+                self.assertEqual(status, 422, refusal)
+                self.assertEqual(refusal["error"], "insufficient_balance")
+                self.assertEqual(Decimal(refusal["required"]), required)
+                self.assertEqual(Decimal(refusal["available"]), available)
+
+        strategy_id, _ = self.save_draft(contract)
+        self.exchange.available_balance = format(required, "f")
+        status, prepared = self.request(
+            "POST", f"/v1/strategies/{strategy_id}/prepare-apply", {}
+        )
+        self.assertEqual(status, 200, prepared)
+        self.assertEqual(self.exchange.trade_writes, [])
+        self.exchange.available_balance = "100000"
+
+    def test_green_retry_preview_and_draft_reuse_source_account_snapshot(self) -> None:
+        source_id, source_result, _ = self._make_rejected_source()
+        status, candidates = self.request("GET", f"/v1/strategies/{source_id}/retry-candidates")
+        self.assertEqual(status, 200, candidates)
+        review = {
+            "sourceRevision": candidates["sourceRevision"],
+            "sourceClientOrderIds": [source_result["orders"][0]["clientOrderId"]],
+        }
+
+        start = len(self.exchange.calls)
+        status, preview = self.request("POST", f"/v1/strategies/{source_id}/retry-preview", review)
+        self.assertEqual(status, 200, preview)
+        config_reads = sum(
+            method == "GET" and urlsplit(path).path == "/api/v5/account/config"
+            for method, path, _ in self.exchange.calls[start:]
+        )
+        self.assertEqual(config_reads, 1)
+
+        draft_request = {
+            **review,
+            "previewHash": preview["previewHash"],
+            "retryRequestId": "retry-request-snapshot-01",
+        }
+        start = len(self.exchange.calls)
+        status, draft = self.request("POST", f"/v1/strategies/{source_id}/retry-drafts", draft_request)
+        self.assertEqual(status, 200, draft)
+        config_reads = sum(
+            method == "GET" and urlsplit(path).path == "/api/v5/account/config"
+            for method, path, _ in self.exchange.calls[start:]
+        )
+        self.assertEqual(config_reads, 1)
+
+        start = len(self.exchange.calls)
+        status, prepared = self.request(
+            "POST", f"/v1/strategies/{draft['id']}/prepare-apply", {}
+        )
+        self.assertEqual(status, 200, prepared)
+        config_reads = sum(
+            method == "GET" and urlsplit(path).path == "/api/v5/account/config"
+            for method, path, _ in self.exchange.calls[start:]
+        )
+        self.assertEqual(config_reads, 1)
+
+    def test_green_batch_execute_rechecks_account_and_mode_after_leverage(self) -> None:
+        mutations = (
+            ("account", "987654321"),
+            ("mode", "unsupported_mode"),
+        )
+        for kind, value in mutations:
+            with self.subTest(kind=kind):
+                self.exchange.account_uid = "123456789"
+                self.exchange.pos_mode = "net_mode"
+                self.exchange.after_leverage_write = None
+                strategy_id, _ = self.save_draft()
+                status, prepared = self.request(
+                    "POST", f"/v1/strategies/{strategy_id}/prepare-apply", {}
+                )
+                self.assertEqual(status, 200, prepared)
+                if kind == "account":
+                    self.exchange.after_leverage_write = lambda _payload, _response: setattr(
+                        self.exchange, "account_uid", value
+                    )
+                else:
+                    self.exchange.after_leverage_write = lambda _payload, _response: setattr(
+                        self.exchange, "pos_mode", value
+                    )
+
+                start = len(self.exchange.calls)
+                status, result = self.request(
+                    "POST", f"/v1/strategies/{strategy_id}/execute-apply",
+                    {"confirmationToken": prepared["confirmationToken"]},
+                )
+
+                if kind == "account":
+                    self.assertEqual(status, 409, result)
+                    self.assertEqual(result["error"], "account_changed")
+                else:
+                    self.assertEqual(status, 200, result)
+                    self.assertEqual(result["status"], "PARTIAL")
+                self.assertEqual(self.exchange.batch_writes, [])
+                execute_calls = self.exchange.calls[start:]
+                leverage_index = next(
+                    index for index, (method, path, _) in enumerate(execute_calls)
+                    if method == "POST" and urlsplit(path).path == "/api/v5/account/set-leverage"
+                )
+                config_reads_before_leverage = sum(
+                    method == "GET" and urlsplit(path).path == "/api/v5/account/config"
+                    for method, path, _ in execute_calls[:leverage_index]
+                )
+                config_reads_after_leverage = sum(
+                    method == "GET" and urlsplit(path).path == "/api/v5/account/config"
+                    for method, path, _ in execute_calls[leverage_index + 1:]
+                )
+                self.assertEqual(config_reads_before_leverage, 1)
+                self.assertGreaterEqual(config_reads_after_leverage, 1)
 
     def test_green_retry_dca_only_keeps_fixed_rows_ids_and_idempotent_execute(self) -> None:
         source_contract = self.id_mode_contract(

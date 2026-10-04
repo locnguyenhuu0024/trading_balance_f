@@ -10,6 +10,7 @@ import '../data/strategy_market_repository.dart';
 import '../domain/strategy_models.dart';
 import '../domain/strategy_selection.dart';
 import 'providers/strategy_dashboard_provider.dart';
+import 'strategy_number_formatter.dart';
 
 enum _StrategyDirection { long, short, both }
 
@@ -859,7 +860,9 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
       child: ListTile(
         dense: true,
         leading: const Icon(Icons.schedule),
-        title: Text('Giá tham chiếu ${ticker.priceText} USDT'),
+        title: Text(
+          'Giá tham chiếu ${StrategyNumberFormatter.amount(ticker.priceText)} USDT',
+        ),
         subtitle: Text(
           'Báo giá tham chiếu lúc ${_dateTime(ticker.observedAt)}',
         ),
@@ -1058,7 +1061,9 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
             ),
           ),
         ),
-        Text('Giá thị trường lúc xem: ${_text(preview['currentPrice'])}'),
+        Text(
+          'Giá thị trường lúc xem: ${StrategyNumberFormatter.amount(preview['currentPrice'], placeholder: '')}',
+        ),
         Text('Thời điểm giá: ${_text(preview['quoteTimestamp'])}'),
         const SizedBox(height: 8),
         Text(
@@ -1280,9 +1285,11 @@ class _StrategyLevelCard extends StatelessWidget {
           CheckboxListTile(
             value: selected,
             onChanged: (value) => onSelected(value ?? false),
-            title: Text('${level.priceText} USDT'),
+            title: Text(
+              '${StrategyNumberFormatter.amount(level.priceText)} USDT',
+            ),
             subtitle: Text(
-              '${distance.toStringAsPrecision(6)} · ${percent.toStringAsFixed(3)}% · ${level.touchCount} lần',
+              '${StrategyNumberFormatter.amount(distance)} · ${StrategyNumberFormatter.percent(percent)}% · ${level.touchCount} lần',
             ),
             secondary: Icon(
               side == StrategySide.long ? Icons.south : Icons.north,
@@ -1317,7 +1324,10 @@ class _PreviewOrderCard extends StatelessWidget {
         ? 'không có ngưỡng dương'
         : _text(liquidation['price']).isEmpty
         ? 'chưa có dữ liệu'
-        : _text(liquidation['price']);
+        : StrategyNumberFormatter.amount(
+            liquidation['price'],
+            placeholder: 'chưa có dữ liệu',
+          );
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -1328,15 +1338,17 @@ class _PreviewOrderCard extends StatelessWidget {
               '$index. ${_text(order['side']).toUpperCase()} · ${_text(order['role'])}',
             ),
             Text(
-              'Giá giới hạn ${_text(order['limitPrice'])} · Hợp đồng ${_text(order['contracts'])}',
+              'Giá giới hạn ${StrategyNumberFormatter.amount(order['limitPrice'], placeholder: '—')} · Hợp đồng ${StrategyNumberFormatter.amount(order['contracts'], placeholder: '—')}',
             ),
             Text(
-              'Ký quỹ ${_text(order['margin'])} · Đòn bẩy ${_text(order['leverage'])}x',
+              'Ký quỹ ${StrategyNumberFormatter.amount(order['margin'], placeholder: '—')} · Đòn bẩy ${_text(order['leverage'])}x',
             ),
             Text(
-              'Phí mở ước tính ${_text(order['openingFeeEstimate'])} · ngoài ngân sách ký quỹ',
+              'Phí mở ước tính ${StrategyNumberFormatter.amount(order['openingFeeEstimate'], placeholder: '—')} · ngoài ngân sách ký quỹ',
             ),
-            Text('Giá vốn lũy kế ${_text(order['cumulativeAverageEntry'])}'),
+            Text(
+              'Giá vốn lũy kế ${StrategyNumberFormatter.amount(order['cumulativeAverageEntry'], placeholder: '—')}',
+            ),
             Text('Thanh lý giả định $liquidationLabel'),
           ],
         ),
@@ -1357,10 +1369,10 @@ class _PreparedOrderTile extends StatelessWidget {
     contentPadding: EdgeInsets.zero,
     leading: CircleAvatar(radius: 14, child: Text('$index')),
     title: Text(
-      '${_text(order['side']).toUpperCase()} · ${_text(order['role'])} · ${_text(order['limitPrice'])}',
+      '${_text(order['side']).toUpperCase()} · ${_text(order['role'])} · ${StrategyNumberFormatter.amount(order['limitPrice'], placeholder: '—')}',
     ),
     subtitle: Text(
-      'Contr ${_text(order['contracts'])} · Margin ${_text(order['margin'])} · ${_text(order['leverage'])}x',
+      'Contr ${StrategyNumberFormatter.amount(order['contracts'], placeholder: '—')} · Margin ${StrategyNumberFormatter.amount(order['margin'], placeholder: '—')} · ${_text(order['leverage'])}x',
     ),
   );
 }
@@ -1382,7 +1394,9 @@ class _PreviewSummary extends StatelessWidget {
           children: [
             Text(label, style: Theme.of(context).textTheme.titleSmall),
             for (final entry in value.entries)
-              Text('${entry.key}: ${entry.value ?? '—'}'),
+              Text(
+                '${entry.key}: ${entry.value is bool ? entry.value : StrategyNumberFormatter.amount(entry.value, placeholder: '—')}',
+              ),
           ],
         ),
       ),
@@ -1403,10 +1417,14 @@ class _PreparedFinancialSummary extends StatelessWidget {
         spacing: 16,
         runSpacing: 6,
         children: [
-          Text('Ký quỹ dự kiến: ${_text(prepared['plannedMargin'])} USDT'),
-          Text('Phần dư: ${_text(prepared['unallocatedMargin'])} USDT'),
           Text(
-            'Phí mở ước tính: ${_text(prepared['estimatedOpeningFees'])} USDT · tính riêng',
+            'Ký quỹ dự kiến: ${StrategyNumberFormatter.amount(prepared['plannedMargin'], placeholder: '—')} USDT',
+          ),
+          Text(
+            'Phần dư: ${StrategyNumberFormatter.amount(prepared['unallocatedMargin'], placeholder: '—')} USDT',
+          ),
+          Text(
+            'Phí mở ước tính: ${StrategyNumberFormatter.amount(prepared['estimatedOpeningFees'], placeholder: '—')} USDT · tính riêng',
           ),
         ],
       ),

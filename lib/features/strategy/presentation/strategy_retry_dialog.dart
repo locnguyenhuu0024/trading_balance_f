@@ -5,6 +5,7 @@ import '../data/strategy_api_client.dart';
 import '../domain/strategy_models.dart';
 import '../../orders/presentation/providers/trade_session_provider.dart';
 import 'providers/strategy_dashboard_provider.dart';
+import 'strategy_number_formatter.dart';
 
 class StrategyRetryDialog extends ConsumerStatefulWidget {
   const StrategyRetryDialog({
@@ -270,7 +271,7 @@ class _StrategyRetryDialogState extends ConsumerState<StrategyRetryDialog> {
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          'Giá tham chiếu hiện tại ${_text(preview.raw['currentPrice'])} · ${_text(preview.raw['quoteTimestamp'])}',
+                          'Giá tham chiếu hiện tại ${StrategyNumberFormatter.amount(preview.raw['currentPrice'], placeholder: '—')} · ${_text(preview.raw['quoteTimestamp'])}',
                         ),
                         _RetryCostSummary(preview: preview),
                         const SizedBox(height: 8),
@@ -479,10 +480,10 @@ class _StrategyRetryDialogState extends ConsumerState<StrategyRetryDialog> {
                 });
               },
         title: Text(
-          '${candidate.side.toUpperCase()} · ${candidate.role} · ${candidate.limitPrice}',
+          '${candidate.side.toUpperCase()} · ${candidate.role} · ${StrategyNumberFormatter.amount(candidate.limitPrice, placeholder: '—')}',
         ),
         subtitle: Text(
-          'Mã nguồn ${candidate.sourceClientOrderId} · ${candidate.contracts} hợp đồng · ${candidate.leverage}x${reason == null ? ' · ${_outcomeLabel(candidate.priorOutcome)}' : ' · $reason'}',
+          'Mã nguồn ${candidate.sourceClientOrderId} · ${StrategyNumberFormatter.amount(candidate.contracts, placeholder: '—')} hợp đồng · ${candidate.leverage}x${reason == null ? ' · ${_outcomeLabel(candidate.priorOutcome)}' : ' · $reason'}',
         ),
         controlAffinity: ListTileControlAffinity.leading,
       ),
@@ -541,10 +542,18 @@ class _RetryCostSummary extends StatelessWidget {
       spacing: 16,
       runSpacing: 8,
       children: [
-        Text('Ký quỹ: ${preview.totalMargin}'),
-        Text('Phí mở ước tính: ${preview.estimatedOpeningFees}'),
-        Text('Vốn cần có: ${preview.requiredBalance}'),
-        Text('Chưa phân bổ: ${preview.unallocatedMargin}'),
+        Text(
+          'Ký quỹ: ${StrategyNumberFormatter.amount(preview.totalMargin, placeholder: '—')}',
+        ),
+        Text(
+          'Phí mở ước tính: ${StrategyNumberFormatter.amount(preview.estimatedOpeningFees, placeholder: '—')}',
+        ),
+        Text(
+          'Vốn cần có: ${StrategyNumberFormatter.amount(preview.requiredBalance, placeholder: '—')}',
+        ),
+        Text(
+          'Chưa phân bổ: ${StrategyNumberFormatter.amount(preview.unallocatedMargin, placeholder: '—')}',
+        ),
       ],
     ),
   );
@@ -562,9 +571,15 @@ class _PreparedRetryCosts extends StatelessWidget {
       spacing: 16,
       runSpacing: 8,
       children: [
-        Text('Ký quỹ: ${_text(prepared['plannedMargin'])}'),
-        Text('Phí mở ước tính: ${_text(prepared['estimatedOpeningFees'])}'),
-        Text('Chưa phân bổ: ${_text(prepared['unallocatedMargin'])}'),
+        Text(
+          'Ký quỹ: ${StrategyNumberFormatter.amount(prepared['plannedMargin'], placeholder: '—')}',
+        ),
+        Text(
+          'Phí mở ước tính: ${StrategyNumberFormatter.amount(prepared['estimatedOpeningFees'], placeholder: '—')}',
+        ),
+        Text(
+          'Chưa phân bổ: ${StrategyNumberFormatter.amount(prepared['unallocatedMargin'], placeholder: '—')}',
+        ),
       ],
     ),
   );
@@ -582,10 +597,10 @@ class _RetryOrderTile extends StatelessWidget {
     contentPadding: EdgeInsets.zero,
     leading: CircleAvatar(radius: 14, child: Text('$index')),
     title: Text(
-      '${_text(order['side']).toUpperCase()} · ${_text(order['role'])} · ${_text(order['limitPrice'])}',
+      '${_text(order['side']).toUpperCase()} · ${_text(order['role'])} · ${StrategyNumberFormatter.amount(order['limitPrice'], placeholder: '—')}',
     ),
     subtitle: Text(
-      'Nguồn ${_text(order['sourceClientOrderId'])}${order['clientOrderId'] == null ? '' : ' → ${_text(order['clientOrderId'])}'} · ${_text(order['contracts'])} hợp đồng · ${_text(order['leverage'])}x · Ký quỹ ${_text(order['margin'])} · Phí ${_text(order['openingFeeEstimate'])}',
+      'Nguồn ${_text(order['sourceClientOrderId'])}${order['clientOrderId'] == null ? '' : ' → ${_text(order['clientOrderId'])}'} · ${StrategyNumberFormatter.amount(order['contracts'], placeholder: '—')} hợp đồng · ${_text(order['leverage'])}x · Ký quỹ ${StrategyNumberFormatter.amount(order['margin'], placeholder: '—')} · Phí ${StrategyNumberFormatter.amount(order['openingFeeEstimate'], placeholder: '—')}',
     ),
   );
 }

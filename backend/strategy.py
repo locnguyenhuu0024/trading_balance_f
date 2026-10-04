@@ -326,17 +326,72 @@ class StrategyService:
     def _invalid(self, reason: str, message: str = "The strategy request is invalid.") -> APIError:
         return APIError(422, "invalid_strategy", message, details={"reason": reason})
 
-    def _account(self) -> tuple[dict[str, Any], str]:
-        try:
-            account = self.okx.account_config()
-        except OKXError:
-            raise APIError(502, "exchange_unavailable", "Current account data is unavailable.") from None
+    @staticmethod
+    def _read_failure(
+        error: OKXError,
+        *,
+        fallback_code: str,
+        fallback_message: str,
+    ) -> APIError:
+        if error.http_status == 429:
+            return APIError(
+                429,
+                "exchange_rate_limited",
+                "The exchange is rate limiting requests; try again shortly.",
+                headers=[("Retry-After", "2")],
+            )
+        return APIError(502, fallback_code, fallback_message)
+
+    @staticmethod
+    def _available_usdt(balance_rows: Any) -> Decimal | None:
+        if not isinstance(balance_rows, list):
+            return None
+        matches = 0
+        available: Decimal | None = None
+        for row in balance_rows:
+            if not isinstance(row, dict) or not isinstance(row.get("details"), list):
+                return None
+            for detail in row["details"]:
+                if not isinstance(detail, dict) or not isinstance(detail.get("ccy"), str):
+                    return None
+                if detail["ccy"] == "USDT":
+                    matches += 1
+                    available = _decimal(detail.get("availBal"))
+                    if available is None:
+                        return None
+        return available if matches == 1 else None
+
+    def _account(
+        self,
+        account_snapshot: tuple[dict[str, Any], str] | None = None,
+        *,
+        fallback_code: str = "exchange_unavailable",
+        fallback_message: str = "Current account data is unavailable.",
+    ) -> tuple[dict[str, Any], str]:
+        if account_snapshot is None:
+            try:
+                account = self.okx.account_config()
+            except OKXError as exc:
+                raise self._read_failure(
+                    exc, fallback_code=fallback_code, fallback_message=fallback_message
+                ) from None
+        else:
+            account, snapshot_fingerprint = account_snapshot
+            if not isinstance(account, dict):
+                raise APIError(502, "account_identity_unavailable", "The exchange account identity is unavailable.")
+        if account_snapshot is not None and (
+            not isinstance(snapshot_fingerprint, str)
+            or not self.owner._valid_account_fingerprint(snapshot_fingerprint)
+        ):
+            raise APIError(502, "account_identity_unavailable", "The exchange account identity is unavailable.")
         fingerprint = self.owner._account_fingerprint(account.get("uid"))
         if not self.owner._valid_account_fingerprint(fingerprint):
             raise APIError(
                 502, "account_identity_unavailable",
                 "The exchange account identity is unavailable; try again later.",
             )
+        if account_snapshot is not None and not hmac.compare_digest(fingerprint, snapshot_fingerprint):
+            raise APIError(502, "account_identity_unavailable", "The exchange account identity is unavailable.")
         return account, fingerprint
 
     def _get_settings(self) -> dict[str, Any]:
@@ -898,8 +953,9 @@ class StrategyService:
         *,
         exclude_child_id: str | None = None,
         reconcile: bool = True,
+        account_snapshot: tuple[dict[str, Any], str] | None = None,
     ) -> dict[str, Any]:
-        account, fingerprint = self._account()
+        account, fingerprint = self._account(account_snapshot)
         with self.store.connection() as connection:
             row = connection.execute(
                 "SELECT * FROM strategies WHERE strategy_id=?", (source_id,)
@@ -1237,7 +1293,8 @@ class StrategyService:
                 "retry_source_unavailable", "The source strategy cannot be retried safely."
             )
         market_account, fingerprint, meta, maker_fee, tiers = self._load_market_inputs(
-            {"instrumentId": context["instrumentId"]}
+            {"instrumentId": context["instrumentId"]},
+            account_snapshot=(context["account"], context["fingerprint"]),
         )
         if not hmac.compare_digest(context["fingerprint"], fingerprint):
             raise APIError(409, "account_changed", "The active OKX account changed; refresh retry review.")
@@ -1289,9 +1346,11 @@ class StrategyService:
         try:
             positions = self.okx.positions("SWAP")
             pending = self.okx.pending_orders(instrument_id)
-        except OKXError:
-            raise APIError(
-                502, "account_preflight_unavailable", "Current positions or pending orders are unavailable."
+        except OKXError as exc:
+            raise self._read_failure(
+                exc,
+                fallback_code="account_preflight_unavailable",
+                fallback_message="Current positions or pending orders are unavailable.",
             ) from None
         for row in positions:
             if row.get("instId") != instrument_id:
@@ -1319,21 +1378,17 @@ class StrategyService:
 
         try:
             balance_rows = self.okx.account_balance()
-        except OKXError:
-            raise APIError(502, "account_preflight_unavailable", "Available USDT balance is unavailable.") from None
-        available: Decimal | None = None
-        for row in balance_rows:
-            details = row.get("details", [])
-            if not isinstance(details, list):
-                continue
-            for detail in details:
-                if isinstance(detail, dict) and detail.get("ccy") == "USDT":
-                    available = _decimal(detail.get("availBal"))
-                    break
-            if available is not None:
-                break
+        except OKXError as exc:
+            raise self._read_failure(
+                exc,
+                fallback_code="account_preflight_unavailable",
+                fallback_message="Available USDT balance is unavailable.",
+            ) from None
+        available = self._available_usdt(balance_rows)
+        if available is None:
+            raise APIError(502, "account_preflight_unavailable", "Available USDT balance is unavailable.")
         required = Decimal(preview["totalMargin"]) + Decimal(preview["estimatedOpeningFees"] or "0")
-        if available is None or available < required:
+        if available < required:
             raise APIError(
                 422, "insufficient_balance", "Available USDT does not cover the retry margin and estimated fees.",
                 details={"required": _text(required), "available": _text(available)},
@@ -1514,7 +1569,11 @@ class StrategyService:
             )
             return self._retry_draft_response(replay_id)
 
-        context = self._retry_source_context(source_id, reconcile=True)
+        context = self._retry_source_context(
+            source_id,
+            reconcile=True,
+            account_snapshot=(context["account"], context["fingerprint"]),
+        )
         selected, selection_digest, normalized_ids = self._retry_selection(
             context, revision, selected_ids
         )
@@ -1789,24 +1848,28 @@ class StrategyService:
             self._ensure_new_order_cap(persisted)
 
     def _load_market_inputs(
-        self, contract: dict[str, Any]
+        self,
+        contract: dict[str, Any],
+        *,
+        account_snapshot: tuple[dict[str, Any], str] | None = None,
     ) -> tuple[dict[str, Any], str, dict[str, Decimal], Decimal, list[dict[str, Decimal]]]:
+        account, fingerprint = self._account(
+            account_snapshot,
+            fallback_code="preview_inputs_unavailable",
+            fallback_message="Current quote, contract, maintenance-tier, or fee data is unavailable.",
+        )
         try:
-            account = self.okx.account_config()
             instrument_rows = self.okx.instruments("SWAP")
             ticker = self.okx.ticker(contract["instrumentId"])
             family = contract["instrumentId"][: -len("-SWAP")]
             fee = self.okx.trade_fee(family)
             tier_rows = self.okx.position_tiers(family)
-        except OKXError:
-            raise APIError(
-                502, "preview_inputs_unavailable",
-                "Current quote, contract, maintenance-tier, or fee data is unavailable.",
+        except OKXError as exc:
+            raise self._read_failure(
+                exc,
+                fallback_code="preview_inputs_unavailable",
+                fallback_message="Current quote, contract, maintenance-tier, or fee data is unavailable.",
             ) from None
-
-        fingerprint = self.owner._account_fingerprint(account.get("uid"))
-        if not self.owner._valid_account_fingerprint(fingerprint):
-            raise APIError(502, "account_identity_unavailable", "The exchange account identity is unavailable.")
         instrument = next(
             (row for row in instrument_rows if row.get("instId") == contract["instrumentId"]), None
         )
@@ -1927,8 +1990,15 @@ class StrategyService:
             "takerFee": taker_fee,
         }, taker_fee, tiers
 
-    def _preview_contract(self, contract: dict[str, Any]) -> dict[str, Any]:
-        account, fingerprint, meta, fee_rate, tiers = self._load_market_inputs(contract)
+    def _preview_contract(
+        self,
+        contract: dict[str, Any],
+        *,
+        account_snapshot: tuple[dict[str, Any], str] | None = None,
+    ) -> dict[str, Any]:
+        account, fingerprint, meta, fee_rate, tiers = self._load_market_inputs(
+            contract, account_snapshot=account_snapshot
+        )
         current = meta["last"]
         tick = meta["tickSize"]
         id_mode = "direction" in contract
@@ -2318,6 +2388,7 @@ class StrategyService:
         self,
         strategy: dict[str, Any],
         expected_fingerprint: str,
+        account_snapshot: tuple[dict[str, Any], str],
     ) -> dict[str, Any] | None:
         contract = strategy.get("contract")
         try:
@@ -2336,7 +2407,10 @@ class StrategyService:
             raise APIError(409, "account_changed", "The active OKX account changed; no strategy order was sent.")
 
         context = self._retry_source_context(
-            metadata["sourceStrategyId"], exclude_child_id=strategy["id"], reconcile=True
+            metadata["sourceStrategyId"],
+            exclude_child_id=strategy["id"],
+            reconcile=True,
+            account_snapshot=account_snapshot,
         )
         if context["instrumentId"] != contract.get("instrumentId"):
             raise APIError(
@@ -2390,14 +2464,17 @@ class StrategyService:
         *,
         resume: bool = False,
         strategy: dict[str, Any] | None = None,
+        account_snapshot: tuple[dict[str, Any], str] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        account, fingerprint = self._account()
+        account, fingerprint = self._account(account_snapshot)
         if not hmac.compare_digest(expected_fingerprint, fingerprint):
             raise APIError(409, "account_changed", "The active OKX account changed; no strategy order was sent.")
         mode = account.get("posMode")
         retry_preview: dict[str, Any] | None = None
         if strategy is not None:
-            retry_preview = self._retry_preflight_preview(strategy, fingerprint)
+            retry_preview = self._retry_preflight_preview(
+                strategy, fingerprint, (account, fingerprint)
+            )
         elif is_resubmission_contract(contract):
             raise APIError(
                 409, "prepared_strategy_invalid", "Retry preflight requires the persisted child strategy."
@@ -2418,8 +2495,12 @@ class StrategyService:
             try:
                 positions = self.okx.positions("SWAP")
                 pending = self.okx.pending_orders(instrument_id)
-            except OKXError:
-                raise APIError(502, "account_preflight_unavailable", "Current positions or pending orders are unavailable.") from None
+            except OKXError as exc:
+                raise self._read_failure(
+                    exc,
+                    fallback_code="account_preflight_unavailable",
+                    fallback_message="Current positions or pending orders are unavailable.",
+                ) from None
             for row in positions:
                 if row.get("instId") != instrument_id:
                     continue
@@ -2428,27 +2509,25 @@ class StrategyService:
                     raise APIError(409, "instrument_position_exists", "Close the existing position for this SWAP before applying.")
             if any(row.get("instId") == instrument_id for row in pending):
                 raise APIError(409, "pending_order_exists", "Cancel existing pending orders for this SWAP before applying.")
-        preview = retry_preview if retry_preview is not None else self._preview_contract(contract)
+        preview = retry_preview if retry_preview is not None else self._preview_contract(
+            contract, account_snapshot=(account, fingerprint)
+        )
         if not hmac.compare_digest(expected_fingerprint, preview["_internal"]["accountFingerprint"]):
             raise APIError(409, "account_changed", "The active OKX account changed; no strategy order was sent.")
         if not resume:
             try:
                 balance_rows = self.okx.account_balance()
-            except OKXError:
-                raise APIError(502, "account_preflight_unavailable", "Available USDT balance is unavailable.") from None
-            available: Decimal | None = None
-            for row in balance_rows:
-                details = row.get("details", [])
-                if not isinstance(details, list):
-                    continue
-                for detail in details:
-                    if isinstance(detail, dict) and detail.get("ccy") == "USDT":
-                        available = _decimal(detail.get("availBal"))
-                        break
-                if available is not None:
-                    break
+            except OKXError as exc:
+                raise self._read_failure(
+                    exc,
+                    fallback_code="account_preflight_unavailable",
+                    fallback_message="Available USDT balance is unavailable.",
+                ) from None
+            available = self._available_usdt(balance_rows)
+            if available is None:
+                raise APIError(502, "account_preflight_unavailable", "Available USDT balance is unavailable.")
             required = Decimal(contract["totalMargin"]) + Decimal(preview["estimatedOpeningFees"] or "0")
-            if available is None or available < required:
+            if available < required:
                 raise APIError(
                     422, "insufficient_balance", "Available USDT does not cover the margin budget and estimated fees.",
                     details={"required": _text(required), "available": _text(available)},
@@ -2456,17 +2535,22 @@ class StrategyService:
         return account, preview
 
     def _prepare(self, strategy_id: str) -> dict[str, Any]:
-        strategy, _, fingerprint = self._current_strategy(strategy_id)
+        strategy, account, fingerprint = self._current_strategy(strategy_id)
         if strategy["attemptStarted"] or strategy["status"] not in ("DRAFT",):
             raise APIError(409, "strategy_immutable", "This strategy has already entered an application attempt.")
         self._ensure_new_order_cap(strategy)
         self._require_eligible_replacement_source(strategy["replacementSourceId"], fingerprint)
         try:
-            _, preview = self._preflight(strategy["contract"], fingerprint, strategy=strategy)
+            _, preview = self._preflight(
+                strategy["contract"],
+                fingerprint,
+                strategy=strategy,
+                account_snapshot=(account, fingerprint),
+            )
         except APIError as exc:
             diagnostics.emit_event(
                 "preflight", component="api", stage="preflight_initial", outcome="failure",
-                reason=self._preflight_diagnostic_reason(exc),
+                reason=self._preflight_diagnostic_reason(exc), api_code=exc.code,
             )
             raise
         except Exception:
@@ -2697,7 +2781,7 @@ class StrategyService:
         token = body.get("confirmationToken")
         if not isinstance(token, str) or not token:
             raise APIError(400, "invalid_request", "A confirmation token is required.")
-        strategy, _, fingerprint = self._current_strategy(strategy_id)
+        strategy, account, fingerprint = self._current_strategy(strategy_id)
         if strategy["status"] != "PREPARED":
             diagnostics.emit_event(
                 "execute_noop", component="api", stage="execute", outcome="noop",
@@ -2747,11 +2831,17 @@ class StrategyService:
             )
             return self._basic_result(self._load_row(strategy_id))
         try:
-            _, live_preview = self._preflight(strategy["contract"], fingerprint, strategy=strategy)
+            _, live_preview = self._preflight(
+                strategy["contract"],
+                fingerprint,
+                strategy=strategy,
+                account_snapshot=(account, fingerprint),
+            )
         except APIError as exc:
             diagnostics.emit_event(
                 "preflight", component="api", stage="preflight_initial", outcome="failure",
-                reason=self._preflight_diagnostic_reason(exc), submission_mode="batch",
+                reason=self._preflight_diagnostic_reason(exc), api_code=exc.code,
+                submission_mode="batch",
             )
             raise
         except Exception:
@@ -2876,7 +2966,8 @@ class StrategyService:
             except APIError as exc:
                 diagnostics.emit_event(
                     "preflight", component="api", stage="preflight_post_leverage", outcome="failure",
-                    reason=self._preflight_diagnostic_reason(exc), submission_mode=submission_mode,
+                    reason=self._preflight_diagnostic_reason(exc), api_code=exc.code,
+                    submission_mode=submission_mode,
                 )
                 raise
             except Exception:
@@ -2955,6 +3046,7 @@ class StrategyService:
     @staticmethod
     def _preflight_diagnostic_reason(error: APIError) -> str:
         return {
+            "exchange_rate_limited": "exchange_rate_limited",
             "account_changed": "account_changed",
             "account_identity_unavailable": "account_changed",
             "account_mode_unsupported": "account_mode_unsupported",
