@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/app_theme.dart';
+import '../../../../core/theme/pnl_color.dart';
 import '../../data/trade_api_client.dart';
 import '../providers/order_cancellation_flow_provider.dart';
 import '../providers/order_provider.dart';
@@ -28,6 +29,9 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
   @override
   Widget build(BuildContext context) {
     final palette = AppPalette.of(context);
+    final closeAllColor = Theme.of(context).brightness == Brightness.dark
+        ? PnlColors.darkNegative
+        : PnlColors.lightNegative;
     final api = ref.watch(tradeApiProvider);
     final sessionState = ref.watch(tradeSessionProvider);
     final session = sessionState.session;
@@ -72,7 +76,8 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
                       ? null
                       : _closeAll,
                   style: TextButton.styleFrom(
-                    foregroundColor: palette.warning,
+                    foregroundColor: closeAllColor,
+                    side: BorderSide(color: closeAllColor, width: 1),
                     minimumSize: const Size(48, 48),
                     padding: const EdgeInsets.symmetric(
                       horizontal: 12,

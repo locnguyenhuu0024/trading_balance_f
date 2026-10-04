@@ -484,9 +484,12 @@ void main() {
           await tester.pump();
           await tester.pump();
 
+          final expectedInstrumentLabel = tab == OrderTab.pending
+              ? 'BTCUSDT'
+              : 'BTC-USDT-SWAP';
           final card = find
               .ancestor(
-                of: find.text('BTC-USDT-SWAP'),
+                of: find.text(expectedInstrumentLabel),
                 matching: find.byType(Card),
               )
               .first;
@@ -498,7 +501,7 @@ void main() {
             matching: find.textContaining(RegExp(r'\d.*đ$')),
           );
 
-          expect(find.text('BTC-USDT-SWAP'), findsOneWidget);
+          expect(find.text(expectedInstrumentLabel), findsOneWidget);
           expect(price, findsOneWidget);
           expect(size, findsOneWidget);
           expect(vndAmount, findsOneWidget);

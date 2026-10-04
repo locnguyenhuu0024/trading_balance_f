@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:trading_balance_f/core/theme/pnl_color.dart';
 import 'package:trading_balance_f/features/orders/data/okx_position_model.dart';
 import 'package:trading_balance_f/features/orders/data/trade_api_client.dart';
 import 'package:trading_balance_f/features/orders/presentation/providers/order_provider.dart';
@@ -294,6 +295,7 @@ Widget _tradeApp({
   List<OkxPosition> positions = const [],
   String filter = 'SWAP',
   bool authenticated = true,
+  Brightness brightness = Brightness.light,
   bool showActions = true,
   bool showAccountControls = false,
   bool showSessionControls = false,
@@ -314,6 +316,7 @@ Widget _tradeApp({
       orderFilterProvider.overrideWith((ref) => filter),
     ],
     child: MaterialApp(
+      theme: ThemeData(brightness: brightness),
       home: Scaffold(
         body: SingleChildScrollView(
           child: Column(
@@ -708,6 +711,36 @@ void main() {
       await tester.pumpAndSettle();
       expect(api.executeCalls, 0);
       expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('close-all button uses red foreground and outline by theme', (
+      tester,
+    ) async {
+      for (final brightness in [Brightness.light, Brightness.dark]) {
+        final api = _FakeTradeApi();
+        await tester.pumpWidget(
+          _tradeApp(
+            api: api,
+            showActions: false,
+            showAccountControls: true,
+            brightness: brightness,
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final tooltip = find.byTooltip('Đóng tất cả vị thế');
+        final button = tester.widget<TextButton>(
+          find.descendant(of: tooltip, matching: find.byType(TextButton)),
+        );
+        final expectedColor = brightness == Brightness.dark
+            ? PnlColors.darkNegative
+            : PnlColors.lightNegative;
+        expect(button.style?.foregroundColor?.resolve({}), expectedColor);
+        expect(
+          button.style?.side?.resolve({}),
+          BorderSide(color: expectedColor, width: 1),
+        );
+      }
     });
 
     testWidgets('ineligible close-all prepare surfaces server reason', (
