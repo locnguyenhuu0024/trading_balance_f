@@ -667,6 +667,10 @@ void main() {
     testWidgets('close all ignores the selected SWAP display filter', (
       tester,
     ) async {
+      tester.view.physicalSize = const Size(320, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
       final api = _FakeTradeApi();
       await tester.pumpWidget(
         _tradeApp(
@@ -679,6 +683,21 @@ void main() {
       );
       await tester.pumpAndSettle();
 
+      expect(find.text('Đóng tất cả vị thế'), findsOneWidget);
+      final closeAllTooltip = find.byTooltip('Đóng tất cả vị thế');
+      final closeAllButton = find.descendant(
+        of: closeAllTooltip,
+        matching: find.byType(TextButton),
+      );
+      expect(tester.getSize(closeAllButton).width, greaterThanOrEqualTo(48));
+      expect(tester.getSize(closeAllButton).height, greaterThanOrEqualTo(48));
+      expect(
+        find.descendant(
+          of: closeAllTooltip,
+          matching: find.byIcon(Icons.warning_amber_rounded),
+        ),
+        findsOneWidget,
+      );
       await tester.tap(find.byTooltip('Đóng tất cả vị thế'));
       await _pumpActiveDialog(tester);
       expect(api.lastAction, 'close_all');
@@ -688,6 +707,7 @@ void main() {
       await tester.tap(find.text('Hủy'));
       await tester.pumpAndSettle();
       expect(api.executeCalls, 0);
+      expect(tester.takeException(), isNull);
     });
 
     testWidgets('ineligible close-all prepare surfaces server reason', (
@@ -1169,13 +1189,11 @@ void main() {
       expect(find.textContaining('operation-12345678'), findsNothing);
       expect(
         tester
-            .widget<IconButton>(
-              find
-                  .ancestor(
-                    of: find.byTooltip('Đóng tất cả vị thế'),
-                    matching: find.byType(IconButton),
-                  )
-                  .first,
+            .widget<TextButton>(
+              find.descendant(
+                of: find.byTooltip('Đóng tất cả vị thế'),
+                matching: find.byType(TextButton),
+              ),
             )
             .onPressed,
         isNotNull,

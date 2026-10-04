@@ -64,15 +64,28 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
           if (widget.showCloseAll && api.isConfigured && isAuthenticated)
             Align(
               alignment: Alignment.centerLeft,
-              child: IconButton(
-                tooltip: 'Đóng tất cả vị thế',
-                onPressed:
-                    _busy || hasUnresolvedOperation || activePositionAction
-                    ? null
-                    : _closeAll,
-                constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                color: palette.warning,
-                icon: const Icon(Icons.warning_amber_rounded, size: 20),
+              child: Tooltip(
+                message: 'Đóng tất cả vị thế',
+                child: TextButton.icon(
+                  onPressed:
+                      _busy || hasUnresolvedOperation || activePositionAction
+                      ? null
+                      : _closeAll,
+                  style: TextButton.styleFrom(
+                    foregroundColor: palette.warning,
+                    minimumSize: const Size(48, 48),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                  ),
+                  icon: const Icon(Icons.warning_amber_rounded, size: 20),
+                  label: const Text(
+                    'Đóng tất cả vị thế',
+                    softWrap: true,
+                    textAlign: TextAlign.left,
+                  ),
+                ),
               ),
             ),
           if (!api.isConfigured)

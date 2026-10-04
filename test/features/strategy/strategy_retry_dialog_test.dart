@@ -48,8 +48,19 @@ void main() {
       await _pumpFrames(tester);
       expect(api.previewCalls, 1);
       expect(find.text('Bản xem trước cố định'), findsOneWidget);
-      expect(find.text('Ký quỹ: 13'), findsOneWidget);
-      expect(find.text('Phí mở ước tính: 0.03'), findsOneWidget);
+      expect(
+        find.text('Giá tham chiếu hiện tại 65,000.12 · 2026-10-03T00:00:00Z'),
+        findsOneWidget,
+      );
+      expect(find.text('Ký quỹ: 1,234.57'), findsOneWidget);
+      expect(find.text('Phí mở ước tính: 3e-9'), findsOneWidget);
+      expect(find.text('Chưa phân bổ: 0.00'), findsOneWidget);
+      expect(
+        find.textContaining('1.00 hợp đồng · 5x · Ký quỹ 1,234.57 · Phí 3e-9'),
+        findsOneWidget,
+      );
+      expect(api.lastPreview!.raw['totalMargin'], '1234.56789');
+      expect(api.lastPreview!.orders.single['limitPrice'], '65000.123456');
       expect(api.previewCalls, 1);
       expect(api.previewSourceRevision, 'source-revision-1');
       expect(api.previewSourceOrderIds, ['source-order-1']);
@@ -315,6 +326,7 @@ class _RetryDialogApi implements StrategyApi {
   String? retryRequestId;
   String? preparedId;
   String? executedId;
+  StrategyRetryPreview? lastPreview;
   bool linkedChildListed = false;
   Completer<StrategyRetryDraft>? createCompleter;
   Completer<Map<String, dynamic>>? executeCompleter;
@@ -376,7 +388,7 @@ class _RetryDialogApi implements StrategyApi {
                 sourceClientOrderId: 'source-order-$index',
                 side: 'long',
                 role: 'entry',
-                limitPrice: '65000',
+                limitPrice: '65000.123456',
                 contracts: '1',
                 leverage: '5',
                 priorOutcome: 'not_submitted',
@@ -413,7 +425,8 @@ class _RetryDialogApi implements StrategyApi {
     previewCalls++;
     previewSourceRevision = sourceRevision;
     previewSourceOrderIds = List.unmodifiable(sourceClientOrderIds);
-    return _retryPreview(sourceStrategyId, sourceClientOrderIds);
+    lastPreview = _retryPreview(sourceStrategyId, sourceClientOrderIds);
+    return lastPreview!;
   }
 
   @override
@@ -511,17 +524,17 @@ StrategyRetryPreview _retryPreview(
     'interval': '6Hutc',
     'allocation': 'fixed',
     'feesOutsideMargin': true,
-    'currentPrice': '65000',
+    'currentPrice': '65000.123456',
     'quoteTimestamp': '2026-10-03T00:00:00Z',
     'sidePercent': {'long': '100', 'short': '0'},
     'sides': [
       {'side': 'long', 'contracts': '1'},
     ],
-    'totalMargin': '13',
-    'plannedMargin': '13',
+    'totalMargin': '1234.56789',
+    'plannedMargin': '1234.56789',
     'unallocatedMargin': '0',
-    'estimatedOpeningFees': '0.03',
-    'requiredBalance': '13.03',
+    'estimatedOpeningFees': '0.000000003',
+    'requiredBalance': '1234.567890003',
     'orders': [order],
   };
   return StrategyRetryPreview(
@@ -530,11 +543,11 @@ StrategyRetryPreview _retryPreview(
     selectedSourceClientOrderIds: List.unmodifiable(sourceOrderIds),
     previewHash: 'retry-hash-1',
     orders: [order],
-    totalMargin: '13',
-    plannedMargin: '13',
+    totalMargin: '1234.56789',
+    plannedMargin: '1234.56789',
     unallocatedMargin: '0',
-    estimatedOpeningFees: '0.03',
-    requiredBalance: '13.03',
+    estimatedOpeningFees: '0.000000003',
+    requiredBalance: '1234.567890003',
     raw: raw,
   );
 }
@@ -588,9 +601,9 @@ Map<String, dynamic> _retryPrepared() => {
   'status': 'PREPARED',
   'confirmationToken': 'one-use-retry-token',
   'expiresAt': '2026-10-03T00:01:00Z',
-  'plannedMargin': '13',
+  'plannedMargin': '1234.56789',
   'unallocatedMargin': '0',
-  'estimatedOpeningFees': '0.03',
+  'estimatedOpeningFees': '0.000000003',
   'quoteTimestamp': '2026-10-03T00:00:00Z',
   'submissionMode': 'batch',
   'resubmission': {
@@ -613,17 +626,17 @@ Map<String, dynamic> _retryOrder({
   if (clientOrderId != null) 'clientOrderId': clientOrderId,
   'side': 'long',
   'role': 'entry',
-  'limitPrice': '65000',
+  'limitPrice': '65000.123456',
   'contracts': '1',
   'leverage': '5',
-  'margin': '13',
-  'allocatedMargin': '13',
+  'margin': '1234.56789',
+  'allocatedMargin': '1234.56789',
   'notional': '65000',
-  'openingFeeEstimate': '0.03',
+  'openingFeeEstimate': '0.000000003',
   'allocationWeight': '1',
   'cumulativeContracts': '1',
-  'cumulativeAverageEntry': '65000',
-  'liquidationEstimate': {'price': '64000', 'method': 'cross'},
+  'cumulativeAverageEntry': '65000.123456',
+  'liquidationEstimate': {'price': '64000.123456', 'method': 'cross'},
 };
 
 class _FakeMarketRepository extends StrategyMarketRepository {

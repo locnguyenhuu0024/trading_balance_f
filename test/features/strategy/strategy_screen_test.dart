@@ -206,108 +206,112 @@ void main() {
     );
   });
 
-  testWidgets('RED-004 sequential canceled summary requires complete queue evidence', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(360, 800);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    final api = _FakeStrategyApi();
-    final session = _AuthenticatedSessionController();
-    StrategyDashboardController? dashboard;
-    api.strategies[1]
-      ..['status'] = 'PARTIAL'
-      ..['orders'] = [
-        {'status': 'canceled'},
-        {'status': 'mmp_canceled'},
-      ]
-      ..['submissionMode'] = 'sequential'
-      ..['queueStatus'] = 'stopped'
-      ..['queueProgress'] = null
-      ..['orderSyncState'] = 'fresh';
-    await tester.pumpWidget(
-      ProviderScope(
-        overrides: [
-          tradeSessionProvider.overrideWith((ref) => session),
-          strategyApiProvider.overrideWithValue(api),
-          strategyMarketRepositoryProvider.overrideWithValue(
-            _FakeMarketRepository(),
-          ),
-        ],
-        child: MediaQuery(
-          data: const MediaQueryData(
-            size: Size(360, 800),
-            textScaler: TextScaler.linear(1.5),
-          ),
-          child: MaterialApp(
-            home: Consumer(
-              builder: (context, ref, child) {
-                dashboard = ref.watch(
-                  strategyDashboardProvider(session.state.session!.bearerToken),
-                );
-                return const StrategyScreen();
-              },
+  testWidgets(
+    'RED-004 sequential canceled summary requires complete queue evidence',
+    (tester) async {
+      tester.view.physicalSize = const Size(360, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final api = _FakeStrategyApi();
+      final session = _AuthenticatedSessionController();
+      StrategyDashboardController? dashboard;
+      api.strategies[1]
+        ..['status'] = 'PARTIAL'
+        ..['orders'] = [
+          {'status': 'canceled'},
+          {'status': 'mmp_canceled'},
+        ]
+        ..['submissionMode'] = 'sequential'
+        ..['queueStatus'] = 'stopped'
+        ..['queueProgress'] = null
+        ..['orderSyncState'] = 'fresh';
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            tradeSessionProvider.overrideWith((ref) => session),
+            strategyApiProvider.overrideWithValue(api),
+            strategyMarketRepositoryProvider.overrideWithValue(
+              _FakeMarketRepository(),
+            ),
+          ],
+          child: MediaQuery(
+            data: const MediaQueryData(
+              size: Size(360, 800),
+              textScaler: TextScaler.linear(1.5),
+            ),
+            child: MaterialApp(
+              home: Consumer(
+                builder: (context, ref, child) {
+                  dashboard = ref.watch(
+                    strategyDashboardProvider(
+                      session.state.session!.bearerToken,
+                    ),
+                  );
+                  return const StrategyScreen();
+                },
+              ),
             ),
           ),
         ),
-      ),
-    );
-    await _pumpFrames(tester);
-    final summary = find.byKey(const Key('strategy-summary-started-1'));
-    await tester.ensureVisible(summary);
-    await tester.pump();
+      );
+      await _pumpFrames(tester);
+      final summary = find.byKey(const Key('strategy-summary-started-1'));
+      await tester.ensureVisible(summary);
+      await tester.pump();
 
-    expect(
-      find.descendant(of: summary, matching: find.text('Đã hủy')),
-      findsNothing,
-    );
-    expect(
-      find.descendant(
-        of: summary,
-        matching: find.text('Một phần / cần kiểm tra'),
-      ),
-      findsOneWidget,
-    );
-    expect(tester.takeException(), isNull);
+      expect(
+        find.descendant(of: summary, matching: find.text('Đã hủy')),
+        findsNothing,
+      );
+      expect(
+        find.descendant(
+          of: summary,
+          matching: find.text('Một phần / cần kiểm tra'),
+        ),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
 
-    api.strategies[1]
-      ..remove('queueStatus')
-      ..remove('queueProgress');
-    await dashboard!.load();
-    await _pumpFrames(tester);
-    expect(
-      find.descendant(of: summary, matching: find.text('Đã hủy')),
-      findsNothing,
-    );
+      api.strategies[1]
+        ..remove('queueStatus')
+        ..remove('queueProgress');
+      await dashboard!.load();
+      await _pumpFrames(tester);
+      expect(
+        find.descendant(of: summary, matching: find.text('Đã hủy')),
+        findsNothing,
+      );
 
-    api.strategies[1]['queueProgress'] = {'totalCount': 2};
-    await dashboard!.load();
-    await _pumpFrames(tester);
-    expect(
-      find.descendant(of: summary, matching: find.text('Đã hủy')),
-      findsNothing,
-    );
+      api.strategies[1]['queueProgress'] = {'totalCount': 2};
+      await dashboard!.load();
+      await _pumpFrames(tester);
+      expect(
+        find.descendant(of: summary, matching: find.text('Đã hủy')),
+        findsNothing,
+      );
 
-    api.strategies[1]
-      ..['submissionMode'] = 'batch'
-      ..remove('queueStatus')
-      ..remove('queueProgress');
-    await dashboard!.load();
-    await _pumpFrames(tester);
-    expect(
-      find.descendant(of: summary, matching: find.text('Đã hủy')),
-      findsOneWidget,
-    );
-    expect(tester.takeException(), isNull);
-  });
+      api.strategies[1]
+        ..['submissionMode'] = 'batch'
+        ..remove('queueStatus')
+        ..remove('queueProgress');
+      await dashboard!.load();
+      await _pumpFrames(tester);
+      expect(
+        find.descendant(of: summary, matching: find.text('Đã hủy')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('T72 strategy detail PnL amount and percent have sign colors', (
     tester,
   ) async {
     final api = _FakeStrategyApi();
     api.strategies[1]
-      ..['unrealizedPnl'] = '1.25'
+      ..['totalMargin'] = '1234.56789'
+      ..['unrealizedPnl'] = '1.23456789'
       ..['pnlPercent'] = '-0.006';
     await tester.pumpWidget(
       ProviderScope(
@@ -326,13 +330,17 @@ void main() {
     await _pumpFrames(tester);
     await _openStrategyDetails(tester, 'started-1');
 
+    expect(find.text('Vốn: 1,234.57 USDT'), findsOneWidget);
     final pnlMetric = find.ancestor(
       of: find.text('PnL chưa thực hiện'),
       matching: find.byWidgetPredicate(
         (widget) => widget is SizedBox && widget.width == 175,
       ),
     );
-    final pnlText = find.descendant(of: pnlMetric, matching: find.text('1.25'));
+    final pnlText = find.descendant(
+      of: pnlMetric,
+      matching: find.text('1.2346'),
+    );
     expect(tester.widget<Text>(pnlText).style?.color, PnlColors.lightPositive);
 
     final percentMetric = find.ancestor(
@@ -343,7 +351,7 @@ void main() {
     );
     final percentText = find.descendant(
       of: percentMetric,
-      matching: find.text('-0.006'),
+      matching: find.text('-0.01'),
     );
     expect(
       tester.widget<Text>(percentText).style?.color,
@@ -706,7 +714,7 @@ void main() {
     expect(
       find.descendant(
         of: startedCard.first,
-        matching: find.textContaining('Giá SWAP 65000'),
+        matching: find.textContaining('Giá SWAP 65,000.00'),
       ),
       findsOneWidget,
     );
@@ -724,14 +732,14 @@ void main() {
     expect(
       find.descendant(
         of: startedCard.first,
-        matching: find.textContaining('Khớp: 2 / 5 hợp đồng'),
+        matching: find.textContaining('Khớp: 2.00 / 5.00 hợp đồng'),
       ),
       findsOneWidget,
     );
     expect(
       find.descendant(
         of: startedCard.first,
-        matching: find.textContaining('Giá khớp TB: 58990'),
+        matching: find.textContaining('Giá khớp TB: 58,990.00'),
       ),
       findsOneWidget,
     );
