@@ -756,6 +756,303 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     );
   }
 
+  Widget _buildPendingOrderRow({
+    required String rowName,
+    required String label,
+    required Widget value,
+    required Color labelColor,
+    CrossAxisAlignment crossAxisAlignment = CrossAxisAlignment.center,
+  }) {
+    return Row(
+      key: Key('pending-order-row-$rowName'),
+      crossAxisAlignment: crossAxisAlignment,
+      children: [
+        Flexible(
+          flex: 2,
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              '$label:',
+              maxLines: 1,
+              softWrap: false,
+              style: TextStyle(color: labelColor, fontSize: 12),
+            ),
+          ),
+        ),
+        const SizedBox(width: AppTokens.space3),
+        Expanded(
+          flex: 3,
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerRight,
+            child: value,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPendingOrderCard(
+    OkxOrder order,
+    bool isDark,
+    String currency,
+    double exchangeRate,
+    bool isBalanceHidden,
+    String timeZoneId,
+  ) {
+    final palette = AppPalette.forBrightness(isDark);
+    final isBuy = order.side.toLowerCase() == 'buy';
+    final sideColor = isBuy ? palette.positive : palette.negative;
+    final sideText = isBuy ? 'MUA' : 'BÁN';
+    final timeString = formatOrderTimestamp(order.cTime, timeZoneId);
+    final baseCoin = order.instId.split('-').first;
+    final instrumentLabel = order.instId.split('-').take(2).join();
+    final cardColor = palette.raised;
+    final borderColor = palette.border;
+    final textColor = palette.ink;
+    final subtitleColor = palette.muted;
+    final iconBgColor = palette.surface;
+    final notional = resolveOrderNotional(order);
+    final leverage = order.lever.isNotEmpty && order.lever != '0'
+        ? order.lever
+        : null;
+    final instrumentType = order.instType.toUpperCase();
+
+    return Card(
+      elevation: 0,
+      color: cardColor,
+      margin: EdgeInsets.zero,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppTokens.radiusMedium),
+        side: BorderSide(color: borderColor),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              key: const Key('pending-order-header'),
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Expanded(
+                  flex: 2,
+                  child: FittedBox(
+                    key: const Key('pending-order-header-left'),
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          sideText,
+                          maxLines: 1,
+                          softWrap: false,
+                          style: TextStyle(
+                            color: sideColor,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                        ),
+                        if (leverage != null) ...[
+                          const SizedBox(width: 4),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 4,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: palette.surface,
+                              borderRadius: BorderRadius.circular(
+                                AppTokens.radiusSmall,
+                              ),
+                            ),
+                            child: Text(
+                              '${leverage}x',
+                              maxLines: 1,
+                              softWrap: false,
+                              style: TextStyle(
+                                color: palette.ink,
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: AppTokens.space2),
+                Expanded(
+                  flex: 5,
+                  child: Align(
+                    key: const Key('pending-order-header-right'),
+                    alignment: Alignment.centerRight,
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerRight,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          CryptoIcon(
+                            symbol: baseCoin,
+                            size: 20,
+                            backgroundColor: iconBgColor,
+                            textColor: textColor,
+                            textSize: 10,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            instrumentLabel,
+                            maxLines: 1,
+                            softWrap: false,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: textColor,
+                            ),
+                          ),
+                          if (instrumentType.isNotEmpty) ...[
+                            const SizedBox(width: 4),
+                            Container(
+                              key: const Key('pending-order-instrument-type'),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: palette.surface,
+                                borderRadius: BorderRadius.circular(
+                                  AppTokens.radiusSmall,
+                                ),
+                              ),
+                              child: Text(
+                                instrumentType,
+                                maxLines: 1,
+                                softWrap: false,
+                                style: TextStyle(
+                                  color: palette.ink,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppTokens.space2),
+            _buildPendingOrderRow(
+              rowName: 'timestamp',
+              label: 'Thời gian',
+              value: Text(
+                timeString,
+                maxLines: 1,
+                softWrap: false,
+                style: TextStyle(color: subtitleColor, fontSize: 12),
+              ),
+              labelColor: subtitleColor,
+            ),
+            const SizedBox(height: AppTokens.space1),
+            _buildPendingOrderRow(
+              rowName: 'state',
+              label: 'Trạng thái',
+              value: Text(
+                order.state.toUpperCase(),
+                maxLines: 1,
+                softWrap: false,
+                style: TextStyle(
+                  color: textColor,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12,
+                ),
+              ),
+              labelColor: subtitleColor,
+            ),
+            const SizedBox(height: AppTokens.space1),
+            _buildPendingOrderRow(
+              rowName: 'price',
+              label: 'Giá',
+              value: Text(
+                formatAdaptiveNumber(order.px),
+                maxLines: 1,
+                softWrap: false,
+                style: TextStyle(
+                  fontWeight: FontWeight.w500,
+                  fontSize: 12,
+                  color: textColor,
+                ),
+              ),
+              labelColor: subtitleColor,
+            ),
+            const SizedBox(height: AppTokens.space1),
+            _buildPendingOrderRow(
+              rowName: 'quantity',
+              label: 'KL',
+              value: Text(
+                formatAdaptiveNumber(order.sz),
+                maxLines: 1,
+                softWrap: false,
+                style: TextStyle(
+                  fontWeight: FontWeight.w500,
+                  fontSize: 12,
+                  color: textColor,
+                ),
+              ),
+              labelColor: subtitleColor,
+            ),
+            const SizedBox(height: AppTokens.space1),
+            _buildPendingOrderRow(
+              rowName: 'notional',
+              label: notional?.source == TradeNotionalSource.filledOrder
+                  ? 'Giá trị đã khớp'
+                  : 'Giá trị lệnh',
+              value: notional == null
+                  ? Text(
+                      '--',
+                      maxLines: 1,
+                      softWrap: false,
+                      style: TextStyle(
+                        color: subtitleColor,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 12,
+                      ),
+                    )
+                  : PortfolioCurrencyAmount(
+                      usdtAmount: notional.usdAmount,
+                      currencyMode: currency,
+                      vndRate: exchangeRate,
+                      hidden: isBalanceHidden,
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      textAlign: TextAlign.right,
+                      primaryStyle: TextStyle(
+                        color: textColor,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12,
+                      ),
+                      secondaryStyle: TextStyle(
+                        color: subtitleColor,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 12,
+                      ),
+                    ),
+              labelColor: subtitleColor,
+              crossAxisAlignment: CrossAxisAlignment.start,
+            ),
+            if (isActiveLimitOrder(order))
+              OrderCancellationControl(order: order),
+          ],
+        ),
+      ),
+    );
+  }
+
   // --- Thẻ hiển thị LỆNH ---
   Widget _buildOrderCard(
     OkxOrder order,
@@ -766,6 +1063,17 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     bool isBalanceHidden,
     String timeZoneId,
   ) {
+    if (currentTab == OrderTab.pending) {
+      return _buildPendingOrderCard(
+        order,
+        isDark,
+        currency,
+        exchangeRate,
+        isBalanceHidden,
+        timeZoneId,
+      );
+    }
+
     final palette = AppPalette.forBrightness(isDark);
     final isBuy = order.side.toLowerCase() == 'buy';
     final sideColor = isBuy ? palette.positive : palette.negative;
