@@ -569,14 +569,9 @@ class StrategyDashboardController extends ChangeNotifier {
   List<Map<String, dynamic>> _strategies = const [];
   final Map<String, StrategyTicker> _quotes = {};
   final Map<String, bool> _reportedQuoteFreshness = {};
-  final Set<String> _quoteInFlight = {};
-  final Map<String, DateTime> _quoteRetryAt = {};
-  final Map<String, int> _quoteFailureCount = {};
   final Set<String> _actionInFlight = {};
   final Set<String> _deleteInFlight = {};
   Future<void>? _loadFuture;
-  Timer? _quoteTimer;
-  Timer? _statusTimer;
   bool _pageVisible = false;
   bool _appVisible = true;
   bool _isLoading = false;
@@ -644,8 +639,7 @@ class StrategyDashboardController extends ChangeNotifier {
       _metricsAreStale = false;
       _metricsStaleAt = null;
       _lastSuccessfulStatusAt = _clock().toUtc();
-      _startPolling();
-      if (_pollingActive) unawaited(_pollQuotes());
+      await _refreshQuoteSnapshot();
     } on StrategyApiException catch (error) {
       if (!_ownsSession) return;
       if (error.isUnauthorized) _onUnauthorized?.call();
@@ -1048,49 +1042,22 @@ class StrategyDashboardController extends ChangeNotifier {
         (_pageVisible == pageVisible && _appVisible == appVisible)) {
       return;
     }
-    final wasActive = _pollingActive;
     _pageVisible = pageVisible;
     _appVisible = appVisible;
-    if (_pollingActive) {
-      if (!wasActive) _refreshStatusIfStale();
-      _startPolling();
-      if (!wasActive) unawaited(_pollQuotes());
-    } else {
-      _stopPolling();
-    }
+    _markMetricsStaleIfExpired();
     _notifyQuoteFreshnessIfChanged();
   }
 
-  bool get _pollingActive => _pageVisible && _appVisible && !_disposed;
-
-  void _refreshStatusIfStale() {
+  void _markMetricsStaleIfExpired() {
     final lastSuccessfulAt = _lastSuccessfulStatusAt;
-    if (lastSuccessfulAt == null) {
-      unawaited(load());
-      return;
-    }
+    if (lastSuccessfulAt == null || _metricsAreStale) return;
     final age = _clock().toUtc().difference(lastSuccessfulAt);
     if (!age.isNegative && age <= _maximumStatusAge) return;
     _markMetricsStale();
     _notify();
-    unawaited(load());
   }
 
-  void _startPolling() {
-    if (!_pollingActive) return;
-    _quoteTimer ??= Timer.periodic(
-      const Duration(seconds: 1),
-      (_) => unawaited(_pollQuotes()),
-    );
-    _statusTimer ??= Timer.periodic(
-      const Duration(seconds: 20),
-      (_) => unawaited(load()),
-    );
-  }
-
-  Future<void> _pollQuotes() async {
-    if (!_pollingActive) return;
-    _notifyQuoteFreshnessIfChanged();
+  Future<void> _refreshQuoteSnapshot() async {
     final strategyByInstrument = <String, String>{};
     for (final item in _strategies) {
       if (!_quotePollingStatuses.contains(
@@ -1108,41 +1075,32 @@ class StrategyDashboardController extends ChangeNotifier {
     }
     final instruments = strategyByInstrument.keys.toList()..sort();
     for (final id in instruments) {
-      if (!_pollingActive || _quoteInFlight.contains(id)) continue;
-      final retryAt = _quoteRetryAt[id];
-      if (retryAt != null && _clock().toUtc().isBefore(retryAt)) continue;
-      if (!_quoteInFlight.add(id)) continue;
+      if (!_ownsSession) return;
       try {
         final strategyId = strategyByInstrument[id]!;
         final response = await _api.getQuote(_bearerToken, strategyId);
-        if (!_ownsSession) continue;
+        if (!_ownsSession) return;
         final quote = _tickerFromResponse(id, response);
         final previous = _quotes[id];
-        if (_pollingActive &&
-            strategyByInstrument[id] == strategyId &&
+        if (strategyByInstrument[id] == strategyId &&
             quote.instrumentId == id &&
             (previous == null ||
                 !quote.observedAt.isBefore(previous.observedAt))) {
           _quotes[id] = quote;
-          _quoteRetryAt.remove(id);
-          _quoteFailureCount.remove(id);
           _notify();
           _notifyQuoteFreshnessIfChanged();
-        } else if (_pollingActive) {
-          _scheduleQuoteRetry(id);
         }
       } on StrategyApiException catch (error) {
-        if (!_ownsSession) continue;
-        if (error.isUnauthorized) _onUnauthorized?.call();
-        _scheduleQuoteRetry(id);
+        if (!_ownsSession) return;
+        if (error.isUnauthorized) {
+          _onUnauthorized?.call();
+          return;
+        }
         _notifyQuoteFreshnessIfChanged();
       } on Object {
-        if (!_ownsSession) continue;
+        if (!_ownsSession) return;
         // Retain the last backend quote with its original timestamp.
-        _scheduleQuoteRetry(id);
         _notifyQuoteFreshnessIfChanged();
-      } finally {
-        _quoteInFlight.remove(id);
       }
     }
   }
@@ -1180,15 +1138,6 @@ class StrategyDashboardController extends ChangeNotifier {
     );
   }
 
-  void _scheduleQuoteRetry(String instrumentId) {
-    final failures = (_quoteFailureCount[instrumentId] ?? 0) + 1;
-    _quoteFailureCount[instrumentId] = failures;
-    final seconds = 1 << failures.clamp(1, 5).toInt();
-    _quoteRetryAt[instrumentId] = _clock().toUtc().add(
-      Duration(seconds: seconds > 30 ? 30 : seconds),
-    );
-  }
-
   void _notifyQuoteFreshnessIfChanged() {
     var changed = false;
     final now = _clock().toUtc();
@@ -1207,13 +1156,6 @@ class StrategyDashboardController extends ChangeNotifier {
     _metricsStaleAt = _clock().toUtc();
   }
 
-  void _stopPolling() {
-    _quoteTimer?.cancel();
-    _statusTimer?.cancel();
-    _quoteTimer = null;
-    _statusTimer = null;
-  }
-
   String _text(Object? value) => value == null ? '' : value.toString();
 
   void _notify() {
@@ -1223,12 +1165,8 @@ class StrategyDashboardController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
-    _stopPolling();
-    _quoteInFlight.clear();
     _actionInFlight.clear();
     _deleteInFlight.clear();
-    _quoteRetryAt.clear();
-    _quoteFailureCount.clear();
     super.dispose();
   }
 }

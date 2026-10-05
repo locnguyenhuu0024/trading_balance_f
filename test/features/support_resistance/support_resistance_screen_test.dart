@@ -254,7 +254,7 @@ void main() {
     expect(controller.stateFor(btc)?.snapshot?.referencePrice, 222);
   });
 
-  testWidgets('GREEN-30 refreshes every minute only while mounted', (
+  testWidgets('Support/Resistance refreshes only on entry and manual request', (
     tester,
   ) async {
     final instruments = _instruments();
@@ -286,6 +286,10 @@ void main() {
     expect(loadCount, 1);
     expect(find.byKey(const Key('levels-sparse-BTC-USDT')), findsOneWidget);
 
+    await tester.pump(const Duration(minutes: 2));
+    await tester.pump();
+    expect(loadCount, 1);
+
     await tester.tap(find.byKey(const Key('support-resistance-refresh')));
     await tester.pumpAndSettle();
     expect(loadCount, 2);
@@ -293,14 +297,14 @@ void main() {
 
     await tester.pump(const Duration(minutes: 1));
     await tester.pump();
-    expect(loadCount, 3);
+    expect(loadCount, 2);
     expect(find.text('Dữ liệu cũ · lần cập nhật thất bại'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(minutes: 1));
     await tester.pump();
 
-    expect(loadCount, 3);
+    expect(loadCount, 2);
   });
 
   testWidgets('RED-30 a late market response cannot replace live coin cards', (

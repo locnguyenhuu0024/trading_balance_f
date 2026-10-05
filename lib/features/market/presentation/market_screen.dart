@@ -10,8 +10,6 @@ import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/crypto_icon.dart';
 import '../../portfolio/presentation/portfolio_screen.dart'; // Lấy trạng thái Dark Mode
-import '../../market/presentation/providers/market_provider.dart';
-import '../../../core/network/okx_websocket_service.dart';
 
 // --- Model dữ liệu nội bộ cho Market ---
 class MarketTicker {
@@ -85,15 +83,10 @@ class MarketScreen extends ConsumerStatefulWidget {
 }
 
 class _MarketScreenState extends ConsumerState<MarketScreen> {
-  bool _isWsSubscribed = false;
-
   @override
   Widget build(BuildContext context) {
     final isDark = ref.watch(isDarkModeProvider);
     final marketAsync = ref.watch(marketListProvider);
-
-    // Thêm theo dõi giá realtime từ WebSocket
-    final livePrices = ref.watch(livePriceProvider);
 
     final palette = AppPalette.forBrightness(isDark);
     final bgColor = palette.background;
@@ -120,7 +113,6 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
           color: palette.ink,
           backgroundColor: palette.raised,
           onRefresh: () async {
-            _isWsSubscribed = false; // Reset trạng thái để đăng ký lại WS
             return ref.invalidate(marketListProvider);
           },
           child: marketAsync.when(
@@ -134,15 +126,6 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
               ),
             ),
             data: (tickers) {
-              // Đăng ký WebSocket cho Top 50 coin vừa tải về
-              if (!_isWsSubscribed && tickers.isNotEmpty) {
-                _isWsSubscribed = true;
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  final coins = tickers.map((e) => e.coinSymbol).toList();
-                  ref.read(okxWebsocketProvider).subscribeToTickers(coins);
-                });
-              }
-
               return ListView.builder(
                 padding: const EdgeInsets.symmetric(
                   horizontal: AppTokens.space4,
@@ -151,13 +134,7 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
                 itemCount: tickers.length,
                 itemBuilder: (context, index) {
                   final t = tickers[index];
-
-                  // --- Cập nhật giá Realtime từ WebSocket ---
-                  double currentPrice = t.last;
-                  final String? realtimePriceStr = livePrices[t.coinSymbol];
-                  if (realtimePriceStr != null) {
-                    currentPrice = double.tryParse(realtimePriceStr) ?? t.last;
-                  }
+                  final currentPrice = t.last;
 
                   // Tính toán lại % biến động dựa trên giá Live mới nhất
                   final double currentChangePercent = t.open24h > 0

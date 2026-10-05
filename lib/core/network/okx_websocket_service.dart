@@ -7,7 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 /// Provider cung cấp WebSocket Service, tự động ngắt kết nối khi không còn dùng
-final okxWebsocketProvider = Provider<OkxWebsocketService>((ref) {
+final okxWebsocketProvider = Provider.autoDispose<OkxWebsocketService>((ref) {
   final service = OkxWebsocketService();
   ref.onDispose(() => service.disconnect());
   return service;
@@ -31,15 +31,11 @@ class OkxWebsocketService {
     if (_channel == null) connect();
 
     // OKX yêu cầu định dạng instId là: "BTC-USDT"
-    final args = coinSymbols.map((coin) => {
-      "channel": "tickers",
-      "instId": "$coin-USDT"
-    }).toList();
+    final args = coinSymbols
+        .map((coin) => {"channel": "tickers", "instId": "$coin-USDT"})
+        .toList();
 
-    final request = {
-      "op": "subscribe",
-      "args": args
-    };
+    final request = {"op": "subscribe", "args": args};
 
     _channel!.sink.add(jsonEncode(request));
   }

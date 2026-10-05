@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -27,7 +29,105 @@ class _FakeOkxWebsocketService extends OkxWebsocketService {
   void disconnect() {}
 }
 
+class _TrackingOkxWebsocketService extends OkxWebsocketService {
+  _TrackingOkxWebsocketService(this.controller);
+
+  final StreamController<dynamic> controller;
+  int connectCalls = 0;
+  int disconnectCalls = 0;
+
+  @override
+  Stream<dynamic> get stream => controller.stream;
+
+  @override
+  void connect() {
+    connectCalls++;
+  }
+
+  @override
+  void subscribeToTickers(List<String> coinSymbols) {}
+
+  @override
+  void disconnect() {
+    disconnectCalls++;
+  }
+}
+
 void main() {
+  testWidgets('Portfolio refresh waits for its loading request to finish', (
+    tester,
+  ) async {
+    const account = OkxAccountData(
+      details: [OkxCoinDetail(ccy: 'BTC', eq: '1', eqUsd: '100', upl: '0')],
+    );
+    final pending = <Completer<OkxAccountData>>[];
+    var loadCalls = 0;
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          portfolioFutureProvider.overrideWith((ref) {
+            loadCalls++;
+            final request = Completer<OkxAccountData>();
+            pending.add(request);
+            return request.future;
+          }),
+          livePriceProvider.overrideWith((ref) => LivePriceNotifier()),
+          okxWebsocketProvider.overrideWithValue(_FakeOkxWebsocketService()),
+          currencyProvider.overrideWith((ref) => CurrencyDisplayMode.usdtVnd),
+          vndExchangeRateProvider.overrideWith((ref) async => 25400),
+          themeModeProvider.overrideWith((ref) => ThemeMode.light),
+          hideBalanceProvider.overrideWith((ref) => false),
+        ],
+        child: const MaterialApp(home: PortfolioScreen()),
+      ),
+    );
+    await tester.pump();
+    expect(loadCalls, 1);
+
+    await tester.pump(const Duration(seconds: 5));
+    expect(loadCalls, 1);
+
+    pending.first.complete(account);
+    await tester.pump();
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    expect(loadCalls, 2);
+
+    pending.last.complete(account);
+    await tester.pump();
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  test(
+    'live price disposal cancels its stream and releases the socket',
+    () async {
+      final canceled = Completer<void>();
+      final stream = StreamController<dynamic>.broadcast(
+        onCancel: canceled.complete,
+      );
+      final service = _TrackingOkxWebsocketService(stream);
+      final container = ProviderContainer(
+        overrides: [
+          okxWebsocketProvider.overrideWith((ref) {
+            ref.onDispose(service.disconnect);
+            return service;
+          }),
+        ],
+      );
+      final listener = container.listen(livePriceProvider, (_, _) {});
+
+      expect(service.connectCalls, 1);
+      listener.close();
+      await container.pump();
+      await canceled.future.timeout(const Duration(seconds: 1));
+
+      expect(service.disconnectCalls, 1);
+      container.dispose();
+      await stream.close();
+    },
+  );
+
   testWidgets('renders direct Portfolio summary and dual currency amounts', (
     tester,
   ) async {

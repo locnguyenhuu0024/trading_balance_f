@@ -973,6 +973,9 @@ void main() {
     }
 
     expect(api.quoteCalls, 1);
+    final quoteCallsBeforeIdle = api.quoteCalls;
+    await tester.pump(const Duration(minutes: 1));
+    expect(api.quoteCalls, quoteCallsBeforeIdle);
     expect(market.tickerCalls, 0);
     expect(find.text('BTC'), findsNWidgets(2));
     expect(find.text('BTC-USDT-SWAP'), findsNothing);

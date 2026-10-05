@@ -38,15 +38,32 @@ class PortfolioScreen extends ConsumerStatefulWidget {
 
 class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
   bool _isWsSubscribed = false;
+  bool _portfolioRefreshInFlight = false;
   Timer? _refreshTimer;
 
   @override
   void initState() {
     super.initState();
-    // Tự động làm mới dữ liệu Portfolio mỗi 2 giây ngầm
-    _refreshTimer = Timer.periodic(const Duration(seconds: 2), (_) {
-      ref.invalidate(portfolioFutureProvider);
+    _refreshTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      unawaited(_refreshPortfolio());
     });
+  }
+
+  Future<void> _refreshPortfolio() async {
+    if (!mounted ||
+        _portfolioRefreshInFlight ||
+        ref.read(portfolioFutureProvider).isLoading) {
+      return;
+    }
+    _portfolioRefreshInFlight = true;
+    ref.invalidate(portfolioFutureProvider);
+    try {
+      await ref.read(portfolioFutureProvider.future);
+    } catch (_) {
+      // The watched provider renders refresh errors in the screen.
+    } finally {
+      if (mounted) _portfolioRefreshInFlight = false;
+    }
   }
 
   @override
@@ -98,7 +115,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
           onRefresh: () async {
             _isWsSubscribed = false;
             ref.invalidate(vndExchangeRateProvider);
-            return ref.invalidate(portfolioFutureProvider);
+            await _refreshPortfolio();
           },
           child: portfolioAsyncValue.when(
             skipLoadingOnReload: true,
@@ -111,6 +128,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
               if (!_isWsSubscribed && data.details.isNotEmpty) {
                 _isWsSubscribed = true;
                 WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!mounted) return;
                   final coins = data.details.map((e) => e.ccy).toList();
                   ref.read(okxWebsocketProvider).subscribeToTickers(coins);
                 });

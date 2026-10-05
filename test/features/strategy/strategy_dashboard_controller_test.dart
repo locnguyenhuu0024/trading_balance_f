@@ -256,82 +256,123 @@ void main() {
     },
   );
 
-  test('a backend quote becomes visibly stale after a failed poll', () async {
+  test('idle Strategy sends no requests until manual refresh', () async {
     var now = DateTime.utc(2026, 10, 1, 8);
     final api = _FakeStrategyApi(status: 'APPLIED', clock: () => now);
     final controller = _controller(api, clock: () => now);
     addTearDown(controller.dispose);
     await controller.load();
-    controller.setVisibility(pageVisible: true, appVisible: true);
-    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(api.listCalls, 1);
+    expect(api.quoteCalls, 1);
     expect(controller.quoteIsFresh('BTC-USDT-SWAP'), isTrue);
 
-    var notificationsAfterAge = 0;
-    controller.addListener(() => notificationsAfterAge++);
-    api.failQuotes = true;
-    now = now.add(const Duration(seconds: 5));
-    await Future<void>.delayed(const Duration(milliseconds: 1100));
-
-    expect(controller.quoteIsFresh('BTC-USDT-SWAP'), isFalse);
-    expect(notificationsAfterAge, greaterThan(0));
-  });
-
-  test('backs off repeated backend quote failures', () async {
-    final api = _FakeStrategyApi(status: 'APPLIED')..failQuotes = true;
-    final controller = _controller(api);
-    addTearDown(controller.dispose);
-    await controller.load();
     controller.setVisibility(pageVisible: true, appVisible: true);
-    await Future<void>.delayed(const Duration(milliseconds: 1100));
-
-    expect(api.quoteCalls, 1);
-  });
-
-  test('does not poll draft or prepared strategies', () async {
-    final api = _FakeStrategyApi(statuses: ['DRAFT', 'PREPARED']);
-    final controller = _controller(api);
-    addTearDown(controller.dispose);
-    await controller.load();
-    controller.setVisibility(pageVisible: true, appVisible: true);
-    await Future<void>.delayed(const Duration(milliseconds: 1100));
-
-    expect(api.quoteCalls, 0);
-  });
-
-  test('backend quote polling stops when the page or app is hidden', () async {
-    final api = _FakeStrategyApi(statuses: ['APPLIED', 'PARTIAL', 'UNKNOWN']);
-    final controller = _controller(api);
-    addTearDown(controller.dispose);
-    await controller.load();
-    expect(api.quoteCalls, 0);
-
+    controller.setVisibility(pageVisible: false, appVisible: true);
+    now = now.add(const Duration(minutes: 1));
     controller.setVisibility(pageVisible: true, appVisible: true);
     await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    expect(api.listCalls, 1);
     expect(api.quoteCalls, 1);
+    expect(controller.metricsAreStale, isTrue);
+    expect(controller.quoteIsFresh('BTC-USDT-SWAP'), isFalse);
 
-    await Future<void>.delayed(const Duration(milliseconds: 1100));
+    await controller.refresh();
+    expect(api.listCalls, 2);
     expect(api.quoteCalls, 2);
-
-    controller.setVisibility(pageVisible: true, appVisible: false);
-    await Future<void>.delayed(const Duration(milliseconds: 1100));
-    expect(api.quoteCalls, 2);
-
-    controller.setVisibility(pageVisible: false, appVisible: true);
-    await Future<void>.delayed(const Duration(milliseconds: 1100));
-    expect(api.quoteCalls, 2);
+    expect(controller.quoteIsFresh('BTC-USDT-SWAP'), isTrue);
   });
 
-  test('does not overlap a slow backend quote request', () async {
-    final api = _FakeStrategyApi(status: 'APPLIED')
-      ..quoteCompleter = Completer<Map<String, dynamic>>();
-    final controller = _controller(api);
+  test(
+    'failed quote snapshots retry only after another explicit load',
+    () async {
+      final api = _FakeStrategyApi(status: 'APPLIED')..failQuotes = true;
+      final controller = _controller(api);
+      addTearDown(controller.dispose);
+      await controller.load();
+      controller.setVisibility(pageVisible: true, appVisible: true);
+      await Future<void>.delayed(const Duration(milliseconds: 1100));
+
+      expect(api.quoteCalls, 1);
+      await controller.refresh();
+      expect(api.quoteCalls, 2);
+    },
+  );
+
+  test(
+    'visibility changes do not request quotes for draft strategies',
+    () async {
+      final api = _FakeStrategyApi(statuses: ['DRAFT', 'PREPARED']);
+      final controller = _controller(api);
+      addTearDown(controller.dispose);
+      await controller.load();
+      controller.setVisibility(pageVisible: true, appVisible: true);
+      controller.setVisibility(pageVisible: false, appVisible: true);
+      controller.setVisibility(pageVisible: true, appVisible: true);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(api.quoteCalls, 0);
+    },
+  );
+
+  test(
+    'load awaits one quote snapshot per eligible distinct instrument',
+    () async {
+      final api = _FakeStrategyApi(statuses: ['APPLIED', 'UNKNOWN'])
+        ..quoteCompleter = Completer<Map<String, dynamic>>();
+      final controller = _controller(api);
+      addTearDown(controller.dispose);
+      var loadCompleted = false;
+      final loading = controller.load().then((_) => loadCompleted = true);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(api.listCalls, 1);
+      expect(api.quoteCalls, 1);
+      expect(loadCompleted, isFalse);
+      api.quoteCompleter!.complete(
+        _quoteResponse(DateTime.utc(2026, 10, 1, 8)),
+      );
+      await loading;
+
+      expect(loadCompleted, isTrue);
+      expect(controller.quoteIsFresh('BTC-USDT-SWAP'), isTrue);
+    },
+  );
+
+  test(
+    'a slow quote snapshot remains part of the coalesced load future',
+    () async {
+      final api = _FakeStrategyApi(status: 'APPLIED')
+        ..quoteCompleter = Completer<Map<String, dynamic>>();
+      final controller = _controller(api);
+      addTearDown(controller.dispose);
+      final firstLoad = controller.load();
+      final coalescedLoad = controller.refresh();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(api.quoteCalls, 1);
+      expect(api.listCalls, 1);
+      api.quoteCompleter!.complete(
+        _quoteResponse(DateTime.utc(2026, 10, 1, 8)),
+      );
+      await Future.wait([firstLoad, coalescedLoad]);
+    },
+  );
+
+  test('quote snapshot stops when the owning session changes', () async {
+    var sessionIsCurrent = true;
+    final api = _FakeStrategyApi(statuses: ['APPLIED', 'PARTIAL'])
+      ..instrumentIds = ['BTC-USDT-SWAP', 'ETH-USDT-SWAP']
+      ..afterQuoteResponse = () => sessionIsCurrent = false;
+    final controller = _controller(
+      api,
+      sessionIsCurrent: () => sessionIsCurrent,
+    );
     addTearDown(controller.dispose);
+
     await controller.load();
-    controller.setVisibility(pageVisible: true, appVisible: true);
-    await Future<void>.delayed(const Duration(milliseconds: 1100));
 
     expect(api.quoteCalls, 1);
-    api.quoteCompleter!.complete(_quoteResponse(DateTime.utc(2026, 10, 1, 8)));
   });
 
   test(
@@ -349,9 +390,7 @@ void main() {
       final controller = _controller(api, clock: () => now);
       addTearDown(controller.dispose);
       await controller.load();
-      controller.setVisibility(pageVisible: true, appVisible: true);
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-      await Future<void>.delayed(const Duration(seconds: 1));
+      await controller.refresh();
 
       expect(controller.quoteFor('BTC-USDT-SWAP')?.lastPrice, 65000);
       expect(api.quoteCalls, 2);
@@ -440,31 +479,22 @@ void main() {
     }
   });
 
-  test(
-    'refreshes private status on resume after a long hidden interval',
-    () async {
-      var now = DateTime.utc(2026, 10, 1, 8);
-      final api = _FakeStrategyApi();
-      final controller = _controller(api, clock: () => now);
-      addTearDown(controller.dispose);
-      await controller.load();
-      controller.setVisibility(pageVisible: true, appVisible: true);
-      controller.setVisibility(pageVisible: false, appVisible: true);
-      now = now.add(const Duration(minutes: 1));
-      api.listCompleter = Completer<List<Map<String, dynamic>>>();
+  test('visibility marks old status stale without sending a request', () async {
+    var now = DateTime.utc(2026, 10, 1, 8);
+    final api = _FakeStrategyApi();
+    final controller = _controller(api, clock: () => now);
+    addTearDown(controller.dispose);
+    await controller.load();
+    controller.setVisibility(pageVisible: true, appVisible: true);
+    controller.setVisibility(pageVisible: false, appVisible: true);
+    now = now.add(const Duration(minutes: 1));
+    controller.setVisibility(pageVisible: true, appVisible: true);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
 
-      controller.setVisibility(pageVisible: true, appVisible: true);
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-
-      expect(api.listCalls, 2);
-      expect(controller.metricsAreStale, isTrue);
-      expect(controller.metricsStaleAt, now);
-
-      api.listCompleter!.complete(api.strategies);
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-      expect(controller.metricsAreStale, isFalse);
-    },
-  );
+    expect(api.listCalls, 1);
+    expect(controller.metricsAreStale, isTrue);
+    expect(controller.metricsStaleAt, now);
+  });
 
   test(
     'T65 retries the exact linked order once after prepared confirmation',
@@ -1186,13 +1216,17 @@ class _FakeStrategyApi implements StrategyApi {
   bool failQuotes = false;
   Completer<Map<String, dynamic>>? quoteCompleter;
   List<Map<String, dynamic>>? quoteSequence;
+  List<String>? instrumentIds;
+  void Function()? afterQuoteResponse;
   DateTime Function() quoteClock;
 
   List<Map<String, dynamic>> get strategies => List.generate(
     statuses.length,
     (index) => {
       'id': index == 0 ? 'draft-1' : 'strategy-$index',
-      'instrumentId': 'BTC-USDT-SWAP',
+      'instrumentId': instrumentIds != null && index < instrumentIds!.length
+          ? instrumentIds![index]
+          : 'BTC-USDT-SWAP',
       'interval': '6Hutc',
       'status': statuses[index],
       if (index == 0 && candidateStage) 'draftStage': 'candidates',
@@ -1322,10 +1356,17 @@ class _FakeStrategyApi implements StrategyApi {
         statusCode: 503,
       );
     }
-    if (quoteCompleter != null) return quoteCompleter!.future;
+    if (quoteCompleter != null) {
+      final response = await quoteCompleter!.future;
+      afterQuoteResponse?.call();
+      return response;
+    }
     final sequence = quoteSequence;
-    if (sequence != null && sequence.isNotEmpty) return sequence.removeAt(0);
-    return _quoteResponse(quoteClock().toUtc());
+    final response = sequence != null && sequence.isNotEmpty
+        ? sequence.removeAt(0)
+        : _quoteResponse(quoteClock().toUtc());
+    afterQuoteResponse?.call();
+    return response;
   }
 
   @override

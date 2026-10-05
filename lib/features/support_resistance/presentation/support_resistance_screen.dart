@@ -20,24 +20,7 @@ class SupportResistanceScreen extends ConsumerStatefulWidget {
 
 class _SupportResistanceScreenState
     extends ConsumerState<SupportResistanceScreen> {
-  Timer? _refreshTimer;
   String? _lastSelectionSignature;
-
-  @override
-  void initState() {
-    super.initState();
-    _refreshTimer = Timer.periodic(const Duration(minutes: 1), (_) {
-      if (mounted) {
-        unawaited(ref.read(supportResistanceLevelsProvider).refresh());
-      }
-    });
-  }
-
-  @override
-  void dispose() {
-    _refreshTimer?.cancel();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
