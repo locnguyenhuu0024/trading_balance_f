@@ -38,11 +38,51 @@ export JEV_TIMEOUT_SECONDS=3
 export JEV_MAX_CONCURRENCY=4
 ```
 
-Start or restart the backend with the existing launcher from that same shell so it inherits these values. For a container or service, configure the settings in the user-owned environment for the backend process, then restart that process using the existing deployment procedure. A host shell's environment does not automatically enter a container or service, and this adapter does not automatically load repository environment files. Keep deployment-specific environment changes in the established user-owned secret and process configuration; this guide does not prescribe edits to protected configuration files or invent a new launch command.
+Start or restart the backend with the existing launcher from that same shell so it inherits these values. For a container or service, configure the settings in the user-owned environment for the backend process and apply them through the existing deployment procedure. A host shell's environment does not automatically enter a container or service, and this adapter does not automatically load repository environment files. Docker captures env-file values when a container is created, so env changes require container recreation; image changes require a rebuild and recreation. `docker restart` alone applies neither change. See [Docker deployment](#docker-deployment) for the existing API and worker procedures. Keep deployment-specific environment changes in the established user-owned secret and process configuration; this guide does not prescribe edits to protected configuration files or invent a new launch command.
 
 The adapter creates a worker-owned Typesafe client, makes one System One call per candidate, and sets the SDK retry policy to zero retries. Its SDK timeout is bounded by both the configured timeout and the remaining assessment deadline. The request has a 12-second admission/evaluation budget: work that cannot be admitted within that budget is marked `deadline_exceeded`, and results arriving at or after the deadline are treated as incomplete. Issued work is drained and clients are closed before the backend returns, so cleanup may extend request duration beyond 12 seconds if an SDK call runs past its timeout. No automatic order action follows an assessment.
 
 Typesafe's [Python SDK guide](https://docs.typesafe.ai/sdk/python) and [synchronous client API](https://docs.typesafe.ai/sdk/python/api/clients/sync) describe the SDK interfaces. Do not enable request/response body logging to diagnose a provider call; the adapter intentionally discards provider exception details and its structured assessment log omits prompts, context bodies, and model names.
+
+## Docker deployment
+
+For the repository's Ubuntu Docker deployment, follow the existing [API rebuild and recreation procedure](../deployment/position-trade-api.md#rebuild-and-recreate-after-an-application-change). The Dockerfile and `/etc/trading-balance/trade-api.env` are user-owned deployment files. Install the SDK into the image as shown below; keep the API key in the server-side env file, never in the Dockerfile, image, or repository.
+
+In the user-owned `backend/Dockerfile`, add this install step after the Python base image is selected and before the `USER` instruction:
+
+```dockerfile
+RUN python -m pip install --no-cache-dir typesafe-sdk==0.7.2
+```
+
+Add the five settings to the existing `/etc/trading-balance/trade-api.env` with `sudoedit`, retaining its other entries and replacing the API-key placeholder with the key from the user-owned secret store:
+
+```sh
+sudoedit /etc/trading-balance/trade-api.env
+```
+
+```text
+JEV_ENABLED=true
+TYPESAFE_API_KEY=<SET_BY_USER>
+TYPESAFE_DEFAULT_MODEL=jev-latest
+JEV_TIMEOUT_SECONDS=3
+JEV_MAX_CONCURRENCY=4
+```
+
+Build the image from the repository root:
+
+```sh
+sudo docker build -f backend/Dockerfile -t trading-balance-trade-api .
+```
+
+Recreate the API container with the existing deployment's full `docker run` recipe, including its protected `--env-file` option, read-only filesystem, security options, database bind mount, and loopback-only port mapping. The exact API-only recipe is in the [deployment guide](../deployment/position-trade-api.md#ubuntu-2404-lts-container); if the separate strategy worker is deployed, use the [coordinated API and worker image procedure](../deployment/position-trade-api.md#strategy-order-monitor-worker). A plain `docker restart` reuses the current container and does not apply a rebuilt image or changed env-file values. Recreate the worker from the same image as part of the coordinated procedure when it is deployed.
+
+After recreation, check the SDK version and imports inside the API container without making a provider call or reading the key:
+
+```sh
+sudo docker exec trading-balance-trade-api python -c 'import importlib.metadata as m, typesafe_sdk; assert m.version("typesafe-sdk") == "0.7.2"; assert all(hasattr(typesafe_sdk, n) for n in ("TypeSafeClient", "Score", "Noul", "RetryPolicy")); print("typesafe-sdk 0.7.2 imports OK")'
+```
+
+If the strategy worker container is present, run the same check against `trading-balance-strategy-worker`. Then use the manual Strategy validation below; only a new Draft with at least one non-empty successful assessment verifies the SDK and API key together. Docker's [container run reference](https://docs.docker.com/reference/cli/docker/container/run/) and [build best practices](https://docs.docker.com/build/building/best-practices/) document the container environment and image build behavior.
 
 ## Manual validation
 
@@ -77,4 +117,4 @@ For an offline regression check, run the automatic strategy tests, which use moc
 python3.12 -m unittest backend.tests.test_strategy_automatic -q
 ```
 
-To disable Jev assessment, set `JEV_ENABLED=false` in the backend process environment and restart the backend through its existing launcher or deployment procedure. Saved candidate metadata remains available for review.
+To disable Jev assessment, set `JEV_ENABLED=false` in the backend process environment and restart the backend through its existing launcher or deployment procedure. For Docker, edit the user-owned env file and recreate the container so it receives the changed value; `docker restart` alone does not reload env-file changes. Saved candidate metadata remains available for review.
