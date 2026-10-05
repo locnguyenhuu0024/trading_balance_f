@@ -60,6 +60,39 @@ void main() {
     );
   });
 
+  testWidgets('strategy details use the modal scroll body without a card', (
+    tester,
+  ) async {
+    final api = _FakeStrategyApi();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          tradeSessionProvider.overrideWith(
+            (ref) => _AuthenticatedSessionController(),
+          ),
+          strategyApiProvider.overrideWithValue(api),
+          strategyMarketRepositoryProvider.overrideWithValue(
+            _FakeMarketRepository(),
+          ),
+        ],
+        child: const MaterialApp(home: StrategyScreen()),
+      ),
+    );
+    await _pumpFrames(tester);
+
+    await _openStrategyDetails(tester, 'started-1');
+    final dialog = find.byType(Dialog);
+    expect(dialog, findsOneWidget);
+    expect(
+      find.descendant(of: dialog, matching: find.byType(Card)),
+      findsNothing,
+    );
+    final scrollView = tester.widget<SingleChildScrollView>(
+      find.descendant(of: dialog, matching: find.byType(SingleChildScrollView)),
+    );
+    expect(scrollView.padding, const EdgeInsets.fromLTRB(20, 4, 20, 16));
+  });
+
   testWidgets('T72 canDelete does not grant replacement eligibility', (
     tester,
   ) async {
@@ -498,9 +531,7 @@ void main() {
       await tester.tap(find.byTooltip('Đóng chi tiết'));
       await tester.pumpAndSettle();
       await _openStrategyDetails(tester, 'prepared-old');
-      final preparedDetails = find
-          .ancestor(of: find.text('ETH-USDT-SWAP'), matching: find.byType(Card))
-          .first;
+      final preparedDetails = _strategyDetailBody();
       expect(
         find.textContaining('Bản nháp đã chuẩn bị vượt quá giới hạn 10 lệnh'),
         findsOneWidget,
@@ -707,13 +738,10 @@ void main() {
     );
     await _openStrategyDetails(tester, 'started-1');
     final draftSummary = find.byKey(const Key('strategy-summary-draft-1'));
-    final startedCard = find.ancestor(
-      of: find.text('BTC-USDT-SWAP'),
-      matching: find.byType(Card),
-    );
+    final startedDetails = _strategyDetailBody();
     expect(
       find.descendant(
-        of: startedCard.first,
+        of: startedDetails,
         matching: find.textContaining('Giá SWAP 65,000.00'),
       ),
       findsOneWidget,
@@ -731,14 +759,14 @@ void main() {
     expect(find.text('Chưa xác định'), findsOneWidget);
     expect(
       find.descendant(
-        of: startedCard.first,
+        of: startedDetails,
         matching: find.textContaining('Khớp: 2.00 / 5.00 hợp đồng'),
       ),
       findsOneWidget,
     );
     expect(
       find.descendant(
-        of: startedCard.first,
+        of: startedDetails,
         matching: find.textContaining('Giá khớp TB: 58,990.00'),
       ),
       findsOneWidget,
@@ -964,12 +992,9 @@ void main() {
       matching: find.text('Hoàn tất'),
     );
     expect(detailStatus, findsOneWidget);
-    final completedCard = find.ancestor(
-      of: detailStatus,
-      matching: find.byType(Card),
-    );
+    final completedDetails = _strategyDetailBody();
     expect(
-      find.descendant(of: completedCard, matching: find.text('Đã khớp')),
+      find.descendant(of: completedDetails, matching: find.text('Đã khớp')),
       findsOneWidget,
     );
   });
@@ -1001,38 +1026,39 @@ void main() {
     }
 
     await _openStrategyDetails(tester, 'never-sent-1');
-    final eligibleCard = find
-        .ancestor(of: find.text('ETH-USDT-SWAP'), matching: find.byType(Card))
-        .first;
+    final eligibleDetails = _strategyDetailBody();
     expect(
-      find.descendant(of: eligibleCard, matching: find.text('Chưa gửi')),
+      find.descendant(of: eligibleDetails, matching: find.text('Chưa gửi')),
       findsNWidgets(2),
     );
     expect(
       find.descendant(
-        of: eligibleCard,
+        of: eligibleDetails,
         matching: find.textContaining('Không có lệnh nào được gửi lên OKX'),
       ),
       findsOneWidget,
     );
     expect(
-      find.descendant(of: eligibleCard, matching: find.textContaining('51008')),
+      find.descendant(
+        of: eligibleDetails,
+        matching: find.textContaining('51008'),
+      ),
       findsOneWidget,
     );
     expect(
       find.descendant(
-        of: eligibleCard,
+        of: eligibleDetails,
         matching: find.textContaining('Lần quét lệnh đã cũ'),
       ),
       findsNothing,
     );
     expect(
-      find.descendant(of: eligibleCard, matching: find.byTooltip('Tạo lại')),
+      find.descendant(of: eligibleDetails, matching: find.byTooltip('Tạo lại')),
       findsOneWidget,
     );
     expect(
       find.descendant(
-        of: eligibleCard,
+        of: eligibleDetails,
         matching: find.byTooltip('Xóa chiến thuật'),
       ),
       findsOneWidget,
@@ -1055,7 +1081,7 @@ void main() {
       findsNothing,
     );
     final replaceButton = find.descendant(
-      of: eligibleCard,
+      of: eligibleDetails,
       matching: find.byKey(const Key('strategy-replace-never-sent-1')),
     );
     await tester.tap(replaceButton);
@@ -1075,7 +1101,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final deleteButton = find.descendant(
-      of: eligibleCard,
+      of: eligibleDetails,
       matching: find.byKey(const Key('strategy-delete-never-sent-1')),
     );
     await tester.tap(deleteButton);
@@ -1116,26 +1142,24 @@ void main() {
     await tester.pumpAndSettle();
 
     await _openStrategyDetails(tester, 'never-sent-other-failure');
-    final genericFailureCard = find
-        .ancestor(of: find.text('ADA-USDT-SWAP'), matching: find.byType(Card))
-        .first;
+    final genericFailureDetails = _strategyDetailBody();
     expect(
       find.descendant(
-        of: genericFailureCard,
+        of: genericFailureDetails,
         matching: find.textContaining('Không có lệnh nào được gửi lên OKX'),
       ),
       findsOneWidget,
     );
     expect(
       find.descendant(
-        of: genericFailureCard,
+        of: genericFailureDetails,
         matching: find.byTooltip('Tạo lại'),
       ),
       findsOneWidget,
     );
     expect(
       find.descendant(
-        of: genericFailureCard,
+        of: genericFailureDetails,
         matching: find.textContaining('OKX từ chối thiết lập đòn bẩy'),
       ),
       findsNothing,
@@ -1148,18 +1172,16 @@ void main() {
       (id: 'attempted-1', instrument: 'XRP-USDT-SWAP'),
     ]) {
       await _openStrategyDetails(tester, scenario.id);
-      final card = find
-          .ancestor(
-            of: find.text(scenario.instrument),
-            matching: find.byType(Card),
-          )
-          .first;
+      final details = _strategyDetailBody();
       expect(
-        find.descendant(of: card, matching: find.byTooltip('Tạo lại')),
+        find.descendant(of: details, matching: find.byTooltip('Tạo lại')),
         findsNothing,
       );
       expect(
-        find.descendant(of: card, matching: find.byTooltip('Xóa chiến thuật')),
+        find.descendant(
+          of: details,
+          matching: find.byTooltip('Xóa chiến thuật'),
+        ),
         findsNothing,
       );
       await tester.tap(find.byTooltip('Đóng chi tiết'));
@@ -1188,6 +1210,11 @@ Future<void> _openStrategyDetails(
   await tester.tap(summary);
   await _pumpFrames(tester);
 }
+
+Finder _strategyDetailBody() => find.descendant(
+  of: find.byType(Dialog),
+  matching: find.byType(SingleChildScrollView),
+);
 
 class _AuthenticatedSessionController extends TradeSessionController {
   _AuthenticatedSessionController()

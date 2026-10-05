@@ -116,6 +116,17 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
         MediaQuery.sizeOf(context).width <= 400 && textScale > 1
         ? kToolbarHeight + (textScale - 1) * 24
         : kToolbarHeight;
+    final filterControls = OrderFilterControls(
+      currentTab: currentTab,
+      currentFilter: currentFilter,
+      isDark: isDark,
+      onTabChanged: (tab) {
+        ref.read(orderTabProvider.notifier).state = tab;
+      },
+      onFilterChanged: (filter) {
+        ref.read(orderFilterProvider.notifier).state = filter;
+      },
+    );
 
     return Scaffold(
       backgroundColor: bgColor,
@@ -158,20 +169,13 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       body: NavigationContentFrame(
         child: Column(
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-              child: OrderFilterControls(
-                currentTab: currentTab,
-                currentFilter: currentFilter,
-                isDark: isDark,
-                onTabChanged: (tab) {
-                  ref.read(orderTabProvider.notifier).state = tab;
-                },
-                onFilterChanged: (filter) {
-                  ref.read(orderFilterProvider.notifier).state = filter;
-                },
+            if (currentTab == OrderTab.positions)
+              TradeAccountControls(filterControls: filterControls)
+            else
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                child: filterControls,
               ),
-            ),
 
             Divider(height: 16, color: palette.border),
 
@@ -210,7 +214,6 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       if (filter == 'SPOT') {
         return Column(
           children: [
-            const TradeAccountControls(),
             Expanded(
               child: Center(
                 child: Text(
@@ -227,7 +230,6 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
         final positionsAsyncValue = ref.watch(tradePositionsProvider);
         return Column(
           children: [
-            const TradeAccountControls(),
             Expanded(
               child: RefreshIndicator(
                 color: palette.ink,
@@ -284,7 +286,6 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       final positionsAsyncValue = ref.watch(positionsFutureProvider);
       return Column(
         children: [
-          const TradeAccountControls(),
           Expanded(
             child: RefreshIndicator(
               color: palette.ink,

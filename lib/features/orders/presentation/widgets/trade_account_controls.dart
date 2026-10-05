@@ -11,9 +11,14 @@ import '../providers/trade_session_provider.dart';
 import 'trade_action_confirmation_dialog.dart';
 
 class TradeAccountControls extends ConsumerStatefulWidget {
-  const TradeAccountControls({super.key, this.showCloseAll = true});
+  const TradeAccountControls({
+    super.key,
+    this.showCloseAll = true,
+    this.filterControls,
+  });
 
   final bool showCloseAll;
+  final Widget? filterControls;
 
   @override
   ConsumerState<TradeAccountControls> createState() =>
@@ -54,6 +59,27 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
                     flow.isBusy &&
                     flow.accountIdentifier == session.accountIdentifier,
               );
+    final canShowCloseAll =
+        widget.showCloseAll && api.isConfigured && isAuthenticated;
+    final closeAllButton = Tooltip(
+      message: 'Đóng tất cả vị thế',
+      child: IconButton(
+        onPressed: _busy || hasUnresolvedOperation || activePositionAction
+            ? null
+            : _closeAll,
+        style: IconButton.styleFrom(
+          foregroundColor: closeAllColor,
+          side: BorderSide(color: closeAllColor, width: 1),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppTokens.radiusMedium),
+          ),
+          minimumSize: const Size(48, 48),
+          maximumSize: const Size(48, 48),
+          padding: EdgeInsets.zero,
+        ),
+        icon: const Icon(Icons.warning_amber_rounded, size: 20),
+      ),
+    );
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(
@@ -65,34 +91,18 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (widget.showCloseAll && api.isConfigured && isAuthenticated)
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Tooltip(
-                message: 'Đóng tất cả vị thế',
-                child: TextButton.icon(
-                  onPressed:
-                      _busy || hasUnresolvedOperation || activePositionAction
-                      ? null
-                      : _closeAll,
-                  style: TextButton.styleFrom(
-                    foregroundColor: closeAllColor,
-                    side: BorderSide(color: closeAllColor, width: 1),
-                    minimumSize: const Size(48, 48),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                  ),
-                  icon: const Icon(Icons.warning_amber_rounded, size: 20),
-                  label: const Text(
-                    'Đóng tất cả vị thế',
-                    softWrap: true,
-                    textAlign: TextAlign.left,
-                  ),
-                ),
-              ),
-            ),
+          if (widget.filterControls != null)
+            Row(
+              children: [
+                Expanded(child: widget.filterControls!),
+                if (canShowCloseAll) ...[
+                  const SizedBox(width: AppTokens.space2),
+                  closeAllButton,
+                ],
+              ],
+            )
+          else if (canShowCloseAll)
+            Align(alignment: Alignment.centerLeft, child: closeAllButton),
           if (!api.isConfigured)
             Text(
               widget.showCloseAll

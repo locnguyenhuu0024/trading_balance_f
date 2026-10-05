@@ -686,14 +686,13 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Đóng tất cả vị thế'), findsOneWidget);
       final closeAllTooltip = find.byTooltip('Đóng tất cả vị thế');
       final closeAllButton = find.descendant(
         of: closeAllTooltip,
-        matching: find.byType(TextButton),
+        matching: find.byType(IconButton),
       );
-      expect(tester.getSize(closeAllButton).width, greaterThanOrEqualTo(48));
-      expect(tester.getSize(closeAllButton).height, greaterThanOrEqualTo(48));
+      expect(find.text('Đóng tất cả vị thế'), findsNothing);
+      expect(tester.getSize(closeAllButton), const Size(48, 48));
       expect(
         find.descendant(
           of: closeAllTooltip,
@@ -729,8 +728,8 @@ void main() {
         await tester.pumpAndSettle();
 
         final tooltip = find.byTooltip('Đóng tất cả vị thế');
-        final button = tester.widget<TextButton>(
-          find.descendant(of: tooltip, matching: find.byType(TextButton)),
+        final button = tester.widget<IconButton>(
+          find.descendant(of: tooltip, matching: find.byType(IconButton)),
         );
         final expectedColor = brightness == Brightness.dark
             ? PnlColors.darkNegative
@@ -739,6 +738,12 @@ void main() {
         expect(
           button.style?.side?.resolve({}),
           BorderSide(color: expectedColor, width: 1),
+        );
+        final shape = button.style?.shape?.resolve({});
+        expect(shape, isA<RoundedRectangleBorder>());
+        expect(
+          (shape! as RoundedRectangleBorder).borderRadius,
+          BorderRadius.circular(12),
         );
       }
     });
@@ -1222,10 +1227,10 @@ void main() {
       expect(find.textContaining('operation-12345678'), findsNothing);
       expect(
         tester
-            .widget<TextButton>(
+            .widget<IconButton>(
               find.descendant(
                 of: find.byTooltip('Đóng tất cả vị thế'),
-                matching: find.byType(TextButton),
+                matching: find.byType(IconButton),
               ),
             )
             .onPressed,

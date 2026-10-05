@@ -745,175 +745,165 @@ class _StrategyDetailContent extends StatelessWidget {
     );
     final pnlPalette = AppPalette.of(context);
 
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                Text(
-                  instrument,
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                Chip(
-                  label: Text(neverSent ? 'Chưa gửi' : _statusLabel(status)),
-                ),
-                if (_text(strategy['interval']).isNotEmpty)
-                  Chip(label: Text(_text(strategy['interval']))),
-              ],
+            Text(instrument, style: Theme.of(context).textTheme.titleMedium),
+            Chip(label: Text(neverSent ? 'Chưa gửi' : _statusLabel(status))),
+            if (_text(strategy['interval']).isNotEmpty)
+              Chip(label: Text(_text(strategy['interval']))),
+          ],
+        ),
+        Text(quoteLabel, style: quoteStyle),
+        if (oversizedUnstartedDraft)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(
+              status == 'PREPARED'
+                  ? 'Bản nháp đã chuẩn bị vượt quá giới hạn 10 lệnh. Cập nhật trạng thái rồi tạo lại với tối đa 10 lệnh.'
+                  : 'Bản nháp cũ vượt quá giới hạn 10 lệnh. Hãy tạo bản nháp mới với tối đa 10 lệnh để tiếp tục.',
             ),
-            Text(quoteLabel, style: quoteStyle),
-            if (oversizedUnstartedDraft)
-              Padding(
-                padding: const EdgeInsets.only(top: 6),
-                child: Text(
-                  status == 'PREPARED'
-                      ? 'Bản nháp đã chuẩn bị vượt quá giới hạn 10 lệnh. Cập nhật trạng thái rồi tạo lại với tối đa 10 lệnh.'
-                      : 'Bản nháp cũ vượt quá giới hạn 10 lệnh. Hãy tạo bản nháp mới với tối đa 10 lệnh để tiếp tục.',
-                ),
-              ),
-            if (neverSent) ...[
-              const SizedBox(height: 6),
-              const Text('Không có lệnh nào được gửi lên OKX.'),
-              if (failureReason == 'leverage_rejected')
-                Text(
-                  leverageErrorCode == null
-                      ? 'OKX từ chối thiết lập đòn bẩy.'
-                      : 'OKX từ chối thiết lập đòn bẩy (mã: $leverageErrorCode).',
-                ),
-            ],
-            if (strategy['replacementCleanupConflict'] == true)
-              const Padding(
-                padding: EdgeInsets.only(top: 6),
-                child: Text(
-                  'OKX đã chấp nhận đầy đủ lệnh thay thế, nhưng hệ thống chưa xóa được chiến thuật cũ.',
-                ),
-              ),
-            if (status == 'DRAFT' && strategy['submissionMode'] == null)
-              const Padding(
-                padding: EdgeInsets.only(top: 6),
-                child: Text('Cơ chế gửi lệnh: chưa xác nhận.'),
-              )
-            else if (submissionMode != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 6),
-                child: Text('Cơ chế gửi đã cố định: ${submissionMode.label}.'),
-              )
-            else if (strategy['submissionMode'] != null)
-              const Padding(
-                padding: EdgeInsets.only(top: 6),
-                child: Text('Cơ chế gửi lệnh chưa khả dụng.'),
-              ),
-            if (status == 'APPLYING' || strategy['queueStatus'] != null) ...[
-              const SizedBox(height: 4),
-              _QueueStatusSummary(strategy: strategy),
-            ],
-            if (sourceStrategyId.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 6),
-                child: Text(
-                  'Bản gửi lại ${_text(strategy['id'])} liên kết với nguồn $sourceStrategyId · ${sourceClientOrderIds.join(', ')}',
-                ),
-              ),
-            if (quote?.observedAt != null)
-              Text('Giá được ghi nhận lúc ${_time(quote!.observedAt)}'),
-            if (metricsAreStale)
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text(
-                  metricsStaleAt == null
-                      ? 'Dữ liệu PnL và vị thế chưa được cập nhật.'
-                      : 'Dữ liệu PnL và vị thế đã cũ; lần cập nhật gần nhất thất bại lúc ${_time(metricsStaleAt!)}.',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.error,
-                  ),
-                ),
-              ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 20,
-              runSpacing: 8,
-              children: [
-                _Metric(
-                  label: 'PnL chưa thực hiện',
-                  value: pnl,
-                  valueColor: resolvePnlColor(_finiteNumber(pnl), pnlPalette),
-                ),
-                _Metric(label: 'Vốn đã khớp', value: usedMargin),
-                _Metric(
-                  label: '% trên vốn đã khớp',
-                  value: pnlPercent,
-                  isPercent: true,
-                  valueColor: resolvePnlColor(
-                    _finiteNumber(pnlPercent),
-                    pnlPalette,
-                  ),
-                ),
-                _Metric(
-                  label: 'Giá vào',
-                  value: _first(position, ['avgPx', 'entryPrice']),
-                ),
-                _Metric(
-                  label: 'Giá hiện tại',
-                  value: _first(position, ['markPx', 'latestPrice']),
-                ),
-                _Metric(
-                  label: 'Thanh lý thực tế',
-                  value: _first(position, ['liqPx', 'liquidationPrice']),
-                ),
-              ],
+          ),
+        if (neverSent) ...[
+          const SizedBox(height: 6),
+          const Text('Không có lệnh nào được gửi lên OKX.'),
+          if (failureReason == 'leverage_rejected')
+            Text(
+              leverageErrorCode == null
+                  ? 'OKX từ chối thiết lập đòn bẩy.'
+                  : 'OKX từ chối thiết lập đòn bẩy (mã: $leverageErrorCode).',
             ),
-            if (_text(observedAt).isNotEmpty) ...[
-              const SizedBox(height: 6),
-              Text('Dữ liệu tài khoản: ${_text(observedAt)}'),
-            ],
-            if (strategy['attributionChanged'] == true)
-              const Padding(
-                padding: EdgeInsets.only(top: 8),
-                child: Text(
-                  'Vị thế có hoạt động ngoài chiến thuật này; số liệu phản ánh tài khoản OKX.',
-                ),
+        ],
+        if (strategy['replacementCleanupConflict'] == true)
+          const Padding(
+            padding: EdgeInsets.only(top: 6),
+            child: Text(
+              'OKX đã chấp nhận đầy đủ lệnh thay thế, nhưng hệ thống chưa xóa được chiến thuật cũ.',
+            ),
+          ),
+        if (status == 'DRAFT' && strategy['submissionMode'] == null)
+          const Padding(
+            padding: EdgeInsets.only(top: 6),
+            child: Text('Cơ chế gửi lệnh: chưa xác nhận.'),
+          )
+        else if (submissionMode != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text('Cơ chế gửi đã cố định: ${submissionMode.label}.'),
+          )
+        else if (strategy['submissionMode'] != null)
+          const Padding(
+            padding: EdgeInsets.only(top: 6),
+            child: Text('Cơ chế gửi lệnh chưa khả dụng.'),
+          ),
+        if (status == 'APPLYING' || strategy['queueStatus'] != null) ...[
+          const SizedBox(height: 4),
+          _QueueStatusSummary(strategy: strategy),
+        ],
+        if (sourceStrategyId.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(
+              'Bản gửi lại ${_text(strategy['id'])} liên kết với nguồn $sourceStrategyId · ${sourceClientOrderIds.join(', ')}',
+            ),
+          ),
+        if (quote?.observedAt != null)
+          Text('Giá được ghi nhận lúc ${_time(quote!.observedAt)}'),
+        if (metricsAreStale)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              metricsStaleAt == null
+                  ? 'Dữ liệu PnL và vị thế chưa được cập nhật.'
+                  : 'Dữ liệu PnL và vị thế đã cũ; lần cập nhật gần nhất thất bại lúc ${_time(metricsStaleAt!)}.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.error,
               ),
-            if (showOrderOutcomes && orderRows.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              Text(
-                'Trạng thái từng lệnh',
-                style: Theme.of(context).textTheme.titleSmall,
+            ),
+          ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 20,
+          runSpacing: 8,
+          children: [
+            _Metric(
+              label: 'PnL chưa thực hiện',
+              value: pnl,
+              valueColor: resolvePnlColor(_finiteNumber(pnl), pnlPalette),
+            ),
+            _Metric(label: 'Vốn đã khớp', value: usedMargin),
+            _Metric(
+              label: '% trên vốn đã khớp',
+              value: pnlPercent,
+              isPercent: true,
+              valueColor: resolvePnlColor(
+                _finiteNumber(pnlPercent),
+                pnlPalette,
               ),
-              if (!neverSent && orderScanNoticeText != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text(
-                    orderScanNoticeText,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
-                  ),
-                )
-              else if (!neverSent && lastOrderScanAt.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text(
-                    'Lần quét lệnh gần nhất: ${_timeText(lastOrderScanAt)}',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ),
-              for (var index = 0; index < orderRows.length; index++)
-                _AppliedOrderRow(index: index + 1, order: orderRows[index]),
-            ],
-            const SizedBox(height: 10),
-            _StrategyActionFooter(
-              strategyId: _text(strategy['id']),
-              actions: actions,
+            ),
+            _Metric(
+              label: 'Giá vào',
+              value: _first(position, ['avgPx', 'entryPrice']),
+            ),
+            _Metric(
+              label: 'Giá hiện tại',
+              value: _first(position, ['markPx', 'latestPrice']),
+            ),
+            _Metric(
+              label: 'Thanh lý thực tế',
+              value: _first(position, ['liqPx', 'liquidationPrice']),
             ),
           ],
         ),
-      ),
+        if (_text(observedAt).isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Text('Dữ liệu tài khoản: ${_text(observedAt)}'),
+        ],
+        if (strategy['attributionChanged'] == true)
+          const Padding(
+            padding: EdgeInsets.only(top: 8),
+            child: Text(
+              'Vị thế có hoạt động ngoài chiến thuật này; số liệu phản ánh tài khoản OKX.',
+            ),
+          ),
+        if (showOrderOutcomes && orderRows.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Text(
+            'Trạng thái từng lệnh',
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
+          if (!neverSent && orderScanNoticeText != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                orderScanNoticeText,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.error,
+                ),
+              ),
+            )
+          else if (!neverSent && lastOrderScanAt.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                'Lần quét lệnh gần nhất: ${_timeText(lastOrderScanAt)}',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
+          for (var index = 0; index < orderRows.length; index++)
+            _AppliedOrderRow(index: index + 1, order: orderRows[index]),
+        ],
+        const SizedBox(height: 10),
+        _StrategyActionFooter(
+          strategyId: _text(strategy['id']),
+          actions: actions,
+        ),
+      ],
     );
   }
 }
@@ -1069,7 +1059,7 @@ class _StrategyDetailsDialog extends StatelessWidget {
                       ).toUpperCase();
                       final started = _hasStartedStatus(strategy['status']);
                       return SingleChildScrollView(
-                        padding: const EdgeInsets.fromLTRB(12, 4, 12, 16),
+                        padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
                         child: _StrategyDetailContent(
                           strategy: strategy,
                           quote: started
