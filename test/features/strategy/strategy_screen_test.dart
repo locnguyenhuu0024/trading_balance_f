@@ -110,6 +110,116 @@ void main() {
   });
 
   testWidgets(
+    'saved Jev recommendations remain visible on candidate cards and details',
+    (tester) async {
+      final api = _FakeStrategyApi();
+      final market = _FakeMarketRepository();
+      api.strategies[0]
+        ..['draftStage'] = 'candidates'
+        ..['canReview'] = true
+        ..['aiGeneration'] = _recommendedGenerationForDisplay();
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            tradeSessionProvider.overrideWith(
+              (ref) => _AuthenticatedSessionController(),
+            ),
+            strategyApiProvider.overrideWithValue(api),
+            strategyMarketRepositoryProvider.overrideWithValue(market),
+          ],
+          child: const MaterialApp(home: StrategyScreen()),
+        ),
+      );
+      await _pumpFrames(tester);
+      final quoteCallsBeforeDetails = api.quoteCalls;
+
+      final card = find
+          .ancestor(
+            of: find.byKey(const Key('strategy-summary-draft-1')),
+            matching: find.byType(Card),
+          )
+          .first;
+      expect(
+        find.descendant(
+          of: card,
+          matching: find.text('Số mức nháp được đề xuất: 2 · Long 1 · Short 1'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: card,
+          matching: find.text('Long · 90.123456789012345678'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: card,
+          matching: find.text('Short · 110.987654321098765432'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: card, matching: find.text('Tổng lệnh: 0')),
+        findsNothing,
+      );
+      expect(
+        find.descendant(
+          of: card,
+          matching: find.textContaining('Chưa tính vốn'),
+        ),
+        findsOneWidget,
+      );
+
+      await _openStrategyDetails(tester, 'draft-1');
+      final details = _strategyDetailBody();
+      expect(
+        find.descendant(
+          of: details,
+          matching: find.text('Số mức nháp được đề xuất: 2 · Long 1 · Short 1'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: details,
+          matching: find.text('Long · 90.123456789012345678'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: details,
+          matching: find.text('Short · 110.987654321098765432'),
+        ),
+        findsOneWidget,
+      );
+      expect(api.prepareCalls, 0);
+      expect(api.executeCalls, 0);
+      expect(api.automaticRequests, isEmpty);
+      expect(api.quoteCalls, quoteCallsBeforeDetails);
+
+      await tester.tap(find.byTooltip('Đóng chi tiết'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('strategy-review-draft-1')));
+      await tester.pumpAndSettle();
+      expect(find.byType(StrategyWizardDialog), findsOneWidget);
+      expect(
+        tester
+            .widgetList<CheckboxListTile>(find.byType(CheckboxListTile))
+            .where((checkbox) => checkbox.value == true),
+        hasLength(2),
+      );
+      expect(market.loadLevelsCalls, 0);
+      expect(api.prepareCalls, 0);
+      expect(api.executeCalls, 0);
+      expect(api.automaticRequests, isEmpty);
+      expect(api.quoteCalls, quoteCallsBeforeDetails);
+    },
+  );
+
+  testWidgets(
     'automatic candidates are saved for deferred review without regeneration',
     (tester) async {
       tester.view.physicalSize = const Size(390, 844);
@@ -169,19 +279,25 @@ void main() {
       expect(api.automaticRequests.last['requestId'], originalRequestId);
       expect(find.byType(StrategyWizardDialog), findsNothing);
       expect(
-        find.textContaining('Đã lưu bản nháp tự động · Long 0 · Short 0'),
+        find.textContaining(
+          'Đã lưu bản nháp tự động · Số mức nháp được đề xuất: 0 · Long 0 · Short 0',
+        ),
         findsOneWidget,
       );
-      expect(
-        find.textContaining('Chưa có mức nào đạt tiêu chí Jev'),
-        findsOneWidget,
+      final saveNotice = tester.widget<Text>(
+        find.byKey(const Key('strategy-automatic-save-notice')),
       );
+      expect(saveNotice.data, contains('Đánh giá Jev chưa khả dụng'));
       expect(
         find.byKey(const Key('strategy-review-auto-draft-1')),
         findsOneWidget,
       );
       final requestCountAfterCreation = api.automaticRequests.length;
 
+      tester
+          .state<ScaffoldMessengerState>(find.byType(ScaffoldMessenger))
+          .hideCurrentSnackBar();
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('strategy-review-auto-draft-1')));
       await tester.pumpAndSettle();
 
@@ -1550,6 +1666,60 @@ Map<String, dynamic> _candidateGenerationSnapshot() => {
     },
   ],
 };
+
+Map<String, dynamic> _recommendedGenerationForDisplay() {
+  Map<String, dynamic> candidate({
+    required String id,
+    required String side,
+    required String price,
+    required int rank,
+  }) => {
+    'levelId': id,
+    'side': side,
+    'price': price,
+    'touchCount': 1,
+    'firstTouchAt': '2029-12-31T00:00:00Z',
+    'lastTouchAt': '2030-01-01T00:00:00Z',
+    'generationOrder': rank - 1,
+    'rank': rank,
+    'assessment': {
+      'provider': 'typesafe',
+      'status': 'success',
+      'structuralQuality': 4,
+      'entrySuitabilityProbability': 0.6,
+      'failureRiskProbability': 0.4,
+    },
+  };
+
+  const longId = 'long-exact-price';
+  const shortId = 'short-exact-price';
+  final snapshot = _candidateGenerationSnapshot();
+  final recommendation =
+      Map<String, dynamic>.from(snapshot['recommendation'] as Map)..addAll({
+        'longLevelIds': <String>[longId],
+        'shortLevelIds': <String>[shortId],
+      });
+  return {
+    ...snapshot,
+    'recommendation': recommendation,
+    'supports': [
+      candidate(
+        id: longId,
+        side: 'long',
+        price: '90.123456789012345678',
+        rank: 1,
+      ),
+    ],
+    'resistances': [
+      candidate(
+        id: shortId,
+        side: 'short',
+        price: '110.987654321098765432',
+        rank: 1,
+      ),
+    ],
+  };
+}
 
 Map<String, dynamic> _candidateDraftRecord({
   required String id,

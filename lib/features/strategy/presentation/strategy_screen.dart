@@ -8,6 +8,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/pnl_color.dart';
 import '../../orders/data/trade_api_client.dart';
 import '../../orders/presentation/providers/trade_session_provider.dart';
+import '../domain/strategy_draft_entries.dart';
 import '../domain/strategy_models.dart';
 import 'providers/strategy_dashboard_provider.dart';
 import 'strategy_automatic_draft_dialog.dart';
@@ -343,24 +344,12 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
         !_sessionMatches(session)) {
       return;
     }
-    final generation =
-        _stringMap(candidateDraft['aiGeneration']) ??
-        _stringMap(_map(candidateDraft['snapshot'])['aiGeneration']) ??
-        const <String, dynamic>{};
-    final recommendation = _stringMap(generation['recommendation']);
-    final longIds = recommendation?['longLevelIds'];
-    final shortIds = recommendation?['shortLevelIds'];
-    final countText = longIds is List && shortIds is List
-        ? 'Long ${longIds.length} · Short ${shortIds.length}'
-        : 'số mức đề xuất chưa có';
-    final emptyRecommendation =
-        longIds is List &&
-        shortIds is List &&
-        longIds.isEmpty &&
-        shortIds.isEmpty;
-    final message = emptyRecommendation
-        ? 'Đã lưu bản nháp tự động · Long 0 · Short 0. Chưa có mức nào đạt tiêu chí Jev; bạn có thể chọn thủ công khi xem xét.'
-        : 'Đã lưu bản nháp tự động · $countText.';
+    final draftEntries = StrategyDraftEntries.fromDraftRecord(candidateDraft);
+    final message = [
+      'Đã lưu bản nháp tự động · Số mức nháp được đề xuất: ${draftEntries.entries.length} · Long ${draftEntries.longCount} · Short ${draftEntries.shortCount}.',
+      if (draftEntries.notice != null) draftEntries.notice!,
+      'Chưa tính vốn và chưa tạo lệnh; hãy xem xét các mức trước khi nhập vốn.',
+    ].join(' ');
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
@@ -640,6 +629,10 @@ class _StrategyCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final id = _text(strategy['id']);
+    final isCandidateDraft = _isCandidateDraft(strategy);
+    final draftEntries = isCandidateDraft
+        ? StrategyDraftEntries.fromDraftRecord(strategy)
+        : null;
     final instrument = _text(strategy['instrumentId']);
     final coin = instrument
         .split('-')
@@ -702,16 +695,17 @@ class _StrategyCard extends StatelessWidget {
                             style: Theme.of(context).textTheme.titleLarge,
                           ),
                         ),
-                        Tooltip(
-                          message: tooltipLines.join('\n'),
-                          child: Icon(
-                            Icons.info_outline,
-                            size: 18,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurfaceVariant,
+                        if (!isCandidateDraft)
+                          Tooltip(
+                            message: tooltipLines.join('\n'),
+                            child: Icon(
+                              Icons.info_outline,
+                              size: 18,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurfaceVariant,
+                            ),
                           ),
-                        ),
                       ],
                     ),
                     const SizedBox(height: 6),
@@ -722,28 +716,33 @@ class _StrategyCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Vốn: ${_summaryTotalMargin(strategy['totalMargin'])}',
+                      isCandidateDraft
+                          ? 'Vốn: Chưa tính'
+                          : 'Vốn: ${_summaryTotalMargin(strategy['totalMargin'])}',
                       style: Theme.of(context).textTheme.bodyMedium,
                     ),
                     const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 16,
-                      runSpacing: 6,
-                      children: [
-                        _StrategySummaryCount(
-                          label: 'Tổng lệnh',
-                          value: orderRows?.length.toString() ?? '--',
-                        ),
-                        _StrategySummaryCount(
-                          label: 'Chưa khớp',
-                          value: orderRows == null ? '--' : '$awaiting',
-                        ),
-                        _StrategySummaryCount(
-                          label: 'Đã khớp',
-                          value: orderRows == null ? '--' : '$filled',
-                        ),
-                      ],
-                    ),
+                    if (draftEntries != null)
+                      _StrategyDraftEntriesSummary(entries: draftEntries)
+                    else
+                      Wrap(
+                        spacing: 16,
+                        runSpacing: 6,
+                        children: [
+                          _StrategySummaryCount(
+                            label: 'Tổng lệnh',
+                            value: orderRows?.length.toString() ?? '--',
+                          ),
+                          _StrategySummaryCount(
+                            label: 'Chưa khớp',
+                            value: orderRows == null ? '--' : '$awaiting',
+                          ),
+                          _StrategySummaryCount(
+                            label: 'Đã khớp',
+                            value: orderRows == null ? '--' : '$filled',
+                          ),
+                        ],
+                      ),
                   ],
                 ),
               ),
@@ -766,6 +765,33 @@ class _StrategySummaryCount extends StatelessWidget {
   Widget build(BuildContext context) => Text('$label: $value');
 }
 
+class _StrategyDraftEntriesSummary extends StatelessWidget {
+  const _StrategyDraftEntriesSummary({required this.entries});
+
+  final StrategyDraftEntries entries;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        'Số mức nháp được đề xuất: ${entries.entries.length} · Long ${entries.longCount} · Short ${entries.shortCount}',
+        style: Theme.of(context).textTheme.bodyMedium,
+      ),
+      for (final side in StrategySide.values)
+        if (entries.entriesFor(side).isEmpty)
+          Text('${side.label} · chưa có mức đề xuất')
+        else
+          for (final entry in entries.entriesFor(side))
+            Text('${side.label} · ${entry.exactPriceText}'),
+      if (entries.notice != null) Text(entries.notice!),
+      const Text(
+        'Chưa tính vốn và chưa tạo lệnh; hãy xem xét các mức trước khi nhập vốn.',
+      ),
+    ],
+  );
+}
+
 class _StrategyDetailContent extends StatelessWidget {
   const _StrategyDetailContent({
     required this.strategy,
@@ -786,6 +812,10 @@ class _StrategyDetailContent extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final status = _text(strategy['status']).toUpperCase();
+    final isCandidateDraft = _isCandidateDraft(strategy);
+    final draftEntries = isCandidateDraft
+        ? StrategyDraftEntries.fromDraftRecord(strategy)
+        : null;
     final neverSent = _isNeverSentStrategy(strategy);
     final oversizedUnstartedDraft =
         (status == 'DRAFT' ||
@@ -856,6 +886,10 @@ class _StrategyDetailContent extends StatelessWidget {
               Chip(label: Text(_text(strategy['interval']))),
           ],
         ),
+        if (draftEntries != null) ...[
+          const SizedBox(height: 8),
+          _StrategyDraftEntriesSummary(entries: draftEntries),
+        ],
         Text(quoteLabel, style: quoteStyle),
         if (oversizedUnstartedDraft)
           Padding(
@@ -883,17 +917,19 @@ class _StrategyDetailContent extends StatelessWidget {
               'OKX đã chấp nhận đầy đủ lệnh thay thế, nhưng hệ thống chưa xóa được chiến thuật cũ.',
             ),
           ),
-        if (status == 'DRAFT' && strategy['submissionMode'] == null)
+        if (!isCandidateDraft &&
+            status == 'DRAFT' &&
+            strategy['submissionMode'] == null)
           const Padding(
             padding: EdgeInsets.only(top: 6),
             child: Text('Cơ chế gửi lệnh: chưa xác nhận.'),
           )
-        else if (submissionMode != null)
+        else if (!isCandidateDraft && submissionMode != null)
           Padding(
             padding: const EdgeInsets.only(top: 6),
             child: Text('Cơ chế gửi đã cố định: ${submissionMode.label}.'),
           )
-        else if (strategy['submissionMode'] != null)
+        else if (!isCandidateDraft && strategy['submissionMode'] != null)
           const Padding(
             padding: EdgeInsets.only(top: 6),
             child: Text('Cơ chế gửi lệnh chưa khả dụng.'),
@@ -1485,6 +1521,9 @@ double? _finiteNumber(Object? value) {
       : double.tryParse(_text(value));
   return number?.isFinite == true ? number : null;
 }
+
+bool _isCandidateDraft(Map<String, dynamic> strategy) =>
+    _text(strategy['draftStage']) == 'candidates';
 
 String _summaryStatusLabel(Map<String, dynamic> strategy) {
   if (_text(strategy['draftStage']) == 'candidates') {
