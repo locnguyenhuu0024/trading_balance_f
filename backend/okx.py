@@ -276,6 +276,32 @@ class OKXClient:
             raise OKXTransportError("exchange ticker is unavailable")
         return data[0]
 
+    def market_candles(
+        self,
+        instrument_id: str,
+        bar: str,
+        *,
+        after: str | None = None,
+        limit: int = 300,
+    ) -> list[Any]:
+        """Read one UTC-aligned public candle page for Strategy generation."""
+        if bar not in {"6Hutc", "1Dutc", "1Wutc"}:
+            raise ValueError("unsupported public candle interval")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 300:
+            raise ValueError("public candle page limit is invalid")
+        if after is not None and (not isinstance(after, str) or not after.isdigit()):
+            raise ValueError("public candle cursor is invalid")
+        params = {"instId": instrument_id, "bar": bar, "limit": str(limit)}
+        if after is not None:
+            params["after"] = after
+        response = self.request(
+            "GET", "/api/v5/market/candles", params=params, private=False
+        )
+        data = response.get("data", [])
+        if not isinstance(data, list):
+            raise OKXTransportError("exchange candle data is unavailable")
+        return data
+
     def pending_orders(self, instrument_id: str) -> list[dict[str, Any]]:
         response = self.request(
             "GET", "/api/v5/trade/orders-pending", params={"instType": "SWAP", "instId": instrument_id}

@@ -839,6 +839,13 @@ class StrategyDashboardController extends ChangeNotifier {
         message: 'Chỉ có thể áp dụng chiến thuật ở trạng thái bản nháp.',
       );
     }
+    if (existing != null && existing['draftStage'] == 'candidates') {
+      _actionInFlight.removeAll(actionIds);
+      return const StrategyApplyOutcome(
+        StrategyApplyOutcomeKind.rejected,
+        message: 'Ứng viên cần được xem xét và lưu trước khi áp dụng.',
+      );
+    }
     if (existing != null && hasOversizedNewStrategyOrderPayload(existing)) {
       _actionInFlight.removeAll(actionIds);
       return const StrategyApplyOutcome(

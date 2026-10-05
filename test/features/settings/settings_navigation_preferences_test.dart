@@ -9,6 +9,29 @@ import 'package:trading_balance_f/core/navigation/navigation_preferences_provide
 import 'package:trading_balance_f/core/security/secure_storage_helper.dart';
 import 'package:trading_balance_f/features/settings/presentation/settings_screen.dart';
 
+Future<void> _scrollUntilVisibleInDialog(
+  WidgetTester tester,
+  Finder target, {
+  required double delta,
+}) async {
+  final dialog = find.byType(AlertDialog);
+  final reorderableList = find.descendant(
+    of: dialog,
+    matching: find.byType(ReorderableListView),
+  );
+  final listScrollable = find
+      .descendant(of: reorderableList, matching: find.byType(Scrollable))
+      .first;
+
+  await tester.scrollUntilVisible(
+    target,
+    delta,
+    scrollable: listScrollable,
+    maxScrolls: 10,
+  );
+  await tester.pumpAndSettle();
+}
+
 class _SettingsStorage extends SecureStorageHelper {
   _SettingsStorage({
     this.failNavigationSave = false,
@@ -243,18 +266,17 @@ void main() {
       'settings',
       'risk',
       'support',
+      'strategy',
     ]) {
       final row = find.byKey(Key('settings-navigation-visible-$id'));
-      await tester.ensureVisible(row);
-      await tester.pumpAndSettle();
+      await _scrollUntilVisibleInDialog(tester, row, delta: 200);
       expect(row, findsOneWidget);
     }
 
     final settingsRow = find.byKey(
       const Key('settings-navigation-visible-settings'),
     );
-    await tester.ensureVisible(settingsRow);
-    await tester.pumpAndSettle();
+    await _scrollUntilVisibleInDialog(tester, settingsRow, delta: -200);
     final settingsCheckbox = tester.widget<CheckboxListTile>(settingsRow);
     expect(settingsCheckbox.value, isTrue);
     expect(settingsCheckbox.onChanged, isNull);
@@ -268,8 +290,7 @@ void main() {
     );
 
     final bmagRow = find.byKey(const Key('settings-navigation-visible-bmag'));
-    await tester.ensureVisible(bmagRow);
-    await tester.pumpAndSettle();
+    await _scrollUntilVisibleInDialog(tester, bmagRow, delta: -200);
     await tester.tap(bmagRow);
     await tester.pumpAndSettle();
 
@@ -316,6 +337,7 @@ void main() {
       'risk',
       'bmag',
       'support',
+      'strategy',
     ]);
     expect(
       tester

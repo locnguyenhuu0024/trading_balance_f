@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -15,6 +17,222 @@ import 'package:trading_balance_f/features/strategy/presentation/strategy_screen
 import 'package:trading_balance_f/features/strategy/presentation/strategy_wizard_dialog.dart';
 
 void main() {
+  testWidgets('automatic strategy action keeps its title on mobile', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          tradeSessionProvider.overrideWith(
+            (ref) => _AuthenticatedSessionController(),
+          ),
+          strategyApiProvider.overrideWithValue(_FakeStrategyApi()),
+          strategyMarketRepositoryProvider.overrideWithValue(
+            _FakeMarketRepository(),
+          ),
+        ],
+        child: const MaterialApp(home: StrategyScreen()),
+      ),
+    );
+    await _pumpFrames(tester);
+
+    expect(
+      find.byKey(const Key('strategy-automatic-create-button')),
+      findsOneWidget,
+    );
+    expect(find.text('Dựng chiến thuật tự động'), findsOneWidget);
+  });
+
+  testWidgets('candidate drafts offer review and cannot be applied directly', (
+    tester,
+  ) async {
+    final api = _FakeStrategyApi();
+    api.strategies[0]
+      ..['draftStage'] = 'candidates'
+      ..['canApply'] = false
+      ..['canReview'] = true
+      ..['aiGeneration'] = _candidateGenerationSnapshot();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          tradeSessionProvider.overrideWith(
+            (ref) => _AuthenticatedSessionController(),
+          ),
+          strategyApiProvider.overrideWithValue(api),
+          strategyMarketRepositoryProvider.overrideWithValue(
+            _FakeMarketRepository(),
+          ),
+        ],
+        child: const MaterialApp(home: StrategyScreen()),
+      ),
+    );
+    await _pumpFrames(tester);
+
+    expect(find.byKey(const Key('strategy-review-draft-1')), findsOneWidget);
+    expect(find.byKey(const Key('strategy-apply-draft-1')), findsNothing);
+    expect(find.byKey(const Key('strategy-replace-draft-1')), findsNothing);
+  });
+
+  testWidgets(
+    'automatic candidates are persisted, unselected, and reopen without regeneration',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final api = _FakeStrategyApi()..automaticFailureCount = 1;
+      final market = _FakeMarketRepository();
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            tradeSessionProvider.overrideWith(
+              (ref) => _AuthenticatedSessionController(),
+            ),
+            strategyApiProvider.overrideWithValue(api),
+            strategyMarketRepositoryProvider.overrideWithValue(market),
+          ],
+          child: const MaterialApp(home: StrategyScreen()),
+        ),
+      );
+      await _pumpFrames(tester);
+
+      await tester.tap(
+        find.byKey(const Key('strategy-automatic-create-button')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const Key('strategy-automatic-instrument-picker')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const Key('strategy-automatic-instrument-BTC-USDT-SWAP')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const Key('strategy-automatic-interval-select')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('1D').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('strategy-automatic-generate')));
+      await tester.pumpAndSettle();
+
+      expect(api.automaticRequests, hasLength(1));
+      expect(
+        find.text('Máy chủ tự động đang bận. Vui lòng thử lại.'),
+        findsOneWidget,
+      );
+      final originalRequestId = api.automaticRequests.single['requestId'];
+      await tester.tap(find.byKey(const Key('strategy-automatic-generate')));
+      await tester.pumpAndSettle();
+
+      expect(api.automaticRequests, hasLength(2));
+      expect(api.automaticRequests.last['instrumentId'], 'BTC-USDT-SWAP');
+      expect(api.automaticRequests.last['interval'], '1Dutc');
+      expect(originalRequestId, matches(RegExp(r'^[A-Za-z0-9_-]{8,64}$')));
+      expect(api.automaticRequests.last['requestId'], originalRequestId);
+      expect(find.text('Hỗ trợ cho Long'), findsOneWidget);
+      expect(find.text('Kháng cự cho Short'), findsOneWidget);
+      expect(find.text('Jev: chưa bật'), findsOneWidget);
+      expect(find.text('Jev: đánh giá không thành công'), findsOneWidget);
+      expect(
+        tester
+            .widgetList<CheckboxListTile>(find.byType(CheckboxListTile))
+            .every((checkbox) => checkbox.value == false),
+        isTrue,
+      );
+      expect(market.loadLevelsCalls, 0);
+      final requestCountAfterCreation = api.automaticRequests.length;
+
+      await tester.tap(find.byTooltip('Đóng'));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('strategy-review-auto-draft-1')),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const Key('strategy-review-auto-draft-1')));
+      await tester.pumpAndSettle();
+
+      expect(api.automaticRequests, hasLength(requestCountAfterCreation));
+      expect(market.loadLevelsCalls, 0);
+      expect(find.text('Jev: chưa bật'), findsOneWidget);
+      expect(find.text('Mã đánh giá: timeout'), findsOneWidget);
+      expect(
+        tester
+            .widgetList<CheckboxListTile>(find.byType(CheckboxListTile))
+            .every((checkbox) => checkbox.value == false),
+        isTrue,
+      );
+    },
+  );
+
+  testWidgets('late automatic response is discarded after a session change', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final session = _AuthenticatedSessionController();
+    final api = _FakeStrategyApi()
+      ..automaticDraftCompleter = Completer<Map<String, dynamic>>();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          tradeSessionProvider.overrideWith((ref) => session),
+          strategyApiProvider.overrideWithValue(api),
+          strategyMarketRepositoryProvider.overrideWithValue(
+            _FakeMarketRepository(),
+          ),
+        ],
+        child: const MaterialApp(home: StrategyScreen()),
+      ),
+    );
+    await _pumpFrames(tester);
+    await tester.tap(find.byKey(const Key('strategy-automatic-create-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const Key('strategy-automatic-instrument-picker')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const Key('strategy-automatic-instrument-BTC-USDT-SWAP')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const Key('strategy-automatic-interval-select')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('6H').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('strategy-automatic-generate')));
+    await tester.pump();
+    expect(api.automaticRequests, hasLength(1));
+
+    session.switchTo('session-b-token');
+    await tester.pumpAndSettle();
+    api.automaticDraftCompleter!.complete(
+      _candidateDraftRecord(
+        id: 'late-auto-draft',
+        instrumentId: 'BTC-USDT-SWAP',
+        interval: '6Hutc',
+        requestId: api.automaticRequests.single['requestId'] as String,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(StrategyWizardDialog), findsNothing);
+    expect(find.byKey(const Key('strategy-selection-count')), findsNothing);
+    expect(
+      find.byKey(const Key('strategy-automatic-create-button')),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('T72 compact strategy cards show current status and omit intro', (
     tester,
   ) async {
@@ -1216,6 +1434,83 @@ Finder _strategyDetailBody() => find.descendant(
   matching: find.byType(SingleChildScrollView),
 );
 
+Map<String, dynamic> _candidateGenerationSnapshot() => {
+  'version': 'ai-generation-v1',
+  'instrumentId': 'BTC-USDT-SWAP',
+  'interval': '6Hutc',
+  'tickSize': '0.01',
+  'referencePrice': '100',
+  'observedAt': '2030-01-01T00:00:00Z',
+  'supports': [
+    {
+      'levelId': 'support-1',
+      'side': 'long',
+      'price': '90',
+      'touchCount': 2,
+      'firstTouchAt': '2029-12-31T00:00:00Z',
+      'lastTouchAt': '2030-01-01T00:00:00Z',
+      'generationOrder': 0,
+      'rank': 1,
+      'assessment': {
+        'provider': 'typesafe',
+        'status': 'disabled',
+        'modelRequested': null,
+        'modelUsed': null,
+        'structuralQuality': null,
+        'entrySuitabilityProbability': null,
+        'failureRiskProbability': null,
+        'errorCode': 'disabled',
+      },
+    },
+  ],
+  'resistances': [
+    {
+      'levelId': 'resistance-1',
+      'side': 'short',
+      'price': '110',
+      'touchCount': 3,
+      'firstTouchAt': '2029-12-31T00:00:00Z',
+      'lastTouchAt': '2030-01-01T00:00:00Z',
+      'generationOrder': 1,
+      'rank': 1,
+      'assessment': {
+        'provider': 'typesafe',
+        'status': 'failed',
+        'modelRequested': 'test-model',
+        'modelUsed': null,
+        'structuralQuality': null,
+        'entrySuitabilityProbability': null,
+        'failureRiskProbability': null,
+        'errorCode': 'timeout',
+      },
+    },
+  ],
+};
+
+Map<String, dynamic> _candidateDraftRecord({
+  required String id,
+  required String instrumentId,
+  required String interval,
+  String? requestId,
+}) => {
+  'id': id,
+  'instrumentId': instrumentId,
+  'interval': interval,
+  'status': 'DRAFT',
+  'draftStage': 'candidates',
+  'canApply': false,
+  'canReview': true,
+  'canDelete': true,
+  'orders': <Object>[],
+  'results': <Object>[],
+  'aiGeneration': {
+    ..._candidateGenerationSnapshot(),
+    'instrumentId': instrumentId,
+    'interval': interval,
+    if (requestId != null) 'requestId': requestId,
+  },
+};
+
 class _AuthenticatedSessionController extends TradeSessionController {
   _AuthenticatedSessionController()
     : super(TradeApiClient(baseUrl: 'https://trade.example')) {
@@ -1227,9 +1522,19 @@ class _AuthenticatedSessionController extends TradeSessionController {
       ),
     );
   }
+
+  void switchTo(String bearerToken) {
+    state = TradeSessionState(
+      session: TradeSession(
+        bearerToken: bearerToken,
+        accountIdentifier: 'other-account',
+        expiresAt: DateTime.now().add(const Duration(hours: 1)),
+      ),
+    );
+  }
 }
 
-class _FakeStrategyApi implements StrategyApi {
+class _FakeStrategyApi implements StrategyApi, AutomaticStrategyApi {
   int quoteCalls = 0;
   int deleteCalls = 0;
   int prepareCalls = 0;
@@ -1239,6 +1544,44 @@ class _FakeStrategyApi implements StrategyApi {
   bool includeNeverSent = false;
   bool includeQueues = false;
   Map<String, dynamic> prepared = const {};
+  final automaticRequests = <Map<String, dynamic>>[];
+  int automaticFailureCount = 0;
+  Completer<Map<String, dynamic>>? automaticDraftCompleter;
+
+  @override
+  Future<Map<String, dynamic>> createAutomaticDrafts(
+    String token, {
+    required String instrumentId,
+    required String interval,
+    required String requestId,
+  }) async {
+    final request = {
+      'instrumentId': instrumentId,
+      'interval': interval,
+      'requestId': requestId,
+    };
+    automaticRequests.add(request);
+    if (automaticFailureCount > 0) {
+      automaticFailureCount--;
+      throw const StrategyApiException(
+        code: 'network_error',
+        message: 'Máy chủ tự động đang bận. Vui lòng thử lại.',
+      );
+    }
+    final response = automaticDraftCompleter == null
+        ? _candidateDraftRecord(
+            id: 'auto-draft-1',
+            instrumentId: instrumentId,
+            interval: interval,
+            requestId: requestId,
+          )
+        : await automaticDraftCompleter!.future;
+    if (automaticDraftCompleter == null) {
+      strategies.removeWhere((item) => item['id'] == response['id']);
+      strategies.insert(0, response);
+    }
+    return response;
+  }
 
   final strategies = <Map<String, dynamic>>[
     {

@@ -60,7 +60,18 @@ abstract class StrategyApi {
   Future<void> deleteDraft(String bearerToken, String id);
 }
 
-class StrategyApiClient implements StrategyApi {
+/// Optional capability kept separate so existing StrategyApi fakes and
+/// integrations do not need to implement automatic candidate generation.
+abstract interface class AutomaticStrategyApi {
+  Future<Map<String, dynamic>> createAutomaticDrafts(
+    String bearerToken, {
+    required String instrumentId,
+    required String interval,
+    required String requestId,
+  });
+}
+
+class StrategyApiClient implements StrategyApi, AutomaticStrategyApi {
   StrategyApiClient({Dio? dio, String? baseUrl})
     : _baseUrl = (baseUrl ?? tradeApiBaseUrl).trim(),
       _dio = dio;
@@ -126,6 +137,34 @@ class StrategyApiClient implements StrategyApi {
     String bearerToken,
     Map<String, dynamic> body,
   ) => _request('POST', 'v1/strategies', bearerToken: bearerToken, body: body);
+
+  @override
+  Future<Map<String, dynamic>> createAutomaticDrafts(
+    String bearerToken, {
+    required String instrumentId,
+    required String interval,
+    required String requestId,
+  }) {
+    final normalizedInstrument = instrumentId.trim().toUpperCase();
+    if (!RegExp(r'^[A-Z0-9]+-USDT-SWAP$').hasMatch(normalizedInstrument) ||
+        !const {'6Hutc', '1Dutc', '1Wutc'}.contains(interval) ||
+        !RegExp(r'^[A-Za-z0-9_-]{8,64}$').hasMatch(requestId)) {
+      throw const StrategyApiException(
+        code: 'invalid_request',
+        message: 'The automatic strategy request is invalid.',
+      );
+    }
+    return _request(
+      'POST',
+      'v1/strategies/automatic-drafts',
+      bearerToken: bearerToken,
+      body: {
+        'instrumentId': normalizedInstrument,
+        'interval': interval,
+        'requestId': requestId,
+      },
+    );
+  }
 
   @override
   Future<StrategyRetryCandidates> getRetryCandidates(
@@ -347,7 +386,12 @@ class StrategyApiClient implements StrategyApi {
         code: _text(payload['error']).isEmpty
             ? 'network_error'
             : _text(payload['error']),
-        message: message.isEmpty ? _failureMessage(error) : message,
+        message: message.isEmpty
+            ? _failureMessage(
+                error,
+                automaticDrafts: path == 'v1/strategies/automatic-drafts',
+              )
+            : message,
         details: payload,
       );
     }
@@ -367,18 +411,26 @@ StrategyApiException _invalidRetryResponse() => const StrategyApiException(
   message: 'The trade API returned an invalid retry review.',
 );
 
-String _failureMessage(DioException error) {
+String _failureMessage(
+  DioException error, {
+  bool automaticDrafts = false,
+}) {
+  final operation = automaticDrafts ? 'dựng chiến thuật tự động' : 'xem trước';
   final statusCode = error.response?.statusCode;
   if (statusCode != null) {
     final guidance = switch (statusCode) {
       401 => 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.',
-      404 =>
-        'Không tìm thấy đường dẫn xem trước chiến lược. Vui lòng kiểm tra API rồi thử lại.',
-      429 =>
-        'Yêu cầu xem trước quá thường xuyên. Vui lòng chờ một chút rồi thử lại.',
-      >= 500 => 'Máy chủ xem trước đang gặp sự cố. Vui lòng thử lại sau.',
+      404 => automaticDrafts
+          ? 'Không tìm thấy đường dẫn dựng chiến thuật tự động. Vui lòng kiểm tra API rồi thử lại.'
+          : 'Không tìm thấy đường dẫn xem trước chiến lược. Vui lòng kiểm tra API rồi thử lại.',
+      429 => automaticDrafts
+          ? 'Yêu cầu dựng chiến thuật tự động quá thường xuyên. Vui lòng chờ một chút rồi thử lại.'
+          : 'Yêu cầu xem trước quá thường xuyên. Vui lòng chờ một chút rồi thử lại.',
+      >= 500 => automaticDrafts
+          ? 'Máy chủ dựng chiến thuật tự động đang gặp sự cố. Vui lòng thử lại sau.'
+          : 'Máy chủ xem trước đang gặp sự cố. Vui lòng thử lại sau.',
       >= 400 =>
-        'Máy chủ từ chối yêu cầu xem trước. Vui lòng kiểm tra thông tin rồi thử lại.',
+        'Máy chủ từ chối yêu cầu $operation. Vui lòng kiểm tra thông tin rồi thử lại.',
       _ => 'Máy chủ trả về phản hồi không thể xử lý. Vui lòng thử lại sau.',
     };
     return '$guidance (HTTP $statusCode)';
@@ -389,13 +441,15 @@ String _failureMessage(DioException error) {
     DioExceptionType.sendTimeout ||
     DioExceptionType.receiveTimeout ||
     DioExceptionType.transformTimeout =>
-      'Yêu cầu xem trước đã quá thời gian chờ. Vui lòng thử lại. (TIMEOUT)',
-    DioExceptionType.cancel =>
-      'Yêu cầu xem trước đã bị hủy. Bạn có thể nhấn “Xem lại lệnh” để thử lại. (CANCELLED)',
+      'Yêu cầu $operation đã quá thời gian chờ. Vui lòng thử lại. (TIMEOUT)',
+    DioExceptionType.cancel => automaticDrafts
+        ? 'Yêu cầu dựng chiến thuật tự động đã bị hủy. Vui lòng thử lại nếu cần. (CANCELLED)'
+        : 'Yêu cầu xem trước đã bị hủy. Bạn có thể nhấn “Xem lại lệnh” để thử lại. (CANCELLED)',
     DioExceptionType.connectionError ||
     DioExceptionType.badCertificate ||
-    DioExceptionType.unknown =>
-      'Không thể kết nối để xem trước lệnh. Kiểm tra mạng hoặc trình duyệt rồi thử lại. (CONNECTION)',
+    DioExceptionType.unknown => automaticDrafts
+        ? 'Không thể kết nối để dựng chiến thuật tự động. Kiểm tra mạng hoặc trình duyệt rồi thử lại. (CONNECTION)'
+        : 'Không thể kết nối để xem trước lệnh. Kiểm tra mạng hoặc trình duyệt rồi thử lại. (CONNECTION)',
     DioExceptionType.badResponse =>
       'Máy chủ trả về phản hồi không hợp lệ. Vui lòng thử lại sau. (SERVER_RESPONSE)',
   };

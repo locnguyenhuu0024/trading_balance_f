@@ -34,12 +34,21 @@ void main() {
     );
   }
 
-  testWidgets('root navigation exposes six destinations and selected label', (
+  testWidgets('root navigation exposes eight destinations and selected label', (
     tester,
   ) async {
     await tester.pumpWidget(shellApp());
 
-    expect(TradingNavigationBar.items, hasLength(6));
+    expect(TradingNavigationBar.items.map((item) => item.id), [
+      'home',
+      'bmag',
+      'orders',
+      'market',
+      'settings',
+      'risk',
+      'support',
+      'strategy',
+    ]);
     expect(find.byKey(const Key('destination-body-0')), findsOneWidget);
     expect(find.text('Trang chủ'), findsOneWidget);
     expect(find.text('Thị trường'), findsNothing);
@@ -57,6 +66,16 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('destination-body-5')), findsOneWidget);
     expect(find.text('Risk'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('navigation-destination-6')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('destination-body-6')), findsOneWidget);
+    expect(find.text('Hỗ trợ'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('navigation-destination-7')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('destination-body-7')), findsOneWidget);
+    expect(find.text('Chiến Thuật'), findsOneWidget);
   });
 
   testWidgets(
@@ -130,31 +149,34 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     tester.view.devicePixelRatio = 1;
-    tester.view.physicalSize = const Size(390, 844);
+    const cases = <(double, double)>[(390, 46.75), (800, 50.6)];
 
-    await tester.pumpWidget(
-      shellApp(
-        navigationPreferences: const NavigationPreferences(
-          displayMode: NavigationDisplayMode.bar,
-          floatingEdge: NavigationEdge.bottom,
-          buttonScale: 1.1,
-          buttonOpacity: 0.75,
+    for (final testCase in cases) {
+      tester.view.physicalSize = Size(testCase.$1, 844);
+      await tester.pumpWidget(
+        shellApp(
+          navigationPreferences: const NavigationPreferences(
+            displayMode: NavigationDisplayMode.bar,
+            floatingEdge: NavigationEdge.bottom,
+            buttonScale: 1.1,
+            buttonOpacity: 0.75,
+          ),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
+      );
+      await tester.pumpAndSettle();
 
-    final indicator = tester.widget<AnimatedContainer>(
-      find.byKey(const Key('navigation-indicator-0')),
-    );
-    final indicatorRect = tester.getRect(
-      find.byKey(const Key('navigation-indicator-0')),
-    );
-    expect(
-      (indicator.decoration! as BoxDecoration).color!.a,
-      closeTo(0.75, 0.001),
-    );
-    expect(indicatorRect.width, closeTo(50.6, 0.1));
+      final indicator = tester.widget<AnimatedContainer>(
+        find.byKey(const Key('navigation-indicator-0')),
+      );
+      final indicatorRect = tester.getRect(
+        find.byKey(const Key('navigation-indicator-0')),
+      );
+      expect(
+        (indicator.decoration! as BoxDecoration).color!.a,
+        closeTo(0.75, 0.001),
+      );
+      expect(indicatorRect.width, closeTo(testCase.$2, 0.1));
+    }
   });
 
   testWidgets('order select controls update their selected values', (

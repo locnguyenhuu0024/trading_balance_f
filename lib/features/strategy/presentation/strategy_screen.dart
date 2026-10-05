@@ -10,6 +10,7 @@ import '../../orders/data/trade_api_client.dart';
 import '../../orders/presentation/providers/trade_session_provider.dart';
 import '../domain/strategy_models.dart';
 import 'providers/strategy_dashboard_provider.dart';
+import 'strategy_automatic_draft_dialog.dart';
 import 'strategy_number_formatter.dart';
 import 'strategy_retry_dialog.dart';
 import 'strategy_settings_dialog.dart';
@@ -120,19 +121,42 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
                           style: Theme.of(context).textTheme.titleLarge,
                         ),
                       ),
-                      IconButton(
-                        key: const Key('strategy-create-button'),
-                        tooltip: 'Dựng chiến thuật',
-                        onPressed: dashboard == null
-                            ? null
-                            : () => _openWizard(context, session, dashboard),
-                        constraints: const BoxConstraints(
-                          minWidth: 48,
-                          minHeight: 48,
-                        ),
-                        icon: const Icon(Icons.add),
-                      ),
                     ],
+                  ),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: Wrap(
+                      alignment: WrapAlignment.end,
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        IconButton(
+                          key: const Key('strategy-create-button'),
+                          tooltip: 'Dựng chiến thuật',
+                          onPressed: dashboard == null
+                              ? null
+                              : () => _openWizard(context, session, dashboard),
+                          constraints: const BoxConstraints(
+                            minWidth: 48,
+                            minHeight: 48,
+                          ),
+                          icon: const Icon(Icons.add),
+                        ),
+                        FilledButton.tonalIcon(
+                          key: const Key('strategy-automatic-create-button'),
+                          onPressed: dashboard == null
+                              ? null
+                              : () => _openAutomaticWizard(
+                                  context,
+                                  session,
+                                  dashboard,
+                                ),
+                          icon: const Icon(Icons.auto_awesome_outlined),
+                          label: const Text('Dựng chiến thuật tự động'),
+                        ),
+                      ],
+                    ),
                   ),
                   const SizedBox(height: 12),
                   if (dashboard?.loadError != null)
@@ -203,6 +227,7 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
   ) {
     final id = _text(strategy['id']);
     final status = _text(strategy['status']).toUpperCase();
+    final candidateStage = _text(strategy['draftStage']) == 'candidates';
     final currentStrategy = () =>
         dashboard.ownsSession ? dashboard.strategyById(id) : null;
     final oversizedDraft =
@@ -213,7 +238,22 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
     return _StrategyActions(
       actionBusy: dashboard.isActionInFlight(id),
       blockApply: oversizedDraft,
-      onReplace: _canReplaceStrategy(strategy)
+      onReview: candidateStage && strategy['canReview'] == true
+          ? () {
+              final current = currentStrategy();
+              if (current != null &&
+                  _text(current['draftStage']) == 'candidates' &&
+                  current['canReview'] == true) {
+                _openWizard(
+                  context,
+                  session,
+                  dashboard,
+                  initialCandidateDraft: current,
+                );
+              }
+            }
+          : null,
+      onReplace: !candidateStage && _canReplaceStrategy(strategy)
           ? () {
               final current = currentStrategy();
               if (current != null && _canReplaceStrategy(current)) {
@@ -226,7 +266,7 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
               }
             }
           : null,
-      onApply: status == 'DRAFT'
+      onApply: status == 'DRAFT' && !candidateStage
           ? () {
               final current = currentStrategy();
               if (!oversizedDraft &&
@@ -235,7 +275,7 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
               }
             }
           : null,
-      onRetry: const {'DRAFT', 'PREPARED'}.contains(status)
+      onRetry: candidateStage || const {'DRAFT', 'PREPARED'}.contains(status)
           ? null
           : () {
               final current = currentStrategy();
@@ -272,6 +312,7 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
     TradeSession session,
     StrategyDashboardController dashboard, {
     String? replacementSourceId,
+    Map<String, dynamic>? initialCandidateDraft,
   }) {
     showDialog<void>(
       context: context,
@@ -281,8 +322,46 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
         dashboard: dashboard,
         onSaved: dashboard.refresh,
         replacementSourceId: replacementSourceId,
+        initialCandidateDraft: initialCandidateDraft,
       ),
     );
+  }
+
+  Future<void> _openAutomaticWizard(
+    BuildContext context,
+    TradeSession session,
+    StrategyDashboardController dashboard,
+  ) async {
+    final candidateDraft = await showDialog<Map<String, dynamic>>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) =>
+          StrategyAutomaticDraftDialog(session: session, dashboard: dashboard),
+    );
+    if (!context.mounted ||
+        candidateDraft == null ||
+        !dashboard.ownsSession ||
+        !_sessionMatches(session)) {
+      return;
+    }
+    await dashboard.refresh();
+    if (!context.mounted ||
+        !dashboard.ownsSession ||
+        !_sessionMatches(session)) {
+      return;
+    }
+    _openWizard(
+      context,
+      session,
+      dashboard,
+      initialCandidateDraft: candidateDraft,
+    );
+  }
+
+  bool _sessionMatches(TradeSession session) {
+    final state = ref.read(tradeSessionProvider);
+    return state.isAuthenticated &&
+        state.session?.bearerToken == session.bearerToken;
   }
 
   void _openSettings(
@@ -511,6 +590,7 @@ class _StrategyActions {
   const _StrategyActions({
     required this.actionBusy,
     required this.blockApply,
+    required this.onReview,
     required this.onReplace,
     required this.onApply,
     required this.onRetry,
@@ -520,6 +600,7 @@ class _StrategyActions {
 
   final bool actionBusy;
   final bool blockApply;
+  final VoidCallback? onReview;
   final VoidCallback? onReplace;
   final VoidCallback? onApply;
   final VoidCallback? onRetry;
@@ -920,6 +1001,13 @@ class _StrategyActionFooter extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final children = <Widget>[
+      if (actions.onReview != null)
+        _button(
+          key: Key('strategy-review-$strategyId'),
+          tooltip: 'Xem lại ứng viên',
+          icon: Icons.rate_review_outlined,
+          onPressed: actions.onReview,
+        ),
       if (actions.onReplace != null)
         _button(
           key: Key('strategy-replace-$strategyId'),
@@ -1383,6 +1471,9 @@ double? _finiteNumber(Object? value) {
 }
 
 String _summaryStatusLabel(Map<String, dynamic> strategy) {
+  if (_text(strategy['draftStage']) == 'candidates') {
+    return 'Chờ xem xét';
+  }
   if (_isAllCanceledStrategy(strategy)) return 'Đã hủy';
   if (_isNeverSentStrategy(strategy)) return 'Chưa gửi';
   return _statusLabel(_text(strategy['status']).toUpperCase());

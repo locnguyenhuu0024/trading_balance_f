@@ -21,12 +21,14 @@ class StrategyWizardDialog extends ConsumerStatefulWidget {
     required this.dashboard,
     required this.onSaved,
     this.replacementSourceId,
+    this.initialCandidateDraft,
   });
 
   final TradeSession session;
   final StrategyDashboardController dashboard;
   final Future<void> Function() onSaved;
   final String? replacementSourceId;
+  final Map<String, dynamic>? initialCandidateDraft;
 
   @override
   ConsumerState<StrategyWizardDialog> createState() =>
@@ -40,6 +42,8 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
   final _longPercentController = TextEditingController(text: '50');
   final Map<String, StrategySelectedLevel> _selected = {};
   final Map<StrategySide, String> _entries = {};
+  final Map<String, Map<String, dynamic>> _candidateAssessments = {};
+  final Map<String, int> _candidateRanks = {};
   List<StrategyInstrument> _instruments = const [];
   StrategyMarketSnapshot? _snapshot;
   StrategyInterval _interval = StrategyInterval.h6;
@@ -58,6 +62,9 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
   bool _isSaving = false;
   int _marketGeneration = 0;
   int _inputGeneration = 0;
+  String? _candidateDraftId;
+
+  bool get _isReviewingCandidates => widget.initialCandidateDraft != null;
 
   StrategyMarketRepository get _market =>
       ref.read(strategyMarketRepositoryProvider);
@@ -73,7 +80,160 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
   @override
   void initState() {
     super.initState();
-    unawaited(_loadInstruments());
+    final candidateDraft = widget.initialCandidateDraft;
+    if (candidateDraft == null) {
+      unawaited(_loadInstruments());
+    } else {
+      _initializeCandidateDraft(candidateDraft);
+    }
+  }
+
+  void _initializeCandidateDraft(Map<String, dynamic> draft) {
+    try {
+      final aiGeneration = _asMap(draft['aiGeneration']).isNotEmpty
+          ? _asMap(draft['aiGeneration'])
+          : _asMap(_asMap(draft['snapshot'])['aiGeneration']);
+      final instrumentId = _text(draft['instrumentId']).isNotEmpty
+          ? _text(draft['instrumentId'])
+          : _text(aiGeneration['instrumentId']);
+      final intervalText = _text(draft['interval']).isNotEmpty
+          ? _text(draft['interval'])
+          : _text(aiGeneration['interval']);
+      final interval = StrategyInterval.values.where(
+        (value) => value.bar == intervalText,
+      );
+      final referenceText = _text(aiGeneration['referencePrice']);
+      final reference = StrategyDecimal.tryParse(referenceText);
+      final snapshotData = _asMap(aiGeneration['evaluationSnapshot']);
+      final observedAtText = _text(aiGeneration['observedAt']).isNotEmpty
+          ? _text(aiGeneration['observedAt'])
+          : _text(snapshotData['observedAt']);
+      final observedAt = DateTime.tryParse(observedAtText);
+      final draftId = _text(draft['id']).trim();
+      if (draftId.isEmpty ||
+          instrumentId.isEmpty ||
+          !RegExp(r'^[A-Z0-9]+-USDT-SWAP$').hasMatch(instrumentId) ||
+          interval.isEmpty ||
+          !const {
+            StrategyInterval.h6,
+            StrategyInterval.d1,
+            StrategyInterval.w1,
+          }.contains(interval.first) ||
+          reference == null ||
+          !reference.isPositive ||
+          !reference.toDouble().isFinite ||
+          observedAt == null ||
+          !observedAt.isUtc ||
+          aiGeneration['supports'] is! List ||
+          aiGeneration['resistances'] is! List) {
+        throw const FormatException('invalid saved candidate snapshot');
+      }
+      final selectedInterval = interval.first;
+      final supports = _parseCandidateLevels(
+        aiGeneration['supports'],
+        StrategySide.long,
+      );
+      final resistances = _parseCandidateLevels(
+        aiGeneration['resistances'],
+        StrategySide.short,
+      );
+      final ticker = StrategyTicker(
+        instrumentId: instrumentId,
+        lastPrice: reference.toDouble(),
+        observedAt: observedAt,
+        exactPriceText: reference.toString(),
+      );
+      _candidateDraftId = draftId;
+      _instrumentId = instrumentId;
+      _interval = selectedInterval;
+      _direction = _StrategyDirection.both;
+      _isLoadingInstruments = false;
+      _instruments = [
+        StrategyInstrument(
+          instrumentId: instrumentId,
+          base: instrumentId.split('-').first,
+          tickSizeText: _text(aiGeneration['tickSize']),
+        ),
+      ];
+      _snapshot = StrategyMarketSnapshot(
+        instrumentId: instrumentId,
+        interval: selectedInterval,
+        ticker: ticker,
+        candles: const [],
+        analysis: StrategyAnalysis(
+          referencePrice: reference.toDouble(),
+          exactReferencePriceText: reference.toString(),
+          supports: supports,
+          resistances: resistances,
+        ),
+      );
+    } on Object catch (_) {
+      _isLoadingInstruments = false;
+      _marketError = 'Bản chụp ứng viên đã lưu không thể mở để xem xét.';
+    }
+  }
+
+  List<StrategyLevel> _parseCandidateLevels(
+    Object? value,
+    StrategySide expectedSide,
+  ) {
+    if (value is! List) throw const FormatException('invalid candidates');
+    final levels = <StrategyLevel>[];
+    for (final raw in value) {
+      final candidate = _asMap(raw);
+      final levelId = _text(candidate['levelId']);
+      final priceText = _text(candidate['price']);
+      final exactPrice = StrategyDecimal.tryParse(priceText);
+      final side = _text(candidate['side']);
+      final touchCount = candidate['touchCount'];
+      final generationOrder = candidate['generationOrder'];
+      final rank = candidate['rank'];
+      final firstTouchAt = DateTime.tryParse(_text(candidate['firstTouchAt']));
+      final lastTouchAt = DateTime.tryParse(_text(candidate['lastTouchAt']));
+      if (!RegExp(r'^[A-Za-z0-9_-]{1,128}$').hasMatch(levelId) ||
+          exactPrice == null ||
+          exactPrice.coefficient.isNegative ||
+          (exactPrice.coefficient == BigInt.zero &&
+              expectedSide != StrategySide.long) ||
+          side != expectedSide.wireValue ||
+          touchCount is! int ||
+          touchCount < 1 ||
+          generationOrder is! int ||
+          generationOrder < 0 ||
+          rank is! int ||
+          rank < 1 ||
+          firstTouchAt == null ||
+          !firstTouchAt.isUtc ||
+          lastTouchAt == null ||
+          !lastTouchAt.isUtc ||
+          lastTouchAt.isBefore(firstTouchAt) ||
+          _candidateAssessments.containsKey(levelId)) {
+        throw const FormatException('invalid candidate level');
+      }
+      final rawAssessment = _asMap(candidate['assessment']);
+      final assessmentStatus = _text(rawAssessment['status']);
+      final assessment = <String, dynamic>{
+        ...rawAssessment,
+        'status':
+            const {'success', 'failed', 'disabled'}.contains(assessmentStatus)
+            ? assessmentStatus
+            : 'unavailable',
+      };
+      _candidateAssessments[levelId] = assessment;
+      _candidateRanks[levelId] = rank;
+      levels.add(
+        StrategyLevel(
+          price: exactPrice.toDouble(),
+          firstTouchAt: firstTouchAt,
+          lastTouchAt: lastTouchAt,
+          touchCount: touchCount,
+          side: expectedSide,
+          exactPriceText: exactPrice.toString(),
+          levelId: levelId,
+        ),
+      );
+    }
+    return List.unmodifiable(levels);
   }
 
   @override
@@ -185,6 +345,8 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
   };
 
   void _toggleLevel(StrategySide side, StrategyLevel level, bool selected) {
+    final parsedPrice = StrategyDecimal.tryParse(level.priceText);
+    if (selected && (parsedPrice == null || !parsedPrice.isPositive)) return;
     final item = StrategySelectedLevel(
       side: side,
       price: level.price,
@@ -452,6 +614,10 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
     final sourceId = widget.replacementSourceId?.trim();
     if (sourceId != null && sourceId.isNotEmpty) {
       body['replacementSourceId'] = sourceId;
+    }
+    final candidateDraftId = _candidateDraftId;
+    if (candidateDraftId != null) {
+      body['candidateDraftId'] = candidateDraftId;
     }
     return body;
   }
@@ -741,7 +907,10 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
   Widget _buildSelectionStep(BuildContext context) {
     final snapshot = _snapshot;
     final pickerEnabled =
-        !_isLoadingInstruments && !_isLoadingLevels && !_isSaving;
+        !_isReviewingCandidates &&
+        !_isLoadingInstruments &&
+        !_isLoadingLevels &&
+        !_isSaving;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -771,7 +940,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
                     DropdownMenuItem(value: value, child: Text(value.label)),
               )
               .toList(growable: false),
-          onChanged: _isLoadingLevels || _isSaving
+          onChanged: _isLoadingLevels || _isSaving || _isReviewingCandidates
               ? null
               : (value) {
                   if (value != null && _instrumentId != null) {
@@ -811,7 +980,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
           _WizardNotice(
             message: _marketError!,
             error: true,
-            onRetry: _loadInstruments,
+            onRetry: _isReviewingCandidates ? null : _loadInstruments,
           ),
         if (snapshot != null) ...[
           _quoteBanner(snapshot.ticker),
@@ -821,8 +990,12 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
             key: const Key('strategy-selection-count'),
           ),
           const SizedBox(height: 8),
-          Text('${snapshot.candles.length} nến UTC đã xác nhận · tối đa 500'),
-          if (snapshot.candles.length < 5)
+          Text(
+            _isReviewingCandidates
+                ? 'Bản chụp ứng viên đã lưu lúc ${_dateTime(snapshot.ticker.observedAt)}'
+                : '${snapshot.candles.length} nến UTC đã xác nhận · tối đa 500',
+          ),
+          if (!_isReviewingCandidates && snapshot.candles.length < 5)
             const _WizardNotice(
               message:
                   'Dữ liệu còn thưa; cần ít nhất 5 nến hợp lệ để tìm vùng giá.',
@@ -839,7 +1012,14 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
               StrategySide.short,
               snapshot.analysis.resistances,
             ),
-          if (!_isLoadingLevels && _selectionOrNull() == null)
+          if (_isReviewingCandidates &&
+              snapshot.analysis.supports.isEmpty &&
+              snapshot.analysis.resistances.isEmpty)
+            const _WizardNotice(
+              message:
+                  'Bản chụp đã lưu không có mức hỗ trợ hoặc kháng cự để chọn.',
+            )
+          else if (!_isLoadingLevels && _selectionOrNull() == null)
             _WizardNotice(
               message: _direction == _StrategyDirection.both
                   ? 'Chọn ít nhất một mức Long và một mức Short, cùng điểm vào gần nhất cho mỗi phía.'
@@ -918,6 +1098,8 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
                 key: ValueKey('strategy-level-${level.id}'),
                 side: side,
                 level: level,
+                candidateAssessment: _candidateAssessments[level.id],
+                candidateRank: _candidateRanks[level.id],
                 referencePrice: _snapshot!.ticker.lastPrice,
                 selected: _selected.containsKey(level.id),
                 entryLevelId: _entries[side],
@@ -1257,6 +1439,8 @@ class _StrategyLevelCard extends StatelessWidget {
     super.key,
     required this.side,
     required this.level,
+    this.candidateAssessment,
+    this.candidateRank,
     required this.referencePrice,
     required this.selected,
     required this.entryLevelId,
@@ -1267,6 +1451,8 @@ class _StrategyLevelCard extends StatelessWidget {
 
   final StrategySide side;
   final StrategyLevel level;
+  final Map<String, dynamic>? candidateAssessment;
+  final int? candidateRank;
   final double referencePrice;
   final bool selected;
   final String? entryLevelId;
@@ -1284,7 +1470,9 @@ class _StrategyLevelCard extends StatelessWidget {
         children: [
           CheckboxListTile(
             value: selected,
-            onChanged: (value) => onSelected(value ?? false),
+            onChanged: level.price > 0
+                ? (value) => onSelected(value ?? false)
+                : null,
             title: Text(
               '${StrategyNumberFormatter.amount(level.priceText)} USDT',
             ),
@@ -1296,6 +1484,19 @@ class _StrategyLevelCard extends StatelessWidget {
             ),
             controlAffinity: ListTileControlAffinity.leading,
           ),
+          if (level.price == 0)
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Mức giá bằng 0 nên không thể chọn làm lệnh.'),
+              ),
+            ),
+          if (candidateRank != null && candidateAssessment != null)
+            _CandidateAssessmentSummary(
+              rank: candidateRank!,
+              assessment: candidateAssessment!,
+            ),
           if (selected)
             RadioListTile<String>(
               value: level.id,
@@ -1309,6 +1510,81 @@ class _StrategyLevelCard extends StatelessWidget {
       ),
     );
   }
+}
+
+class _CandidateAssessmentSummary extends StatelessWidget {
+  const _CandidateAssessmentSummary({
+    required this.rank,
+    required this.assessment,
+  });
+
+  final int rank;
+  final Map<String, dynamic> assessment;
+
+  @override
+  Widget build(BuildContext context) {
+    final status = _text(assessment['status']);
+    final statusLabel = switch (status) {
+      'success' => 'Jev: đã đánh giá',
+      'disabled' => 'Jev: chưa bật',
+      'failed' => 'Jev: đánh giá không thành công',
+      _ => 'Jev: chưa có dữ liệu',
+    };
+    final quality = _finiteInRange(assessment['structuralQuality'], 0, 5);
+    final suitability = _finiteInRange(
+      assessment['entrySuitabilityProbability'],
+      0,
+      1,
+    );
+    final failureRisk = _finiteInRange(
+      assessment['failureRiskProbability'],
+      0,
+      1,
+    );
+    final errorCode = _text(assessment['errorCode']);
+    final safeErrorCode = RegExp(r'^[A-Za-z0-9_-]{1,32}$').hasMatch(errorCode)
+        ? errorCode
+        : '';
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Hạng Jev: $rank'),
+          Wrap(
+            spacing: 12,
+            runSpacing: 4,
+            children: [
+              Text(statusLabel),
+              Text(
+                'Chất lượng: ${quality == null ? 'chưa có' : '${quality.toStringAsFixed(1)}/5'}',
+              ),
+              Text(
+                'Phù hợp điểm vào: ${suitability == null ? 'chưa có' : '${(suitability * 100).toStringAsFixed(1)}%'}',
+              ),
+              Text(
+                'Rủi ro thất bại: ${failureRisk == null ? 'chưa có' : '${(failureRisk * 100).toStringAsFixed(1)}%'}',
+              ),
+            ],
+          ),
+          if (safeErrorCode.isNotEmpty) Text('Mã đánh giá: $safeErrorCode'),
+        ],
+      ),
+    );
+  }
+}
+
+double? _finiteInRange(Object? value, double minimum, double maximum) {
+  final parsed = value is num
+      ? value.toDouble()
+      : double.tryParse(_text(value));
+  if (parsed == null ||
+      !parsed.isFinite ||
+      parsed < minimum ||
+      parsed > maximum) {
+    return null;
+  }
+  return parsed;
 }
 
 class _PreviewOrderCard extends StatelessWidget {

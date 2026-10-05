@@ -12,6 +12,121 @@ import 'package:trading_balance_f/features/strategy/presentation/providers/strat
 import 'package:trading_balance_f/features/strategy/presentation/strategy_wizard_dialog.dart';
 
 void main() {
+  testWidgets(
+    'empty saved candidate snapshots stay open without regenerating',
+    (tester) async {
+      final market = _FakeStrategyMarketRepository();
+      final api = _FakeStrategyApi();
+      final dashboard = _dashboard(api, market);
+      addTearDown(dashboard.dispose);
+      final draft = _savedCandidateDraft(includeSupport: false);
+      await _pumpWizard(
+        tester,
+        market,
+        api,
+        dashboard,
+        initialCandidateDraft: draft,
+      );
+
+      expect(
+        find.text('Bản chụp đã lưu không có mức hỗ trợ hoặc kháng cự để chọn.'),
+        findsOneWidget,
+      );
+      expect(market.loadCalls, isEmpty);
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.byKey(const Key('strategy-next-step-one')),
+            )
+            .onPressed,
+        isNull,
+      );
+    },
+  );
+
+  testWidgets('zero support is visible but disabled while valid rows remain', (
+    tester,
+  ) async {
+    final market = _FakeStrategyMarketRepository();
+    final api = _FakeStrategyApi();
+    final dashboard = _dashboard(api, market);
+    addTearDown(dashboard.dispose);
+    await _pumpWizard(
+      tester,
+      market,
+      api,
+      dashboard,
+      initialCandidateDraft: _savedCandidateDraft(supportPrice: '0'),
+    );
+
+    final zeroRow = find.byKey(const Key('strategy-level-support-1'));
+    final validRow = find.byKey(const Key('strategy-level-support-malformed'));
+    expect(zeroRow, findsOneWidget);
+    expect(validRow, findsOneWidget);
+    expect(
+      find.text('Mức giá bằng 0 nên không thể chọn làm lệnh.'),
+      findsOneWidget,
+    );
+    final checkboxes = tester.widgetList<CheckboxListTile>(
+      find.byType(CheckboxListTile),
+    );
+    expect(checkboxes.first.onChanged, isNull);
+    expect(checkboxes.last.onChanged, isNotNull);
+    expect(find.text('Jev: đã đánh giá'), findsNWidgets(2));
+    expect(find.text('Chất lượng: chưa có'), findsNWidgets(2));
+    expect(find.text('Chất lượng: 3.5/5'), findsOneWidget);
+    expect(find.text('Phù hợp điểm vào: 70.0%'), findsOneWidget);
+    expect(find.text('Rủi ro thất bại: 20.0%'), findsOneWidget);
+    expect(market.loadCalls, isEmpty);
+  });
+
+  testWidgets(
+    'saved candidate review materializes through its original draft id',
+    (tester) async {
+      final market = _FakeStrategyMarketRepository();
+      final api = _FakeStrategyApi()..saveDraftId = 'candidate-draft-1';
+      final dashboard = _dashboard(api, market);
+      addTearDown(dashboard.dispose);
+      await _pumpWizard(
+        tester,
+        market,
+        api,
+        dashboard,
+        initialCandidateDraft: _savedCandidateDraft(),
+      );
+
+      expect(market.loadCalls, isEmpty);
+      expect(find.text('Jev: chưa bật'), findsOneWidget);
+      expect(
+        tester
+            .widgetList<CheckboxListTile>(find.byType(CheckboxListTile))
+            .every((checkbox) => checkbox.value == false),
+        isTrue,
+      );
+      await tester.tap(find.byKey(const Key('strategy-direction-select')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Long').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byType(CheckboxListTile).first);
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('strategy-next-step-one')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('strategy-margin-input')),
+        '100',
+      );
+      await tester.tap(find.byKey(const Key('strategy-request-preview')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('strategy-save-draft')));
+      await tester.pumpAndSettle();
+
+      expect(api.saveBodies, hasLength(1));
+      expect(api.saveBodies.single['candidateDraftId'], 'candidate-draft-1');
+      expect(api.saveDraftId, 'candidate-draft-1');
+      expect(market.loadCalls, isEmpty);
+    },
+  );
+
   testWidgets('account switch while wizard open disables old session preview', (
     tester,
   ) async {
@@ -801,6 +916,75 @@ Finder _selectedInstrument(String instrumentId) => find.descendant(
   matching: find.text(instrumentId),
 );
 
+Map<String, dynamic> _savedCandidateDraft({
+  String supportPrice = '90',
+  bool includeSupport = true,
+}) => {
+  'id': 'candidate-draft-1',
+  'instrumentId': 'BTC-USDT-SWAP',
+  'interval': '6Hutc',
+  'status': 'DRAFT',
+  'draftStage': 'candidates',
+  'canApply': false,
+  'canReview': true,
+  'aiGeneration': {
+    'version': 'ai-generation-v1',
+    'instrumentId': 'BTC-USDT-SWAP',
+    'interval': '6Hutc',
+    'tickSize': '0.01',
+    'referencePrice': '100',
+    'observedAt': '2030-01-01T00:00:00Z',
+    'supports': !includeSupport
+        ? <Object>[]
+        : [
+            {
+              'levelId': 'support-1',
+              'side': 'long',
+              'price': supportPrice,
+              'touchCount': 2,
+              'firstTouchAt': '2029-12-31T00:00:00Z',
+              'lastTouchAt': '2030-01-01T00:00:00Z',
+              'generationOrder': 0,
+              'rank': 1,
+              'assessment': {'status': 'disabled', 'errorCode': 'disabled'},
+            },
+            {
+              'levelId': 'support-assessed',
+              'side': 'long',
+              'price': '94',
+              'touchCount': 1,
+              'firstTouchAt': '2029-12-30T00:00:00Z',
+              'lastTouchAt': '2029-12-31T00:00:00Z',
+              'generationOrder': 1,
+              'rank': 2,
+              'assessment': {
+                'status': 'success',
+                'structuralQuality': 3.5,
+                'entrySuitabilityProbability': 0.7,
+                'failureRiskProbability': 0.2,
+              },
+            },
+            {
+              'levelId': 'support-malformed',
+              'side': 'long',
+              'price': '95',
+              'touchCount': 1,
+              'firstTouchAt': '2029-12-30T00:00:00Z',
+              'lastTouchAt': '2029-12-31T00:00:00Z',
+              'generationOrder': 2,
+              'rank': 3,
+              'assessment': {
+                'status': 'success',
+                'structuralQuality': 9,
+                'entrySuitabilityProbability': 1.5,
+                'failureRiskProbability': -0.1,
+              },
+            },
+          ],
+    'resistances': <Object>[],
+  },
+};
+
 StrategyDashboardController _dashboard(
   StrategyApi api,
   StrategyMarketRepository market,
@@ -816,6 +1000,7 @@ Future<void> _pumpWizard(
   StrategyApi api,
   StrategyDashboardController dashboard, {
   String? replacementSourceId,
+  Map<String, dynamic>? initialCandidateDraft,
   _AuthenticatedSessionController? sessionController,
 }) async {
   tester.view.physicalSize = const Size(1200, 1600);
@@ -849,6 +1034,7 @@ Future<void> _pumpWizard(
                   dashboard: dashboard,
                   onSaved: () async {},
                   replacementSourceId: replacementSourceId,
+                  initialCandidateDraft: initialCandidateDraft,
                 ),
               ),
               child: const Text('Open wizard'),
@@ -903,6 +1089,7 @@ class _FakeStrategyApi implements StrategyApi {
   int executeCalls = 0;
   int deleteCalls = 0;
   bool reportCleanupConflict = false;
+  String? saveDraftId;
 
   @override
   Future<StrategyRetryCandidates> getRetryCandidates(
@@ -966,7 +1153,7 @@ class _FakeStrategyApi implements StrategyApi {
     Map<String, dynamic> body,
   ) async {
     saveBodies.add(body);
-    return {'id': 'draft-1'};
+    return {'id': saveDraftId ?? 'draft-1'};
   }
 
   @override

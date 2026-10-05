@@ -6,6 +6,22 @@ import 'package:trading_balance_f/features/strategy/domain/strategy_models.dart'
 import 'package:trading_balance_f/features/strategy/presentation/providers/strategy_dashboard_provider.dart';
 
 void main() {
+  test('candidate-stage drafts cannot reach prepare or execute', () async {
+    final api = _FakeStrategyApi()..candidateStage = true;
+    final controller = _controller(api);
+    addTearDown(controller.dispose);
+    await controller.load();
+
+    final outcome = await controller.applyDraft(
+      'draft-1',
+      confirm: (_) async => true,
+    );
+
+    expect(outcome.kind, StrategyApplyOutcomeKind.rejected);
+    expect(api.prepareCalls, 0);
+    expect(api.executeCalls, 0);
+  });
+
   test(
     'logout during confirmation prevents execute and stale success',
     () async {
@@ -1165,6 +1181,7 @@ class _FakeStrategyApi implements StrategyApi {
   List<Map<String, dynamic>>? savedDraftOrders;
   String executeStatus = 'APPLIED';
   bool replacementCleanupConflict = false;
+  bool candidateStage = false;
   StrategyApiException? listError;
   bool failQuotes = false;
   Completer<Map<String, dynamic>>? quoteCompleter;
@@ -1178,6 +1195,7 @@ class _FakeStrategyApi implements StrategyApi {
       'instrumentId': 'BTC-USDT-SWAP',
       'interval': '6Hutc',
       'status': statuses[index],
+      if (index == 0 && candidateStage) 'draftStage': 'candidates',
       if (index == 0 && savedDraftOrders != null) 'orders': savedDraftOrders,
       'canDelete': canDeleteIds.contains(
         index == 0 ? 'draft-1' : 'strategy-$index',

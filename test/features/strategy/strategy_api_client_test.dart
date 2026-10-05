@@ -25,6 +25,63 @@ void main() {
     expect(StrategyRetryCandidate.tryParse(contradictoryCandidate), isNull);
   });
 
+  test(
+    'automatic drafts post the authenticated stable request payload',
+    () async {
+      final adapter = _TradeAdapter();
+      final client = StrategyApiClient(
+        baseUrl: 'https://trade.example.com',
+        dio: Dio(BaseOptions())..httpClientAdapter = adapter,
+      );
+
+      await client.createAutomaticDrafts(
+        'current-session-token',
+        instrumentId: 'btc-usdt-swap',
+        interval: '1Dutc',
+        requestId: 'auto-request_123456',
+      );
+
+      expect(adapter.requests, hasLength(1));
+      final request = adapter.requests.single;
+      expect(request.method, 'POST');
+      expect(request.uri.path, '/v1/strategies/automatic-drafts');
+      expect(request.headers['Authorization'], 'Bearer current-session-token');
+      expect(request.data, {
+        'instrumentId': 'BTC-USDT-SWAP',
+        'interval': '1Dutc',
+        'requestId': 'auto-request_123456',
+      });
+    },
+  );
+
+  test('automatic draft requests reject unsupported intervals and IDs', () {
+    final adapter = _TradeAdapter();
+    final client = StrategyApiClient(
+      baseUrl: 'https://trade.example.com',
+      dio: Dio(BaseOptions())..httpClientAdapter = adapter,
+    );
+
+    expect(
+      () => client.createAutomaticDrafts(
+        'current-session-token',
+        instrumentId: 'BTC-USDT-SWAP',
+        interval: '12Hutc',
+        requestId: 'automatic-request-123',
+      ),
+      throwsA(isA<StrategyApiException>()),
+    );
+    expect(
+      () => client.createAutomaticDrafts(
+        'current-session-token',
+        instrumentId: 'BTC-USDT-SWAP',
+        interval: '6Hutc',
+        requestId: 'short',
+      ),
+      throwsA(isA<StrategyApiException>()),
+    );
+    expect(adapter.requests, isEmpty);
+  });
+
   final unstructuredHttpFailures = [
     (status: 404, marker: 'HTTP 404', guidance: 'không tìm thấy'),
     (status: 429, marker: 'HTTP 429', guidance: 'quá thường xuyên'),

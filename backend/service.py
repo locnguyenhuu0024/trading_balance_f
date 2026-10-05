@@ -206,7 +206,8 @@ class TradeService:
             self._require_session(environ)
             if method == "POST":
                 self._check_action_rate("strategies", source)
-            return 200, self.strategy.dispatch(method, path, body), []
+            request_guard = lambda: self._require_session(environ)
+            return 200, self.strategy.dispatch(method, path, body, request_guard=request_guard), []
         if method == "POST" and path == "/v1/actions/prepare":
             self._require_session(environ)
             self._check_action_rate("prepare", source)

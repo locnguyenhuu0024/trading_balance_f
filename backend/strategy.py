@@ -17,6 +17,7 @@ from . import diagnostics
 from .security import new_confirmation_token, new_operation_id, token_digest
 from .service import APIError
 from .store import decode_json, encode_json
+from .strategy_automatic import AutomaticStrategyService
 from .strategy_queue import (
     initial_results,
     new_queue,
@@ -218,11 +219,24 @@ class StrategyService:
         self.store = owner.store
         self.okx = owner.okx
         self.clock = owner.clock
+        self.automatic = AutomaticStrategyService(self)
         self._quote_cache: dict[str, tuple[float, dict[str, str]]] = {}
         self._quote_cache_lock = threading.Lock()
         self._quote_instrument_locks: dict[str, threading.Lock] = {}
 
-    def dispatch(self, method: str, path: str, body: dict[str, Any]) -> dict[str, Any]:
+    def dispatch(
+        self,
+        method: str,
+        path: str,
+        body: dict[str, Any],
+        *,
+        request_guard: Callable[[], Any] | None = None,
+    ) -> dict[str, Any]:
+        automatic_response = self.automatic.dispatch(
+            method, path, body, request_guard=request_guard
+        )
+        if automatic_response is not None:
+            return automatic_response
         if path == "/v1/strategies/settings":
             if method == "GET":
                 return self._get_settings()
@@ -1409,6 +1423,7 @@ class StrategyService:
 
     def _retry_candidates(self, source_id: str) -> dict[str, Any]:
         context = self._retry_source_context(source_id)
+        self.automatic.assert_not_candidate(context["source"])
         diagnostics.emit_event(
             "selection", component="api", stage="retry_candidates", outcome="selected",
             selected_count=len(context["candidates"]),
@@ -1439,6 +1454,7 @@ class StrategyService:
                 "retry_selection_invalid", "The retry preview request is invalid.", 422
             )
         context = self._retry_source_context(source_id)
+        self.automatic.assert_not_candidate(context["source"])
         selected, selection_digest, ids = self._retry_selection(
             context, revision, body.get("sourceClientOrderIds")
         )
@@ -1562,6 +1578,7 @@ class StrategyService:
 
         # Replay lookup is intentionally before market reads, preview minting, or source writes.
         context = self._retry_source_context(source_id, reconcile=False)
+        self.automatic.assert_not_candidate(context["source"])
         existing = self._find_retry_request(context["children"], request_id)
         if existing is not None:
             replay_id = self._retry_replay(
@@ -2328,6 +2345,20 @@ class StrategyService:
             or not _STRATEGY_ID.fullmatch(replacement_source_id)
         ):
             raise self._invalid("replacement_source_id")
+        candidate_draft_id = body.get("candidateDraftId")
+        if candidate_draft_id is not None and (
+            not isinstance(candidate_draft_id, str)
+            or not _STRATEGY_ID.fullmatch(candidate_draft_id)
+        ):
+            raise APIError(422, "candidate_selection_invalid", "The saved candidate selection is invalid.")
+        if candidate_draft_id is not None and replacement_source_id is not None:
+            raise APIError(422, "candidate_selection_invalid", "Candidate drafts cannot use replacement lineage.")
+        candidate_draft: dict[str, Any] | None = None
+        if candidate_draft_id is not None:
+            _, initial_fingerprint = self._account()
+            candidate_draft = self.automatic.load_candidate_for_materialization(
+                candidate_draft_id, contract, initial_fingerprint
+            )
         expected = body.get("previewHash")
         if not isinstance(expected, str):
             raise APIError(400, "preview_required", "Submit the preview hash before saving a draft.")
@@ -2344,33 +2375,80 @@ class StrategyService:
         snapshot["_metadata"] = preview["_internal"]["metadata"]
         snapshot["_positionMode"] = preview["_internal"]["positionMode"]
         now = self.clock()
-        strategy_id = new_operation_id()
+        strategy_id = new_operation_id() if candidate_draft is None else candidate_draft["id"]
+        materialized_generation: dict[str, Any] | None = None
+        if candidate_draft is not None:
+            if not hmac.compare_digest(candidate_draft["accountFingerprint"], account_fingerprint):
+                raise APIError(409, "account_changed", "The active OKX account changed during review.")
+            self.automatic.verify_candidate_materialization(candidate_draft, contract)
+            materialized_generation = candidate_draft["snapshot"]["aiGeneration"]
+            snapshot["draftStage"] = "materialized"
+            snapshot["aiGeneration"] = materialized_generation
         with self.store.transaction() as connection:
-            if replacement_source_id is not None:
+            if candidate_draft is not None:
+                current_row = connection.execute(
+                    "SELECT * FROM strategies WHERE strategy_id=? AND account_fingerprint=?",
+                    (candidate_draft_id, account_fingerprint),
+                ).fetchone()
+                if current_row is None:
+                    raise APIError(409, "candidate_not_materializable", "The saved candidate draft changed before saving.")
+                current_candidate = self._decode_row(current_row)
+                self.automatic.verify_candidate_materialization(current_candidate, contract)
+                current_generation = current_candidate["snapshot"].get("aiGeneration")
+                if encode_json(current_generation) != encode_json(materialized_generation):
+                    raise APIError(409, "candidate_selection_mismatch", "The saved candidates changed before saving.")
+                changed = connection.execute(
+                    "UPDATE strategies SET status='DRAFT', contract_json=?, snapshot_json=?, orders_json=?, "
+                    "results_json=?, preview_hash=?, confirmation_hash=NULL, prepared_expires_at=NULL, "
+                    "prepared_json=NULL, attempt_started=0, batch_attempted=0, order_placement_attempted=0, "
+                    "queue_json=NULL, execution_id=NULL, execution_lease_until=NULL, replacement_source_id=NULL, "
+                    "failure_reason=NULL, leverage_results_json='[]', updated_at=? "
+                    "WHERE strategy_id=? AND account_fingerprint=? AND status='DRAFT' AND attempt_started=0",
+                    (
+                        encode_json(contract),
+                        encode_json(snapshot),
+                        encode_json(orders),
+                        encode_json([{**row, "status": "not_submitted", "filledContracts": "0"} for row in orders]),
+                        preview["previewHash"],
+                        now,
+                        strategy_id,
+                        account_fingerprint,
+                    ),
+                ).rowcount
+                if changed != 1:
+                    raise APIError(409, "candidate_not_materializable", "The saved candidate draft changed before saving.")
+            elif replacement_source_id is not None:
                 source_row = connection.execute(
                     "SELECT * FROM strategies WHERE strategy_id=? AND account_fingerprint=?",
                     (replacement_source_id, account_fingerprint),
                 ).fetchone()
+                source = None if source_row is None else self._decode_row(source_row)
+                if source is not None and self.automatic.is_candidate_stage(source):
+                    raise APIError(
+                        409, "candidate_not_materialized",
+                        "Candidate drafts cannot be used as replacement sources.",
+                    )
                 if source_row is None or not self._eligible_never_sent_record(
-                    connection, self._decode_row(source_row), account_fingerprint, now
+                    connection, source, account_fingerprint, now
                 ):
                     raise APIError(
                         409,
                         "replacement_source_unavailable",
                         "The never-sent source is no longer eligible for replacement.",
                     )
-            connection.execute(
-                "INSERT INTO strategies(strategy_id, account_fingerprint, status, contract_json, snapshot_json, "
-                "orders_json, results_json, preview_hash, replacement_source_id, submission_mode, "
-                "created_at, updated_at) "
-                "VALUES (?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
-                (
-                    strategy_id, account_fingerprint, encode_json(contract), encode_json(snapshot),
-                    encode_json(orders), encode_json([{**row, "status": "not_submitted", "filledContracts": "0"} for row in orders]),
-                    preview["previewHash"], replacement_source_id, now, now,
-                ),
-            )
-        return {
+            if candidate_draft is None:
+                connection.execute(
+                    "INSERT INTO strategies(strategy_id, account_fingerprint, status, contract_json, snapshot_json, "
+                    "orders_json, results_json, preview_hash, replacement_source_id, submission_mode, "
+                    "created_at, updated_at) "
+                    "VALUES (?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
+                    (
+                        strategy_id, account_fingerprint, encode_json(contract), encode_json(snapshot),
+                        encode_json(orders), encode_json([{**row, "status": "not_submitted", "filledContracts": "0"} for row in orders]),
+                        preview["previewHash"], replacement_source_id, now, now,
+                    ),
+                )
+        result = {
             "id": strategy_id,
             "status": "DRAFT",
             "submissionMode": None,
@@ -2383,6 +2461,10 @@ class StrategyService:
             "orders": orders,
             "preview": self._public_preview(snapshot),
         }
+        if candidate_draft is not None:
+            result["draftStage"] = "materialized"
+            result["aiGeneration"] = materialized_generation
+        return result
 
     def _retry_preflight_preview(
         self,
@@ -2536,6 +2618,7 @@ class StrategyService:
 
     def _prepare(self, strategy_id: str) -> dict[str, Any]:
         strategy, account, fingerprint = self._current_strategy(strategy_id)
+        self.automatic.assert_not_candidate(strategy)
         if strategy["attemptStarted"] or strategy["status"] not in ("DRAFT",):
             raise APIError(409, "strategy_immutable", "This strategy has already entered an application attempt.")
         self._ensure_new_order_cap(strategy)
@@ -2782,6 +2865,7 @@ class StrategyService:
         if not isinstance(token, str) or not token:
             raise APIError(400, "invalid_request", "A confirmation token is required.")
         strategy, account, fingerprint = self._current_strategy(strategy_id)
+        self.automatic.assert_not_candidate(strategy)
         if strategy["status"] != "PREPARED":
             diagnostics.emit_event(
                 "execute_noop", component="api", stage="execute", outcome="noop",
@@ -3372,6 +3456,12 @@ class StrategyService:
             "createdAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(strategy["createdAt"])),
             "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(strategy["updatedAt"])),
         }
+        draft_stage = strategy["snapshot"].get("draftStage")
+        ai_generation = strategy["snapshot"].get("aiGeneration")
+        if draft_stage is not None:
+            result["draftStage"] = draft_stage
+        if isinstance(ai_generation, dict):
+            result["aiGeneration"] = ai_generation
         lineage = self._public_retry_summary(strategy.get("contract"))
         if lineage is not None:
             result["resubmission"] = lineage
@@ -3382,6 +3472,11 @@ class StrategyService:
         return self._result_for(strategy, fingerprint)
 
     def _result_for(self, strategy: dict[str, Any], fingerprint: str) -> dict[str, Any]:
+        if self.automatic.is_candidate_stage(strategy):
+            _, current_fingerprint = self._account()
+            if not hmac.compare_digest(fingerprint, current_fingerprint):
+                raise APIError(409, "account_changed", "The active OKX account changed.")
+            return self.automatic.public_candidate_result(strategy)
         active_queue = (
             strategy["submissionMode"] == "sequential"
             and strategy["status"] == "APPLYING"
@@ -3677,6 +3772,36 @@ class StrategyService:
             current = self._decode_row(current_row)
             if not hmac.compare_digest(current["accountFingerprint"], fingerprint):
                 raise APIError(409, "account_changed", "This strategy belongs to a different OKX account.")
+            if self.automatic.is_candidate_stage(current):
+                reservation = connection.execute(
+                    "SELECT 1 FROM strategy_reservations WHERE strategy_id=? LIMIT 1",
+                    (strategy_id,),
+                ).fetchone()
+                replacement = connection.execute(
+                    "SELECT 1 FROM strategies WHERE replacement_source_id=? LIMIT 1",
+                    (strategy_id,),
+                ).fetchone()
+                safe_candidate = (
+                    current["status"] == "DRAFT"
+                    and not current["attemptStarted"]
+                    and not current["orderPlacementAttempted"]
+                    and not current["batchAttempted"]
+                    and current.get("prepared") is None
+                    and current.get("replacementSourceId") is None
+                    and current.get("executionId") is None
+                    and current.get("orders") == []
+                    and current.get("results") == []
+                    and reservation is None
+                    and replacement is None
+                )
+                if not safe_candidate:
+                    raise APIError(
+                        409,
+                        "strategy_immutable",
+                        "Order placement and lifecycle state are not safe for deletion.",
+                    )
+                self._delete_strategy_with_dependents(connection, strategy_id)
+                return {"id": strategy_id, "status": "DELETED"}
             if self._eligible_never_sent_record(connection, current, fingerprint, now):
                 self._delete_strategy_with_dependents(connection, strategy_id)
                 return {"id": strategy_id, "status": "DELETED"}
