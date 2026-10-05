@@ -39,6 +39,11 @@ _INTERVALS = ("6Hutc", "1Dutc", "1Wutc")
 _BARS = {"6Hutc": "6Hutc", "1Dutc": "1Dutc", "1Wutc": "1Wutc"}
 _CONTEXT_CANDLE_COUNT = 20
 _MAX_AGE_MS = 15_000
+_RECOMMENDATION_VERSION = "ai-jev-selection-v1"
+_RECOMMENDATION_MAX_PER_SIDE = 5
+_RECOMMENDATION_MIN_QUALITY = 4
+_RECOMMENDATION_MIN_SUITABILITY = 0.6
+_RECOMMENDATION_MAX_FAILURE_RISK = 0.4
 _ERROR_CODES = frozenset({
     "disabled", "key_missing", "sdk_unavailable", "settings_invalid",
     "deadline_exceeded", "timeout", "provider_error", "provider_unavailable",
@@ -680,6 +685,56 @@ class AutomaticStrategyService:
             candidate["rank"] = rank
 
     @staticmethod
+    def _recommendation(
+        supports: list[dict[str, Any]], resistances: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        def eligible_ids(candidates: list[dict[str, Any]], side: str) -> list[str]:
+            eligible: list[tuple[int, dict[str, Any]]] = []
+            seen_ids: set[str] = set()
+            for candidate in candidates:
+                if not isinstance(candidate, dict) or candidate.get("side") != side:
+                    continue
+                level_id = candidate.get("levelId")
+                rank = candidate.get("rank")
+                price = parse_decimal(candidate.get("price"))
+                assessment = candidate.get("assessment")
+                if (
+                    not isinstance(level_id, str) or not level_id or level_id in seen_ids
+                    or not isinstance(rank, int) or isinstance(rank, bool) or rank < 1
+                    or price is None or price <= 0
+                    or not isinstance(assessment, dict)
+                    or assessment.get("status") != "success"
+                ):
+                    continue
+                quality = _numeric(assessment.get("structuralQuality"), _RECOMMENDATION_MIN_QUALITY, 5)
+                suitability = _numeric(
+                    assessment.get("entrySuitabilityProbability"), _RECOMMENDATION_MIN_SUITABILITY, 1
+                )
+                failure_risk = _numeric(
+                    assessment.get("failureRiskProbability"), 0, _RECOMMENDATION_MAX_FAILURE_RISK
+                )
+                if quality is None or suitability is None or failure_risk is None:
+                    continue
+                seen_ids.add(level_id)
+                eligible.append((rank, candidate))
+
+            eligible.sort(key=lambda item: item[0])
+            return [
+                candidate["levelId"]
+                for _, candidate in eligible[:_RECOMMENDATION_MAX_PER_SIDE]
+            ]
+
+        return {
+            "version": _RECOMMENDATION_VERSION,
+            "maxPerSide": _RECOMMENDATION_MAX_PER_SIDE,
+            "minStructuralQuality": _RECOMMENDATION_MIN_QUALITY,
+            "minEntrySuitabilityProbability": _RECOMMENDATION_MIN_SUITABILITY,
+            "maxFailureRiskProbability": _RECOMMENDATION_MAX_FAILURE_RISK,
+            "longLevelIds": eligible_ids(supports, "long"),
+            "shortLevelIds": eligible_ids(resistances, "short"),
+        }
+
+    @staticmethod
     def _generation_snapshot(
         *,
         instrument_id: str,
@@ -717,6 +772,7 @@ class AutomaticStrategyService:
             "contextCandles": {
                 key: candle_metadata(rows) for key, rows in context_candles.items()
             },
+            "recommendation": AutomaticStrategyService._recommendation(supports, resistances),
             "supports": supports,
             "resistances": resistances,
         }

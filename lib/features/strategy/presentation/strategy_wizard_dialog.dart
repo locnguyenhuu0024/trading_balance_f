@@ -167,11 +167,137 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
           resistances: resistances,
         ),
       );
+      _applySavedRecommendation(
+        aiGeneration['recommendation'],
+        supports: supports,
+        resistances: resistances,
+      );
     } on Object catch (_) {
       _isLoadingInstruments = false;
       _marketError = 'Bản chụp ứng viên đã lưu không thể mở để xem xét.';
     }
   }
+
+  void _applySavedRecommendation(
+    Object? rawRecommendation, {
+    required List<StrategyLevel> supports,
+    required List<StrategyLevel> resistances,
+  }) {
+    _selected.clear();
+    _entries.clear();
+    _direction = _StrategyDirection.both;
+    if (rawRecommendation == null) {
+      _selectionNotice =
+          'Không có đề xuất Jev đã lưu; mọi mức bắt đầu chưa chọn.';
+      return;
+    }
+
+    final recommendation = _strictStringMap(rawRecommendation);
+    if (recommendation == null ||
+        recommendation['version'] != 'ai-jev-selection-v1' ||
+        recommendation['maxPerSide'] != 5 ||
+        !_recommendationNumberEquals(
+          recommendation['minStructuralQuality'],
+          4,
+        ) ||
+        !_recommendationNumberEquals(
+          recommendation['minEntrySuitabilityProbability'],
+          0.6,
+        ) ||
+        !_recommendationNumberEquals(
+          recommendation['maxFailureRiskProbability'],
+          0.4,
+        )) {
+      _selectionNotice =
+          'Đề xuất đã lưu không hợp lệ; mọi mức đã được bỏ chọn. Bạn có thể chọn thủ công.';
+      return;
+    }
+    final rawLongIds = recommendation['longLevelIds'];
+    final rawShortIds = recommendation['shortLevelIds'];
+    if (rawLongIds is! List ||
+        rawShortIds is! List ||
+        !rawLongIds.every((id) => id is String) ||
+        !rawShortIds.every((id) => id is String) ||
+        rawLongIds.length > 5 ||
+        rawShortIds.length > 5) {
+      _selectionNotice =
+          'Đề xuất đã lưu không hợp lệ; mọi mức đã được bỏ chọn. Bạn có thể chọn thủ công.';
+      return;
+    }
+
+    final longIds = List<String>.from(rawLongIds);
+    final shortIds = List<String>.from(rawShortIds);
+    final allIds = [...longIds, ...shortIds];
+    if (allIds.toSet().length != allIds.length) {
+      _selectionNotice =
+          'Đề xuất đã lưu không hợp lệ; mọi mức đã được bỏ chọn. Bạn có thể chọn thủ công.';
+      return;
+    }
+
+    final levelsBySide = <StrategySide, Map<String, StrategyLevel>>{
+      StrategySide.long: {for (final level in supports) level.id: level},
+      StrategySide.short: {for (final level in resistances) level.id: level},
+    };
+    final selections = <StrategySelectedLevel>[];
+    for (final (ids, side) in [
+      (longIds, StrategySide.long),
+      (shortIds, StrategySide.short),
+    ]) {
+      for (final id in ids) {
+        final level = levelsBySide[side]![id];
+        final exactPrice = StrategyDecimal.tryParse(level?.priceText);
+        if (level == null ||
+            exactPrice == null ||
+            !exactPrice.isPositive ||
+            !_hasValidSuccessfulAssessment(id)) {
+          _selectionNotice =
+              'Đề xuất đã lưu không hợp lệ; mọi mức đã được bỏ chọn. Bạn có thể chọn thủ công.';
+          return;
+        }
+        selections.add(
+          StrategySelectedLevel(
+            side: side,
+            price: level.price,
+            exactPriceText: exactPrice.toString(),
+            levelId: id,
+          ),
+        );
+      }
+    }
+
+    for (final selection in selections) {
+      _selected[selection.id] = selection;
+    }
+    final hasLong = longIds.isNotEmpty;
+    final hasShort = shortIds.isNotEmpty;
+    _direction = switch ((hasLong, hasShort)) {
+      (true, false) => _StrategyDirection.long,
+      (false, true) => _StrategyDirection.short,
+      _ => _StrategyDirection.both,
+    };
+    if (allIds.isEmpty) {
+      _selectionNotice =
+          'Không có mức nào đạt tiêu chí Jev; bạn có thể chọn thủ công.';
+    }
+    _moveEntriesToNearest();
+  }
+
+  bool _hasValidSuccessfulAssessment(String levelId) {
+    final assessment = _candidateAssessments[levelId];
+    if (assessment == null || assessment['status'] != 'success') return false;
+    return _finiteInRange(assessment['structuralQuality'], 0, 5) != null &&
+        _finiteInRange(assessment['entrySuitabilityProbability'], 0, 1) !=
+            null &&
+        _finiteInRange(assessment['failureRiskProbability'], 0, 1) != null;
+  }
+
+  bool _recommendationNumberEquals(Object? value, num expected) =>
+      value is num && value.toDouble().isFinite && value == expected;
+
+  Map<String, dynamic>? _strictStringMap(Object? value) =>
+      value is Map && value.keys.every((key) => key is String)
+      ? Map<String, dynamic>.from(value)
+      : null;
 
   List<StrategyLevel> _parseCandidateLevels(
     Object? value,
@@ -1027,7 +1153,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
               error: true,
             ),
           if (_selectionNotice != null)
-            _WizardNotice(message: _selectionNotice!, error: true),
+            _WizardNotice(message: _selectionNotice!),
         ],
         if (_workflowError != null)
           _WizardNotice(message: _workflowError!, error: true),

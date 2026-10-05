@@ -13,6 +13,168 @@ import 'package:trading_balance_f/features/strategy/presentation/strategy_wizard
 
 void main() {
   testWidgets(
+    'saved Jev recommendations preselect exact five-per-side IDs and nearest entries',
+    (tester) async {
+      final market = _FakeStrategyMarketRepository();
+      final api = _FakeStrategyApi();
+      final dashboard = _dashboard(api, market);
+      addTearDown(dashboard.dispose);
+      await _pumpWizard(
+        tester,
+        market,
+        api,
+        dashboard,
+        initialCandidateDraft: _candidateDraftWithRecommendation(
+          longIds: const ['long-1', 'long-2', 'long-3', 'long-4', 'long-5'],
+          shortIds: const [
+            'short-1',
+            'short-2',
+            'short-3',
+            'short-4',
+            'short-5',
+          ],
+        ),
+      );
+
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('strategy-direction-select')),
+          matching: find.text('Long và Short'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Đã chọn 10/10 lệnh · Long 5 · Short 5'),
+        findsOneWidget,
+      );
+      for (var index = 1; index <= 6; index++) {
+        final longCheckbox = tester.widget<CheckboxListTile>(
+          find.descendant(
+            of: find.byKey(Key('strategy-level-long-$index')),
+            matching: find.byType(CheckboxListTile),
+          ),
+        );
+        final shortCheckbox = tester.widget<CheckboxListTile>(
+          find.descendant(
+            of: find.byKey(Key('strategy-level-short-$index')),
+            matching: find.byType(CheckboxListTile),
+          ),
+        );
+        expect(longCheckbox.value, index <= 5);
+        expect(shortCheckbox.value, index <= 5);
+      }
+      final entryIds = tester
+          .widgetList<RadioListTile<String>>(find.byType(RadioListTile<String>))
+          .map((radio) => radio.groupValue)
+          .toSet();
+      expect(entryIds, containsAll({'long-1', 'short-1'}));
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.byKey(const Key('strategy-next-step-one')),
+            )
+            .onPressed,
+        isNotNull,
+      );
+      expect(market.loadCalls, isEmpty);
+    },
+  );
+
+  testWidgets('one-sided recommendation derives Long and empty derives Both', (
+    tester,
+  ) async {
+    final market = _FakeStrategyMarketRepository();
+    final api = _FakeStrategyApi();
+    final dashboard = _dashboard(api, market);
+    addTearDown(dashboard.dispose);
+    await _pumpWizard(
+      tester,
+      market,
+      api,
+      dashboard,
+      initialCandidateDraft: _candidateDraftWithRecommendation(
+        longIds: const ['long-1'],
+        shortIds: const [],
+      ),
+    );
+
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('strategy-direction-select')),
+        matching: find.text('Long'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Đã chọn 1/10 lệnh · Long 1 · Short 0'), findsOneWidget);
+    expect(
+      find.text('Không có mức nào đạt tiêu chí Jev; bạn có thể chọn thủ công.'),
+      findsNothing,
+    );
+
+    final emptyMarket = _FakeStrategyMarketRepository();
+    final emptyApi = _FakeStrategyApi();
+    final emptyDashboard = _dashboard(emptyApi, emptyMarket);
+    addTearDown(emptyDashboard.dispose);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await _pumpWizard(
+      tester,
+      emptyMarket,
+      emptyApi,
+      emptyDashboard,
+      initialCandidateDraft: _candidateDraftWithRecommendation(
+        longIds: const [],
+        shortIds: const [],
+      ),
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('strategy-direction-select')),
+        matching: find.text('Long và Short'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Đã chọn 0/10 lệnh · Long 0 · Short 0'), findsOneWidget);
+    expect(
+      find.text('Không có mức nào đạt tiêu chí Jev; bạn có thể chọn thủ công.'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('malformed recommendation clears both sides atomically', (
+    tester,
+  ) async {
+    final market = _FakeStrategyMarketRepository();
+    final api = _FakeStrategyApi();
+    final dashboard = _dashboard(api, market);
+    addTearDown(dashboard.dispose);
+    await _pumpWizard(
+      tester,
+      market,
+      api,
+      dashboard,
+      initialCandidateDraft: _candidateDraftWithRecommendation(
+        longIds: const ['long-1'],
+        shortIds: const ['missing-level'],
+      ),
+    );
+
+    expect(
+      tester
+          .widgetList<CheckboxListTile>(find.byType(CheckboxListTile))
+          .every((checkbox) => checkbox.value == false),
+      isTrue,
+    );
+    expect(find.text('Đã chọn 0/10 lệnh · Long 0 · Short 0'), findsOneWidget);
+    expect(
+      find.text(
+        'Đề xuất đã lưu không hợp lệ; mọi mức đã được bỏ chọn. Bạn có thể chọn thủ công.',
+      ),
+      findsOneWidget,
+    );
+    expect(market.loadCalls, isEmpty);
+  });
+
+  testWidgets(
     'empty saved candidate snapshots stay open without regenerating',
     (tester) async {
       final market = _FakeStrategyMarketRepository();
@@ -33,6 +195,10 @@ void main() {
         findsOneWidget,
       );
       expect(market.loadCalls, isEmpty);
+      expect(
+        find.text('Không có đề xuất Jev đã lưu; mọi mức bắt đầu chưa chọn.'),
+        findsOneWidget,
+      );
       expect(
         tester
             .widget<FilledButton>(
@@ -982,6 +1148,65 @@ Map<String, dynamic> _savedCandidateDraft({
             },
           ],
     'resistances': <Object>[],
+  },
+};
+
+Map<String, dynamic> _candidateDraftWithRecommendation({
+  required List<String> longIds,
+  required List<String> shortIds,
+}) {
+  final draft = _savedCandidateDraft();
+  final generation = draft['aiGeneration'] as Map<String, dynamic>;
+  generation['supports'] = List.generate(6, (index) {
+    final rank = index + 1;
+    return _recommendedCandidate(
+      id: 'long-$rank',
+      side: 'long',
+      price: (96 - (index * 2)).toString(),
+      rank: rank,
+    );
+  });
+  generation['resistances'] = List.generate(6, (index) {
+    final rank = index + 1;
+    return _recommendedCandidate(
+      id: 'short-$rank',
+      side: 'short',
+      price: (104 + (index * 2)).toString(),
+      rank: rank,
+    );
+  });
+  generation['recommendation'] = {
+    'version': 'ai-jev-selection-v1',
+    'maxPerSide': 5,
+    'minStructuralQuality': 4,
+    'minEntrySuitabilityProbability': 0.6,
+    'maxFailureRiskProbability': 0.4,
+    'longLevelIds': longIds,
+    'shortLevelIds': shortIds,
+  };
+  return draft;
+}
+
+Map<String, dynamic> _recommendedCandidate({
+  required String id,
+  required String side,
+  required String price,
+  required int rank,
+}) => {
+  'levelId': id,
+  'side': side,
+  'price': price,
+  'touchCount': 1,
+  'firstTouchAt': '2029-12-30T00:00:00Z',
+  'lastTouchAt': '2029-12-31T00:00:00Z',
+  'generationOrder': rank - 1,
+  'rank': rank,
+  'assessment': {
+    'status': 'success',
+    // The UI must use the saved IDs rather than re-screening model scores.
+    'structuralQuality': rank == 5 ? 3.5 : 4,
+    'entrySuitabilityProbability': rank == 5 ? 0.59 : 0.6,
+    'failureRiskProbability': rank == 5 ? 0.41 : 0.4,
   },
 };
 

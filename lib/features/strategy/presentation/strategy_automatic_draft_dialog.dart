@@ -286,7 +286,7 @@ class _StrategyAutomaticDraftDialogState
                     ],
                     const SizedBox(height: 8),
                     const Text(
-                      'Ứng viên chỉ được lưu để bạn xem xét. Mọi mức giá, phía giao dịch và thông số lệnh đều cần bạn chọn lại.',
+                      'Không tạo hoặc gửi lệnh ở bước này. Bản nháp sẽ tự lưu sau khi tạo; đề xuất Jev chọn tối đa 5 mức cho mỗi phía, không bù phần thiếu. Bạn có thể sửa lựa chọn khi xem lại.',
                     ),
                   ],
                 ),

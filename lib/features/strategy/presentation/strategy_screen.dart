@@ -343,12 +343,35 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
         !_sessionMatches(session)) {
       return;
     }
-    _openWizard(
-      context,
-      session,
-      dashboard,
-      initialCandidateDraft: candidateDraft,
-    );
+    final generation =
+        _stringMap(candidateDraft['aiGeneration']) ??
+        _stringMap(_map(candidateDraft['snapshot'])['aiGeneration']) ??
+        const <String, dynamic>{};
+    final recommendation = _stringMap(generation['recommendation']);
+    final longIds = recommendation?['longLevelIds'];
+    final shortIds = recommendation?['shortLevelIds'];
+    final countText = longIds is List && shortIds is List
+        ? 'Long ${longIds.length} · Short ${shortIds.length}'
+        : 'số mức đề xuất chưa có';
+    final emptyRecommendation =
+        longIds is List &&
+        shortIds is List &&
+        longIds.isEmpty &&
+        shortIds.isEmpty;
+    final message = emptyRecommendation
+        ? 'Đã lưu bản nháp tự động · Long 0 · Short 0. Chưa có mức nào đạt tiêu chí Jev; bạn có thể chọn thủ công khi xem xét.'
+        : 'Đã lưu bản nháp tự động · $countText.';
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(
+            message,
+            key: const Key('strategy-automatic-save-notice'),
+          ),
+          duration: const Duration(seconds: 6),
+        ),
+      );
   }
 
   bool _sessionMatches(TradeSession session) {

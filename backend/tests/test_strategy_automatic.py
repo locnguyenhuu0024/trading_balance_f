@@ -272,6 +272,141 @@ class AutomaticStrategyApiTests(unittest.TestCase):
         self.assertEqual(status, 200, result)
         return result
 
+    @staticmethod
+    def _selection_candidates(side: str, count: int) -> list[dict[str, Any]]:
+        return [
+            {
+                "levelId": f"{side}-{index}",
+                "side": side,
+                "price": str(100 + index),
+                "generationOrder": index + 1,
+                "rank": index + 1,
+                "assessment": {
+                    "status": "success",
+                    "structuralQuality": 4.5,
+                    "entrySuitabilityProbability": 0.9 - index / 100,
+                    "failureRiskProbability": 0.1,
+                },
+            }
+            for index in range(count)
+        ]
+
+    def test_recommendation_caps_each_side_independently_and_preserves_candidates(self) -> None:
+        supports = self._selection_candidates("long", 8)
+        resistances = self._selection_candidates("short", 8)
+        before = deepcopy((supports, resistances))
+
+        recommendation = AutomaticStrategyService._recommendation(supports, resistances)
+
+        self.assertEqual(recommendation, {
+            "version": "ai-jev-selection-v1",
+            "maxPerSide": 5,
+            "minStructuralQuality": 4,
+            "minEntrySuitabilityProbability": 0.6,
+            "maxFailureRiskProbability": 0.4,
+            "longLevelIds": [f"long-{index}" for index in range(5)],
+            "shortLevelIds": [f"short-{index}" for index in range(5)],
+        })
+        self.assertEqual((supports, resistances), before)
+
+    def test_recommendation_keeps_partial_side_counts_without_transferring_quota(self) -> None:
+        supports = self._selection_candidates("long", 8)
+        resistances = self._selection_candidates("short", 8)
+        for candidate in supports:
+            candidate["assessment"]["structuralQuality"] = 3.99
+
+        recommendation = AutomaticStrategyService._recommendation(supports, resistances)
+
+        self.assertEqual(recommendation["longLevelIds"], [])
+        self.assertEqual(recommendation["shortLevelIds"], [f"short-{index}" for index in range(5)])
+
+    def test_recommendation_preserves_two_eligible_levels_and_caps_other_side_at_five(self) -> None:
+        supports = self._selection_candidates("long", 8)
+        resistances = self._selection_candidates("short", 8)
+        for candidate in supports[2:]:
+            candidate["assessment"]["structuralQuality"] = 3.99
+
+        recommendation = AutomaticStrategyService._recommendation(supports, resistances)
+
+        self.assertEqual(recommendation["longLevelIds"], ["long-0", "long-1"])
+        self.assertEqual(recommendation["shortLevelIds"], [f"short-{index}" for index in range(5)])
+
+    def test_recommendation_excludes_all_weak_failed_and_disabled_candidates(self) -> None:
+        supports = self._selection_candidates("long", 3)
+        resistances = self._selection_candidates("short", 3)
+        for candidate in supports:
+            candidate["assessment"]["structuralQuality"] = 3.99
+        resistances[0]["assessment"]["status"] = "failed"
+        resistances[1]["assessment"]["status"] = "disabled"
+        resistances[2]["assessment"]["failureRiskProbability"] = 0.41
+
+        recommendation = AutomaticStrategyService._recommendation(supports, resistances)
+
+        self.assertEqual(recommendation["longLevelIds"], [])
+        self.assertEqual(recommendation["shortLevelIds"], [])
+
+    def test_recommendation_accepts_inclusive_thresholds_and_rejects_invalid_scores_or_prices(self) -> None:
+        supports = self._selection_candidates("long", 1)
+        supports[0]["assessment"].update({
+            "structuralQuality": 4,
+            "entrySuitabilityProbability": 0.6,
+            "failureRiskProbability": 0.4,
+        })
+        resistances = self._selection_candidates("short", 6)
+        resistances[0]["assessment"]["structuralQuality"] = True
+        resistances[1]["assessment"]["entrySuitabilityProbability"] = float("nan")
+        resistances[2]["assessment"]["failureRiskProbability"] = 1.01
+        resistances[3]["price"] = "0"
+        resistances[4]["price"] = "-1"
+        resistances[5]["price"] = "not-a-price"
+
+        recommendation = AutomaticStrategyService._recommendation(supports, resistances)
+
+        self.assertEqual(recommendation["longLevelIds"], ["long-0"])
+        self.assertEqual(recommendation["shortLevelIds"], [])
+
+    def test_recommendation_uses_saved_rank_for_ties_and_excludes_failed_or_disabled_assessments(self) -> None:
+        tied = self._selection_candidates("long", 3)
+        for candidate in tied:
+            candidate["assessment"].update({
+                "structuralQuality": 4,
+                "entrySuitabilityProbability": 0.6,
+                "failureRiskProbability": 0.4,
+            })
+        tied[0]["generationOrder"] = 3
+        tied[1]["generationOrder"] = 1
+        tied[2]["generationOrder"] = 2
+        AutomaticStrategyService._rank(tied)
+        short = self._selection_candidates("short", 3)
+        short[0]["assessment"]["status"] = "failed"
+        short[1]["assessment"]["status"] = "disabled"
+        short[2]["assessment"].update({
+            "structuralQuality": 3.99,
+            "entrySuitabilityProbability": 0.99,
+            "failureRiskProbability": 0.01,
+        })
+
+        recommendation = AutomaticStrategyService._recommendation(tied, short)
+
+        self.assertEqual(recommendation["longLevelIds"], ["long-1", "long-2", "long-0"])
+        self.assertEqual(recommendation["shortLevelIds"], [])
+
+    def test_recommendation_attaches_to_saved_snapshot_and_replays_without_recomputation(self) -> None:
+        created = self.create_candidates("recommendation-replay-01")
+        generation = created["aiGeneration"]
+        recommendation = generation["recommendation"]
+        self.assertEqual(set(recommendation), {
+            "version", "maxPerSide", "minStructuralQuality",
+            "minEntrySuitabilityProbability", "maxFailureRiskProbability",
+            "longLevelIds", "shortLevelIds",
+        })
+        self.assertEqual(recommendation["version"], "ai-jev-selection-v1")
+        self.assertEqual(recommendation["longLevelIds"], [])
+        self.assertEqual(recommendation["shortLevelIds"], [])
+        replay = self.create_candidates("recommendation-replay-01")
+        self.assertEqual(replay["aiGeneration"]["recommendation"], recommendation)
+        self.assertEqual(replay["aiGeneration"], generation)
+
     @patch.dict(os.environ, {"JEV_ENABLED": "false"})
     def test_disabled_enrichment_keeps_every_candidate_reviewable_and_idempotent(self) -> None:
         created = self.create_candidates()
@@ -395,6 +530,19 @@ class AutomaticStrategyApiTests(unittest.TestCase):
         self.service.strategy.automatic.provider_factory = lambda: FixedProvider(evaluate)
         created = self.create_candidates("ranked-request-001")
         generation = created["aiGeneration"]
+        for group, selected_ids in (
+            (generation["supports"], generation["recommendation"]["longLevelIds"]),
+            (generation["resistances"], generation["recommendation"]["shortLevelIds"]),
+        ):
+            eligible_ids = [
+                row["levelId"] for row in group
+                if row["price"] != "0"
+                and row["assessment"]["status"] == "success"
+                and row["assessment"]["structuralQuality"] >= 4
+                and row["assessment"]["entrySuitabilityProbability"] >= 0.6
+                and row["assessment"]["failureRiskProbability"] <= 0.4
+            ][:5]
+            self.assertEqual(selected_ids, eligible_ids)
         for group in (generation["supports"], generation["resistances"]):
             self.assertEqual([row["rank"] for row in group], list(range(1, len(group) + 1)))
             self.assertTrue(all(row["assessment"]["status"] == "success" for row in group))
@@ -485,6 +633,10 @@ class AutomaticStrategyApiTests(unittest.TestCase):
         self.assertEqual(saved["id"], candidate["id"])
         self.assertEqual(saved["draftStage"], "materialized")
         self.assertEqual(saved["aiGeneration"], candidate["aiGeneration"])
+        self.assertEqual(
+            saved["aiGeneration"]["recommendation"],
+            candidate["aiGeneration"]["recommendation"],
+        )
         persisted = self.service.strategy._load_row(candidate["id"])
         self.assertEqual(persisted["snapshot"]["draftStage"], "materialized")
         self.assertEqual(persisted["snapshot"]["aiGeneration"], candidate["aiGeneration"])

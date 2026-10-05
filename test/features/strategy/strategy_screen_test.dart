@@ -71,6 +71,10 @@ void main() {
     await tester.tap(automaticAction);
     await tester.pumpAndSettle();
     expect(find.byType(StrategyAutomaticDraftDialog), findsOneWidget);
+    expect(
+      find.textContaining('Không tạo hoặc gửi lệnh ở bước này'),
+      findsOneWidget,
+    );
     await tester.tap(find.byKey(const Key('strategy-automatic-close')));
     await tester.pumpAndSettle();
   });
@@ -106,7 +110,7 @@ void main() {
   });
 
   testWidgets(
-    'automatic candidates are persisted, unselected, and reopen without regeneration',
+    'automatic candidates are saved for deferred review without regeneration',
     (tester) async {
       tester.view.physicalSize = const Size(390, 844);
       tester.view.devicePixelRatio = 1;
@@ -163,6 +167,24 @@ void main() {
       expect(api.automaticRequests.last['interval'], '1Dutc');
       expect(originalRequestId, matches(RegExp(r'^[A-Za-z0-9_-]{8,64}$')));
       expect(api.automaticRequests.last['requestId'], originalRequestId);
+      expect(find.byType(StrategyWizardDialog), findsNothing);
+      expect(
+        find.textContaining('Đã lưu bản nháp tự động · Long 0 · Short 0'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('Chưa có mức nào đạt tiêu chí Jev'),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('strategy-review-auto-draft-1')),
+        findsOneWidget,
+      );
+      final requestCountAfterCreation = api.automaticRequests.length;
+
+      await tester.tap(find.byKey(const Key('strategy-review-auto-draft-1')));
+      await tester.pumpAndSettle();
+
       expect(find.text('Hỗ trợ cho Long'), findsOneWidget);
       expect(find.text('Kháng cự cho Short'), findsOneWidget);
       expect(find.text('Jev: chưa bật'), findsOneWidget);
@@ -174,17 +196,19 @@ void main() {
         isTrue,
       );
       expect(market.loadLevelsCalls, 0);
-      final requestCountAfterCreation = api.automaticRequests.length;
 
       await tester.tap(find.byTooltip('Đóng'));
       await tester.pumpAndSettle();
+
+      expect(api.automaticRequests, hasLength(requestCountAfterCreation));
+      expect(market.loadLevelsCalls, 0);
+      expect(find.byType(StrategyWizardDialog), findsNothing);
       expect(
         find.byKey(const Key('strategy-review-auto-draft-1')),
         findsOneWidget,
       );
       await tester.tap(find.byKey(const Key('strategy-review-auto-draft-1')));
       await tester.pumpAndSettle();
-
       expect(api.automaticRequests, hasLength(requestCountAfterCreation));
       expect(market.loadLevelsCalls, 0);
       expect(find.text('Jev: chưa bật'), findsOneWidget);
@@ -1469,6 +1493,15 @@ Map<String, dynamic> _candidateGenerationSnapshot() => {
   'tickSize': '0.01',
   'referencePrice': '100',
   'observedAt': '2030-01-01T00:00:00Z',
+  'recommendation': {
+    'version': 'ai-jev-selection-v1',
+    'maxPerSide': 5,
+    'minStructuralQuality': 4,
+    'minEntrySuitabilityProbability': 0.6,
+    'maxFailureRiskProbability': 0.4,
+    'longLevelIds': <String>[],
+    'shortLevelIds': <String>[],
+  },
   'supports': [
     {
       'levelId': 'support-1',
