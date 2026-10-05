@@ -13,11 +13,12 @@ import 'package:trading_balance_f/features/strategy/data/strategy_api_client.dar
 import 'package:trading_balance_f/features/strategy/data/strategy_market_repository.dart';
 import 'package:trading_balance_f/features/strategy/domain/strategy_models.dart';
 import 'package:trading_balance_f/features/strategy/presentation/providers/strategy_dashboard_provider.dart';
+import 'package:trading_balance_f/features/strategy/presentation/strategy_automatic_draft_dialog.dart';
 import 'package:trading_balance_f/features/strategy/presentation/strategy_screen.dart';
 import 'package:trading_balance_f/features/strategy/presentation/strategy_wizard_dialog.dart';
 
 void main() {
-  testWidgets('automatic strategy action keeps its title on mobile', (
+  testWidgets('strategy action toolbar fits mobile with discoverable actions', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(390, 844);
@@ -40,11 +41,38 @@ void main() {
     );
     await _pumpFrames(tester);
 
-    expect(
-      find.byKey(const Key('strategy-automatic-create-button')),
-      findsOneWidget,
+    expect(find.text('Chiến Thuật'), findsOneWidget);
+    expect(find.text('Chiến thuật đã lưu'), findsNothing);
+    expect(find.text('Dựng chiến thuật tự động'), findsNothing);
+
+    final manualAction = find.byKey(const Key('strategy-create-button'));
+    final automaticAction = find.byKey(
+      const Key('strategy-automatic-create-button'),
     );
-    expect(find.text('Dựng chiến thuật tự động'), findsOneWidget);
+    expect(manualAction, findsOneWidget);
+    expect(automaticAction, findsOneWidget);
+    expect(find.byTooltip('Dựng chiến thuật tự động'), findsOneWidget);
+
+    for (final action in [manualAction, automaticAction]) {
+      final rect = tester.getRect(action);
+      expect(rect.width, greaterThanOrEqualTo(48));
+      expect(rect.height, greaterThanOrEqualTo(48));
+      expect(rect.left, greaterThanOrEqualTo(0));
+      expect(rect.right, lessThanOrEqualTo(390));
+    }
+
+    await tester.tap(manualAction);
+    await tester.pumpAndSettle();
+    expect(find.byType(StrategyWizardDialog), findsOneWidget);
+    await tester.tap(find.text('Hủy').last);
+    await tester.pumpAndSettle();
+
+    expect(automaticAction, findsOneWidget);
+    await tester.tap(automaticAction);
+    await tester.pumpAndSettle();
+    expect(find.byType(StrategyAutomaticDraftDialog), findsOneWidget);
+    await tester.tap(find.byKey(const Key('strategy-automatic-close')));
+    await tester.pumpAndSettle();
   });
 
   testWidgets('candidate drafts offer review and cannot be applied directly', (

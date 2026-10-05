@@ -113,17 +113,6 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
                 if (!sessionState.isAuthenticated || session == null)
                   const _SignedOutCard()
                 else ...[
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          'Chiến thuật đã lưu',
-                          style: Theme.of(context).textTheme.titleLarge,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
                   Align(
                     alignment: Alignment.centerRight,
                     child: Wrap(
@@ -143,8 +132,9 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
                           ),
                           icon: const Icon(Icons.add),
                         ),
-                        FilledButton.tonalIcon(
+                        IconButton(
                           key: const Key('strategy-automatic-create-button'),
+                          tooltip: 'Dựng chiến thuật tự động',
                           onPressed: dashboard == null
                               ? null
                               : () => _openAutomaticWizard(
@@ -152,8 +142,11 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
                                   session,
                                   dashboard,
                                 ),
+                          constraints: const BoxConstraints(
+                            minWidth: 48,
+                            minHeight: 48,
+                          ),
                           icon: const Icon(Icons.auto_awesome_outlined),
-                          label: const Text('Dựng chiến thuật tự động'),
                         ),
                       ],
                     ),
