@@ -633,6 +633,10 @@ class _StrategyCard extends StatelessWidget {
     final draftEntries = isCandidateDraft
         ? StrategyDraftEntries.fromDraftRecord(strategy)
         : null;
+    final directionLabel = _strategyDirectionLabel(
+      strategy,
+      candidateEntries: draftEntries,
+    );
     final instrument = _text(strategy['instrumentId']);
     final coin = instrument
         .split('-')
@@ -681,7 +685,7 @@ class _StrategyCard extends StatelessWidget {
             onTap: onOpenDetails,
             child: Semantics(
               button: true,
-              label: 'Mở chi tiết chiến thuật $coin',
+              label: 'Mở chi tiết chiến thuật $coin · $directionLabel',
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
                 child: Column(
@@ -709,10 +713,24 @@ class _StrategyCard extends StatelessWidget {
                       ],
                     ),
                     const SizedBox(height: 6),
-                    Chip(
-                      label: Text(statusLabel),
-                      visualDensity: VisualDensity.compact,
-                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      children: [
+                        Chip(
+                          label: Text(statusLabel),
+                          visualDensity: VisualDensity.compact,
+                          materialTapTargetSize:
+                              MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        Chip(
+                          key: Key('strategy-direction-$id'),
+                          label: Text(directionLabel),
+                          visualDensity: VisualDensity.compact,
+                          materialTapTargetSize:
+                              MaterialTapTargetSize.shrinkWrap,
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 4),
                     Text(
@@ -1524,6 +1542,48 @@ double? _finiteNumber(Object? value) {
 
 bool _isCandidateDraft(Map<String, dynamic> strategy) =>
     _text(strategy['draftStage']) == 'candidates';
+
+String _strategyDirectionLabel(
+  Map<String, dynamic> strategy, {
+  StrategyDraftEntries? candidateEntries,
+}) {
+  if (candidateEntries != null) {
+    final hasLong = candidateEntries.entries.any(
+      (entry) => entry.side == StrategySide.long,
+    );
+    final hasShort = candidateEntries.entries.any(
+      (entry) => entry.side == StrategySide.short,
+    );
+    if (hasLong && hasShort) return 'Đề xuất: Long + Short';
+    if (hasLong) return 'Đề xuất: Long';
+    if (hasShort) return 'Đề xuất: Short';
+    return 'Chưa chọn chiều';
+  }
+
+  final rawSides = strategy['sides'];
+  final sides = <String>{};
+  if (rawSides != null) {
+    if (rawSides is! List || rawSides.isEmpty) return 'Chưa rõ chiều';
+    for (final side in rawSides) {
+      if (side != 'long' && side != 'short') return 'Chưa rõ chiều';
+      sides.add(side as String);
+    }
+  } else {
+    final rawOrders = strategy['orders'];
+    if (rawOrders is! List || rawOrders.isEmpty) return 'Chưa rõ chiều';
+    for (final order in rawOrders) {
+      if (order is! Map) return 'Chưa rõ chiều';
+      final side = order['side'];
+      if (side != 'long' && side != 'short') return 'Chưa rõ chiều';
+      sides.add(side as String);
+    }
+  }
+
+  if (sides.length == 2) return 'Long + Short';
+  if (sides.contains('long')) return 'Long';
+  if (sides.contains('short')) return 'Short';
+  return 'Chưa rõ chiều';
+}
 
 String _summaryStatusLabel(Map<String, dynamic> strategy) {
   if (_text(strategy['draftStage']) == 'candidates') {

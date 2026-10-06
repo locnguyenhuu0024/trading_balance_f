@@ -18,6 +18,192 @@ import 'package:trading_balance_f/features/strategy/presentation/strategy_screen
 import 'package:trading_balance_f/features/strategy/presentation/strategy_wizard_dialog.dart';
 
 void main() {
+  testWidgets('strategy direction labels stay unknown without valid evidence', (
+    tester,
+  ) async {
+    final api = _FakeStrategyApi();
+    api.strategies
+      ..[0]['sides'] = <String>['LONG', 'buy']
+      ..add({
+        'id': 'unknown-2',
+        'instrumentId': 'ETH-USDT-SWAP',
+        'status': 'DRAFT',
+        'sides': <String>['buy'],
+        'orders': <Object>[],
+      });
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          tradeSessionProvider.overrideWith(
+            (ref) => _AuthenticatedSessionController(),
+          ),
+          strategyApiProvider.overrideWithValue(api),
+          strategyMarketRepositoryProvider.overrideWithValue(
+            _FakeMarketRepository(),
+          ),
+        ],
+        child: const MaterialApp(home: StrategyScreen()),
+      ),
+    );
+    await _pumpFrames(tester);
+
+    expect(find.text('Chưa rõ chiều'), findsNWidgets(2));
+  });
+
+  testWidgets('saved strategy cards show their own direction at mobile width', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = _FakeStrategyApi();
+    api.strategies[0]['sides'] = <String>['long'];
+    api.strategies.addAll([
+      {
+        'id': 'short-2',
+        'instrumentId': 'ETH-USDT-SWAP',
+        'status': 'APPLIED',
+        'sides': <String>['short'],
+        'orders': <Object>[],
+      },
+      {
+        'id': 'both-3',
+        'instrumentId': 'SOL-USDT-SWAP',
+        'status': 'APPLIED',
+        'sides': <String>['long', 'short', 'long'],
+        'orders': <Object>[],
+      },
+    ]);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          tradeSessionProvider.overrideWith(
+            (ref) => _AuthenticatedSessionController(),
+          ),
+          strategyApiProvider.overrideWithValue(api),
+          strategyMarketRepositoryProvider.overrideWithValue(
+            _FakeMarketRepository(),
+          ),
+        ],
+        child: MaterialApp(
+          home: Builder(
+            builder: (context) => MediaQuery(
+              data: MediaQuery.of(
+                context,
+              ).copyWith(textScaler: TextScaler.linear(1.5)),
+              child: const StrategyScreen(),
+            ),
+          ),
+        ),
+      ),
+    );
+    await _pumpFrames(tester);
+
+    expect(find.text('Long'), findsOneWidget);
+    expect(find.text('Short'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('strategy-direction-both-3')),
+        matching: find.text('Long + Short'),
+      ),
+      findsOneWidget,
+    );
+    for (final id in ['draft-1', 'short-2', 'both-3']) {
+      expect(find.byKey(Key('strategy-direction-$id')), findsOneWidget);
+      expect(find.byKey(Key('strategy-summary-$id')), findsOneWidget);
+    }
+    expect(find.byKey(const Key('strategy-apply-draft-1')), findsOneWidget);
+    expect(find.text('Bản nháp'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('legacy strategy direction comes from validated order sides', (
+    tester,
+  ) async {
+    final api = _FakeStrategyApi();
+    api.strategies[0]
+      ..remove('sides')
+      ..['orders'] = [
+        {'side': 'long'},
+        {'side': 'short'},
+      ];
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          tradeSessionProvider.overrideWith(
+            (ref) => _AuthenticatedSessionController(),
+          ),
+          strategyApiProvider.overrideWithValue(api),
+          strategyMarketRepositoryProvider.overrideWithValue(
+            _FakeMarketRepository(),
+          ),
+        ],
+        child: const MaterialApp(home: StrategyScreen()),
+      ),
+    );
+    await _pumpFrames(tester);
+
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('strategy-direction-draft-1')),
+        matching: find.text('Long + Short'),
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+    'candidate direction labels use only saved valid recommendations',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 1400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final api = _FakeStrategyApi();
+      api.strategies[0]
+        ..['draftStage'] = 'candidates'
+        ..['aiGeneration'] = _candidateGenerationSnapshot();
+      api.strategies.add(
+        _candidateDraftRecord(
+          id: 'candidate-2',
+          instrumentId: 'BTC-USDT-SWAP',
+          interval: '6Hutc',
+        )..['aiGeneration'] = _recommendedGenerationForDisplay(),
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            tradeSessionProvider.overrideWith(
+              (ref) => _AuthenticatedSessionController(),
+            ),
+            strategyApiProvider.overrideWithValue(api),
+            strategyMarketRepositoryProvider.overrideWithValue(
+              _FakeMarketRepository(),
+            ),
+          ],
+          child: const MaterialApp(home: StrategyScreen()),
+        ),
+      );
+      await _pumpFrames(tester);
+
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('strategy-direction-draft-1')),
+          matching: find.text('Chưa chọn chiều'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('strategy-direction-candidate-2')),
+          matching: find.text('Đề xuất: Long + Short'),
+        ),
+        findsOneWidget,
+      );
+    },
+  );
+
   testWidgets('strategy action toolbar fits mobile with discoverable actions', (
     tester,
   ) async {
