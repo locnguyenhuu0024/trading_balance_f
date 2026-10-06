@@ -108,6 +108,13 @@ class StrategyWorkerTests(unittest.TestCase):
             "filledContracts": "0",
             "averageFillPrice": None,
         }
+        snapshot_order = {
+            "clientOrderId": CLIENT_ORDER_ID,
+            "side": "long",
+            "contracts": "2",
+        }
+        snapshot = {"_positionMode": "long_short_mode", "orders": [snapshot_order]}
+        prepared = {"_positionMode": "long_short_mode", "orders": [snapshot_order]}
         with self.store.transaction() as connection:
             connection.execute(
                 "INSERT INTO strategies(strategy_id, account_fingerprint, status, contract_json, "
@@ -115,15 +122,16 @@ class StrategyWorkerTests(unittest.TestCase):
                 "prepared_expires_at, prepared_json, attempt_started, batch_attempted, execution_id, "
                 "execution_lease_until, replacement_source_id, failure_reason, leverage_results_json, "
                 "created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, '', NULL, NULL, NULL, 1, ?, NULL, NULL, ?, NULL, '[]', ?, ?)",
+                "VALUES (?, ?, ?, ?, ?, ?, ?, '', NULL, NULL, ?, 1, ?, NULL, NULL, ?, NULL, '[]', ?, ?)",
                 (
                     strategy_id,
                     ACCOUNT_FINGERPRINT,
                     status,
                     encode_json({"instrumentId": INSTRUMENT, "interval": "12Hutc"}),
-                    encode_json({}),
+                    encode_json(snapshot),
                     encode_json([order]),
                     encode_json([order]),
+                    encode_json(prepared),
                     batch_attempted,
                     replacement_source_id,
                     self.now,
@@ -331,6 +339,39 @@ class StrategyWorkerTests(unittest.TestCase):
         self.assertTrue(worker.run_once())
         strategy, _ = self._strategy("strategy-worker-03")
         self.assertNotEqual(strategy["status"], "COMPLETED")
+
+    def test_green_worker_completion_ignores_opposite_hedge_position(self) -> None:
+        self.exchange.orders[CLIENT_ORDER_ID].update(
+            state="filled", accFillSz="2", avgPx="59002"
+        )
+        self.exchange.position_rows = [
+            {"instId": INSTRUMENT, "pos": "3", "posSide": "short"}
+        ]
+
+        worker = self._worker(owner_id="worker-opposite-position")
+        self.assertTrue(worker.run_once())
+
+        strategy, sync = self._strategy()
+        self.assertEqual(strategy["status"], "COMPLETED")
+        self.assertIsNone(sync.get("last_error"))
+        self.assertEqual(self.exchange.write_calls, [])
+
+    def test_red_worker_unknown_scope_does_not_prove_zero_positions(self) -> None:
+        with self.store.transaction() as connection:
+            connection.execute(
+                "UPDATE strategies SET snapshot_json='{}', prepared_json=NULL WHERE strategy_id=?",
+                ("strategy-worker-01",),
+            )
+        self.exchange.orders[CLIENT_ORDER_ID].update(
+            state="filled", accFillSz="2", avgPx="59002"
+        )
+
+        worker = self._worker(owner_id="worker-unknown-scope")
+        self.assertTrue(worker.run_once())
+
+        strategy, sync = self._strategy()
+        self.assertNotEqual(strategy["status"], "COMPLETED")
+        self.assertEqual(sync.get("last_error"), "positions_invalid")
 
     def test_red_never_batched_not_submitted_rows_keep_failure_state(self) -> None:
         strategy_id = self._insert_strategy(

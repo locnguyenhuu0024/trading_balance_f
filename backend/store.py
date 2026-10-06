@@ -9,6 +9,8 @@ import threading
 from contextlib import contextmanager
 from typing import Any, Callable, Iterator
 
+from .strategy_scope import UNKNOWN_SCOPE, extract_persisted_scope
+
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS auth_state (
@@ -78,8 +80,10 @@ CREATE TABLE IF NOT EXISTS strategy_reservations (
     account_fingerprint TEXT NOT NULL,
     instrument_id TEXT NOT NULL,
     strategy_id TEXT NOT NULL UNIQUE,
+    position_mode TEXT NOT NULL DEFAULT 'unknown',
+    side_scope TEXT NOT NULL DEFAULT 'all',
     created_at REAL NOT NULL,
-    PRIMARY KEY (account_fingerprint, instrument_id)
+    PRIMARY KEY (account_fingerprint, instrument_id, strategy_id)
 );
 CREATE TABLE IF NOT EXISTS strategy_monitor_lease (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
@@ -107,6 +111,98 @@ def encode_json(value: Any) -> str:
 
 def decode_json(value: str) -> Any:
     return json.loads(value)
+
+
+def _migrate_strategy_reservations(connection: sqlite3.Connection) -> None:
+    def schema_is_scoped() -> bool:
+        info = connection.execute("PRAGMA table_info(strategy_reservations)").fetchall()
+        columns = {row[1] for row in info}
+        primary_key = {row[1] for row in info if row[5]}
+        return (
+            {"position_mode", "side_scope"}.issubset(columns)
+            and primary_key == {"account_fingerprint", "instrument_id", "strategy_id"}
+        )
+
+    def ensure_lookup_index() -> None:
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS strategy_reservations_scope_lookup "
+            "ON strategy_reservations(account_fingerprint, instrument_id)"
+        )
+
+    if schema_is_scoped():
+        ensure_lookup_index()
+        return
+
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        if schema_is_scoped():
+            ensure_lookup_index()
+            connection.execute("COMMIT")
+            return
+
+        temporary = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='strategy_reservations_scoped_migration'"
+        ).fetchone()
+        if temporary is not None:
+            raise sqlite3.DatabaseError("strategy reservation migration table already exists")
+
+        connection.execute(
+            "CREATE TABLE strategy_reservations_scoped_migration ("
+            "account_fingerprint TEXT NOT NULL, instrument_id TEXT NOT NULL, "
+            "strategy_id TEXT NOT NULL UNIQUE, position_mode TEXT NOT NULL DEFAULT 'unknown', "
+            "side_scope TEXT NOT NULL DEFAULT 'all', created_at REAL NOT NULL, "
+            "PRIMARY KEY (account_fingerprint, instrument_id, strategy_id))"
+        )
+        legacy_rows = connection.execute(
+            "SELECT account_fingerprint, instrument_id, strategy_id, created_at "
+            "FROM strategy_reservations"
+        ).fetchall()
+        for reservation in legacy_rows:
+            account_fingerprint, instrument_id, strategy_id, created_at = reservation
+            scope = UNKNOWN_SCOPE
+            strategy = connection.execute(
+                "SELECT account_fingerprint, contract_json, snapshot_json, orders_json, prepared_json "
+                "FROM strategies WHERE strategy_id=?",
+                (strategy_id,),
+            ).fetchone()
+            if strategy is not None:
+                try:
+                    contract = json.loads(strategy[1])
+                    snapshot = json.loads(strategy[2])
+                    orders = json.loads(strategy[3])
+                    prepared = None if strategy[4] is None else json.loads(strategy[4])
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    pass
+                else:
+                    if (
+                        strategy[0] == account_fingerprint
+                        and isinstance(contract, dict)
+                        and contract.get("instrumentId") == instrument_id
+                    ):
+                        scope = extract_persisted_scope(
+                            prepared, snapshot, orders, require_prepared_mode=True
+                        )
+            if not scope.valid:
+                scope = UNKNOWN_SCOPE
+            connection.execute(
+                "INSERT INTO strategy_reservations_scoped_migration "
+                "(account_fingerprint, instrument_id, strategy_id, position_mode, side_scope, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    account_fingerprint, instrument_id, strategy_id,
+                    scope.position_mode, scope.side_scope, created_at,
+                ),
+            )
+        connection.execute("DROP TABLE strategy_reservations")
+        connection.execute(
+            "ALTER TABLE strategy_reservations_scoped_migration RENAME TO strategy_reservations"
+        )
+        ensure_lookup_index()
+        connection.execute("COMMIT")
+    except Exception:
+        connection.execute("ROLLBACK")
+        raise
 
 
 class SQLiteStore:
@@ -155,6 +251,7 @@ class SQLiteStore:
                     "CREATE INDEX IF NOT EXISTS strategies_replacement_source "
                     "ON strategies(replacement_source_id, status)"
                 )
+                _migrate_strategy_reservations(connection)
             finally:
                 connection.close()
             self._initialized = True

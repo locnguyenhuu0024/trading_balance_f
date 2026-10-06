@@ -37,6 +37,16 @@ from .strategy_retry import (
     source_revision as _retry_source_revision,
     source_rows as _retry_source_rows,
 )
+from .strategy_scope import (
+    UNKNOWN_SCOPE,
+    StrategyScope,
+    extract_persisted_scope,
+    reservation_scope,
+    scope_for_sides,
+    scopes_overlap,
+    scoped_pending_rows,
+    scoped_position_rows,
+)
 
 
 _INTERVALS = {"6Hutc", "12Hutc", "1Dutc", "1Wutc"}
@@ -276,6 +286,64 @@ class StrategyService:
         if action == "quote" and method == "GET":
             return self._quote(strategy_id)
         raise APIError(404, "not_found", "The requested endpoint was not found.")
+
+    @staticmethod
+    def _persisted_scope(
+        strategy: dict[str, Any], *, require_prepared_mode: bool = True
+    ) -> StrategyScope:
+        return extract_persisted_scope(
+            strategy.get("prepared"), strategy.get("snapshot"), strategy.get("orders"),
+            require_prepared_mode=require_prepared_mode,
+        )
+
+    @staticmethod
+    def _has_overlapping_reservation(
+        connection: Any,
+        fingerprint: str,
+        instrument_id: str,
+        scope: StrategyScope,
+        *,
+        exclude_ids: set[str] | None = None,
+    ) -> bool:
+        excluded = exclude_ids or set()
+        reservations = connection.execute(
+            "SELECT strategy_id, position_mode, side_scope FROM strategy_reservations "
+            "WHERE account_fingerprint=? AND instrument_id=?",
+            (fingerprint, instrument_id),
+        ).fetchall()
+        return any(
+            row["strategy_id"] not in excluded
+            and scopes_overlap(
+                scope, reservation_scope(row["position_mode"], row["side_scope"])
+            )
+            for row in reservations
+        )
+
+    def _claim_reservation_in_connection(
+        self,
+        connection: Any,
+        strategy: dict[str, Any],
+        scope: StrategyScope,
+        now: float,
+    ) -> None:
+        if self._has_overlapping_reservation(
+            connection,
+            strategy["accountFingerprint"],
+            strategy["contract"]["instrumentId"],
+            scope,
+        ):
+            raise APIError(
+                409, "instrument_apply_in_progress",
+                "Another strategy is applying or reconciling an overlapping position scope.",
+            )
+        connection.execute(
+            "INSERT INTO strategy_reservations(account_fingerprint, instrument_id, strategy_id, "
+            "position_mode, side_scope, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                strategy["accountFingerprint"], strategy["contract"]["instrumentId"],
+                strategy["id"], scope.position_mode, scope.side_scope, now,
+            ),
+        )
 
     def _quote(self, strategy_id: str) -> dict[str, str]:
         strategy, _, _ = self._current_strategy(strategy_id)
@@ -615,11 +683,11 @@ class StrategyService:
         return True
 
     @classmethod
-    def _positions_clear_for_instrument(cls, rows: Any, instrument_id: str) -> bool:
-        return cls._valid_position_rows(rows) and all(
-            row["instId"] != instrument_id or _decimal(row["pos"]) == 0
-            for row in rows
-        )
+    def _positions_clear_for_instrument(
+        cls, rows: Any, instrument_id: str, scope: StrategyScope
+    ) -> bool:
+        relevant = scoped_position_rows(rows, instrument_id, scope)
+        return relevant is not None and not relevant
 
     def _terminal_delete_position_rows(self) -> tuple[list[Any] | None, bool]:
         response = self.okx.request(
@@ -1002,11 +1070,13 @@ class StrategyService:
                 (source_id, fingerprint),
             ).fetchone()
             reservations = connection.execute(
-                "SELECT strategy_id FROM strategy_reservations WHERE account_fingerprint=? AND instrument_id=?",
+                "SELECT strategy_id, position_mode, side_scope FROM strategy_reservations "
+                "WHERE account_fingerprint=? AND instrument_id=?",
                 (fingerprint, instrument_id),
             ).fetchall()
 
         revision = _retry_source_revision(source, self.owner.settings.session_signing_key)
+        source_scope = self._persisted_scope(source, require_prepared_mode=False)
         blocked: str | None = None
         if source["status"] == "APPLYING":
             blocked = "source_applying"
@@ -1022,18 +1092,33 @@ class StrategyService:
             blocked = "source_not_attempted"
         elif source.get("submissionModeInvalid") or source.get("queueCorrupt"):
             blocked = "source_evidence_malformed"
+        elif not source_scope.valid:
+            blocked = "source_evidence_malformed"
         elif unsafe_lineage:
             blocked = "source_lineage_invalid"
         elif ordinary_replacement is not None:
             blocked = "ordinary_replacement_exists"
-        elif any(row["strategy_id"] != exclude_child_id for row in reservations):
-            blocked = "reservation_active"
 
         try:
             source_pairs = _retry_source_rows(source)
         except RetryDataError:
             source_pairs = []
             blocked = blocked or "source_evidence_malformed"
+
+        if blocked is None and source_pairs:
+            reservation_blocks_every_order = all(
+                any(
+                    reservation["strategy_id"] != exclude_child_id
+                    and scopes_overlap(
+                        scope_for_sides(source_scope.position_mode, [order["side"]]),
+                        reservation_scope(reservation["position_mode"], reservation["side_scope"]),
+                    )
+                    for reservation in reservations
+                )
+                for _, order, _ in source_pairs
+            )
+            if reservation_blocks_every_order:
+                blocked = "reservation_active"
 
         reviewed_source = source
         if reconcile and blocked is None and source_pairs:
@@ -1076,6 +1161,20 @@ class StrategyService:
                             eligible = False
                             reason = "selection_in_use"
                             break
+                if eligible:
+                    candidate_scope = scope_for_sides(source_scope.position_mode, [order["side"]])
+                    if any(
+                        reservation["strategy_id"] != exclude_child_id
+                        and scopes_overlap(
+                            candidate_scope,
+                            reservation_scope(
+                                reservation["position_mode"], reservation["side_scope"]
+                            ),
+                        )
+                        for reservation in reservations
+                    ):
+                        eligible = False
+                        reason = "reservation_active"
                 public_row: dict[str, Any] = {
                     "sourceClientOrderId": row_id,
                     "side": order["side"],
@@ -1091,7 +1190,11 @@ class StrategyService:
                     public_row["levelId"] = order["levelId"]
                 candidates.append(public_row)
         if blocked is None and not any(row["eligible"] for row in candidates):
-            blocked = "no_eligible_rows"
+            blocked = (
+                "reservation_active"
+                if candidates and all(row["reason"] == "reservation_active" for row in candidates)
+                else "no_eligible_rows"
+            )
         return {
             "source": source,
             "reviewedSource": reviewed_source,
@@ -1136,6 +1239,10 @@ class StrategyService:
                 if reason == "selection_in_use":
                     raise self._retry_request_error(
                         "retry_selection_in_use", "One or more selected source orders are already in another retry."
+                    )
+                if reason == "reservation_active":
+                    raise self._retry_request_error(
+                        "retry_source_unavailable", "A selected position side is reserved by another strategy."
                     )
                 raise self._retry_request_error(
                     "retry_selection_invalid", "One or more selected source orders are not safely retryable.", 422
@@ -1223,15 +1330,26 @@ class StrategyService:
             (source_id, fingerprint),
         ).fetchone()
         reservations = connection.execute(
-            "SELECT strategy_id FROM strategy_reservations WHERE account_fingerprint=? AND instrument_id=?",
+            "SELECT strategy_id, position_mode, side_scope FROM strategy_reservations "
+            "WHERE account_fingerprint=? AND instrument_id=?",
             (fingerprint, instrument_id),
         ).fetchall()
-        if (
-            unsafe_lineage or ordinary_replacement is not None
-            or any(item["strategy_id"] != exclude_child_id for item in reservations)
-        ):
+        source_scope = self._persisted_scope(source, require_prepared_mode=False)
+        if unsafe_lineage or ordinary_replacement is not None or not source_scope.valid:
             raise self._retry_request_error(
                 "retry_source_unavailable", "The source is blocked by another strategy attempt."
+            )
+        if any(
+            item["strategy_id"] != exclude_child_id
+            and scopes_overlap(
+                scope_for_sides(source_scope.position_mode, [order["side"]]),
+                reservation_scope(item["position_mode"], item["side_scope"]),
+            )
+            for _, order, _ in selected
+            for item in reservations
+        ):
+            raise self._retry_request_error(
+                "retry_source_unavailable", "A selected position side is reserved by another strategy."
             )
         for index, order, result in selected:
             prior, reason = _retry_classify_row(source, index, order, result)
@@ -1346,7 +1464,8 @@ class StrategyService:
     ) -> None:
         mode = preview.get("_internal", {}).get("positionMode")
         sides = preview.get("sides")
-        if not isinstance(sides, list) or not sides:
+        scope = scope_for_sides(mode, sides)
+        if not scope.valid:
             raise APIError(409, "retry_source_unavailable", "The retry orders cannot be validated safely.")
         if len(set(sides)) == 2 and mode != "long_short_mode":
             raise APIError(
@@ -1366,28 +1485,25 @@ class StrategyService:
                 fallback_code="account_preflight_unavailable",
                 fallback_message="Current positions or pending orders are unavailable.",
             ) from None
-        for row in positions:
-            if row.get("instId") != instrument_id:
-                continue
-            size = _decimal(row.get("pos"))
-            if size is None or size != 0:
-                raise APIError(
-                    409, "instrument_position_exists",
-                    "Close the existing position for this SWAP before reviewing a retry.",
-                )
-        if any(row.get("instId") == instrument_id for row in pending):
+        relevant_positions = scoped_position_rows(positions, instrument_id, scope)
+        if relevant_positions is None or relevant_positions:
             raise APIError(
-                409, "pending_order_exists", "Cancel existing pending orders for this SWAP before reviewing a retry."
+                409, "instrument_position_exists",
+                "Close the overlapping position for this SWAP before reviewing a retry.",
+            )
+        conflicting_pending = scoped_pending_rows(pending, instrument_id, scope)
+        if conflicting_pending is None or conflicting_pending:
+            raise APIError(
+                409, "pending_order_exists", "Cancel overlapping pending orders for this SWAP before reviewing a retry."
             )
         with self.store.connection() as connection:
-            reservation = connection.execute(
-                "SELECT 1 FROM strategy_reservations WHERE account_fingerprint=? AND instrument_id=? LIMIT 1",
-                (context["fingerprint"], instrument_id),
-            ).fetchone()
-        if reservation is not None:
+            reservation = self._has_overlapping_reservation(
+                connection, context["fingerprint"], instrument_id, scope
+            )
+        if reservation:
             raise APIError(
                 409, "instrument_apply_in_progress",
-                "Another strategy is applying or reconciling this account and instrument.",
+                "Another strategy is applying or reconciling an overlapping position scope.",
             )
 
         try:
@@ -2572,6 +2688,25 @@ class StrategyService:
             )
         if mode not in ("net_mode", "long_short_mode"):
             raise APIError(409, "account_mode_unsupported", "The current OKX position mode is unsupported.")
+        prepared_scope = None
+        if strategy is not None and strategy.get("prepared") is not None:
+            prepared_scope = self._persisted_scope(strategy, require_prepared_mode=True)
+            if not prepared_scope.valid:
+                raise APIError(
+                    409, "prepared_strategy_invalid",
+                    "The prepared strategy position scope cannot be validated safely.",
+                )
+            if prepared_scope.position_mode != mode:
+                raise APIError(
+                    409, "account_mode_unsupported",
+                    "The current OKX position mode differs from the prepared strategy.",
+                )
+        target_scope = scope_for_sides(mode, sides)
+        if not target_scope.valid:
+            raise APIError(
+                409, "prepared_strategy_invalid",
+                "The executable position sides cannot be validated safely.",
+            )
         instrument_id = contract["instrumentId"]
         if not resume:
             try:
@@ -2583,13 +2718,14 @@ class StrategyService:
                     fallback_code="account_preflight_unavailable",
                     fallback_message="Current positions or pending orders are unavailable.",
                 ) from None
-            for row in positions:
-                if row.get("instId") != instrument_id:
-                    continue
-                size = _decimal(row.get("pos"))
-                if size is None or size != 0:
-                    raise APIError(409, "instrument_position_exists", "Close the existing position for this SWAP before applying.")
-            if any(row.get("instId") == instrument_id for row in pending):
+            relevant_positions = scoped_position_rows(positions, instrument_id, target_scope)
+            if relevant_positions is None or relevant_positions:
+                raise APIError(
+                    409, "instrument_position_exists",
+                    "Close the overlapping position for this SWAP before applying.",
+                )
+            conflicting_pending = scoped_pending_rows(pending, instrument_id, target_scope)
+            if conflicting_pending is None or conflicting_pending:
                 raise APIError(409, "pending_order_exists", "Cancel existing pending orders for this SWAP before applying.")
         preview = retry_preview if retry_preview is not None else self._preview_contract(
             contract, account_snapshot=(account, fingerprint)
@@ -2716,6 +2852,12 @@ class StrategyService:
 
     def _claim_execution(self, strategy_id: str, strategy: dict[str, Any], token: str) -> str | None:
         self._ensure_new_order_cap(strategy)
+        scope = self._persisted_scope(strategy, require_prepared_mode=True)
+        if not scope.valid:
+            raise APIError(
+                409, "prepared_strategy_invalid",
+                "The prepared strategy position scope cannot be validated safely.",
+            )
         presented = token_digest(token, self.owner.settings.session_signing_key)
         if not isinstance(strategy["confirmationHash"], str) or not hmac.compare_digest(strategy["confirmationHash"], presented):
             raise APIError(403, "invalid_confirmation", "The confirmation token is invalid.")
@@ -2765,14 +2907,7 @@ class StrategyService:
                 ).rowcount
                 if changed != 1:
                     return None
-                connection.execute(
-                    "INSERT INTO strategy_reservations(account_fingerprint, instrument_id, strategy_id, created_at) "
-                    "VALUES (?, ?, ?, ?)",
-                    (
-                        strategy["accountFingerprint"], strategy["contract"]["instrumentId"],
-                        strategy_id, now,
-                    ),
-                )
+                self._claim_reservation_in_connection(connection, strategy, scope, now)
         except sqlite3.IntegrityError:
             raise APIError(
                 409, "instrument_apply_in_progress",
@@ -2794,6 +2929,12 @@ class StrategyService:
             or any(not isinstance(row, dict) for row in orders)
         ):
             raise APIError(409, "prepared_strategy_invalid", "The prepared strategy cannot be queued safely.")
+        scope = self._persisted_scope(strategy, require_prepared_mode=True)
+        if not scope.valid:
+            raise APIError(
+                409, "prepared_strategy_invalid",
+                "The prepared strategy position scope cannot be validated safely.",
+            )
         now = self.clock()
         queue = new_queue(enqueued_at=now, total_count=len(orders), preview_hash=preview_hash)
         queued_results = initial_results(orders)
@@ -2834,14 +2975,7 @@ class StrategyService:
                 ).rowcount
                 if changed != 1:
                     return False
-                connection.execute(
-                    "INSERT INTO strategy_reservations(account_fingerprint, instrument_id, strategy_id, created_at) "
-                    "VALUES (?, ?, ?, ?)",
-                    (
-                        strategy["accountFingerprint"], strategy["contract"]["instrumentId"],
-                        strategy_id, now,
-                    ),
-                )
+                self._claim_reservation_in_connection(connection, strategy, scope, now)
         except sqlite3.IntegrityError:
             raise APIError(
                 409, "instrument_apply_in_progress",
@@ -2899,6 +3033,36 @@ class StrategyService:
         prepared_mode = prepared.get("submissionMode")
         if prepared_mode is not None and prepared_mode != submission_mode:
             raise APIError(409, "prepared_strategy_invalid", "The prepared submission mode is inconsistent.")
+        try:
+            _, live_preview = self._preflight(
+                strategy["contract"],
+                fingerprint,
+                strategy=strategy,
+                account_snapshot=(account, fingerprint),
+            )
+        except APIError as exc:
+            diagnostics.emit_event(
+                "preflight", component="api", stage="preflight_initial", outcome="failure",
+                reason=self._preflight_diagnostic_reason(exc), api_code=exc.code,
+                submission_mode=submission_mode,
+            )
+            raise
+        except Exception:
+            diagnostics.emit_event(
+                "preflight", component="api", stage="preflight_initial", outcome="failure",
+                reason="preflight_unavailable", submission_mode=submission_mode,
+            )
+            raise
+        diagnostics.emit_event(
+            "preflight", component="api", stage="preflight_initial", outcome="success",
+            submission_mode=submission_mode,
+        )
+        if not hmac.compare_digest(live_preview["previewHash"], str(prepared.get("previewHash", ""))):
+            self._reset_to_draft(strategy_id)
+            raise APIError(
+                409, "strategy_stale", "Contract, fee, or tier data changed; review a fresh draft before applying.",
+                details={"preview": self._public_preview(live_preview)},
+            )
         if submission_mode == "sequential":
             if prepared_mode != "sequential":
                 raise APIError(409, "prepared_strategy_invalid", "The prepared submission mode is missing.")
@@ -2914,36 +3078,6 @@ class StrategyService:
                 order_count=len(prepared.get("orders", [])), persisted=True,
             )
             return self._basic_result(self._load_row(strategy_id))
-        try:
-            _, live_preview = self._preflight(
-                strategy["contract"],
-                fingerprint,
-                strategy=strategy,
-                account_snapshot=(account, fingerprint),
-            )
-        except APIError as exc:
-            diagnostics.emit_event(
-                "preflight", component="api", stage="preflight_initial", outcome="failure",
-                reason=self._preflight_diagnostic_reason(exc), api_code=exc.code,
-                submission_mode="batch",
-            )
-            raise
-        except Exception:
-            diagnostics.emit_event(
-                "preflight", component="api", stage="preflight_initial", outcome="failure",
-                reason="preflight_unavailable", submission_mode="batch",
-            )
-            raise
-        diagnostics.emit_event(
-            "preflight", component="api", stage="preflight_initial", outcome="success",
-            submission_mode="batch",
-        )
-        if not hmac.compare_digest(live_preview["previewHash"], str(prepared.get("previewHash", ""))):
-            self._reset_to_draft(strategy_id)
-            raise APIError(
-                409, "strategy_stale", "Contract, fee, or tier data changed; review a fresh draft before applying.",
-                details={"preview": self._public_preview(live_preview)},
-            )
         execution_id = self._claim_execution(strategy_id, strategy, token)
         if execution_id is None:
             latest = self._load_row(strategy_id)
@@ -3371,8 +3505,11 @@ class StrategyService:
                 )
             ):
                 return False
+            scope = self._persisted_scope(current, require_prepared_mode=False)
+            if not scope.valid:
+                return False
             return self._positions_clear_for_instrument(
-                terminal_positions, current["contract"]["instrumentId"]
+                terminal_positions, current["contract"]["instrumentId"], scope
             )
 
     def _replacement_cleanup_conflict(self, strategy: dict[str, Any]) -> bool:
@@ -3503,19 +3640,22 @@ class StrategyService:
             raise
         position_status = "available"
         position_rows: list[dict[str, Any]] = []
+        scope = self._persisted_scope(strategy, require_prepared_mode=False)
         try:
             raw_positions, valid_position_rows = self._terminal_delete_position_rows()
         except OKXError:
             raw_positions = None
             valid_position_rows = False
-        if raw_positions is None or not valid_position_rows:
+        relevant_positions = (
+            None if raw_positions is None or not valid_position_rows or not scope.valid
+            else scoped_position_rows(raw_positions, strategy["contract"]["instrumentId"], scope)
+        )
+        if relevant_positions is None:
             raw_positions = []
             position_status = "unavailable"
-        actual = [] if position_status == "unavailable" else [
-            row for row in raw_positions
-            if row["instId"] == strategy["contract"]["instrumentId"]
-            and _decimal(row["pos"]) != 0
-        ]
+            actual = []
+        else:
+            actual = relevant_positions
         if position_status == "available" and actual:
             position_status = "present"
         if position_status == "available" and not actual:
@@ -3822,6 +3962,12 @@ class StrategyService:
                 )
 
         instrument_id = current["contract"]["instrumentId"]
+        scope = self._persisted_scope(current, require_prepared_mode=False)
+        if not scope.valid:
+            raise APIError(
+                409, "strategy_immutable",
+                "The strategy position scope cannot be validated safely.",
+            )
         prepared = current.get("prepared")
         position_mode = (
             prepared.get("_positionMode")
@@ -3869,7 +4015,7 @@ class StrategyService:
                 "strategy_immutable",
                 "Current exchange order evidence is incomplete or no longer terminal.",
             )
-        if not valid_position_rows or not self._positions_clear_for_instrument(positions, instrument_id):
+        if not valid_position_rows or not self._positions_clear_for_instrument(positions, instrument_id, scope):
             raise APIError(
                 409,
                 "strategy_immutable",

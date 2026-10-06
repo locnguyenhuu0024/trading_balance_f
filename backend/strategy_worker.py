@@ -32,6 +32,7 @@ from .strategy_queue import (
     stop_queue,
     _ack_decimal,
 )
+from .strategy_scope import extract_persisted_scope, scoped_position_rows
 from .service import APIError
 from . import diagnostics
 
@@ -354,29 +355,27 @@ class StrategyOrderWorker:
     def _all_orders_terminal(results: list[dict[str, Any]]) -> bool:
         return bool(results) and all(row.get("status") in _ORDER_TERMINAL_STATES for row in results)
 
-    def _position_proves_zero(self, instrument_id: str, fence: int) -> tuple[bool, str | None]:
+    def _position_proves_zero(
+        self, strategy: dict[str, Any], fence: int
+    ) -> tuple[bool, str | None]:
         self._pace()
         self._ensure_lease(fence)
+        contract = strategy.get("contract")
+        instrument_id = contract.get("instrumentId") if isinstance(contract, dict) else None
+        scope = extract_persisted_scope(
+            strategy.get("prepared"), strategy.get("snapshot"), strategy.get("orders"),
+            require_prepared_mode=False,
+        )
+        if not scope.valid or not isinstance(instrument_id, str) or not instrument_id:
+            return False, "positions_invalid"
         try:
             rows = self.okx.positions("SWAP")
         except OKXError:
             return False, "positions_unavailable"
-        if not isinstance(rows, list):
+        relevant = scoped_position_rows(rows, instrument_id, scope)
+        if relevant is None:
             return False, "positions_invalid"
-        for row in rows:
-            if not isinstance(row, dict):
-                return False, "positions_invalid"
-            row_instrument = row.get("instId")
-            if not isinstance(row_instrument, str) or not row_instrument:
-                return False, "positions_invalid"
-            if row_instrument != instrument_id:
-                continue
-            size = _decimal(row.get("pos"))
-            if size is None:
-                return False, "positions_invalid"
-            if size != 0:
-                return False, None
-        return True, None
+        return not relevant, None
 
     def _process_strategy(self, strategy: dict[str, Any], fence: int) -> None:
         if strategy["submissionMode"] == "sequential" and strategy["status"] == "APPLYING":
@@ -421,9 +420,7 @@ class StrategyOrderWorker:
         scan_error = order_error
         complete = False
         if scan_error is None and strategy["orderPlacementAttempted"] and self._all_orders_terminal(results):
-            complete, position_error = self._position_proves_zero(
-                strategy["contract"]["instrumentId"], fence
-            )
+            complete, position_error = self._position_proves_zero(strategy, fence)
             if position_error is not None:
                 scan_error = position_error
             elif complete:

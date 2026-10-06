@@ -281,15 +281,16 @@ class StrategyApiTests(unittest.TestCase):
         return response["status"], {} if not payload else json.loads(payload.decode("utf-8"))
 
     @staticmethod
-    def one_sided_contract() -> dict[str, Any]:
+    def one_sided_contract(side: str = "long") -> dict[str, Any]:
+        price = "59000" if side == "long" else "61000"
         return {
             "instrumentId": INSTRUMENT,
             "interval": "12Hutc",
-            "selectedLevels": [{"side": "long", "price": "59000"}],
-            "entryBySide": {"long": "59000"},
+            "selectedLevels": [{"side": side, "price": price}],
+            "entryBySide": {side: price},
             "totalMargin": "60",
-            "leverage": {"long": 5},
-            "sidePercent": {"long": "100"},
+            "leverage": {side: 5},
+            "sidePercent": {side: "100"},
             "allocation": "equal",
         }
 
@@ -640,6 +641,225 @@ class StrategyApiTests(unittest.TestCase):
         self.assertEqual(status, 409, result)
         self.assertEqual(result["error"], "pending_order_exists")
         self.assertEqual(self.exchange.trade_writes, [])
+
+    def test_green_hedge_long_strategy_allows_valid_opposite_short_exposure(self) -> None:
+        self.exchange.pos_mode = "long_short_mode"
+        self.exchange.positions = [
+            {"instId": INSTRUMENT, "pos": "1", "posSide": "short", "mgnMode": "isolated"}
+        ]
+        self.exchange.pending = [
+            {"instId": INSTRUMENT, "ordId": "short-order", "posSide": "short", "side": "sell", "sz": "1"}
+        ]
+        strategy_id, _ = self.save_draft(self.one_sided_contract())
+
+        status, prepared = self.request("POST", f"/v1/strategies/{strategy_id}/prepare-apply", {})
+
+        self.assertEqual(status, 200, prepared)
+        self.assertEqual(self.exchange.trade_writes, [])
+        status, applied = self.request(
+            "POST", f"/v1/strategies/{strategy_id}/execute-apply",
+            {"confirmationToken": prepared["confirmationToken"]},
+        )
+        self.assertEqual(status, 200, applied)
+        self.assertEqual(applied["status"], "APPLIED")
+        self.assertTrue(all(row["posSide"] == "long" for row in self.exchange.batch_writes[0][2]))
+
+    def test_green_hedge_short_strategy_allows_valid_opposite_long_exposure(self) -> None:
+        self.exchange.pos_mode = "long_short_mode"
+        self.exchange.positions = [
+            {"instId": INSTRUMENT, "pos": "1", "posSide": "long", "mgnMode": "isolated"}
+        ]
+        self.exchange.pending = [
+            {"instId": INSTRUMENT, "ordId": "long-order", "posSide": "long", "side": "buy", "sz": "1"}
+        ]
+        strategy_id, _ = self.save_draft(self.one_sided_contract("short"))
+
+        status, prepared = self.request("POST", f"/v1/strategies/{strategy_id}/prepare-apply", {})
+
+        self.assertEqual(status, 200, prepared)
+        status, applied = self.request(
+            "POST", f"/v1/strategies/{strategy_id}/execute-apply",
+            {"confirmationToken": prepared["confirmationToken"]},
+        )
+        self.assertEqual(status, 200, applied)
+        self.assertEqual(applied["status"], "APPLIED")
+        self.assertTrue(all(row["posSide"] == "short" for row in self.exchange.batch_writes[0][2]))
+
+    def test_red_hedge_scope_fails_closed_on_malformed_relevant_evidence(self) -> None:
+        self.exchange.pos_mode = "long_short_mode"
+        strategy_id, _ = self.save_draft(self.one_sided_contract())
+        for invalid_position in (
+            {"instId": INSTRUMENT, "pos": "1", "posSide": {}},
+            {"instId": INSTRUMENT, "pos": "1", "posSide": "net"},
+            {"instId": INSTRUMENT, "pos": "NaN", "posSide": "short"},
+        ):
+            self.exchange.positions = [invalid_position]
+            status, refusal = self.request("POST", f"/v1/strategies/{strategy_id}/prepare-apply", {})
+            self.assertEqual(status, 409, refusal)
+            self.assertEqual(refusal["error"], "instrument_position_exists")
+        self.exchange.positions = []
+        self.exchange.pending = [{"instId": INSTRUMENT, "posSide": "short", "side": {}, "sz": "1"}]
+        status, refusal = self.request("POST", f"/v1/strategies/{strategy_id}/prepare-apply", {})
+        self.assertEqual(status, 409, refusal)
+        self.assertEqual(refusal["error"], "pending_order_exists")
+        self.assertEqual(self.exchange.trade_writes, [])
+
+    def test_red_prepared_position_mode_change_blocks_batch_claim_before_writes(self) -> None:
+        for submission_mode in ("batch", "sequential"):
+            with self.subTest(submission_mode=submission_mode):
+                status, settings = self.request(
+                    "POST", "/v1/strategies/settings",
+                    {"limitOrderSubmissionMode": submission_mode},
+                )
+                self.assertEqual(status, 200, settings)
+                self.exchange.pos_mode = "long_short_mode"
+                strategy_id, _ = self.save_draft(self.one_sided_contract())
+                status, prepared = self.request("POST", f"/v1/strategies/{strategy_id}/prepare-apply", {})
+                self.assertEqual(status, 200, prepared)
+                self.exchange.pos_mode = "net_mode"
+
+                status, refusal = self.request(
+                    "POST", f"/v1/strategies/{strategy_id}/execute-apply",
+                    {"confirmationToken": prepared["confirmationToken"]},
+                )
+
+                self.assertEqual(status, 409, refusal)
+                self.assertEqual(refusal["error"], "account_mode_unsupported")
+                self.assertEqual(self.exchange.trade_writes, [])
+                persisted = self.service.strategy._load_row(strategy_id)
+                self.assertEqual(persisted["status"], "PREPARED")
+                self.assertEqual(persisted["confirmationHash"], token_digest(
+                    prepared["confirmationToken"], SIGNING_KEY
+                ))
+
+    def test_red_hedge_batch_reservations_allow_only_opposite_single_sides(self) -> None:
+        self.exchange.pos_mode = "long_short_mode"
+        ids_and_prepared: list[tuple[str, dict[str, Any], str]] = []
+        for side in ("long", "short", "long"):
+            strategy_id, _ = self.save_draft(self.one_sided_contract(side))
+            status, prepared = self.request("POST", f"/v1/strategies/{strategy_id}/prepare-apply", {})
+            self.assertEqual(status, 200, prepared)
+            ids_and_prepared.append((strategy_id, prepared, side))
+
+        for strategy_id, prepared, side in ids_and_prepared[:2]:
+            status, applied = self.request(
+                "POST", f"/v1/strategies/{strategy_id}/execute-apply",
+                {"confirmationToken": prepared["confirmationToken"]},
+            )
+            self.assertEqual(status, 200, applied)
+            self.assertEqual(applied["status"], "APPLIED")
+        writes_before_refusal = len(self.exchange.trade_writes)
+        refused_id, refused_prepared, _ = ids_and_prepared[2]
+
+        status, refusal = self.request(
+            "POST", f"/v1/strategies/{refused_id}/execute-apply",
+            {"confirmationToken": refused_prepared["confirmationToken"]},
+        )
+
+        self.assertEqual(status, 409, refusal)
+        self.assertEqual(refusal["error"], "instrument_apply_in_progress")
+        self.assertEqual(len(self.exchange.trade_writes), writes_before_refusal)
+        refused = self.service.strategy._load_row(refused_id)
+        self.assertEqual(refused["status"], "PREPARED")
+        self.assertFalse(refused["attemptStarted"])
+        account_fingerprint = self.service.strategy._load_row(
+            ids_and_prepared[0][0]
+        )["accountFingerprint"]
+        with self.service.store.connection() as connection:
+            reservations = connection.execute(
+                "SELECT strategy_id, position_mode, side_scope FROM strategy_reservations "
+                "WHERE account_fingerprint=? AND instrument_id=?",
+                (account_fingerprint, INSTRUMENT),
+            ).fetchall()
+        self.assertEqual(
+            {(row["strategy_id"], row["position_mode"], row["side_scope"]) for row in reservations},
+            {
+                (ids_and_prepared[0][0], "long_short_mode", "long"),
+                (ids_and_prepared[1][0], "long_short_mode", "short"),
+            },
+        )
+
+    def test_green_parallel_opposite_hedge_claims_both_succeed_atomically(self) -> None:
+        self.exchange.pos_mode = "long_short_mode"
+        strategy_ids: list[str] = []
+        prepared: list[dict[str, Any]] = []
+        for side in ("long", "short"):
+            strategy_id, _ = self.save_draft(self.one_sided_contract(side))
+            status, value = self.request("POST", f"/v1/strategies/{strategy_id}/prepare-apply", {})
+            self.assertEqual(status, 200, value)
+            strategy_ids.append(strategy_id)
+            prepared.append(value)
+
+        self.exchange.position_read_barrier = threading.Barrier(2)
+        self.exchange.position_barrier_reads = 0
+
+        def execute(index: int) -> tuple[int, dict[str, Any]]:
+            return self.request(
+                "POST", f"/v1/strategies/{strategy_ids[index]}/execute-apply",
+                {"confirmationToken": prepared[index]["confirmationToken"]},
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(execute, range(2)))
+
+        self.assertEqual([status for status, _ in results], [200, 200])
+        self.assertEqual(len(self.exchange.batch_writes), 2)
+        with self.service.store.connection() as connection:
+            reservations = connection.execute(
+                "SELECT strategy_id, side_scope FROM strategy_reservations ORDER BY side_scope"
+            ).fetchall()
+        self.assertEqual(
+            [(row["strategy_id"], row["side_scope"]) for row in reservations],
+            [(strategy_ids[0], "long"), (strategy_ids[1], "short")],
+        )
+
+    def test_green_hedge_sequential_queues_allow_opposite_and_refuse_same_side(self) -> None:
+        self.exchange.pos_mode = "long_short_mode"
+        status, settings = self.request(
+            "POST", "/v1/strategies/settings", {"limitOrderSubmissionMode": "sequential"}
+        )
+        self.assertEqual(status, 200, settings)
+
+        queued: list[tuple[str, dict[str, Any]]] = []
+        for side in ("long", "short"):
+            strategy_id, _ = self.save_draft(self.one_sided_contract(side))
+            status, prepared = self.request("POST", f"/v1/strategies/{strategy_id}/prepare-apply", {})
+            self.assertEqual(status, 200, prepared)
+            status, result = self.request(
+                "POST", f"/v1/strategies/{strategy_id}/execute-apply",
+                {"confirmationToken": prepared["confirmationToken"]},
+            )
+            self.assertEqual(status, 200, result)
+            self.assertEqual(result["status"], "APPLYING")
+            queued.append((strategy_id, result))
+
+        self.assertEqual(len(self.exchange.trade_writes), 0)
+        refused_id, _ = self.save_draft(self.one_sided_contract("long"))
+        status, refused_prepared = self.request(
+            "POST", f"/v1/strategies/{refused_id}/prepare-apply", {}
+        )
+        self.assertEqual(status, 200, refused_prepared)
+        status, refusal = self.request(
+            "POST", f"/v1/strategies/{refused_id}/execute-apply",
+            {"confirmationToken": refused_prepared["confirmationToken"]},
+        )
+        self.assertEqual(status, 409, refusal)
+        self.assertEqual(refusal["error"], "instrument_apply_in_progress")
+        stored = self.service.strategy._load_row(refused_id)
+        self.assertEqual(stored["status"], "PREPARED")
+        self.assertFalse(stored["attemptStarted"])
+        with self.service.store.connection() as connection:
+            reservations = connection.execute(
+                "SELECT strategy_id, position_mode, side_scope FROM strategy_reservations "
+                "ORDER BY side_scope"
+            ).fetchall()
+        self.assertEqual(
+            [(row["strategy_id"], row["position_mode"], row["side_scope"]) for row in reservations],
+            [
+                (queued[0][0], "long_short_mode", "long"),
+                (queued[1][0], "long_short_mode", "short"),
+            ],
+        )
 
     def test_red_unvalidated_fee_tier_or_contract_metadata_blocks_preview(self) -> None:
         self.exchange.tier_data = []
@@ -1501,6 +1721,44 @@ class StrategyApiTests(unittest.TestCase):
         self.assertIsNone(result["usedMargin"])
         self.assertIsNone(result["pnlPercent"])
 
+    def test_green_hedge_result_pnl_and_attribution_include_only_strategy_side(self) -> None:
+        self.exchange.pos_mode = "long_short_mode"
+        strategy_id, _ = self.save_draft(self.one_sided_contract("long"))
+        status, prepared = self.request(
+            "POST", f"/v1/strategies/{strategy_id}/prepare-apply", {}
+        )
+        self.assertEqual(status, 200, prepared)
+        status, applied = self.request(
+            "POST", f"/v1/strategies/{strategy_id}/execute-apply",
+            {"confirmationToken": prepared["confirmationToken"]},
+        )
+        self.assertEqual(status, 200, applied)
+        order = applied["orders"][0]
+        self.exchange.orders[order["clientOrderId"]].update(
+            state="filled", accFillSz=order["contracts"], avgPx=order["limitPrice"]
+        )
+        with self.service.store.transaction() as connection:
+            connection.execute(
+                "INSERT INTO strategy_sync_state(strategy_id, last_attempt_at, last_success_at, "
+                "last_error, next_scan_at, consecutive_errors) VALUES (?, ?, ?, NULL, ?, 0) "
+                "ON CONFLICT(strategy_id) DO UPDATE SET last_success_at=excluded.last_success_at, "
+                "last_error=NULL, next_scan_at=excluded.next_scan_at, consecutive_errors=0",
+                (strategy_id, self.now - 60, self.now - 60, self.now - 1),
+            )
+        self.exchange.positions = [
+            {"instId": INSTRUMENT, "pos": order["contracts"], "posSide": "long", "upl": "3"},
+            {"instId": INSTRUMENT, "pos": "8", "posSide": "short", "upl": "100"},
+        ]
+
+        status, result = self.request("GET", f"/v1/strategies/{strategy_id}/result")
+
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["positionStatus"], "present")
+        self.assertEqual([row["side"] for row in result["positions"]], ["long"])
+        self.assertEqual(result["unrealizedPnl"], "3")
+        self.assertNotEqual(result["unrealizedPnl"], "103")
+        self.assertFalse(result["attributionChanged"])
+
     def test_red_exchange_market_metadata_identity_and_max_leverage_are_validated(self) -> None:
         baseline_instruments = deepcopy(self.exchange.instrument_data)
         baseline_fees = deepcopy(self.exchange.fee_data)
@@ -1845,6 +2103,23 @@ class StrategyApiTests(unittest.TestCase):
             self.assertIsNotNone(connection.execute(
                 "SELECT 1 FROM strategies WHERE strategy_id=?", (strategy_id,)
             ).fetchone())
+
+    def test_green_terminal_delete_ignores_opposite_hedge_position_but_blocks_same_side(self) -> None:
+        strategy_id, _ = self._make_canceled_terminal_strategy()
+        self.exchange.positions = [
+            {"instId": INSTRUMENT, "pos": "2", "posSide": "short"}
+        ]
+        status, deleted = self.request("POST", f"/v1/strategies/{strategy_id}/delete", {})
+        self.assertEqual(status, 200, deleted)
+        self.assertEqual(deleted["status"], "DELETED")
+
+        same_side_id, _ = self._make_canceled_terminal_strategy()
+        self.exchange.positions = [
+            {"instId": INSTRUMENT, "pos": "2", "posSide": "long"}
+        ]
+        status, refusal = self.request("POST", f"/v1/strategies/{same_side_id}/delete", {})
+        self.assertEqual(status, 409, refusal)
+        self.assertEqual(refusal["error"], "strategy_immutable")
 
     def test_red_terminal_delete_fails_closed_on_position_read_error(self) -> None:
         strategy_id, _ = self._make_canceled_terminal_strategy()
@@ -2420,6 +2695,88 @@ class StrategyApiTests(unittest.TestCase):
         with self.service.store.transaction() as connection:
             connection.execute("DELETE FROM strategy_reservations WHERE strategy_id=?", (source_id,))
         self.assertEqual(len(self.exchange.trade_writes), writes_before)
+
+    def test_green_retry_selection_ignores_opposite_hedge_evidence_and_rechecks_overlap(self) -> None:
+        self.exchange.pos_mode = "long_short_mode"
+        source_contract = self.multi_order_contract(1, 1)
+        source_id, source_result, _ = self._make_rejected_source(
+            contract=source_contract,
+            rejected_order_indexes={0, 1},
+        )
+        opposite_id, _ = self.save_draft(self.one_sided_contract("short"))
+        status, opposite_prepared = self.request(
+            "POST", f"/v1/strategies/{opposite_id}/prepare-apply", {}
+        )
+        self.assertEqual(status, 200, opposite_prepared)
+        status, opposite_result = self.request(
+            "POST", f"/v1/strategies/{opposite_id}/execute-apply",
+            {"confirmationToken": opposite_prepared["confirmationToken"]},
+        )
+        self.assertEqual(status, 200, opposite_result)
+        self.assertEqual(opposite_result["status"], "APPLIED")
+        self.exchange.positions = [
+            {"instId": INSTRUMENT, "pos": "1", "posSide": "short", "upl": "5"}
+        ]
+        self.exchange.pending = [
+            {"instId": INSTRUMENT, "ordId": "short-pending", "posSide": "short", "side": "sell", "sz": "1"}
+        ]
+        status, candidates = self.request(
+            "GET", f"/v1/strategies/{source_id}/retry-candidates"
+        )
+        self.assertEqual(status, 200, candidates)
+        candidates_by_side = {row["side"]: row for row in candidates["candidates"]}
+        self.assertTrue(candidates_by_side["long"]["eligible"], candidates_by_side["long"])
+        self.assertFalse(candidates_by_side["short"]["eligible"], candidates_by_side["short"])
+        self.assertEqual(candidates_by_side["short"]["reason"], "reservation_active")
+        review = {
+            "sourceRevision": candidates["sourceRevision"],
+            "sourceClientOrderIds": [source_result["orders"][0]["clientOrderId"]],
+        }
+
+        status, preview = self.request(
+            "POST", f"/v1/strategies/{source_id}/retry-preview", review
+        )
+        self.assertEqual(status, 200, preview)
+        self.assertEqual({row["side"] for row in preview["orders"]}, {"long"})
+
+        account_fingerprint = self.service.strategy._load_row(source_id)["accountFingerprint"]
+        with self.service.store.transaction() as connection:
+            connection.execute(
+                "INSERT INTO strategy_reservations(account_fingerprint, instrument_id, strategy_id, "
+                "position_mode, side_scope, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (account_fingerprint, INSTRUMENT, "same-side-active", "long_short_mode", "long", self.now),
+            )
+        status, blocked = self.request(
+            "GET", f"/v1/strategies/{source_id}/retry-candidates"
+        )
+        self.assertEqual(status, 200, blocked)
+        self.assertTrue(all(not row["eligible"] for row in blocked["candidates"]))
+        self.assertTrue(all(row["reason"] == "reservation_active" for row in blocked["candidates"]))
+        with self.service.store.transaction() as connection:
+            connection.execute(
+                "DELETE FROM strategy_reservations WHERE strategy_id=?", ("same-side-active",)
+            )
+
+        status, child = self.request(
+            "POST", f"/v1/strategies/{source_id}/retry-drafts",
+            {
+                **review,
+                "previewHash": preview["previewHash"],
+                "retryRequestId": "retry-opposite-hedge-scope-001",
+            },
+        )
+        self.assertEqual(status, 200, child)
+        status, child_prepared = self.request(
+            "POST", f"/v1/strategies/{child['id']}/prepare-apply", {}
+        )
+        self.assertEqual(status, 200, child_prepared)
+        status, child_result = self.request(
+            "POST", f"/v1/strategies/{child['id']}/execute-apply",
+            {"confirmationToken": child_prepared["confirmationToken"]},
+        )
+        self.assertEqual(status, 200, child_result)
+        self.assertEqual(child_result["status"], "APPLIED")
+        self.assertEqual({row["posSide"] for row in self.exchange.batch_writes[-1][2]}, {"long"})
 
     def test_red_prepare_rejects_unavailable_or_ambiguous_usdt_balance(self) -> None:
         malformed_responses = (
