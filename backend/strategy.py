@@ -61,6 +61,12 @@ _ORDER_TERMINAL_STATES = frozenset({"rejected", "filled", "canceled", "mmp_cance
 _DELETABLE_SUBMITTED_ORDER_STATES = frozenset({"filled", "canceled", "mmp_canceled"})
 _DELETABLE_ORDER_STATES = _DELETABLE_SUBMITTED_ORDER_STATES | {"rejected", "not_submitted"}
 _STRATEGY_ID = re.compile(r"[A-Za-z0-9_-]{8,64}\Z")
+_DEFAULT_JEV_SCREENING_THRESHOLDS = {
+    "minStructuralQuality": 4,
+    "minEntrySuitabilityProbability": 0.6,
+    "maxFailureRiskProbability": 0.4,
+}
+_JEV_SCREENING_THRESHOLD_KEYS = frozenset(_DEFAULT_JEV_SCREENING_THRESHOLDS)
 
 
 def _decimal(value: Any) -> Decimal | None:
@@ -478,24 +484,127 @@ class StrategyService:
 
     def _get_settings(self) -> dict[str, Any]:
         _, fingerprint = self._account()
-        return {"limitOrderSubmissionMode": self._limit_order_submission_mode(fingerprint)}
+        return self._settings_for_fingerprint(fingerprint)
 
     def _save_settings(self, body: dict[str, Any]) -> dict[str, Any]:
-        mode = body.get("limitOrderSubmissionMode")
-        if mode not in ("sequential", "batch"):
+        allowed_keys = {"limitOrderSubmissionMode", "jevScreeningThresholds"}
+        if not isinstance(body, dict) or not body or not set(body).issubset(allowed_keys):
+            raise APIError(
+                400, "invalid_strategy_settings",
+                "The strategy settings request contains an unsupported field or no settings.",
+            )
+
+        mode_supplied = "limitOrderSubmissionMode" in body
+        thresholds_supplied = "jevScreeningThresholds" in body
+        requested_mode = body.get("limitOrderSubmissionMode")
+        if mode_supplied and requested_mode not in ("sequential", "batch"):
             raise APIError(
                 400, "invalid_submission_mode",
                 "limitOrderSubmissionMode must be sequential or batch.",
             )
+        requested_thresholds: dict[str, Any] | None = None
+        if thresholds_supplied:
+            requested_thresholds = self._parse_jev_screening_thresholds(
+                body.get("jevScreeningThresholds")
+            )
+            if requested_thresholds is None:
+                raise APIError(
+                    400, "invalid_jev_screening_thresholds",
+                    "jevScreeningThresholds must contain valid values for all three thresholds.",
+                )
+
         _, fingerprint = self._account()
         with self.store.transaction() as connection:
-            connection.execute(
-                "INSERT INTO strategy_account_preferences(account_fingerprint, limit_order_submission_mode, updated_at) "
-                "VALUES (?, ?, ?) ON CONFLICT(account_fingerprint) DO UPDATE SET "
-                "limit_order_submission_mode=excluded.limit_order_submission_mode, updated_at=excluded.updated_at",
-                (fingerprint, mode, self.clock()),
+            row = connection.execute(
+                "SELECT * FROM strategy_account_preferences WHERE account_fingerprint=?",
+                (fingerprint,),
+            ).fetchone()
+            current = self._settings_from_preference_row(row)
+            mode = requested_mode if mode_supplied else current["limitOrderSubmissionMode"]
+            thresholds = (
+                requested_thresholds
+                if thresholds_supplied
+                else current["jevScreeningThresholds"]
             )
-        return {"limitOrderSubmissionMode": mode}
+            connection.execute(
+                "INSERT INTO strategy_account_preferences(account_fingerprint, limit_order_submission_mode, "
+                "jev_min_structural_quality, jev_min_entry_suitability_probability, "
+                "jev_max_failure_risk_probability, updated_at) VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(account_fingerprint) DO UPDATE SET "
+                "limit_order_submission_mode=excluded.limit_order_submission_mode, "
+                "jev_min_structural_quality=excluded.jev_min_structural_quality, "
+                "jev_min_entry_suitability_probability=excluded.jev_min_entry_suitability_probability, "
+                "jev_max_failure_risk_probability=excluded.jev_max_failure_risk_probability, "
+                "updated_at=excluded.updated_at",
+                (
+                    fingerprint, mode, thresholds["minStructuralQuality"],
+                    thresholds["minEntrySuitabilityProbability"],
+                    thresholds["maxFailureRiskProbability"], self.clock(),
+                ),
+            )
+        return {
+            "limitOrderSubmissionMode": mode,
+            "jevScreeningThresholds": thresholds,
+        }
+
+    @staticmethod
+    def _parse_jev_screening_thresholds(value: Any) -> dict[str, int | float] | None:
+        if not isinstance(value, dict) or set(value) != _JEV_SCREENING_THRESHOLD_KEYS:
+            return None
+        quality = value.get("minStructuralQuality")
+        suitability = value.get("minEntrySuitabilityProbability")
+        failure_risk = value.get("maxFailureRiskProbability")
+        if type(quality) is not int or quality < 0 or quality > 5:
+            return None
+        probabilities = (suitability, failure_risk)
+        if any(
+            isinstance(probability, bool)
+            or not isinstance(probability, (int, float))
+            or probability < 0
+            or probability > 1
+            or not math.isfinite(probability)
+            for probability in probabilities
+        ):
+            return None
+        return {
+            "minStructuralQuality": quality,
+            "minEntrySuitabilityProbability": float(suitability),
+            "maxFailureRiskProbability": float(failure_risk),
+        }
+
+    @classmethod
+    def _settings_from_preference_row(cls, row: Any) -> dict[str, Any]:
+        if row is None:
+            return {
+                "limitOrderSubmissionMode": "sequential",
+                "jevScreeningThresholds": dict(_DEFAULT_JEV_SCREENING_THRESHOLDS),
+            }
+        mode = row["limit_order_submission_mode"]
+        thresholds = cls._parse_jev_screening_thresholds({
+            "minStructuralQuality": row["jev_min_structural_quality"],
+            "minEntrySuitabilityProbability": row["jev_min_entry_suitability_probability"],
+            "maxFailureRiskProbability": row["jev_max_failure_risk_probability"],
+        })
+        if mode not in ("sequential", "batch") or thresholds is None:
+            raise APIError(
+                500, "strategy_settings_unavailable",
+                "The saved strategy settings are invalid.",
+            )
+        return {
+            "limitOrderSubmissionMode": mode,
+            "jevScreeningThresholds": thresholds,
+        }
+
+    def _settings_for_fingerprint(self, fingerprint: str) -> dict[str, Any]:
+        with self.store.connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM strategy_account_preferences WHERE account_fingerprint=?",
+                (fingerprint,),
+            ).fetchone()
+        return self._settings_from_preference_row(row)
+
+    def _jev_screening_thresholds(self, fingerprint: str) -> dict[str, Any]:
+        return dict(self._settings_for_fingerprint(fingerprint)["jevScreeningThresholds"])
 
     def _limit_order_submission_mode(self, fingerprint: str) -> str:
         with self.store.connection() as connection:

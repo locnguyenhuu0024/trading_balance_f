@@ -6,6 +6,7 @@ import '../../orders/data/trade_api_browser_adapter_stub.dart'
     if (dart.library.html) '../../orders/data/trade_api_browser_adapter.dart'
     as browser;
 import '../domain/strategy_models.dart';
+import '../domain/strategy_settings.dart';
 
 abstract class StrategyApi {
   Future<Map<String, dynamic>> preview(
@@ -71,7 +72,19 @@ abstract interface class AutomaticStrategyApi {
   });
 }
 
-class StrategyApiClient implements StrategyApi, AutomaticStrategyApi {
+/// Optional full-settings capability. Legacy StrategyApi implementations keep
+/// their mode-only methods and do not have to implement this interface.
+abstract interface class StrategySettingsApi {
+  Future<StrategySettings> getStrategySettings(String bearerToken);
+
+  Future<StrategySettings> saveStrategySettings(
+    String bearerToken,
+    StrategySettings settings,
+  );
+}
+
+class StrategyApiClient
+    implements StrategyApi, AutomaticStrategyApi, StrategySettingsApi {
   StrategyApiClient({Dio? dio, String? baseUrl})
     : _baseUrl = (baseUrl ?? tradeApiBaseUrl).trim(),
       _dio = dio;
@@ -338,6 +351,45 @@ class StrategyApiClient implements StrategyApi, AutomaticStrategyApi {
   }
 
   @override
+  Future<StrategySettings> getStrategySettings(String bearerToken) async {
+    final response = await _request(
+      'GET',
+      'v1/strategies/settings',
+      bearerToken: bearerToken,
+    );
+    final settings = StrategySettings.tryParse(response);
+    if (settings == null) throw _invalidSettingsResponse();
+    return settings;
+  }
+
+  @override
+  Future<StrategySettings> saveStrategySettings(
+    String bearerToken,
+    StrategySettings settings,
+  ) async {
+    if (!settings.isValid) {
+      throw const StrategyApiException(
+        code: 'invalid_request',
+        message: 'The strategy settings are invalid.',
+      );
+    }
+    final response = await _request(
+      'POST',
+      'v1/strategies/settings',
+      bearerToken: bearerToken,
+      body: settings.toJson(),
+    );
+    final acknowledged = StrategySettings.tryParse(response);
+    if (acknowledged == null || acknowledged != settings) {
+      throw const StrategyApiException(
+        code: 'invalid_response',
+        message: 'The trade API did not acknowledge all selected settings.',
+      );
+    }
+    return acknowledged;
+  }
+
+  @override
   Future<void> deleteDraft(String bearerToken, String id) async {
     await _request(
       'POST',
@@ -409,6 +461,11 @@ bool _validRetrySelection(String revision, List<String> ids) =>
 StrategyApiException _invalidRetryResponse() => const StrategyApiException(
   code: 'invalid_response',
   message: 'The trade API returned an invalid retry review.',
+);
+
+StrategyApiException _invalidSettingsResponse() => const StrategyApiException(
+  code: 'invalid_response',
+  message: 'The trade API returned invalid strategy settings.',
 );
 
 String _failureMessage(

@@ -1,4 +1,5 @@
 import 'strategy_models.dart';
+import 'strategy_settings.dart';
 
 enum StrategyDraftEntriesIssue {
   none,
@@ -213,9 +214,8 @@ class StrategyDraftEntries {
     if (recommendation == null ||
         recommendation['version'] != 'ai-jev-selection-v1' ||
         recommendation['maxPerSide'] != 5 ||
-        !_numberEquals(recommendation['minStructuralQuality'], 4) ||
-        !_numberEquals(recommendation['minEntrySuitabilityProbability'], 0.6) ||
-        !_numberEquals(recommendation['maxFailureRiskProbability'], 0.4)) {
+        StrategyJevScreeningThresholds.tryParseSnapshot(recommendation) ==
+            null) {
       return _invalid;
     }
 
@@ -318,9 +318,6 @@ class StrategyDraftEntries {
     }
     return parsed;
   }
-
-  static bool _numberEquals(Object? value, num expected) =>
-      value is num && value.toDouble().isFinite && value == expected;
 }
 
 class _Candidate {

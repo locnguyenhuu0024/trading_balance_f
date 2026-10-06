@@ -120,6 +120,39 @@ void main() {
     expect(entries.entries.single.levelId, 'long-1');
   });
 
+  test(
+    'custom recorded thresholds preserve saved IDs without re-screening',
+    () {
+      final record = _draft(
+        longIds: const ['long-custom'],
+        supports: [
+          _candidate(
+            'long-custom',
+            'long',
+            '90',
+            structuralQuality: 3,
+            entrySuitability: 0.55,
+            failureRisk: 0.45,
+          ),
+        ],
+      );
+      record['aiGeneration']['recommendation'] = {
+        'version': 'ai-jev-selection-v1',
+        'maxPerSide': 5,
+        'minStructuralQuality': 3,
+        'minEntrySuitabilityProbability': 0.55,
+        'maxFailureRiskProbability': 0.45,
+        'longLevelIds': ['long-custom'],
+        'shortLevelIds': <String>[],
+      };
+
+      final entries = StrategyDraftEntries.fromDraftRecord(record);
+
+      expect(entries.issue, StrategyDraftEntriesIssue.none);
+      expect(entries.entries.map((entry) => entry.levelId), ['long-custom']);
+    },
+  );
+
   test('empty recommendation diagnostics distinguish saved states safely', () {
     final disabled = StrategyDraftEntries.fromDraftRecord(
       _draft(
@@ -215,7 +248,16 @@ void main() {
         'maxPerSide': 5,
         'minStructuralQuality': 4,
         'minEntrySuitabilityProbability': 0.6,
-        'maxFailureRiskProbability': 0.41,
+        'maxFailureRiskProbability': 1.01,
+        'longLevelIds': ['long-1'],
+        'shortLevelIds': <String>[],
+      },
+      {
+        'version': 'ai-jev-selection-v1',
+        'maxPerSide': 5,
+        'minStructuralQuality': 3.5,
+        'minEntrySuitabilityProbability': 0.55,
+        'maxFailureRiskProbability': 0.45,
         'longLevelIds': ['long-1'],
         'shortLevelIds': <String>[],
       },

@@ -7,6 +7,7 @@ import '../../../orders/presentation/providers/trade_session_provider.dart';
 import '../../data/strategy_api_client.dart';
 import '../../data/strategy_market_repository.dart';
 import '../../domain/strategy_models.dart';
+import '../../domain/strategy_settings.dart';
 
 typedef StrategyConfirmation =
     Future<bool> Function(Map<String, dynamic> prepared);
@@ -583,10 +584,12 @@ class StrategyDashboardController extends ChangeNotifier {
   String? _actionError;
   String? _deleteError;
   String? _limitOrderSubmissionMode;
+  StrategySettings? _strategySettings;
   String? _settingsError;
   bool _settingsIsLoading = false;
   bool _settingsIsSaving = false;
   bool _settingsLoaded = false;
+  int _settingsOperationGeneration = 0;
   Future<void>? _settingsLoadFuture;
 
   bool get ownsSession => _ownsSession;
@@ -599,9 +602,12 @@ class StrategyDashboardController extends ChangeNotifier {
   String? get actionError => _actionError;
   String? get deleteError => _deleteError;
   String? get limitOrderSubmissionMode => _limitOrderSubmissionMode;
+  StrategySettings? get strategySettings => _strategySettings;
+  bool get supportsFullStrategySettings => _api is StrategySettingsApi;
   String? get settingsError => _settingsError;
   bool get settingsIsLoading => _settingsIsLoading;
   bool get settingsIsSaving => _settingsIsSaving;
+  bool get settingsLoaded => _settingsLoaded;
   bool get metricsAreStale => _metricsAreStale;
   DateTime? get metricsStaleAt => _metricsStaleAt;
   Map<String, dynamic>? strategyById(String id) {
@@ -658,7 +664,7 @@ class StrategyDashboardController extends ChangeNotifier {
   }
 
   Future<void> loadStrategySettings({bool force = false}) {
-    if (!_ownsSession) return Future<void>.value();
+    if (!_ownsSession || _settingsIsSaving) return Future<void>.value();
     final current = _settingsLoadFuture;
     if (current != null) return current;
     if (_settingsLoaded && !force) return Future<void>.value();
@@ -670,43 +676,73 @@ class StrategyDashboardController extends ChangeNotifier {
   }
 
   Future<void> _performSettingsLoad() async {
+    final generation = ++_settingsOperationGeneration;
     _settingsIsLoading = true;
     _settingsError = null;
     _notify();
     try {
-      final mode = await _api.getLimitOrderSubmissionMode(_bearerToken);
-      if (!_ownsSession) return;
-      if (StrategyLimitOrderSubmissionMode.parse(mode) == null) {
-        throw const StrategyApiException(
-          code: 'invalid_response',
-          message: 'Máy chủ trả về cơ chế gửi lệnh không hợp lệ.',
-        );
+      final capability = _api;
+      if (capability is StrategySettingsApi) {
+        final settings = await (capability as StrategySettingsApi)
+            .getStrategySettings(_bearerToken);
+        if (!_acceptSettingsGeneration(generation)) return;
+        if (!settings.isValid ||
+            StrategyLimitOrderSubmissionMode.parse(
+                  settings.limitOrderSubmissionMode,
+                ) ==
+                null) {
+          throw const StrategyApiException(
+            code: 'invalid_response',
+            message: 'Máy chủ trả về cài đặt chiến thuật không hợp lệ.',
+          );
+        }
+        _strategySettings = settings;
+        _limitOrderSubmissionMode = settings.limitOrderSubmissionMode;
+      } else {
+        final mode = await _api.getLimitOrderSubmissionMode(_bearerToken);
+        if (!_acceptSettingsGeneration(generation)) return;
+        if (StrategyLimitOrderSubmissionMode.parse(mode) == null) {
+          throw const StrategyApiException(
+            code: 'invalid_response',
+            message: 'Máy chủ trả về cơ chế gửi lệnh không hợp lệ.',
+          );
+        }
+        _strategySettings = null;
+        _limitOrderSubmissionMode = mode;
       }
-      _limitOrderSubmissionMode = mode;
       _settingsLoaded = true;
       _settingsError = null;
     } on StrategyApiException catch (error) {
-      if (!_ownsSession) return;
+      if (!_acceptSettingsGeneration(generation)) return;
       if (error.isUnauthorized) _onUnauthorized?.call();
       _settingsError = error.message;
     } on Object {
-      if (!_ownsSession) return;
+      if (!_acceptSettingsGeneration(generation)) return;
       _settingsError = 'Không thể tải cài đặt chiến thuật.';
     } finally {
-      if (_ownsSession) {
+      if (_acceptSettingsGeneration(generation)) {
         _settingsIsLoading = false;
         _notify();
       }
     }
   }
 
+  bool _acceptSettingsGeneration(int generation) =>
+      _ownsSession && generation == _settingsOperationGeneration;
+
   Future<bool> saveLimitOrderSubmissionMode(String mode) async {
-    if (!_ownsSession || _settingsIsSaving) return false;
+    if (!_ownsSession ||
+        _settingsIsSaving ||
+        _settingsIsLoading ||
+        _settingsLoadFuture != null) {
+      return false;
+    }
     if (StrategyLimitOrderSubmissionMode.parse(mode) == null) {
       _settingsError = 'Cơ chế gửi lệnh không hợp lệ.';
       _notify();
       return false;
     }
+    final generation = ++_settingsOperationGeneration;
     _settingsIsSaving = true;
     _settingsError = null;
     _notify();
@@ -715,7 +751,7 @@ class StrategyDashboardController extends ChangeNotifier {
         _bearerToken,
         mode,
       );
-      if (!_ownsSession) return false;
+      if (!_acceptSettingsGeneration(generation)) return false;
       if (acknowledged != mode ||
           StrategyLimitOrderSubmissionMode.parse(acknowledged) == null) {
         throw const StrategyApiException(
@@ -724,20 +760,86 @@ class StrategyDashboardController extends ChangeNotifier {
         );
       }
       _limitOrderSubmissionMode = acknowledged;
+      final currentSettings = _strategySettings;
+      if (currentSettings != null) {
+        _strategySettings = StrategySettings(
+          limitOrderSubmissionMode: acknowledged,
+          jevScreeningThresholds: currentSettings.jevScreeningThresholds,
+        );
+      }
       _settingsLoaded = true;
       _settingsError = null;
       return true;
     } on StrategyApiException catch (error) {
-      if (!_ownsSession) return false;
+      if (!_acceptSettingsGeneration(generation)) return false;
       if (error.isUnauthorized) _onUnauthorized?.call();
       _settingsError = error.message;
       return false;
     } on Object {
-      if (!_ownsSession) return false;
+      if (!_acceptSettingsGeneration(generation)) return false;
       _settingsError = 'Không thể lưu cài đặt chiến thuật.';
       return false;
     } finally {
-      if (_ownsSession) {
+      if (_acceptSettingsGeneration(generation)) {
+        _settingsIsSaving = false;
+        _notify();
+      }
+    }
+  }
+
+  Future<bool> saveStrategySettings(StrategySettings settings) async {
+    final capability = _api;
+    if (!_ownsSession ||
+        capability is! StrategySettingsApi ||
+        !_settingsLoaded ||
+        _settingsIsLoading ||
+        _settingsIsSaving ||
+        _settingsLoadFuture != null) {
+      return false;
+    }
+    final settingsApi = capability as StrategySettingsApi;
+    if (!settings.isValid ||
+        StrategyLimitOrderSubmissionMode.parse(
+              settings.limitOrderSubmissionMode,
+            ) ==
+            null) {
+      _settingsError = 'Cài đặt chiến thuật không hợp lệ.';
+      _notify();
+      return false;
+    }
+
+    final generation = ++_settingsOperationGeneration;
+    _settingsIsSaving = true;
+    _settingsError = null;
+    _notify();
+    try {
+      final acknowledged = await settingsApi.saveStrategySettings(
+        _bearerToken,
+        settings,
+      );
+      if (!_acceptSettingsGeneration(generation)) return false;
+      if (acknowledged != settings || !acknowledged.isValid) {
+        throw const StrategyApiException(
+          code: 'invalid_response',
+          message: 'Máy chủ chưa xác nhận đầy đủ các cài đặt đã lưu.',
+        );
+      }
+      _strategySettings = acknowledged;
+      _limitOrderSubmissionMode = acknowledged.limitOrderSubmissionMode;
+      _settingsLoaded = true;
+      _settingsError = null;
+      return true;
+    } on StrategyApiException catch (error) {
+      if (!_acceptSettingsGeneration(generation)) return false;
+      if (error.isUnauthorized) _onUnauthorized?.call();
+      _settingsError = error.message;
+      return false;
+    } on Object {
+      if (!_acceptSettingsGeneration(generation)) return false;
+      _settingsError = 'Không thể lưu cài đặt chiến thuật.';
+      return false;
+    } finally {
+      if (_acceptSettingsGeneration(generation)) {
         _settingsIsSaving = false;
         _notify();
       }

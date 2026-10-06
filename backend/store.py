@@ -74,6 +74,9 @@ CREATE INDEX IF NOT EXISTS strategies_account_updated ON strategies(account_fing
 CREATE TABLE IF NOT EXISTS strategy_account_preferences (
     account_fingerprint TEXT PRIMARY KEY,
     limit_order_submission_mode TEXT NOT NULL,
+    jev_min_structural_quality INTEGER NOT NULL DEFAULT 4,
+    jev_min_entry_suitability_probability REAL NOT NULL DEFAULT 0.6,
+    jev_max_failure_risk_probability REAL NOT NULL DEFAULT 0.4,
     updated_at REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS strategy_reservations (
@@ -111,6 +114,38 @@ def encode_json(value: Any) -> str:
 
 def decode_json(value: str) -> Any:
     return json.loads(value)
+
+
+def _migrate_strategy_account_preferences(connection: sqlite3.Connection) -> None:
+    additions = (
+        ("jev_min_structural_quality", "INTEGER NOT NULL DEFAULT 4"),
+        ("jev_min_entry_suitability_probability", "REAL NOT NULL DEFAULT 0.6"),
+        ("jev_max_failure_risk_probability", "REAL NOT NULL DEFAULT 0.4"),
+    )
+
+    def columns() -> set[str]:
+        return {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(strategy_account_preferences)"
+            ).fetchall()
+        }
+
+    if all(name in columns() for name, _ in additions):
+        return
+
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        present = columns()
+        for name, declaration in additions:
+            if name not in present:
+                connection.execute(
+                    f"ALTER TABLE strategy_account_preferences ADD COLUMN {name} {declaration}"
+                )
+        connection.execute("COMMIT")
+    except Exception:
+        connection.execute("ROLLBACK")
+        raise
 
 
 def _migrate_strategy_reservations(connection: sqlite3.Connection) -> None:
@@ -251,6 +286,7 @@ class SQLiteStore:
                     "CREATE INDEX IF NOT EXISTS strategies_replacement_source "
                     "ON strategies(replacement_source_id, status)"
                 )
+                _migrate_strategy_account_preferences(connection)
                 _migrate_strategy_reservations(connection)
             finally:
                 connection.close()

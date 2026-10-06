@@ -80,6 +80,48 @@ void main() {
     },
   );
 
+  testWidgets('wizard accepts saved IDs with valid custom thresholds', (
+    tester,
+  ) async {
+    final market = _FakeStrategyMarketRepository();
+    final api = _FakeStrategyApi();
+    final dashboard = _dashboard(api, market);
+    addTearDown(dashboard.dispose);
+    final draft = _candidateDraftWithRecommendation(
+      longIds: const ['long-5'],
+      shortIds: const ['short-5'],
+    );
+    (draft['aiGeneration']['recommendation'] as Map<String, dynamic>)
+      ..['minStructuralQuality'] = 3
+      ..['minEntrySuitabilityProbability'] = 0.55
+      ..['maxFailureRiskProbability'] = 0.45;
+
+    await _pumpWizard(
+      tester,
+      market,
+      api,
+      dashboard,
+      initialCandidateDraft: draft,
+    );
+
+    expect(find.text('Đã chọn 2/10 lệnh · Long 1 · Short 1'), findsOneWidget);
+    final longFifth = tester.widget<CheckboxListTile>(
+      find.descendant(
+        of: find.byKey(const Key('strategy-level-long-5')),
+        matching: find.byType(CheckboxListTile),
+      ),
+    );
+    final shortFifth = tester.widget<CheckboxListTile>(
+      find.descendant(
+        of: find.byKey(const Key('strategy-level-short-5')),
+        matching: find.byType(CheckboxListTile),
+      ),
+    );
+    expect(longFifth.value, isTrue);
+    expect(shortFifth.value, isTrue);
+    expect(market.loadCalls, isEmpty);
+  });
+
   testWidgets('one-sided recommendation derives Long and empty derives Both', (
     tester,
   ) async {

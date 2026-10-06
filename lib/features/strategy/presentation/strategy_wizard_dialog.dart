@@ -9,6 +9,7 @@ import '../data/strategy_api_client.dart';
 import '../data/strategy_market_repository.dart';
 import '../domain/strategy_models.dart';
 import '../domain/strategy_selection.dart';
+import '../domain/strategy_settings.dart';
 import 'providers/strategy_dashboard_provider.dart';
 import 'strategy_number_formatter.dart';
 
@@ -196,18 +197,8 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
     if (recommendation == null ||
         recommendation['version'] != 'ai-jev-selection-v1' ||
         recommendation['maxPerSide'] != 5 ||
-        !_recommendationNumberEquals(
-          recommendation['minStructuralQuality'],
-          4,
-        ) ||
-        !_recommendationNumberEquals(
-          recommendation['minEntrySuitabilityProbability'],
-          0.6,
-        ) ||
-        !_recommendationNumberEquals(
-          recommendation['maxFailureRiskProbability'],
-          0.4,
-        )) {
+        StrategyJevScreeningThresholds.tryParseSnapshot(recommendation) ==
+            null) {
       _selectionNotice =
           'Đề xuất đã lưu không hợp lệ; mọi mức đã được bỏ chọn. Bạn có thể chọn thủ công.';
       return;
@@ -290,9 +281,6 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
             null &&
         _finiteInRange(assessment['failureRiskProbability'], 0, 1) != null;
   }
-
-  bool _recommendationNumberEquals(Object? value, num expected) =>
-      value is num && value.toDouble().isFinite && value == expected;
 
   Map<String, dynamic>? _strictStringMap(Object? value) =>
       value is Map && value.keys.every((key) => key is String)

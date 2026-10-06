@@ -365,6 +365,36 @@ class AutomaticStrategyApiTests(unittest.TestCase):
         self.assertEqual(recommendation["longLevelIds"], ["long-0"])
         self.assertEqual(recommendation["shortLevelIds"], [])
 
+    def test_recommendation_accepts_custom_threshold_boundary_equality(self) -> None:
+        supports = self._selection_candidates("long", 2)
+        supports[0]["assessment"].update({
+            "structuralQuality": 3,
+            "entrySuitabilityProbability": 0.5,
+            "failureRiskProbability": 0.5,
+        })
+        supports[1]["assessment"]["structuralQuality"] = 2.99
+        resistances = self._selection_candidates("short", 1)
+        resistances[0]["assessment"].update({
+            "structuralQuality": 3,
+            "entrySuitabilityProbability": 0.5,
+            "failureRiskProbability": 0.5,
+        })
+        custom = {
+            "minStructuralQuality": 3,
+            "minEntrySuitabilityProbability": 0.5,
+            "maxFailureRiskProbability": 0.5,
+        }
+
+        recommendation = AutomaticStrategyService._recommendation(
+            supports, resistances, custom
+        )
+
+        self.assertEqual(recommendation["minStructuralQuality"], 3)
+        self.assertEqual(recommendation["minEntrySuitabilityProbability"], 0.5)
+        self.assertEqual(recommendation["maxFailureRiskProbability"], 0.5)
+        self.assertEqual(recommendation["longLevelIds"], ["long-0"])
+        self.assertEqual(recommendation["shortLevelIds"], ["short-0"])
+
     def test_recommendation_uses_saved_rank_for_ties_and_excludes_failed_or_disabled_assessments(self) -> None:
         tied = self._selection_candidates("long", 3)
         for candidate in tied:
@@ -406,6 +436,152 @@ class AutomaticStrategyApiTests(unittest.TestCase):
         replay = self.create_candidates("recommendation-replay-01")
         self.assertEqual(replay["aiGeneration"]["recommendation"], recommendation)
         self.assertEqual(replay["aiGeneration"], generation)
+
+    def test_green_001_custom_preferences_filter_generation_and_remain_frozen(self) -> None:
+        captured = {
+            "minStructuralQuality": 3,
+            "minEntrySuitabilityProbability": 0.5,
+            "maxFailureRiskProbability": 0.5,
+        }
+        changed_during_provider = {
+            "minStructuralQuality": 5,
+            "minEntrySuitabilityProbability": 0.9,
+            "maxFailureRiskProbability": 0.1,
+        }
+        status, saved = self.request("POST", "/v1/strategies/settings", {
+            "jevScreeningThresholds": captured,
+        })
+        self.assertEqual(status, 200, saved)
+
+        def change_preferences_during_evaluation(
+            contexts: list[dict[str, Any]],
+        ) -> list[ProviderOutcome]:
+            status, updated = self.request("POST", "/v1/strategies/settings", {
+                "jevScreeningThresholds": changed_during_provider,
+            })
+            self.assertEqual(status, 200, updated)
+            return [
+                ProviderOutcome(
+                    status="success",
+                    error_code=None,
+                    model_requested="captured-thresholds-test",
+                    model_used="captured-thresholds-test",
+                    structural_quality=3.5,
+                    entry_suitability_probability=0.55,
+                    failure_risk_probability=0.45,
+                    evaluated_at="2026-10-05T00:00:00.000Z",
+                )
+                for _ in contexts
+            ]
+
+        self.service.strategy.automatic.provider_factory = lambda: FixedProvider(
+            change_preferences_during_evaluation
+        )
+        created = self.create_candidates("captured-thresholds-01")
+        generation = created["aiGeneration"]
+        recommendation = generation["recommendation"]
+        self.assertEqual(recommendation["minStructuralQuality"], captured["minStructuralQuality"])
+        self.assertEqual(
+            recommendation["minEntrySuitabilityProbability"],
+            captured["minEntrySuitabilityProbability"],
+        )
+        self.assertEqual(
+            recommendation["maxFailureRiskProbability"],
+            captured["maxFailureRiskProbability"],
+        )
+        for candidates, selected in (
+            (generation["supports"], recommendation["longLevelIds"]),
+            (generation["resistances"], recommendation["shortLevelIds"]),
+        ):
+            eligible = sorted(
+                (
+                    candidate for candidate in candidates
+                    if float(candidate["price"]) > 0
+                    and candidate["assessment"]["status"] == "success"
+                    and candidate["assessment"]["structuralQuality"] >= captured["minStructuralQuality"]
+                    and candidate["assessment"]["entrySuitabilityProbability"]
+                    >= captured["minEntrySuitabilityProbability"]
+                    and candidate["assessment"]["failureRiskProbability"]
+                    <= captured["maxFailureRiskProbability"]
+                ),
+                key=lambda candidate: candidate["rank"],
+            )
+            self.assertEqual(selected, [candidate["levelId"] for candidate in eligible[:5]])
+            self.assertTrue(selected)
+
+        self.assertEqual(self.get_settings_for_test(), {
+            "limitOrderSubmissionMode": "sequential",
+            "jevScreeningThresholds": changed_during_provider,
+        })
+
+        stricter = self.create_candidates("stricter-thresholds-01")["aiGeneration"]
+        self.assertEqual(stricter["recommendation"]["minStructuralQuality"], 5)
+        self.assertEqual(
+            stricter["recommendation"]["minEntrySuitabilityProbability"], 0.9
+        )
+        self.assertEqual(stricter["recommendation"]["maxFailureRiskProbability"], 0.1)
+        self.assertEqual(stricter["recommendation"]["longLevelIds"], [])
+        self.assertEqual(stricter["recommendation"]["shortLevelIds"], [])
+
+        contract = self._materialization_contract(created)
+        with patch.object(
+            self.service.strategy, "_preview_contract", return_value=self._fake_preview(contract)
+        ):
+            status, materialized = self.request("POST", "/v1/strategies", {
+                **contract,
+                "candidateDraftId": created["id"],
+                "previewHash": "a" * 64,
+            })
+        self.assertEqual(status, 200, materialized)
+        self.assertEqual(materialized["aiGeneration"], generation)
+
+        _, fingerprint = self.service.strategy._account()
+        with self.service.store.transaction() as connection:
+            connection.execute(
+                "UPDATE strategy_account_preferences SET jev_min_structural_quality=9 "
+                "WHERE account_fingerprint=?", (fingerprint,),
+            )
+        replay = self.create_candidates("captured-thresholds-01")
+        self.assertEqual(replay["aiGeneration"], generation)
+        self.assertEqual(replay["aiGeneration"], materialized["aiGeneration"])
+
+    def get_settings_for_test(self) -> dict[str, Any]:
+        status, result = self.request("GET", "/v1/strategies/settings")
+        self.assertEqual(status, 200, result)
+        return result
+
+    def test_corrupt_screening_preferences_block_new_generation_before_market_work(self) -> None:
+        status, _ = self.request("POST", "/v1/strategies/settings", {
+            "jevScreeningThresholds": {
+                "minStructuralQuality": 3,
+                "minEntrySuitabilityProbability": 0.5,
+                "maxFailureRiskProbability": 0.5,
+            },
+        })
+        self.assertEqual(status, 200)
+        _, fingerprint = self.service.strategy._account()
+        with self.service.store.transaction() as connection:
+            connection.execute(
+                "UPDATE strategy_account_preferences SET jev_max_failure_risk_probability=1.1 "
+                "WHERE account_fingerprint=?", (fingerprint,),
+            )
+
+        self.service.strategy.automatic.provider_factory = lambda: self.fail(
+            "provider must not run for corrupt saved screening preferences"
+        )
+        status, result = self.request(
+            "POST", "/v1/strategies/automatic-drafts",
+            self.generation_request("corrupt-screening-01"),
+        )
+        self.assertEqual(status, 500, result)
+        self.assertEqual(result["error"], "strategy_settings_unavailable")
+        self.assertFalse(any(
+            "/api/v5/public/instruments" in call[1] or "/api/v5/market/" in call[1]
+            for call in self.exchange.calls
+        ))
+        with self.service.store.connection() as connection:
+            count = connection.execute("SELECT COUNT(*) FROM strategies").fetchone()[0]
+        self.assertEqual(count, 0)
 
     @patch.dict(os.environ, {"JEV_ENABLED": "false"})
     def test_disabled_enrichment_keeps_every_candidate_reviewable_and_idempotent(self) -> None:

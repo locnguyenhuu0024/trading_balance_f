@@ -250,6 +250,8 @@ class AutomaticStrategyService:
                 request_guard()
             return replay
 
+        screening_thresholds = self.strategy._jev_screening_thresholds(fingerprint)
+
         instrument, tick_size = self._instrument(instrument_id)
         quote = self._quote(instrument_id)
         observed_ms = timestamp_milliseconds(quote.get("ts"))
@@ -344,6 +346,7 @@ class AutomaticStrategyService:
             context_candles=context_candles,
             supports=supports,
             resistances=resistances,
+            screening_thresholds=screening_thresholds,
         )
         candidate_id = self._persist_candidate(
             fingerprint=fingerprint,
@@ -686,8 +689,16 @@ class AutomaticStrategyService:
 
     @staticmethod
     def _recommendation(
-        supports: list[dict[str, Any]], resistances: list[dict[str, Any]]
+        supports: list[dict[str, Any]],
+        resistances: list[dict[str, Any]],
+        screening_thresholds: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        thresholds = screening_thresholds or {
+            "minStructuralQuality": _RECOMMENDATION_MIN_QUALITY,
+            "minEntrySuitabilityProbability": _RECOMMENDATION_MIN_SUITABILITY,
+            "maxFailureRiskProbability": _RECOMMENDATION_MAX_FAILURE_RISK,
+        }
+
         def eligible_ids(candidates: list[dict[str, Any]], side: str) -> list[str]:
             eligible: list[tuple[int, dict[str, Any]]] = []
             seen_ids: set[str] = set()
@@ -706,12 +717,17 @@ class AutomaticStrategyService:
                     or assessment.get("status") != "success"
                 ):
                     continue
-                quality = _numeric(assessment.get("structuralQuality"), _RECOMMENDATION_MIN_QUALITY, 5)
+                quality = _numeric(
+                    assessment.get("structuralQuality"), thresholds["minStructuralQuality"], 5
+                )
                 suitability = _numeric(
-                    assessment.get("entrySuitabilityProbability"), _RECOMMENDATION_MIN_SUITABILITY, 1
+                    assessment.get("entrySuitabilityProbability"),
+                    thresholds["minEntrySuitabilityProbability"], 1,
                 )
                 failure_risk = _numeric(
-                    assessment.get("failureRiskProbability"), 0, _RECOMMENDATION_MAX_FAILURE_RISK
+                    assessment.get("failureRiskProbability"),
+                    0,
+                    thresholds["maxFailureRiskProbability"],
                 )
                 if quality is None or suitability is None or failure_risk is None:
                     continue
@@ -727,9 +743,9 @@ class AutomaticStrategyService:
         return {
             "version": _RECOMMENDATION_VERSION,
             "maxPerSide": _RECOMMENDATION_MAX_PER_SIDE,
-            "minStructuralQuality": _RECOMMENDATION_MIN_QUALITY,
-            "minEntrySuitabilityProbability": _RECOMMENDATION_MIN_SUITABILITY,
-            "maxFailureRiskProbability": _RECOMMENDATION_MAX_FAILURE_RISK,
+            "minStructuralQuality": thresholds["minStructuralQuality"],
+            "minEntrySuitabilityProbability": thresholds["minEntrySuitabilityProbability"],
+            "maxFailureRiskProbability": thresholds["maxFailureRiskProbability"],
             "longLevelIds": eligible_ids(supports, "long"),
             "shortLevelIds": eligible_ids(resistances, "short"),
         }
@@ -747,6 +763,7 @@ class AutomaticStrategyService:
         context_candles: dict[str, list[dict[str, Any]]],
         supports: list[dict[str, Any]],
         resistances: list[dict[str, Any]],
+        screening_thresholds: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         def candle_metadata(rows: list[dict[str, Any]]) -> dict[str, Any]:
             compact = [{key: row[key] for key in (
@@ -772,7 +789,9 @@ class AutomaticStrategyService:
             "contextCandles": {
                 key: candle_metadata(rows) for key, rows in context_candles.items()
             },
-            "recommendation": AutomaticStrategyService._recommendation(supports, resistances),
+            "recommendation": AutomaticStrategyService._recommendation(
+                supports, resistances, screening_thresholds
+            ),
             "supports": supports,
             "resistances": resistances,
         }

@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/features/strategy/data/strategy_api_client.dart';
 import 'package:trading_balance_f/features/strategy/domain/strategy_models.dart';
+import 'package:trading_balance_f/features/strategy/domain/strategy_settings.dart';
 
 void main() {
   test('retry DTOs require bound previews and consistent eligibility', () {
@@ -331,6 +332,91 @@ void main() {
       expect(invalidAck.code, 'invalid_response');
     },
   );
+
+  test(
+    'full strategy settings use and verify the typed complete payload',
+    () async {
+      final adapter = _TradeAdapter();
+      final client = StrategyApiClient(
+        baseUrl: 'https://trade.example.com',
+        dio: Dio(BaseOptions())..httpClientAdapter = adapter,
+      );
+      const defaults = StrategySettings(
+        limitOrderSubmissionMode: 'sequential',
+        jevScreeningThresholds: StrategyJevScreeningThresholds.defaults,
+      );
+      expect(await client.getStrategySettings('session-token'), defaults);
+
+      const custom = StrategySettings(
+        limitOrderSubmissionMode: 'batch',
+        jevScreeningThresholds: StrategyJevScreeningThresholds(
+          minStructuralQuality: 3,
+          minEntrySuitabilityProbability: 0.555,
+          maxFailureRiskProbability: 0.45,
+        ),
+      );
+      expect(
+        await client.saveStrategySettings('session-token', custom),
+        custom,
+      );
+      expect(adapter.requests[0].method, 'GET');
+      expect(adapter.requests[1].method, 'POST');
+      expect(adapter.requests[1].data, custom.toJson());
+    },
+  );
+
+  test(
+    'full settings reject incomplete GET data and mismatched save ACK',
+    () async {
+      final invalidGetClient = StrategyApiClient(
+        baseUrl: 'https://trade.example.com',
+        dio: Dio(BaseOptions())
+          ..httpClientAdapter = _TradeAdapter(
+            getSettingsThresholds: const {'minStructuralQuality': 4},
+          ),
+      );
+      await expectLater(
+        invalidGetClient.getStrategySettings('session-token'),
+        throwsA(
+          isA<StrategyApiException>().having(
+            (error) => error.code,
+            'code',
+            'invalid_response',
+          ),
+        ),
+      );
+
+      const custom = StrategySettings(
+        limitOrderSubmissionMode: 'batch',
+        jevScreeningThresholds: StrategyJevScreeningThresholds(
+          minStructuralQuality: 3,
+          minEntrySuitabilityProbability: 0.555,
+          maxFailureRiskProbability: 0.45,
+        ),
+      );
+      final mismatchClient = StrategyApiClient(
+        baseUrl: 'https://trade.example.com',
+        dio: Dio(BaseOptions())
+          ..httpClientAdapter = _TradeAdapter(
+            postSettingsThresholds: const {
+              'minStructuralQuality': 3,
+              'minEntrySuitabilityProbability': 0.56,
+              'maxFailureRiskProbability': 0.45,
+            },
+          ),
+      );
+      await expectLater(
+        mismatchClient.saveStrategySettings('session-token', custom),
+        throwsA(
+          isA<StrategyApiException>().having(
+            (error) => error.code,
+            'code',
+            'invalid_response',
+          ),
+        ),
+      );
+    },
+  );
 }
 
 Future<StrategyApiException> _capturePreviewFailure(
@@ -477,11 +563,24 @@ Map<String, dynamic> _retryDraftResponse() => {
   'preview': _retryPreviewResponse(includeChildId: true),
 };
 
+const Map<String, dynamic> _defaultSettingsThresholds = {
+  'minStructuralQuality': 4,
+  'minEntrySuitabilityProbability': 0.6,
+  'maxFailureRiskProbability': 0.4,
+};
+
 class _TradeAdapter implements HttpClientAdapter {
-  _TradeAdapter({this.getSettingsMode = 'sequential', this.postSettingsMode});
+  _TradeAdapter({
+    this.getSettingsMode = 'sequential',
+    this.postSettingsMode,
+    this.getSettingsThresholds,
+    this.postSettingsThresholds,
+  });
 
   final String getSettingsMode;
   final String? postSettingsMode;
+  final Map<String, dynamic>? getSettingsThresholds;
+  final Map<String, dynamic>? postSettingsThresholds;
   final List<RequestOptions> requests = [];
 
   @override
@@ -520,11 +619,17 @@ class _TradeAdapter implements HttpClientAdapter {
       },
       '/v1/strategies/settings' when options.method == 'GET' => {
         'limitOrderSubmissionMode': getSettingsMode,
+        'jevScreeningThresholds':
+            getSettingsThresholds ?? _defaultSettingsThresholds,
       },
       '/v1/strategies/settings' => {
         'limitOrderSubmissionMode':
             postSettingsMode ??
             (options.data as Map)['limitOrderSubmissionMode'],
+        'jevScreeningThresholds':
+            postSettingsThresholds ??
+            (options.data as Map)['jevScreeningThresholds'] ??
+            _defaultSettingsThresholds,
       },
       _ => {'status': 'DELETED'},
     };
