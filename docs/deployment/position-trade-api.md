@@ -332,6 +332,13 @@ The public production API base URL is `https://api.tradingbalancef.com`. Build t
 flutter build web --no-pub --release --dart-define=TRADE_API_BASE_URL=https://api.tradingbalancef.com
 ```
 
+```sh
+scp -r build/web/* deploy@217.60.248.123:/var/www/tradingbalancef/app/
+```
+
+```sh
+```
+
 This URL is public. It is not a credential.
 
 ## Startup, persistence, and first-use checks
