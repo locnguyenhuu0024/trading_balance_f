@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import sqlite3
+from contextlib import closing
 from concurrent.futures import ThreadPoolExecutor
 from tempfile import TemporaryDirectory
 from threading import Barrier
@@ -76,7 +77,7 @@ class CancellationExchange(FakeOKX):
             self.calls.append((method, path, payload))
             self.cancel_bodies.append(copy.deepcopy(payload))
             if self.operation_db_path is not None:
-                with sqlite3.connect(self.operation_db_path) as connection:
+                with closing(sqlite3.connect(self.operation_db_path)) as connection, connection:
                     row = connection.execute(
                         "SELECT status, results_json FROM operations WHERE action='cancel_order' "
                         "ORDER BY created_at DESC LIMIT 1"
@@ -549,7 +550,7 @@ class OrderCancellationTests(unittest.TestCase):
     def test_red_recovery_of_durable_attempt_started_is_read_only(self) -> None:
         token = self.login()
         prepared = self.prepare(token)
-        with sqlite3.connect(self.settings.operation_db_path) as connection:
+        with closing(sqlite3.connect(self.settings.operation_db_path)) as connection, connection:
             row = connection.execute(
                 "SELECT results_json FROM operations WHERE operation_id=?",
                 (prepared["operationId"],),

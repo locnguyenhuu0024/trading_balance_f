@@ -37,18 +37,28 @@ class _SettingsStorage extends SecureStorageHelper {
     this.failNavigationSave = false,
     this.failTextScaleSave = false,
     this.navigationSaveGate,
+    this.pendingApiKeyRead = true,
   }) : super(const FlutterSecureStorage());
 
   final bool failNavigationSave;
   final bool failTextScaleSave;
   final Completer<void>? navigationSaveGate;
+  final bool pendingApiKeyRead;
   NavigationPreferences? savedNavigationPreferences;
   double? savedAppTextScale;
 
   // Keep the initial legacy read pending so opening the access page does not
   // depend on a platform secure-storage implementation in this widget test.
   @override
-  Future<String?> getOkxApiKey() => Completer<String?>().future;
+  Future<String?> getOkxApiKey() => pendingApiKeyRead
+      ? Completer<String?>().future
+      : Future<String?>.value(null);
+
+  @override
+  Future<String?> getOkxSecretKey() async => null;
+
+  @override
+  Future<String?> getOkxPassphrase() async => null;
 
   @override
   Future<bool> getHideBalanceDefault() async => false;
@@ -124,7 +134,37 @@ void main() {
     await tester.ensureVisible(accessEntry);
     await tester.pumpAndSettle();
     await tester.tap(accessEntry);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.text('API và giao dịch'), findsOneWidget);
+    expect(find.text('Đang tải thông tin API đã lưu…'), findsOneWidget);
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    expect(find.byKey(const Key('settings-okx-credential-bundle')), findsNothing);
+    expect(find.text('API Key'), findsNothing);
+    expect(find.text('Secret Key'), findsNothing);
+    expect(find.text('Passphrase'), findsNothing);
+    expect(find.text('Giao dịch riêng tư'), findsOneWidget);
+    expect(find.byKey(const Key('settings-trade-access-button')), findsNothing);
+  });
+
+  testWidgets('opens the ready API and trade access subpage', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      settingsApp(_SettingsStorage(pendingApiKeyRead: false)),
+    );
+    await tester.pump();
+
+    final accessEntry = find.byKey(const Key('settings-trade-access-button'));
+    await tester.ensureVisible(accessEntry);
     await tester.pumpAndSettle();
+    await tester.tap(accessEntry);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    await tester.tap(find.byKey(const Key('settings-toggle-okx-entry-mode')));
+    await tester.pump();
 
     expect(find.text('API Key'), findsOneWidget);
     expect(find.text('Secret Key'), findsOneWidget);

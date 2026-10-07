@@ -1,9 +1,9 @@
-import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../../../../core/security/secure_storage_helper.dart';
+import '../../../../core/network/backend_data_client.dart';
+import '../../../../core/network/backend_data_session.dart';
 import '../../application/risk_monitor_bridge.dart';
 import '../../application/risk_monitor.dart';
 import '../../application/risk_monitor_runtime.dart';
@@ -11,28 +11,25 @@ import '../../application/risk_notification_sink.dart';
 import '../../data/risk/risk_local_store.dart';
 import '../../data/risk/risk_market_repository.dart';
 import '../../data/risk/risk_repository.dart';
-import '../../data/risk/risk_request_coordinator.dart';
+import '../../../orders/presentation/providers/trade_session_provider.dart';
 
 /// The presentation layer depends on the typed monitor protocol.  Production
 /// wiring can override this provider with the foreground owner (and the later
 /// Android owner); the in-memory owner keeps previews and widget tests
 /// deterministic without starting a platform service.
 final riskMonitorOwnerProvider = Provider<RiskMonitorOwner>((ref) {
-  final repository = ref.watch(riskRepositoryProvider);
-  final marketDio = Dio(
-    BaseOptions(
-      baseUrl: kIsWeb ? '' : 'https://www.okx.com',
-      connectTimeout: const Duration(seconds: 15),
-      receiveTimeout: const Duration(seconds: 15),
-      headers: const <String, Object>{'Content-Type': 'application/json'},
-    ),
+  final backendSession = ref.read(backendDataSessionProvider);
+  final backendClient = ref.read(backendDataClientProvider);
+  final repository = ref.read(riskRepositoryProvider);
+  final marketRepository = RiskMarketRepository(
+    backendClient.dio,
+    backendSession: backendSession,
+    requestCoordinator: repository.requestCoordinator,
   );
+  ref.onDispose(marketRepository.dispose);
   final monitor = RiskMonitor.fromRepositories(
     repository: repository,
-    marketRepository: RiskMarketRepository(
-      marketDio,
-      requestCoordinator: ref.watch(riskRequestCoordinatorProvider),
-    ),
+    marketRepository: marketRepository,
     store: RiskLocalStore(storage: DeferredSharedPreferencesRiskStorage()),
     notificationSink: kIsWeb
         ? const InAppRiskNotificationSink()
@@ -42,8 +39,12 @@ final riskMonitorOwnerProvider = Provider<RiskMonitorOwner>((ref) {
     monitor: monitor,
     platform: kIsWeb
         ? const DefaultRiskRuntimePlatformAdapter()
-        : FlutterBackgroundRiskRuntimeAdapter(),
-    credentialChanges: CredentialMutationBus.changes,
+        : FlutterBackgroundRiskRuntimeAdapter(
+            backendSession: backendSession,
+            onSessionExpired: () =>
+                ref.read(tradeSessionProvider.notifier).expire(),
+          ),
+    backendDataSession: backendSession,
   );
   ref.onDispose(runtime.dispose);
   return runtime;

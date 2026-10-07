@@ -3,30 +3,28 @@ import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:trading_balance_f/core/network/backend_data_client.dart';
+import 'package:trading_balance_f/core/network/backend_data_session.dart';
+import 'package:trading_balance_f/features/orders/data/trade_api_client.dart';
 import 'package:trading_balance_f/features/orders/data/order_repository.dart';
 
 void main() {
   group('OrderRepository ALL filter', () {
-    test('keeps ALL loads atomic when one pending subtype fails', () async {
-      final adapter = _RecordingAdapter(failInstType: 'FUTURES');
-      final repository = OrderRepository(_dioWith(adapter));
+    test('keeps an ALL load atomic when its backend aggregate fails', () async {
+      final adapter = _RecordingAdapter(failAll: true);
+      final repository = _repository(adapter);
 
       await expectLater(
         repository.getPendingOrders(instType: 'ALL'),
         throwsA(isA<Exception>()),
       );
 
-      expect(adapter.requestedTypes, hasLength(4));
-      expect(
-        adapter.requestedTypes,
-        containsAll(['SPOT', 'MARGIN', 'SWAP', 'FUTURES']),
-      );
-      expect(adapter.requestedTypes, isNot(contains('ALL')));
+      expect(adapter.requestedTypes, ['ALL']);
     });
 
     test('does not request SPOT positions', () async {
       final adapter = _RecordingAdapter();
-      final repository = OrderRepository(_dioWith(adapter));
+      final repository = _repository(adapter);
 
       final positions = await repository.getOpenPositions(instType: 'SPOT');
 
@@ -36,7 +34,7 @@ void main() {
 
     test('keeps a concrete pending filter as a single request', () async {
       final adapter = _RecordingAdapter();
-      final repository = OrderRepository(_dioWith(adapter));
+      final repository = _repository(adapter);
 
       final orders = await repository.getPendingOrders(instType: 'SWAP');
 
@@ -45,9 +43,9 @@ void main() {
       expect(adapter.requestedTypes, ['SWAP']);
     });
 
-    test('merges ALL positions from margin, swap, and futures', () async {
+    test('loads ALL positions through one backend aggregate request', () async {
       final adapter = _RecordingAdapter();
-      final repository = OrderRepository(_dioWith(adapter));
+      final repository = _repository(adapter);
 
       final positions = await repository.getOpenPositions(instType: 'ALL');
 
@@ -60,20 +58,14 @@ void main() {
         ]),
       );
       expect(positions, hasLength(3));
-      expect(adapter.requestedTypes, hasLength(3));
-      expect(
-        adapter.requestedTypes,
-        containsAll(['MARGIN', 'SWAP', 'FUTURES']),
-      );
-      expect(adapter.requestedTypes, isNot(contains('SPOT')));
-      expect(adapter.requestedTypes, isNot(contains('ALL')));
+      expect(adapter.requestedTypes, ['ALL']);
     });
 
     test(
       'merges pending and history orders newest first with stable ties',
       () async {
         final adapter = _RecordingAdapter();
-        final repository = OrderRepository(_dioWith(adapter));
+        final repository = _repository(adapter);
 
         final pending = await repository.getPendingOrders(instType: 'ALL');
         final history = await repository.getOrdersHistory(instType: 'ALL');
@@ -81,22 +73,31 @@ void main() {
 
         expect(pending.map((order) => order.instType), expectedOrder);
         expect(history.map((order) => order.instType), expectedOrder);
-        expect(adapter.requestedTypes, hasLength(8));
-        expect(adapter.requestedTypes, isNot(contains('ALL')));
+        expect(adapter.requestedTypes, ['ALL', 'ALL']);
       },
     );
   });
 }
 
-Dio _dioWith(_RecordingAdapter adapter) {
-  return Dio(BaseOptions(baseUrl: 'https://orders.test'))
-    ..httpClientAdapter = adapter;
+OrderRepository _repository(_RecordingAdapter adapter) {
+  final client = BackendDataClient(
+    dio: Dio()..httpClientAdapter = adapter,
+    baseUrl: 'https://orders.test',
+  );
+  final session = BackendDataSession(
+    initialSession: TradeSession(
+      bearerToken: 'test-token',
+      accountIdentifier: 'test-account',
+      expiresAt: DateTime.now().add(const Duration(minutes: 5)),
+    ),
+  );
+  return OrderRepository(client, session);
 }
 
 class _RecordingAdapter implements HttpClientAdapter {
-  _RecordingAdapter({this.failInstType});
+  _RecordingAdapter({this.failAll = false});
 
-  final String? failInstType;
+  final bool failAll;
   final List<String> requestedTypes = [];
 
   @override
@@ -108,32 +109,48 @@ class _RecordingAdapter implements HttpClientAdapter {
     final instType = options.queryParameters['instType'] as String;
     requestedTypes.add(instType);
 
-    if (instType == failInstType) {
+    if (failAll && instType == 'ALL') {
       throw DioException(
         requestOptions: options,
         type: DioExceptionType.connectionError,
-        message: 'Forced failure for $instType',
+        message: 'Forced aggregate failure',
       );
     }
 
     final responseData = switch (options.path) {
-      '/api/v5/account/positions' => {
+      'v1/data/account/positions' => {
         'code': '0',
         'msg': '',
-        'data': [
-          {'instId': '$instType-USDT-SWAP'},
-        ],
+        'data': instType == 'ALL'
+            ? [
+                {'instId': 'MARGIN-USDT-SWAP'},
+                {'instId': 'SWAP-USDT-SWAP'},
+                {'instId': 'FUTURES-USDT-SWAP'},
+              ]
+            : [
+                {'instId': '$instType-USDT-SWAP'},
+              ],
       },
-      '/api/v5/trade/orders-pending' || '/api/v5/trade/orders-history' => {
+      'v1/data/trade/orders-pending' || 'v1/data/trade/orders-history' => {
         'code': '0',
         'msg': '',
-        'data': [
-          {
-            'instType': instType,
-            'instId': '$instType-USDT',
-            'cTime': _timestampFor(instType),
-          },
-        ],
+        'data': instType == 'ALL'
+            ? ['SPOT', 'MARGIN', 'SWAP', 'FUTURES']
+                  .map(
+                    (type) => {
+                      'instType': type,
+                      'instId': '$type-USDT',
+                      'cTime': _timestampFor(type),
+                    },
+                  )
+                  .toList()
+            : [
+                {
+                  'instType': instType,
+                  'instId': '$instType-USDT',
+                  'cTime': _timestampFor(instType),
+                },
+              ],
       },
       _ => throw StateError('Unexpected orders endpoint: ${options.path}'),
     };

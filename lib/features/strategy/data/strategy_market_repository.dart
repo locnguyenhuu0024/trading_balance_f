@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:trading_balance_f/core/network/backend_data_client.dart';
+import 'package:trading_balance_f/features/orders/presentation/providers/trade_session_provider.dart';
 
 import '../../portfolio/data/risk/risk_request_coordinator.dart';
 import '../domain/strategy_calculator.dart';
@@ -11,7 +12,7 @@ typedef _MarketPrice = ({double value, String text});
 
 class StrategyMarketRepository {
   StrategyMarketRepository(
-    this._dio, {
+    this._client, {
     required this.requestCoordinator,
     StrategyMarketClock? clock,
     this.calculator = const StrategyLevelCalculator(),
@@ -24,7 +25,7 @@ class StrategyMarketRepository {
   static const candlePageSize = 300;
   static const maximumPublicTickerAge = Duration(seconds: 15);
 
-  final Dio _dio;
+  final BackendDataClient _client;
   final RiskRequestCoordinator requestCoordinator;
   final StrategyMarketClock clock;
   final StrategyLevelCalculator calculator;
@@ -247,10 +248,9 @@ class StrategyMarketRepository {
       return await requestCoordinator.run<Response<dynamic>>(
         lane: RiskRequestLane.public,
         key: key,
-        request: () => _dio.get<dynamic>(
+        request: () => _client.get(
           endpoint,
           queryParameters: query,
-          options: Options(extra: const {'requiresAuth': false}),
         ),
       );
     } on RiskRequestBackoffException {
@@ -358,17 +358,9 @@ class StrategyMarketRepository {
 final strategyMarketRepositoryProvider = Provider<StrategyMarketRepository>((
   ref,
 ) {
-  final dio = Dio(
-    BaseOptions(
-      baseUrl: kIsWeb ? '' : 'https://www.okx.com',
-      connectTimeout: const Duration(seconds: 15),
-      receiveTimeout: const Duration(seconds: 15),
-      headers: const {'Content-Type': 'application/json'},
-    ),
-  );
-  ref.onDispose(() => dio.close(force: true));
+  final client = ref.watch(backendDataClientProvider);
   return StrategyMarketRepository(
-    dio,
+    client,
     requestCoordinator: ref.watch(riskRequestCoordinatorProvider),
   );
 });

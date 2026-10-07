@@ -9,6 +9,7 @@ import hmac
 import http.client
 import json
 import re
+import threading
 import time
 from typing import Any, Callable, Optional
 from urllib.parse import urlencode
@@ -37,12 +38,14 @@ class OKXError(RuntimeError):
         error_code: str | None = None,
         diagnostic_category: str | None = None,
         http_status: int | None = None,
+        retry_after: str | None = None,
         ack_shape: str | None = None,
     ):
         super().__init__(message)
         self.error_code = bounded_error_code(error_code)
         self.diagnostic_category = diagnostic_category
         self.http_status = http_status if isinstance(http_status, int) and not isinstance(http_status, bool) and 100 <= http_status <= 599 else None
+        self.retry_after = retry_after if isinstance(retry_after, str) and re.fullmatch(r"[0-9]{1,5}", retry_after) else None
         self.ack_shape = ack_shape
 
 
@@ -50,12 +53,80 @@ class OKXTransportError(OKXError):
     """Transport failed; callers must treat a write's outcome as unknown."""
 
 
+class _TransportResponse(dict[str, Any]):
+    """Internal response carrying bounded HTTP metadata without wire fields."""
+
+    def __init__(
+        self,
+        payload: dict[str, Any],
+        *,
+        http_status: int | None,
+        retry_after: str | None,
+    ):
+        super().__init__(payload)
+        self.http_status = http_status
+        self.retry_after = retry_after
+
+
 Transport = Callable[[str, str, dict[str, str], Optional[bytes]], dict[str, Any]]
+
+
+class _HTTPSConnectionPool:
+    """Small exclusive-lease pool; a leased socket is never shared by callers."""
+
+    def __init__(self, host: str, *, timeout: float, max_connections: int):
+        self._host = host
+        self._timeout = timeout
+        self._max_connections = max_connections
+        self._condition = threading.Condition()
+        self._idle: list[http.client.HTTPSConnection] = []
+        self._connection_count = 0
+
+    def acquire(self) -> http.client.HTTPSConnection:
+        deadline = time.monotonic() + self._timeout
+        create_connection = False
+        with self._condition:
+            while True:
+                if self._idle:
+                    return self._idle.pop()
+                if self._connection_count < self._max_connections:
+                    self._connection_count += 1
+                    create_connection = True
+                    break
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("exchange connection pool is busy")
+                self._condition.wait(remaining)
+        if create_connection:
+            try:
+                return http.client.HTTPSConnection(self._host, timeout=self._timeout)
+            except Exception:
+                with self._condition:
+                    self._connection_count -= 1
+                    self._condition.notify()
+                raise
+        raise RuntimeError("exchange connection lease is unavailable")
+
+    def release(self, connection: http.client.HTTPSConnection, *, discard: bool) -> None:
+        if discard:
+            try:
+                connection.close()
+            except Exception:
+                pass
+            with self._condition:
+                self._connection_count -= 1
+                self._condition.notify()
+            return
+        with self._condition:
+            self._idle.append(connection)
+            self._condition.notify()
 
 
 class OKXClient:
     BASE_HOST = "www.okx.com"
     MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+    MAX_CONNECTIONS = 5
+    CONNECTION_TIMEOUT_SECONDS = 10
 
     def __init__(
         self,
@@ -71,6 +142,11 @@ class OKXClient:
         self._passphrase = passphrase
         self._transport = transport
         self._clock = clock
+        self._connection_pool = _HTTPSConnectionPool(
+            self.BASE_HOST,
+            timeout=self.CONNECTION_TIMEOUT_SECONDS,
+            max_connections=self.MAX_CONNECTIONS,
+        )
 
     def _timestamp(self) -> str:
         value = dt.datetime.fromtimestamp(self._clock(), tz=dt.timezone.utc)
@@ -95,8 +171,10 @@ class OKXClient:
     def _network_transport(
         self, method: str, request_path: str, headers: dict[str, str], body: bytes | None
     ) -> dict[str, Any]:
-        connection = http.client.HTTPSConnection(self.BASE_HOST, timeout=10)
+        connection: http.client.HTTPSConnection | None = None
+        discard_connection = True
         try:
+            connection = self._connection_pool.acquire()
             connection.request(method, request_path, body=body, headers=headers)
             response = connection.getresponse()
             response_body = response.read(self.MAX_RESPONSE_BYTES + 1)
@@ -111,6 +189,7 @@ class OKXClient:
                     "exchange returned an unusable HTTP response",
                     diagnostic_category="http_rejected",
                     http_status=response.status,
+                    retry_after=self._retry_after(response.getheader("Retry-After")),
                 )
             try:
                 decoded = json.loads(response_body.decode("utf-8"))
@@ -126,13 +205,28 @@ class OKXClient:
                     diagnostic_category="nonobject_response",
                     http_status=response.status,
                 )
-            return decoded
+            discard_connection = bool(getattr(response, "will_close", False))
+            return _TransportResponse(
+                decoded,
+                http_status=response.status,
+                retry_after=self._retry_after(response.getheader("Retry-After")),
+            )
         except OKXTransportError:
             raise
         except (OSError, http.client.HTTPException, TimeoutError):
             raise OKXTransportError("exchange transport failed") from None
         finally:
-            connection.close()
+            if connection is not None:
+                self._connection_pool.release(connection, discard=discard_connection)
+
+    @staticmethod
+    def _retry_after(value: Any) -> str | None:
+        if not isinstance(value, str):
+            return None
+        token = value.strip()
+        if not re.fullmatch(r"[0-9]{1,5}", token):
+            return None
+        return str(min(int(token), 86_400))
 
     def request(
         self,
@@ -216,11 +310,17 @@ class OKXClient:
             outcome, reason = diagnostics.okx_category_reason(error.diagnostic_category)
             log_result(outcome, reason)
             raise error
+        transport_http_status = getattr(response, "http_status", None)
+        transport_retry_after = getattr(response, "retry_after", None)
+        if isinstance(response, _TransportResponse):
+            response = dict(response)
         code = str(response.get("code", ""))
         if code != "0" and code not in allow_nonzero_codes:
             error = OKXError(
                 "exchange rejected the request", error_code=code,
                 diagnostic_category="exchange_rejected",
+                http_status=transport_http_status,
+                retry_after=transport_retry_after,
                 ack_shape="valid" if bounded_error_code(code) is not None else "invalid_code",
             )
             outcome, reason = diagnostics.okx_category_reason(error.diagnostic_category)

@@ -37,8 +37,11 @@ class PortfolioScreen extends ConsumerStatefulWidget {
 }
 
 class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
-  bool _isWsSubscribed = false;
   bool _portfolioRefreshInFlight = false;
+  bool _tickerSubscriptionScheduled = false;
+  List<String> _subscribedCoins = const <String>[];
+  List<String>? _pendingCoins;
+  OkxWebsocketService? _tickerService;
   Timer? _refreshTimer;
 
   @override
@@ -69,7 +72,40 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    _tickerService?.clearLegacySubscription();
     super.dispose();
+  }
+
+  void _syncTickerSubscription(List<String> coins) {
+    final nextCoins = List<String>.unmodifiable(coins);
+    if (_pendingCoins != null && _sameCoins(_pendingCoins!, nextCoins)) return;
+    if (_pendingCoins == null && _sameCoins(_subscribedCoins, nextCoins)) return;
+    _pendingCoins = nextCoins;
+    if (_tickerSubscriptionScheduled) return;
+    _tickerSubscriptionScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _tickerSubscriptionScheduled = false;
+      if (!mounted) return;
+      final requestedCoins = _pendingCoins ?? const <String>[];
+      _pendingCoins = null;
+      if (_sameCoins(_subscribedCoins, requestedCoins)) return;
+      _subscribedCoins = requestedCoins;
+      final service = ref.read(okxWebsocketProvider);
+      _tickerService = service;
+      if (requestedCoins.isEmpty) {
+        service.clearLegacySubscription();
+      } else {
+        service.subscribeToTickers(requestedCoins);
+      }
+    });
+  }
+
+  bool _sameCoins(List<String> left, List<String> right) {
+    if (left.length != right.length) return false;
+    for (var index = 0; index < left.length; index++) {
+      if (left[index] != right[index]) return false;
+    }
+    return true;
   }
 
   @override
@@ -113,7 +149,6 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
           color: palette.ink,
           backgroundColor: palette.raised,
           onRefresh: () async {
-            _isWsSubscribed = false;
             ref.invalidate(vndExchangeRateProvider);
             await _refreshPortfolio();
           },
@@ -121,18 +156,12 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
             skipLoadingOnReload: true,
             loading: () =>
                 Center(child: CircularProgressIndicator(color: textColor)),
-            error: (error, stack) =>
-                _buildErrorState(context, error.toString(), isDark),
+            error: (error, stack) {
+              _syncTickerSubscription(const <String>[]);
+              return _buildErrorState(context, error.toString(), isDark);
+            },
             data: (data) {
-              // Đăng ký WebSocket khi load xong danh sách coin
-              if (!_isWsSubscribed && data.details.isNotEmpty) {
-                _isWsSubscribed = true;
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (!mounted) return;
-                  final coins = data.details.map((e) => e.ccy).toList();
-                  ref.read(okxWebsocketProvider).subscribeToTickers(coins);
-                });
-              }
+              _syncTickerSubscription(data.details.map((e) => e.ccy).toList());
               return _buildPortfolioData(
                 data,
                 livePrices,

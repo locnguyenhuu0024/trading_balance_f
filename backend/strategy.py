@@ -3717,12 +3717,7 @@ class StrategyService:
         strategy, _, fingerprint = self._current_strategy(strategy_id)
         return self._result_for(strategy, fingerprint)
 
-    def _result_for(self, strategy: dict[str, Any], fingerprint: str) -> dict[str, Any]:
-        if self.automatic.is_candidate_stage(strategy):
-            _, current_fingerprint = self._account()
-            if not hmac.compare_digest(fingerprint, current_fingerprint):
-                raise APIError(409, "account_changed", "The active OKX account changed.")
-            return self.automatic.public_candidate_result(strategy)
+    def _refresh_result_state(self, strategy: dict[str, Any]) -> dict[str, Any]:
         active_queue = (
             strategy["submissionMode"] == "sequential"
             and strategy["status"] == "APPLYING"
@@ -3741,29 +3736,29 @@ class StrategyService:
             if self._order_scan_due(strategy["id"]):
                 strategy, scan_error = self._reconcile_orders_with_outcome(strategy)
                 self._record_api_order_scan(strategy["id"], scan_error)
-        try:
-            account, current_fingerprint = self._account()
-            if not hmac.compare_digest(fingerprint, current_fingerprint):
-                raise APIError(409, "account_changed", "The active OKX account changed.")
-        except APIError:
-            raise
+        return strategy
+
+    def _project_result(
+        self,
+        strategy: dict[str, Any],
+        account: dict[str, Any],
+        raw_positions: list[Any] | None,
+        valid_position_rows: bool,
+        observed_at: float,
+    ) -> dict[str, Any]:
         position_status = "available"
         position_rows: list[dict[str, Any]] = []
         scope = self._persisted_scope(strategy, require_prepared_mode=False)
-        try:
-            raw_positions, valid_position_rows = self._terminal_delete_position_rows()
-        except OKXError:
-            raw_positions = None
-            valid_position_rows = False
         relevant_positions = (
             None if raw_positions is None or not valid_position_rows or not scope.valid
             else scoped_position_rows(raw_positions, strategy["contract"]["instrumentId"], scope)
         )
         if relevant_positions is None:
-            raw_positions = []
+            terminal_positions: list[Any] = []
             position_status = "unavailable"
-            actual = []
+            actual: list[dict[str, Any]] = []
         else:
+            terminal_positions = raw_positions if raw_positions is not None else []
             actual = relevant_positions
         if position_status == "available" and actual:
             position_status = "present"
@@ -3779,7 +3774,7 @@ class StrategyService:
                 "unrealizedPnl": row.get("upl"),
                 "marginMode": row.get("mgnMode"),
             })
-        observed = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(self.clock()))
+        observed = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(observed_at))
         filled_margin: Decimal | None = Decimal(0)
         expected_by_side = {"long": Decimal(0), "short": Decimal(0)}
         for row in strategy["results"]:
@@ -3830,7 +3825,7 @@ class StrategyService:
         sync_fields = self._order_sync_fields(strategy["id"])
         result = self._basic_result(
             strategy,
-            terminal_positions=raw_positions,
+            terminal_positions=terminal_positions,
             terminal_positions_available=position_status != "unavailable",
             order_sync_state=sync_fields["orderSyncState"],
         )
@@ -3848,6 +3843,28 @@ class StrategyService:
             **sync_fields,
         })
         return result
+
+    def _result_for(self, strategy: dict[str, Any], fingerprint: str) -> dict[str, Any]:
+        if self.automatic.is_candidate_stage(strategy):
+            _, current_fingerprint = self._account()
+            if not hmac.compare_digest(fingerprint, current_fingerprint):
+                raise APIError(409, "account_changed", "The active OKX account changed.")
+            return self.automatic.public_candidate_result(strategy)
+        strategy = self._refresh_result_state(strategy)
+        try:
+            account, current_fingerprint = self._account()
+            if not hmac.compare_digest(fingerprint, current_fingerprint):
+                raise APIError(409, "account_changed", "The active OKX account changed.")
+        except APIError:
+            raise
+        try:
+            raw_positions, valid_position_rows = self._terminal_delete_position_rows()
+        except OKXError:
+            raw_positions = None
+            valid_position_rows = False
+        return self._project_result(
+            strategy, account, raw_positions, valid_position_rows, self.clock()
+        )
 
     def _order_scan_due(self, strategy_id: str) -> bool:
         now = self.clock()
@@ -3985,21 +4002,59 @@ class StrategyService:
         _, fingerprint = self._account()
         with self.store.connection() as connection:
             rows = connection.execute(
-                "SELECT * FROM strategies WHERE account_fingerprint=? ORDER BY created_at DESC, strategy_id DESC",
+                "SELECT strategy_id FROM strategies WHERE account_fingerprint=? "
+                "ORDER BY created_at DESC, strategy_id DESC",
                 (fingerprint,),
             ).fetchall()
-        strategies: list[dict[str, Any]] = []
-        for row in rows:
+        selected_ids = [row["strategy_id"] for row in rows]
+        for strategy_id in selected_ids:
             with self.store.connection() as connection:
                 current = connection.execute(
                     "SELECT * FROM strategies WHERE strategy_id=? AND account_fingerprint=?",
-                    (row["strategy_id"], fingerprint),
+                    (strategy_id, fingerprint),
                 ).fetchone()
             if current is None:
                 continue
             strategy = self._decode_row(current)
             self._expire_prepare(strategy)
-            strategies.append(self._result_for(strategy, fingerprint))
+            if not self.automatic.is_candidate_stage(strategy):
+                self._refresh_result_state(strategy)
+
+        selected_id_set = set(selected_ids)
+        with self.store.connection() as connection:
+            refreshed_rows = connection.execute(
+                "SELECT * FROM strategies WHERE account_fingerprint=? ORDER BY created_at DESC, strategy_id DESC",
+                (fingerprint,),
+            ).fetchall()
+        refreshed_by_id = {
+            row["strategy_id"]: self._decode_row(row)
+            for row in refreshed_rows
+            if row["strategy_id"] in selected_id_set
+        }
+        strategies = [refreshed_by_id[strategy_id] for strategy_id in selected_ids if strategy_id in refreshed_by_id]
+        projected: list[dict[str, Any]] = []
+        account, current_fingerprint = self._account()
+        if not hmac.compare_digest(fingerprint, current_fingerprint):
+            raise APIError(409, "account_changed", "The active OKX account changed.")
+        raw_positions: list[Any] | None = None
+        valid_position_rows = False
+        if any(not self.automatic.is_candidate_stage(strategy) for strategy in strategies):
+            try:
+                raw_positions, valid_position_rows = self._terminal_delete_position_rows()
+            except OKXError:
+                raw_positions = None
+                valid_position_rows = False
+        observed_at = self.clock()
+        _, current_fingerprint = self._account()
+        if not hmac.compare_digest(fingerprint, current_fingerprint):
+            raise APIError(409, "account_changed", "The active OKX account changed.")
+        for strategy in strategies:
+            if self.automatic.is_candidate_stage(strategy):
+                projected.append(self.automatic.public_candidate_result(strategy))
+            else:
+                projected.append(self._project_result(
+                    strategy, account, raw_positions, valid_position_rows, observed_at
+                ))
         with self.store.connection() as connection:
             remaining_ids = {
                 row["strategy_id"]
@@ -4007,7 +4062,7 @@ class StrategyService:
                     "SELECT strategy_id FROM strategies WHERE account_fingerprint=?", (fingerprint,)
                 ).fetchall()
             }
-        return {"strategies": [row for row in strategies if row["id"] in remaining_ids]}
+        return {"strategies": [row for row in projected if row["id"] in remaining_ids]}
 
     def _delete(self, strategy_id: str) -> dict[str, Any]:
         strategy, _, fingerprint = self._current_strategy(strategy_id)

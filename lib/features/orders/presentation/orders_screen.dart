@@ -104,9 +104,8 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     final timeZoneId = ref.watch(appTimeZoneProvider);
     final exchangeRate = ref.watch(vndExchangeRateProvider).value ?? 25400.0;
     final isBalanceHidden = ref.watch(hideBalanceProvider);
-    final isTradeAuthenticated = ref
-        .watch(tradeSessionProvider)
-        .isAuthenticated;
+    final tradeSessionState = ref.watch(tradeSessionProvider);
+    final isTradeAuthenticated = tradeSessionState.isAuthenticated;
 
     final palette = AppPalette.of(context);
     final bgColor = palette.background;
@@ -210,7 +209,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
   ) {
     final palette = AppPalette.forBrightness(isDark);
     if (currentTab == OrderTab.positions) {
-      final hasTradeSession = ref.watch(tradeSessionProvider).isAuthenticated;
+      final tradeState = ref.watch(tradeSessionProvider);
       if (filter == 'SPOT') {
         return Column(
           children: [
@@ -226,7 +225,11 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
         );
       }
 
-      if (hasTradeSession) {
+      if (tradeState.isLoading) {
+        return Center(child: CircularProgressIndicator(color: palette.ink));
+      }
+
+      if (tradeState.isAuthenticated) {
         final positionsAsyncValue = ref.watch(tradePositionsProvider);
         return Column(
           children: [
@@ -330,6 +333,9 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
         ],
       );
     } else {
+      if (ref.watch(tradeSessionProvider).isLoading) {
+        return Center(child: CircularProgressIndicator(color: palette.ink));
+      }
       final ordersAsyncValue = ref.watch(ordersFutureProvider);
       final orderList = RefreshIndicator(
         color: palette.ink,

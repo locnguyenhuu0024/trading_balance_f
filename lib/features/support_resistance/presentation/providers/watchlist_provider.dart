@@ -1,9 +1,9 @@
 import 'dart:async';
 
-import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:trading_balance_f/features/orders/presentation/providers/trade_session_provider.dart';
 
 import '../../../portfolio/data/risk/risk_request_coordinator.dart';
 import '../../data/market_repository.dart';
@@ -240,17 +240,9 @@ class _WatchlistUpdate {
 
 final supportResistanceMarketRepositoryProvider =
     Provider<SupportResistanceRepository>((ref) {
-      final dio = Dio(
-        BaseOptions(
-          baseUrl: kIsWeb ? '' : 'https://www.okx.com',
-          connectTimeout: const Duration(seconds: 15),
-          receiveTimeout: const Duration(seconds: 15),
-          headers: const <String, Object>{'Content-Type': 'application/json'},
-        ),
-      );
-      ref.onDispose(() => dio.close(force: true));
+      final client = ref.watch(backendDataClientProvider);
       return SupportResistanceRepository(
-        dio,
+        client,
         requestCoordinator: ref.watch(riskRequestCoordinatorProvider),
       );
     });

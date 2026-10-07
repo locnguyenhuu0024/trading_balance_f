@@ -1,9 +1,10 @@
 // File Name: fractal_provider.dart
 // File Path: lib/features/fractal_tracker/presentation/providers/fractal_provider.dart
 
-import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:trading_balance_f/core/network/backend_data_client.dart';
+import 'package:trading_balance_f/features/orders/presentation/providers/trade_session_provider.dart';
 import '../../../../core/timezone/app_time_zone.dart';
 import '../../data/fractal_model.dart';
 
@@ -131,7 +132,7 @@ int _yearMonthlyCandleMidpointMs(int candleTimestampMs) {
 final fractalDataProvider = FutureProvider.autoDispose<List<FractalData>>((
   ref,
 ) async {
-  final dio = Dio(BaseOptions(baseUrl: 'https://www.okx.com'));
+  final client = ref.watch(backendDataClientProvider);
 
   final targetMonth = ref.watch(selectedMonthProvider);
   final targetYear = ref.watch(selectedYearProvider);
@@ -140,7 +141,7 @@ final fractalDataProvider = FutureProvider.autoDispose<List<FractalData>>((
 
   final results = await Future.wait([
     _fetchAndProcess(
-      dio,
+      client,
       'D1',
       fractalBarForTimeframe('D1'),
       24,
@@ -149,7 +150,7 @@ final fractalDataProvider = FutureProvider.autoDispose<List<FractalData>>((
       timeZoneId,
     ),
     _fetchAndProcess(
-      dio,
+      client,
       'W1',
       fractalBarForTimeframe('W1'),
       42,
@@ -158,7 +159,7 @@ final fractalDataProvider = FutureProvider.autoDispose<List<FractalData>>((
       timeZoneId,
     ),
     _fetchAndProcess(
-      dio,
+      client,
       'M1',
       fractalBarForTimeframe('M1'),
       31,
@@ -167,7 +168,7 @@ final fractalDataProvider = FutureProvider.autoDispose<List<FractalData>>((
       timeZoneId,
     ),
     _fetchAndProcess(
-      dio,
+      client,
       'Y1',
       fractalBarForTimeframe('Y1'),
       12,
@@ -181,7 +182,7 @@ final fractalDataProvider = FutureProvider.autoDispose<List<FractalData>>((
 });
 
 Future<FractalData?> _fetchAndProcess(
-  Dio dio,
+  BackendDataClient client,
   String timeframe,
   String barId,
   int limit,
@@ -214,7 +215,7 @@ Future<FractalData?> _fetchAndProcess(
     // Hàm gọi API
     Future<void> fetchApi(String endpoint) async {
       try {
-        final response = await dio.get(
+        final response = await client.get(
           endpoint,
           queryParameters: {
             'instId': '$coin-USDT',

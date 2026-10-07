@@ -3,8 +3,9 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:dio/dio.dart';
 import 'package:intl/intl.dart';
+import 'package:trading_balance_f/core/network/backend_data_client.dart';
+import 'package:trading_balance_f/features/orders/presentation/providers/trade_session_provider.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import '../../../core/currency/currency_display_mode.dart';
 import '../../../core/navigation/navigation_content_frame.dart';
@@ -29,12 +30,30 @@ final backgroundServiceProvider = StateProvider<bool>((ref) => false);
 // --- Provider lấy tỷ giá ---
 final vndExchangeRateProvider = FutureProvider<double>((ref) async {
   try {
-    final dio = Dio();
-    final response = await dio.get(
-      'https://api.coingecko.com/api/v3/simple/price',
-      queryParameters: {'ids': 'tether', 'vs_currencies': 'vnd'},
-    );
-    return (response.data['tether']['vnd'] as num).toDouble();
+    final response = await ref
+        .watch(backendDataClientProvider)
+        .get(BackendDataClient.usdtVndRoute);
+    final body = response.data;
+    if (body is! Map || body['code'] != '0' || body['data'] is! List) {
+      throw const FormatException('Invalid exchange-rate response.');
+    }
+    final rows = body['data'] as List;
+    if (rows.isEmpty || rows.first is! Map) {
+      throw const FormatException('Missing exchange-rate row.');
+    }
+    final row = rows.first as Map;
+    if (row['instId'] != 'USDT-VND' || row['source'] != 'CoinGecko') {
+      throw const FormatException('Unexpected exchange-rate row.');
+    }
+    final rawRate = row['rate'];
+    if (rawRate is! String) {
+      throw const FormatException('Invalid exchange-rate value.');
+    }
+    final rate = double.tryParse(rawRate);
+    if (rate == null || !rate.isFinite || rate <= 0) {
+      throw const FormatException('Invalid exchange-rate value.');
+    }
+    return rate;
   } catch (e) {
     return 25400.0;
   }

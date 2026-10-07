@@ -3,41 +3,36 @@
 
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../core/network/dio_client.dart';
+import '../../../core/network/backend_data_client.dart';
+import '../../../core/network/backend_data_session.dart';
+import '../presentation/providers/trade_session_provider.dart';
 import 'okx_order_model.dart';
 import 'okx_position_model.dart'; // Thêm dòng import này
 
 final orderRepositoryProvider = Provider<OrderRepository>((ref) {
-  final dio = ref.watch(dioProvider);
-  return OrderRepository(dio);
+  final client = ref.watch(backendDataClientProvider);
+  final session = ref.watch(backendDataSessionProvider);
+  return OrderRepository(client, session);
 });
 
 class OrderRepository {
-  final Dio _dio;
+  OrderRepository(this._client, this._session);
 
-  static const _allPositionTypes = ['MARGIN', 'SWAP', 'FUTURES'];
-  static const _allOrderTypes = ['SPOT', 'MARGIN', 'SWAP', 'FUTURES'];
-
-  OrderRepository(this._dio);
+  final BackendDataClient _client;
+  final BackendDataSession _session;
 
   /// Lấy danh sách VỊ THẾ MỞ (Open Positions - Margin, Futures, Swap)
   Future<List<OkxPosition>> getOpenPositions({required String instType}) async {
     // SPOT không có vị thế mở, nên nếu filter là SPOT thì trả về mảng rỗng
     if (instType == 'SPOT') return [];
-    if (instType == 'ALL') {
-      final positionsByType = await Future.wait(
-        _allPositionTypes.map((type) => getOpenPositions(instType: type)),
-      );
-      return positionsByType.expand((positions) => positions).toList();
-    }
 
     try {
-      final response = await _dio.get(
+      final response = await _client.get(
         '/api/v5/account/positions',
         queryParameters: {
           'instType': instType,
         },
-        options: Options(extra: {'requiresAuth': true}),
+        session: _session,
       );
 
       final data = response.data;
@@ -55,23 +50,17 @@ class OrderRepository {
 
   /// Lấy danh sách lệnh ĐANG CHỜ (Active/Pending)
   Future<List<OkxOrder>> getPendingOrders({required String instType}) async {
-    if (instType == 'ALL') {
-      final ordersByType = await Future.wait(
-        _allOrderTypes.map((type) => getPendingOrders(instType: type)),
-      );
-      return _sortNewestFirst(ordersByType.expand((orders) => orders).toList());
-    }
-
     try {
-      final response = await _dio.get(
+      final response = await _client.get(
         '/api/v5/trade/orders-pending',
         queryParameters: {
           'instType': instType,
         },
-        options: Options(extra: {'requiresAuth': true}),
+        session: _session,
       );
 
-      return _parseResponse(response.data);
+      final orders = _parseResponse(response.data);
+      return instType == 'ALL' ? _sortNewestFirst(orders) : orders;
     } on DioException catch (e) {
       _handleDioError(e);
       rethrow;
@@ -80,23 +69,17 @@ class OrderRepository {
 
   /// Lấy danh sách LỊCH SỬ lệnh (7 ngày qua)
   Future<List<OkxOrder>> getOrdersHistory({required String instType}) async {
-    if (instType == 'ALL') {
-      final ordersByType = await Future.wait(
-        _allOrderTypes.map((type) => getOrdersHistory(instType: type)),
-      );
-      return _sortNewestFirst(ordersByType.expand((orders) => orders).toList());
-    }
-
     try {
-      final response = await _dio.get(
+      final response = await _client.get(
         '/api/v5/trade/orders-history',
         queryParameters: {
           'instType': instType,
         },
-        options: Options(extra: {'requiresAuth': true}),
+        session: _session,
       );
 
-      return _parseResponse(response.data);
+      final orders = _parseResponse(response.data);
+      return instType == 'ALL' ? _sortNewestFirst(orders) : orders;
     } on DioException catch (e) {
       _handleDioError(e);
       rethrow;
@@ -135,8 +118,11 @@ class OrderRepository {
   // --- Hàm hỗ trợ xử lý lỗi dùng chung ---
   void _handleDioError(DioException e) {
     if (e.response?.statusCode == 401) {
-      throw Exception('API Key không hợp lệ hoặc thiếu quyền.');
+      throw Exception('Phiên giao dịch đã hết hạn. Hãy đăng nhập lại.');
     }
-    throw Exception('Lỗi kết nối: ${e.message}');
+    if (e.response?.statusCode == 429) {
+      throw Exception('Dữ liệu giao dịch đang bị giới hạn. Hãy thử lại sau.');
+    }
+    throw Exception('Không thể tải dữ liệu giao dịch từ máy chủ.');
   }
 }

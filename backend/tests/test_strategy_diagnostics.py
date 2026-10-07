@@ -375,6 +375,9 @@ class StrategyDiagnosticsTests(unittest.TestCase):
             def read(self, _: int) -> bytes:
                 return self._body
 
+            def getheader(self, _: str) -> None:
+                return None
+
         class Connection:
             def __init__(self, response: Response):
                 self.response = response

@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/network/backend_data_client.dart';
+import '../../../../core/network/backend_data_session.dart';
 import '../../data/trade_api_client.dart';
 
 final tradeApiProvider = Provider<TradeApi>((ref) => TradeApiClient());
@@ -13,34 +15,86 @@ final tradeSessionProvider =
       return controller;
     });
 
+/// Shared in-memory identity for foreground and later native data clients.
+final backendDataSessionProvider = ChangeNotifierProvider<BackendDataSession>((
+  ref,
+) {
+  final initialState = ref.read(tradeSessionProvider);
+  final session = BackendDataSession(initialSession: initialState.session);
+  ref.listen<TradeSessionState>(tradeSessionProvider, (previous, next) {
+    session.update(next.session);
+  });
+  return session;
+});
+
+/// Production data client. A stale 401 cannot expire a newer foreground
+/// session because both the shared generation and controller session are
+/// checked before clearing it.
+final backendDataClientProvider = Provider<BackendDataClient>((ref) {
+  final client = BackendDataClient(
+    onUnauthorized: (session, generation, expectedSession) {
+      final sharedSession = ref.read(backendDataSessionProvider);
+      if (!identical(sharedSession, session) ||
+          !sharedSession.matches(generation, expectedSession)) {
+        return;
+      }
+      final foregroundSession = ref.read(tradeSessionProvider).session;
+      if (!_sameTradeSession(foregroundSession, expectedSession)) return;
+      ref.read(tradeSessionProvider.notifier).expire();
+    },
+  );
+  ref.onDispose(() => client.close(force: true));
+  return client;
+});
+
 final tradePositionsProvider =
     FutureProvider.autoDispose<TradePositionsSnapshot>((ref) async {
-      final session = ref.watch(tradeSessionProvider).session;
+      final tradeState = ref.watch(tradeSessionProvider);
+      final backendSession = ref.watch(backendDataSessionProvider);
+      final session = backendSession.current;
+      if (tradeState.isLoading) {
+        throw const TradeApiException(
+          code: 'session_loading',
+          message: 'Đang kiểm tra phiên giao dịch. Vui lòng đợi một chút.',
+        );
+      }
       if (session == null) {
         throw const TradeApiException(
           code: 'authentication_required',
-          message: 'Sign in to load positions owned by the trade API.',
+          message: 'Vui lòng đăng nhập để xem vị thế giao dịch.',
         );
       }
-      if (!session.isActive) {
-        ref.read(tradeSessionProvider.notifier).expire();
-        throw const TradeApiException(
-          code: 'authentication_required',
-          message:
-              'The trade API session expired. Sign in again to enable actions.',
-        );
-      }
+      final generation = backendSession.generation;
       try {
-        return await ref
+        final snapshot = await ref
             .read(tradeApiProvider)
             .getPositions(session.bearerToken);
+        if (!backendSession.matches(generation, session)) {
+          throw const BackendDataException(
+            code: 'session_changed',
+            message: 'Phiên giao dịch đã thay đổi. Hãy tải lại dữ liệu.',
+            statusCode: 401,
+          );
+        }
+        return snapshot;
       } on TradeApiException catch (error) {
-        if (error.isUnauthorized) {
+        if (error.isUnauthorized &&
+            backendSession.matches(generation, session) &&
+            _sameTradeSession(
+              ref.read(tradeSessionProvider).session,
+              session,
+            )) {
           ref.read(tradeSessionProvider.notifier).expire();
         }
         rethrow;
       }
     });
+
+bool _sameTradeSession(TradeSession? left, TradeSession right) =>
+    left != null &&
+    left.bearerToken == right.bearerToken &&
+    left.accountIdentifier == right.accountIdentifier &&
+    left.expiresAt == right.expiresAt;
 
 class TradeSessionState {
   const TradeSessionState({

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
@@ -5,31 +6,30 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../../core/network/okx_interceptor.dart';
+import '../../../../core/network/backend_data_client.dart';
+import '../../../../core/network/backend_data_session.dart';
+import '../../../orders/data/trade_api_client.dart';
+import '../../../orders/presentation/providers/trade_session_provider.dart';
 import '../../domain/risk/risk_models.dart';
 import 'okx_risk_dto.dart';
 import 'risk_request_coordinator.dart';
 
 typedef RiskRepositoryClock = DateTime Function();
 
-/// A dedicated risk adapter.  Every method below is a GET; no order, borrow,
+/// A dedicated risk adapter. Every method below is a GET; no order, borrow,
 /// repay, or account-mutating endpoint is exposed from this repository.
+/// The shared session/client are read once so ordinary login changes do not
+/// recreate the monitor owner or its repository graph.
 final riskRepositoryProvider = Provider<RiskRepository>((ref) {
-  final dio = Dio(
-    BaseOptions(
-      baseUrl: kIsWeb ? '' : 'https://www.okx.com',
-      connectTimeout: const Duration(seconds: 15),
-      receiveTimeout: const Duration(seconds: 15),
-      headers: const <String, Object>{'Content-Type': 'application/json'},
-    ),
+  final backendSession = ref.read(backendDataSessionProvider);
+  final backendClient = ref.read(backendDataClientProvider);
+  final repository = RiskRepository(
+    backendClient.dio,
+    backendSession: backendSession,
+    requestCoordinator: ref.read(riskRequestCoordinatorProvider),
   );
-  // Reuse the existing signing interceptor without importing the legacy
-  // LogInterceptor, which could expose authenticated request payloads.
-  dio.interceptors.add(ref.watch(okxInterceptorProvider));
-  return RiskRepository(
-    dio,
-    requestCoordinator: ref.watch(riskRequestCoordinatorProvider),
-  );
+  ref.onDispose(() => repository.dispose());
+  return repository;
 });
 
 class RiskRepositoryException implements Exception {
@@ -113,6 +113,7 @@ class RiskRepository {
   RiskRepository(
     this._dio, {
     this.environment = 'production',
+    this.backendSession,
     RiskRepositoryClock? clock,
     RiskRequestCoordinator? requestCoordinator,
     this.maxLedgerPages = 100,
@@ -121,10 +122,20 @@ class RiskRepository {
   }) : clock = clock ?? DateTime.now,
        requestCoordinator =
            requestCoordinator ??
-           RiskRequestCoordinator(clock: clock ?? DateTime.now);
+           RiskRequestCoordinator(clock: clock ?? DateTime.now) {
+    _observedSessionGeneration = backendSession?.generation;
+    final session = backendSession;
+    if (session != null) {
+      _sessionSubscription = session.changes.listen((_) {
+        _observedSessionGeneration = session.generation;
+        clearCaches();
+      });
+    }
+  }
 
   final Dio _dio;
   final String environment;
+  final BackendDataSession? backendSession;
   final RiskRepositoryClock clock;
   final RiskRequestCoordinator requestCoordinator;
   final int maxLedgerPages;
@@ -133,6 +144,8 @@ class RiskRepository {
 
   _TimedRiskValue<OkxRiskAccountConfigDto>? _configCache;
   int _cacheGeneration = 0;
+  int? _observedSessionGeneration;
+  StreamSubscription<void>? _sessionSubscription;
   RiskRepositorySelectionFailure? _lastSelectionFailure;
   final Map<String, _TimedRiskValue<OkxRiskInstrumentDto?>> _instrumentCache =
       <String, _TimedRiskValue<OkxRiskInstrumentDto?>>{};
@@ -168,6 +181,31 @@ class RiskRepository {
     requestCoordinator.clearLane(RiskRequestLane.authenticated);
   }
 
+  Future<void> dispose() async {
+    await _sessionSubscription?.cancel();
+    _sessionSubscription = null;
+  }
+
+  TradeSession? _requireActiveBackendSession(String endpoint) {
+    final session = backendSession;
+    if (session == null) return null;
+    session.expireIfNeeded();
+    if (_observedSessionGeneration != session.generation) {
+      _observedSessionGeneration = session.generation;
+      clearCaches();
+    }
+    final current = session.current;
+    if (current == null) {
+      throw RiskRepositoryException(
+        'Backend session is unavailable',
+        statusCode: 401,
+        credentialFailure: true,
+        endpoint: endpoint,
+      );
+    }
+    return current;
+  }
+
   RiskRepositorySelectionFailure? get lastSelectionFailure =>
       _lastSelectionFailure;
 
@@ -180,6 +218,7 @@ class RiskRepository {
       '/api/v5/account/interest-accrued';
 
   Future<OkxRiskAccountConfigDto> getAccountConfig() async {
+    _requireActiveBackendSession(configEndpoint);
     final generation = _cacheGeneration;
     final cached = _configCache;
     if (cached != null && !_expired(cached.fetchedAt, stableCacheTtl)) {
@@ -204,6 +243,7 @@ class RiskRepository {
   }
 
   Future<List<OkxRiskPositionDto>> getPositions({String? instId}) async {
+    _requireActiveBackendSession(positionsEndpoint);
     final query = <String, dynamic>{'instType': 'MARGIN'};
     final requestedInstId = instId?.trim();
     if (requestedInstId != null && requestedInstId.isNotEmpty) {
@@ -222,6 +262,7 @@ class RiskRepository {
   Future<OkxRiskInstrumentDto?> getMarginInstrument({
     required String instId,
   }) async {
+    _requireActiveBackendSession(instrumentsEndpoint);
     final generation = _cacheGeneration;
     final cached = _instrumentCache[instId];
     if (cached != null && !_expired(cached.fetchedAt, stableCacheTtl)) {
@@ -255,6 +296,7 @@ class RiskRepository {
   }
 
   Future<OkxRiskFeeRateDto?> getTradeFee({required String instId}) async {
+    _requireActiveBackendSession(feeEndpoint);
     final generation = _cacheGeneration;
     final cached = _feeCache[instId];
     if (cached != null && !_expired(cached.fetchedAt, stableCacheTtl)) {
@@ -284,6 +326,7 @@ class RiskRepository {
   }
 
   Future<OkxRiskInterestRateDto?> getInterestRate({required String ccy}) async {
+    _requireActiveBackendSession(interestRateEndpoint);
     final generation = _cacheGeneration;
     final key = ccy.trim().toUpperCase();
     final cached = _rateCache[key];
@@ -320,6 +363,7 @@ class RiskRepository {
     DateTime? episodeEnd,
     int pageSize = 100,
   }) async {
+    _requireActiveBackendSession(interestAccruedEndpoint);
     final generation = _cacheGeneration;
     final key = _ledgerKey(
       instId: instId,
@@ -794,6 +838,7 @@ class RiskRepository {
     String? selectedPositionId,
     String? selectedEpisodeKey,
   }) async {
+    _requireActiveBackendSession(positionsEndpoint);
     final generation = _cacheGeneration;
     _lastSelectionFailure = null;
     late final OkxRiskAccountConfigDto config;
@@ -910,6 +955,7 @@ class RiskRepository {
   Future<RiskPositionBatch> loadPositionsBatch({
     int ledgerPageBudget = 2,
   }) async {
+    _requireActiveBackendSession(positionsEndpoint);
     final generation = _cacheGeneration;
     _lastSelectionFailure = null;
     late final OkxRiskAccountConfigDto config;
@@ -1562,7 +1608,12 @@ class RiskRepository {
     RiskRepositoryException error, {
     required int generation,
   }) {
-    if (generation != _cacheGeneration) return;
+    if (generation != _cacheGeneration &&
+        !(error.credentialFailure &&
+            error.statusCode == 401 &&
+            backendSession?.current == null)) {
+      return;
+    }
     final prior = _lastSelectionFailure;
     final retryAfter = <Duration?>[prior?.retryAfter, error.retryAfter]
         .whereType<Duration>()
@@ -1584,16 +1635,37 @@ class RiskRepository {
     String endpoint, {
     Map<String, dynamic>? queryParameters,
   }) async {
+    final expectedSession = _requireActiveBackendSession(endpoint);
+    final expectedGeneration = backendSession?.generation;
     try {
-      return await requestCoordinator.run<Response<dynamic>>(
+      final response = await requestCoordinator.run<Response<dynamic>>(
         lane: RiskRequestLane.authenticated,
         key: _requestKey(endpoint, queryParameters),
         request: () => _dio.get<dynamic>(
           endpoint,
           queryParameters: queryParameters,
-          options: Options(extra: const <String, Object>{'requiresAuth': true}),
+          options: Options(
+            extra: <String, Object>{
+              'requiresAuth': true,
+              if (backendSession != null)
+                BackendDataClient.sessionExtraKey: backendSession!,
+            },
+          ),
         ),
       );
+      final session = backendSession;
+      if (session != null &&
+          (expectedSession == null ||
+              expectedGeneration == null ||
+              !session.matches(expectedGeneration, expectedSession))) {
+        throw RiskRepositoryException(
+          'Backend session changed during the request',
+          statusCode: 401,
+          credentialFailure: true,
+          endpoint: endpoint,
+        );
+      }
+      return response;
     } on RiskRequestBackoffException catch (error) {
       throw RiskRepositoryException(
         'OKX request rate limit reached',

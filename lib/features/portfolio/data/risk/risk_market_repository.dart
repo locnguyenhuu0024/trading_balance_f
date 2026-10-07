@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:dio/dio.dart';
 
+import '../../../../core/network/backend_data_session.dart';
 import '../../domain/risk/market_risk_engine.dart';
 import '../../domain/risk/risk_models.dart';
 import 'okx_risk_dto.dart';
@@ -40,6 +41,7 @@ class RiskMarketRepositoryException implements Exception {
 class RiskMarketRepository {
   RiskMarketRepository(
     this._dio, {
+    this.backendSession,
     RiskMarketRepositoryClock? clock,
     RiskRequestCoordinator? requestCoordinator,
     this.venue = 'OKX',
@@ -48,9 +50,19 @@ class RiskMarketRepository {
   }) : clock = clock ?? DateTime.now,
        requestCoordinator =
            requestCoordinator ??
-           RiskRequestCoordinator(clock: clock ?? DateTime.now);
+           RiskRequestCoordinator(clock: clock ?? DateTime.now) {
+    _observedSessionGeneration = backendSession?.generation;
+    final session = backendSession;
+    if (session != null) {
+      _sessionSubscription = session.changes.listen((_) {
+        _observedSessionGeneration = session.generation;
+        clearCaches();
+      });
+    }
+  }
 
   final Dio _dio;
+  final BackendDataSession? backendSession;
   final RiskMarketRepositoryClock clock;
   final RiskRequestCoordinator requestCoordinator;
   final String venue;
@@ -85,12 +97,16 @@ class RiskMarketRepository {
   final Map<String, Future<MarketSourceResult<List<MarketOpenInterestSample>>>>
   _openInterestRequests =
       <String, Future<MarketSourceResult<List<MarketOpenInterestSample>>>>{};
+  int _cacheGeneration = 0;
+  int? _observedSessionGeneration;
+  StreamSubscription<void>? _sessionSubscription;
 
   static const String candlesEndpoint = '/api/v5/market/candles';
   static const String fundingEndpoint = '/api/v5/public/funding-rate';
   static const String openInterestEndpoint = '/api/v5/public/open-interest';
 
   void clearCaches() {
+    _cacheGeneration++;
     _candleCache.clear();
     _candleRequests.clear();
     _fundingCache.clear();
@@ -100,6 +116,20 @@ class RiskMarketRepository {
     requestCoordinator.clearLane(RiskRequestLane.public);
   }
 
+  Future<void> dispose() async {
+    await _sessionSubscription?.cancel();
+    _sessionSubscription = null;
+  }
+
+  void _synchronizeSessionGeneration() {
+    final session = backendSession;
+    if (session == null) return;
+    session.expireIfNeeded();
+    if (_observedSessionGeneration == session.generation) return;
+    _observedSessionGeneration = session.generation;
+    clearCaches();
+  }
+
   /// Fetches confirmed spot candles for the requested 1H or 4H interval.
   /// Invalid intervals are rejected before any request is made.
   Future<MarketCandleSeries> getCandles({
@@ -107,6 +137,7 @@ class RiskMarketRepository {
     required String interval,
     int? limit,
   }) async {
+    _synchronizeSessionGeneration();
     final instrument = instId.trim().toUpperCase();
     final normalizedInterval = interval.trim().toUpperCase();
     _requireInterval(normalizedInterval);
@@ -130,13 +161,14 @@ class RiskMarketRepository {
     }
     final pending = _candleRequests[key];
     if (pending != null) return pending;
+    final generation = _cacheGeneration;
     final request = _fetchCandles(
       instrument: instrument,
       interval: normalizedInterval,
       limit: safeLimit,
     );
     _candleRequests[key] = request;
-    _completeCandleRequest(key, request);
+    _completeCandleRequest(key, request, generation);
     return request;
   }
 
@@ -225,6 +257,7 @@ class RiskMarketRepository {
   Future<MarketSourceResult<MarketFundingObservation>> getFundingResult({
     required String instId,
   }) async {
+    _synchronizeSessionGeneration();
     final instrument = instId.trim().toUpperCase();
     if (instrument.isEmpty) {
       throw ArgumentError.value('', 'instId', 'must not be empty');
@@ -239,9 +272,10 @@ class RiskMarketRepository {
     }
     final pending = _fundingRequests[instrument];
     if (pending != null) return pending;
+    final generation = _cacheGeneration;
     final request = _fetchFundingResult(instrument);
     _fundingRequests[instrument] = request;
-    _completeFundingRequest(instrument, request);
+    _completeFundingRequest(instrument, request, generation);
     return request;
   }
 
@@ -336,6 +370,7 @@ class RiskMarketRepository {
 
   Future<MarketSourceResult<List<MarketOpenInterestSample>>>
   getOpenInterestResult({required String instId}) async {
+    _synchronizeSessionGeneration();
     final instrument = instId.trim().toUpperCase();
     if (instrument.isEmpty) {
       throw ArgumentError.value('', 'instId', 'must not be empty');
@@ -350,9 +385,10 @@ class RiskMarketRepository {
     }
     final pending = _openInterestRequests[instrument];
     if (pending != null) return pending;
+    final generation = _cacheGeneration;
     final request = _fetchOpenInterestResult(instrument);
     _openInterestRequests[instrument] = request;
-    _completeOpenInterestRequest(instrument, request);
+    _completeOpenInterestRequest(instrument, request, generation);
     return request;
   }
 
@@ -466,6 +502,7 @@ class RiskMarketRepository {
     required String asset,
     DateTime? now,
   }) async {
+    _synchronizeSessionGeneration();
     final normalizedAsset = asset.trim().toUpperCase();
     if (normalizedAsset.isEmpty) {
       throw ArgumentError.value('', 'asset', 'must not be empty');
@@ -509,6 +546,7 @@ class RiskMarketRepository {
     required Iterable<String> assets,
     DateTime? now,
   }) async {
+    _synchronizeSessionGeneration();
     final uniqueAssets = <String>[];
     final seen = <String>{};
     for (final asset in assets) {
@@ -536,10 +574,16 @@ class RiskMarketRepository {
     return !age.isNegative && age >= marketCacheTtl;
   }
 
-  void _completeCandleRequest(String key, Future<MarketCandleSeries> request) {
+  void _completeCandleRequest(
+    String key,
+    Future<MarketCandleSeries> request,
+    int generation,
+  ) {
     request.then<void>(
       (value) {
-        _candleCache[key] = _TimedMarketValue(value, clock());
+        if (generation == _cacheGeneration) {
+          _candleCache[key] = _TimedMarketValue(value, clock());
+        }
         if (identical(_candleRequests[key], request)) {
           _candleRequests.remove(key);
         }
@@ -565,7 +609,7 @@ class RiskMarketRepository {
       limit: limit,
     );
     _candleRequests[key] = request;
-    _completeCandleRequest(key, request);
+    _completeCandleRequest(key, request, _cacheGeneration);
   }
 
   MarketCandleSeries _staleCandle(MarketCandleSeries value) {
@@ -595,10 +639,13 @@ class RiskMarketRepository {
   void _completeFundingRequest(
     String key,
     Future<MarketSourceResult<MarketFundingObservation>> request,
+    int generation,
   ) {
     request.then<void>(
       (value) {
-        _fundingCache[key] = _TimedMarketValue(value, clock());
+        if (generation == _cacheGeneration) {
+          _fundingCache[key] = _TimedMarketValue(value, clock());
+        }
         if (identical(_fundingRequests[key], request)) {
           _fundingRequests.remove(key);
         }
@@ -615,7 +662,7 @@ class RiskMarketRepository {
     if (_fundingRequests.containsKey(instrument)) return;
     final request = _fetchFundingResult(instrument);
     _fundingRequests[instrument] = request;
-    _completeFundingRequest(instrument, request);
+    _completeFundingRequest(instrument, request, _cacheGeneration);
   }
 
   MarketSourceResult<MarketFundingObservation> _staleFunding(
@@ -653,10 +700,13 @@ class RiskMarketRepository {
   void _completeOpenInterestRequest(
     String key,
     Future<MarketSourceResult<List<MarketOpenInterestSample>>> request,
+    int generation,
   ) {
     request.then<void>(
       (value) {
-        _openInterestCache[key] = _TimedMarketValue(value, clock());
+        if (generation == _cacheGeneration) {
+          _openInterestCache[key] = _TimedMarketValue(value, clock());
+        }
         if (identical(_openInterestRequests[key], request)) {
           _openInterestRequests.remove(key);
         }
@@ -673,7 +723,7 @@ class RiskMarketRepository {
     if (_openInterestRequests.containsKey(instrument)) return;
     final request = _fetchOpenInterestResult(instrument);
     _openInterestRequests[instrument] = request;
-    _completeOpenInterestRequest(instrument, request);
+    _completeOpenInterestRequest(instrument, request, _cacheGeneration);
   }
 
   MarketSourceResult<List<MarketOpenInterestSample>> _staleOpenInterest(

@@ -17,7 +17,9 @@ import 'package:trading_balance_f/features/orders/data/okx_order_model.dart';
 import 'package:trading_balance_f/features/orders/data/okx_position_model.dart';
 import 'package:trading_balance_f/features/orders/presentation/providers/order_provider.dart';
 import 'package:trading_balance_f/features/portfolio/data/okx_balance_model.dart';
+import 'package:trading_balance_f/features/portfolio/application/risk_monitor_bridge.dart';
 import 'package:trading_balance_f/features/portfolio/presentation/providers/portfolio_provider.dart';
+import 'package:trading_balance_f/features/portfolio/presentation/providers/risk_dashboard_provider.dart';
 import 'package:trading_balance_f/features/settings/presentation/settings_screen.dart';
 import 'package:trading_balance_f/features/support_resistance/data/watchlist_store.dart';
 import 'package:trading_balance_f/features/support_resistance/domain/models.dart';
@@ -55,6 +57,8 @@ void main() {
   testWidgets('shows all primary destinations and switches selected content', (
     tester,
   ) async {
+    final riskOwner = InMemoryRiskMonitorOwner();
+    addTearDown(riskOwner.dispose);
     final watchlist = WatchlistController(
       store: WatchlistStore(storage: _MemoryWatchlistStorage()),
       loadActiveInstruments: (marketMode) async =>
@@ -86,6 +90,10 @@ void main() {
           themeModeProvider.overrideWith((ref) => ThemeMode.light),
           supportResistanceWatchlistProvider.overrideWith((ref) => watchlist),
           supportResistanceLevelsProvider.overrideWith((ref) => levels),
+          riskMonitorOwnerProvider.overrideWithValue(riskOwner),
+          riskMonitorBridgeProvider.overrideWithValue(
+            RiskMonitorBridge(riskOwner),
+          ),
         ],
         child: const MaterialApp(home: MainNavigationShell()),
       ),

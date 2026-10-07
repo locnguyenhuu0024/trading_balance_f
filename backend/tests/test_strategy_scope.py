@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -211,7 +212,7 @@ class StrategyReservationMigrationTests(unittest.TestCase):
             with self.assertRaises(sqlite3.DatabaseError):
                 self.store.initialize()
 
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             columns = {row[1] for row in connection.execute("PRAGMA table_info(strategy_reservations)")}
             row = connection.execute(
                 "SELECT account_fingerprint, instrument_id, strategy_id, created_at "

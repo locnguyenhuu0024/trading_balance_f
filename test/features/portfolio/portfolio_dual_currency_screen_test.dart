@@ -100,7 +100,7 @@ void main() {
   });
 
   test(
-    'live price disposal cancels its stream and releases the socket',
+    'live price disposal cancels its poll stream without starting polling',
     () async {
       final canceled = Completer<void>();
       final stream = StreamController<dynamic>.broadcast(
@@ -117,7 +117,7 @@ void main() {
       );
       final listener = container.listen(livePriceProvider, (_, _) {});
 
-      expect(service.connectCalls, 1);
+      expect(service.connectCalls, 0);
       listener.close();
       await container.pump();
       await canceled.future.timeout(const Duration(seconds: 1));

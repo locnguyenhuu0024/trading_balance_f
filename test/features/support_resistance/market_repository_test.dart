@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:trading_balance_f/core/network/backend_data_client.dart';
 import 'package:trading_balance_f/features/portfolio/data/risk/risk_request_coordinator.dart';
 import 'package:trading_balance_f/features/support_resistance/data/market_repository.dart';
 import 'package:trading_balance_f/features/support_resistance/domain/models.dart';
@@ -21,7 +22,8 @@ void main() {
       );
       final openTime = now;
       final adapter = _RecordingAdapter((request) {
-        if (request.uri.path == SupportResistanceRepository.tickerEndpoint) {
+        if (request.uri.path ==
+            _backendPath(SupportResistanceRepository.tickerEndpoint)) {
           return const _WireResponse(<String, Object?>{
             'code': '0',
             'data': <Object?>[
@@ -29,7 +31,8 @@ void main() {
             ],
           });
         }
-        if (request.uri.path == SupportResistanceRepository.candlesEndpoint) {
+        if (request.uri.path ==
+            _backendPath(SupportResistanceRepository.candlesEndpoint)) {
           if (request.queryParameters['after'] == null) {
             return _ok(<Object?>[
               _row(openTime, 100, 1000, 99, 100, '0'),
@@ -57,7 +60,8 @@ void main() {
       final candleRequests = adapter.requests
           .where(
             (request) =>
-                request.uri.path == SupportResistanceRepository.candlesEndpoint,
+                request.uri.path ==
+                _backendPath(SupportResistanceRepository.candlesEndpoint),
           )
           .toList();
       expect(candleRequests, hasLength(2));
@@ -95,13 +99,15 @@ void main() {
         },
       );
       final adapter = _RecordingAdapter((request) {
-        if (request.uri.path == SupportResistanceRepository.tickerEndpoint) {
+        if (request.uri.path ==
+            _backendPath(SupportResistanceRepository.tickerEndpoint)) {
           final instrument = request.queryParameters['instId'];
           return _ok(<Object?>[
             <String, Object?>{'instId': instrument, 'last': '100.3'},
           ]);
         }
-        if (request.uri.path == SupportResistanceRepository.candlesEndpoint) {
+        if (request.uri.path ==
+            _backendPath(SupportResistanceRepository.candlesEndpoint)) {
           return _ok(candles.reversed.map(_rowFor).toList());
         }
         throw StateError('Unexpected endpoint ${request.uri.path}');
@@ -136,14 +142,16 @@ void main() {
       final tickerKeys = adapter.requests
           .where(
             (request) =>
-                request.uri.path == SupportResistanceRepository.tickerEndpoint,
+                request.uri.path ==
+                _backendPath(SupportResistanceRepository.tickerEndpoint),
           )
           .map((request) => request.queryParameters['instId'])
           .toList();
       final candleKeys = adapter.requests
           .where(
             (request) =>
-                request.uri.path == SupportResistanceRepository.candlesEndpoint,
+                request.uri.path ==
+                _backendPath(SupportResistanceRepository.candlesEndpoint),
           )
           .map((request) => request.queryParameters)
           .toList();
@@ -164,7 +172,7 @@ void main() {
     () async {
       final adapter = _RecordingAdapter((request) {
         if (request.uri.path ==
-            SupportResistanceRepository.instrumentsEndpoint) {
+            _backendPath(SupportResistanceRepository.instrumentsEndpoint)) {
           if (request.queryParameters['instType'] == 'SPOT') {
             return _ok(<Object?>[
               _instrument('ETH-USDT', 'SPOT', 'ETH', quote: 'USDT'),
@@ -208,7 +216,7 @@ void main() {
     () async {
       final adapter = _RecordingAdapter((request) {
         if (request.uri.path ==
-            SupportResistanceRepository.instrumentsEndpoint) {
+            _backendPath(SupportResistanceRepository.instrumentsEndpoint)) {
           return _ok(<Object?>[
             _instrument('ETH-USDT-SWAP', 'SWAP', '', settle: 'USDT'),
             _instrument('ETH-USD-SWAP', 'SWAP', '', settle: 'USD'),
@@ -232,7 +240,8 @@ void main() {
     'GREEN-28 maps each selection to the UTC exchange bar identifier',
     () async {
       final adapter = _RecordingAdapter((request) {
-        if (request.uri.path == SupportResistanceRepository.candlesEndpoint) {
+        if (request.uri.path ==
+            _backendPath(SupportResistanceRepository.candlesEndpoint)) {
           return _ok(const <Object?>[]);
         }
         throw StateError('Unexpected endpoint ${request.uri.path}');
@@ -258,12 +267,14 @@ void main() {
     'invalid ticker and candle keys return typed response failures',
     () async {
       final adapter = _RecordingAdapter((request) {
-        if (request.uri.path == SupportResistanceRepository.tickerEndpoint) {
+        if (request.uri.path ==
+            _backendPath(SupportResistanceRepository.tickerEndpoint)) {
           return _ok(<Object?>[
             <String, Object?>{'instId': 'ETH-USDT-SWAP', 'last': '100'},
           ]);
         }
-        if (request.uri.path == SupportResistanceRepository.candlesEndpoint) {
+        if (request.uri.path ==
+            _backendPath(SupportResistanceRepository.candlesEndpoint)) {
           final timestamp = now.subtract(const Duration(hours: 1));
           return _ok(<Object?>[
             <String, Object?>{
@@ -369,8 +380,10 @@ SupportResistanceRepository _repository(
   DateTime now,
 ) {
   return SupportResistanceRepository(
-    Dio(BaseOptions(baseUrl: 'https://www.okx.com'))
-      ..httpClientAdapter = adapter,
+    BackendDataClient(
+      dio: Dio()..httpClientAdapter = adapter,
+      baseUrl: 'https://data.example',
+    ),
     requestCoordinator: RiskRequestCoordinator(
       clock: () => now,
       minimumSpacing: Duration.zero,
@@ -378,6 +391,9 @@ SupportResistanceRepository _repository(
     clock: () => now,
   );
 }
+
+String _backendPath(String legacyPath) =>
+    legacyPath.replaceFirst('/api/v5/', '/v1/data/');
 
 List<SupportResistanceCandle> _levelCandles({
   required int count,

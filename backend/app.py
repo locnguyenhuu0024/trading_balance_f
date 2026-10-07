@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from typing import Any, Callable
 
+from .currency import CurrencyTransport
 from .service import APIError, BODY_LIMIT_BYTES, RuntimeSettings, TradeService
 from .okx import Transport
 from . import diagnostics
@@ -17,26 +19,35 @@ class WSGIApplication:
         *,
         settings: RuntimeSettings | None = None,
         transport: Transport | None = None,
+        currency_transport: CurrencyTransport | None = None,
         clock: Callable[[], float] | None = None,
         service: TradeService | None = None,
     ):
         self._settings = settings
         self._transport = transport
+        self._currency_transport = currency_transport
         self._clock = clock
         self._service = service
+        self._service_lock = threading.Lock()
 
     def _get_service(self) -> TradeService:
         if self._service is not None:
             return self._service
-        try:
-            settings = self._settings or RuntimeSettings.from_environ()
-            kwargs: dict[str, Any] = {"transport": self._transport}
-            if self._clock is not None:
-                kwargs["clock"] = self._clock
-            self._service = TradeService(settings, **kwargs)
-            return self._service
-        except Exception:
-            raise APIError(503, "service_not_configured", "The private API is not ready.") from None
+        with self._service_lock:
+            if self._service is not None:
+                return self._service
+            try:
+                settings = self._settings or RuntimeSettings.from_environ()
+                kwargs: dict[str, Any] = {
+                    "transport": self._transport,
+                    "currency_transport": self._currency_transport,
+                }
+                if self._clock is not None:
+                    kwargs["clock"] = self._clock
+                self._service = TradeService(settings, **kwargs)
+                return self._service
+            except Exception:
+                raise APIError(503, "service_not_configured", "The private API is not ready.") from None
 
     @staticmethod
     def _response(
@@ -50,7 +61,7 @@ class WSGIApplication:
         ).encode("utf-8")
         status_text = {
             200: "OK", 204: "No Content", 400: "Bad Request", 401: "Unauthorized",
-            403: "Forbidden", 404: "Not Found", 409: "Conflict", 410: "Gone",
+            403: "Forbidden", 404: "Not Found", 405: "Method Not Allowed", 409: "Conflict", 410: "Gone",
             413: "Payload Too Large", 415: "Unsupported Media Type", 422: "Unprocessable Entity",
             429: "Too Many Requests", 500: "Internal Server Error", 502: "Bad Gateway",
             503: "Service Unavailable",
@@ -233,11 +244,18 @@ def create_application(
     *,
     settings: RuntimeSettings | None = None,
     transport: Transport | None = None,
+    currency_transport: CurrencyTransport | None = None,
     clock: Callable[[], float] | None = None,
     service: TradeService | None = None,
 ) -> WSGIApplication:
     """Create an app with optional fake transport and temporary test settings."""
-    return WSGIApplication(settings=settings, transport=transport, clock=clock, service=service)
+    return WSGIApplication(
+        settings=settings,
+        transport=transport,
+        currency_transport=currency_transport,
+        clock=clock,
+        service=service,
+    )
 
 
 application = create_application()

@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:trading_balance_f/core/network/backend_data_client.dart';
 import 'package:trading_balance_f/features/portfolio/data/risk/risk_request_coordinator.dart';
 import 'package:trading_balance_f/features/strategy/data/strategy_market_repository.dart';
 import 'package:trading_balance_f/features/strategy/domain/strategy_models.dart';
@@ -278,8 +279,10 @@ void main() {
 
 StrategyMarketRepository _repository(_OkxAdapter adapter, DateTime now) =>
     StrategyMarketRepository(
-      Dio(BaseOptions(baseUrl: 'https://www.okx.com'))
-        ..httpClientAdapter = adapter,
+      BackendDataClient(
+        dio: Dio()..httpClientAdapter = adapter,
+        baseUrl: 'https://data.example',
+      ),
       requestCoordinator: RiskRequestCoordinator(
         minimumSpacing: Duration.zero,
         delay: (_) async {},

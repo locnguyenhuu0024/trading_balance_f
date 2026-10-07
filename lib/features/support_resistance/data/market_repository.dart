@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:trading_balance_f/core/network/backend_data_client.dart';
 
 import '../../portfolio/data/risk/risk_request_coordinator.dart';
 import '../domain/level_calculator.dart';
@@ -12,7 +13,7 @@ typedef SupportResistanceRepositoryClock = DateTime Function();
 /// foreground public lane's single-flight, spacing, and rate-limit state.
 class SupportResistanceRepository {
   SupportResistanceRepository(
-    this._dio, {
+    this._client, {
     required this.requestCoordinator,
     SupportResistanceRepositoryClock? clock,
     this.calculator = const SupportResistanceCalculator(),
@@ -23,7 +24,7 @@ class SupportResistanceRepository {
   static const String candlesEndpoint = '/api/v5/market/candles';
   static const int maximumCandleCount = 300;
 
-  final Dio _dio;
+  final BackendDataClient _client;
   final RiskRequestCoordinator requestCoordinator;
   final SupportResistanceRepositoryClock clock;
   final SupportResistanceCalculator calculator;
@@ -308,10 +309,9 @@ class SupportResistanceRepository {
       return await requestCoordinator.run<Response<dynamic>>(
         lane: RiskRequestLane.public,
         key: _requestKey(endpoint, queryParameters),
-        request: () => _dio.get<dynamic>(
+        request: () => _client.get(
           endpoint,
           queryParameters: queryParameters,
-          options: Options(extra: <String, dynamic>{'requiresAuth': false}),
         ),
       );
     } on RiskRequestBackoffException catch (error) {
