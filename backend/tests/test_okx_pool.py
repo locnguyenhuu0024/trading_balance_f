@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import threading
 import unittest
+from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
 from unittest.mock import patch
 
+from backend.data_gateway import DataGateway, GatewayError
 from backend.okx import OKXClient, OKXError, OKXTransportError
 
 
@@ -214,6 +217,64 @@ class HTTPSConnectionPoolTests(unittest.TestCase):
         self.assertEqual(raised.exception.error_code, "50011")
         self.assertEqual(raised.exception.http_status, 200)
         self.assertEqual(raised.exception.retry_after, "29")
+
+
+class RetryAfterMetadataTests(unittest.TestCase):
+    def test_retry_after_sanitizes_duration_date_and_invalid_values(self) -> None:
+        self.assertEqual(OKXClient._retry_after("100000"), "100000")
+        self.assertEqual(
+            OKXClient._retry_after("Wed, 21 Oct 2015 07:28:00 GMT"),
+            "Wed, 21 Oct 2015 07:28:00 GMT",
+        )
+        self.assertIsNone(OKXClient._retry_after("not a retry value"))
+        self.assertIsNone(OKXClient._retry_after("12\r\nX-Injected: value"))
+        self.assertIsNone(OKXClient._retry_after("9" * 400))
+        self.assertEqual(
+            OKXError("safe", retry_after="Wed, 21 Oct 2015 07:28:00 GMT").retry_after,
+            "Wed, 21 Oct 2015 07:28:00 GMT",
+        )
+
+    def test_http_date_from_response_sets_gateway_cooldown_without_second_request(self) -> None:
+        now = datetime(2026, 10, 8, 0, 0, 0, tzinfo=timezone.utc)
+        retry_after = format_datetime(now + timedelta(seconds=37), usegmt=True)
+        responses = []
+
+        class Connection:
+            def __init__(self, host: str, *, timeout: float):
+                pass
+
+            def request(self, method, path, *, body=None, headers=None):
+                return None
+
+            def getresponse(self):
+                response = FakeResponse(
+                    b'{"code":"50011","data":[]}', status=429, retry_after=retry_after
+                )
+                responses.append(response)
+                return response
+
+            def close(self):
+                return None
+
+        monotonic = [100.0]
+        with patch("backend.okx.http.client.HTTPSConnection", Connection):
+            client = OKXClient("key", "secret", "passphrase")
+            gateway = DataGateway(
+                client,
+                account_fingerprint=lambda account: "test-fingerprint",
+                monotonic_clock=lambda: monotonic[0],
+                wall_clock=lambda: now.timestamp(),
+            )
+            with self.assertRaises(GatewayError) as first:
+                gateway.identity_for_display(session_guard=lambda: None)
+
+            self.assertEqual(first.exception.headers, [("Retry-After", "37")])
+            monotonic[0] += 2.2
+            with self.assertRaises(GatewayError) as second:
+                gateway.identity_for_display(session_guard=lambda: None)
+
+        self.assertEqual(second.exception.headers, [("Retry-After", "35")])
+        self.assertEqual(len(responses), 1)
 
 
 if __name__ == "__main__":

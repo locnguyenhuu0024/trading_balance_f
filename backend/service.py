@@ -523,14 +523,9 @@ class TradeService:
     def _fetch_display_snapshot(self, environ: dict[str, Any]) -> dict[str, Any]:
         request_guard = lambda: self._require_session(environ)
 
-        def read_group(
+        def read_instruments(
             instrument_type: str,
-        ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]], float]:
-            positions, positions_deadline = self.data_gateway.read_internal_with_deadline(
-                "account/positions",
-                {"instType": instrument_type},
-                session_guard=request_guard,
-            )
+        ) -> tuple[dict[str, dict[str, Any]], float]:
             instruments, instruments_deadline = self.data_gateway.read_internal_with_deadline(
                 "public/instruments",
                 {"instType": instrument_type},
@@ -538,13 +533,21 @@ class TradeService:
             instrument_map = {
                 str(item.get("instId")): item for item in instruments if item.get("instId")
             }
-            return positions, instrument_map, min(positions_deadline, instruments_deadline)
+            return instrument_map, instruments_deadline
 
         admission_reserved = 0
         submitted_futures: dict[str, Future[Any]] = {}
+
+        def release_reserved_admission() -> None:
+            nonlocal admission_reserved
+            for _ in range(admission_reserved):
+                self._display_admission.release()
+            admission_reserved = 0
+
         try:
             for attempt in range(2):
-                before = self.data_gateway.identity_for_display(session_guard=request_guard)
+                request_guard()
+                submitted_futures = {}
                 for _ in SUPPORTED_TYPES:
                     if not self._display_admission.acquire(blocking=False):
                         raise GatewayError(
@@ -553,28 +556,104 @@ class TradeService:
                             "The requested data is temporarily unavailable.",
                         )
                     admission_reserved += 1
-                submitted_futures = {}
+
+                try:
+                    before, positions_by_type, positions_deadline = (
+                        self.data_gateway.read_display_positions(session_guard=request_guard)
+                    )
+                except GatewayError as error:
+                    if error.code == "data_stale" and attempt == 0:
+                        release_reserved_admission()
+                        continue
+                    raise
+
                 for instrument_type in SUPPORTED_TYPES:
-                    future = self._display_executor.submit(read_group, instrument_type)
+                    future = self._display_executor.submit(read_instruments, instrument_type)
                     admission_reserved -= 1
                     future.add_done_callback(lambda _future: self._display_admission.release())
                     submitted_futures[instrument_type] = future
 
-                positions_by_type: dict[str, list[dict[str, Any]]] = {}
                 instruments_by_type: dict[str, dict[str, dict[str, Any]]] = {}
-                deadlines: list[float] = []
+                deadlines: list[float] = [positions_deadline]
+                failure: Exception | None = None
                 for instrument_type in SUPPORTED_TYPES:
-                    positions, instruments, deadline = submitted_futures[instrument_type].result(timeout=45)
-                    positions_by_type[instrument_type] = positions
-                    instruments_by_type[instrument_type] = instruments
-                    deadlines.append(deadline)
-                after = self.data_gateway.identity_for_display(session_guard=request_guard, force=True)
-                if before.fingerprint != after.fingerprint or before.generation != after.generation:
+                    try:
+                        instruments, deadline = submitted_futures[instrument_type].result(timeout=45)
+                        instruments_by_type[instrument_type] = instruments
+                        deadlines.append(deadline)
+                    except Exception as error:
+                        if failure is None:
+                            failure = error
+                if failure is not None:
+                    raise failure
+
+                current_identity = self.data_gateway.identity_for_display(
+                    session_guard=request_guard
+                )
+                if (
+                    before.fingerprint != current_identity.fingerprint
+                    or before.generation != current_identity.generation
+                ):
                     raise GatewayError(
                         409, "account_changed", "The active account changed during this request."
                     )
                 if all(self.data_gateway.is_deadline_fresh(deadline) for deadline in deadlines):
-                    break
+                    pos_mode = before.account.get("posMode")
+                    if not isinstance(pos_mode, str) or not pos_mode:
+                        raise APIError(502, "account_unavailable", "Current account data is unavailable.")
+                    normalized: list[dict[str, Any]] = []
+                    for instrument_type in SUPPORTED_TYPES:
+                        instrument_map = instruments_by_type[instrument_type]
+                        for raw in positions_by_type[instrument_type]:
+                            position = self._normalize_position(
+                                raw, instrument_type, pos_mode, instrument_map
+                            )
+                            if position.get("size") == "0":
+                                continue
+                            normalized.append(position)
+
+                    seen: set[str] = set()
+                    for position in normalized:
+                        identity = position["identity"]
+                        key = _identity_key(identity)
+                        if key in seen:
+                            position["identityAmbiguous"] = True
+                        else:
+                            position["identityAmbiguous"] = False
+                            seen.add(key)
+                    normalized.sort(key=lambda item: _identity_key(item["identity"]))
+
+                    request_guard()
+                    published_identity = self.data_gateway.identity_for_display(
+                        session_guard=request_guard
+                    )
+                    if (
+                        before.fingerprint != published_identity.fingerprint
+                        or before.generation != published_identity.generation
+                    ):
+                        raise GatewayError(
+                            409, "account_changed", "The active account changed during this request."
+                        )
+                    request_guard()
+                    if not all(
+                        self.data_gateway.is_deadline_fresh(deadline)
+                        for deadline in deadlines
+                    ):
+                        if attempt == 0:
+                            release_reserved_admission()
+                            continue
+                        raise GatewayError(
+                            503,
+                            "data_stale",
+                            "The requested data became stale before it was ready.",
+                        )
+                    return {
+                        "accountIdentifier": mask_identifier(before.account.get("uid")) or "••••",
+                        "accountFingerprint": before.fingerprint,
+                        "positionMode": pos_mode,
+                        "positions": normalized,
+                        "instruments": instruments_by_type,
+                    }
                 if attempt == 1:
                     raise GatewayError(
                         503,
@@ -584,73 +663,26 @@ class TradeService:
         except GatewayError as error:
             for future in submitted_futures.values():
                 future.cancel()
+            request_guard()
             raise APIError(error.status, error.code, error.message, headers=error.headers) from None
         except FutureTimeoutError:
             for future in submitted_futures.values():
                 future.cancel()
+            request_guard()
             raise APIError(503, "data_unavailable", "The requested data is temporarily unavailable.") from None
         except APIError:
             for future in submitted_futures.values():
                 future.cancel()
+            request_guard()
             raise
         except Exception:
             for future in submitted_futures.values():
                 future.cancel()
+            request_guard()
             raise APIError(502, "exchange_unavailable", "Current account data is unavailable.") from None
         finally:
-            for _ in range(admission_reserved):
-                self._display_admission.release()
-
-        pos_mode = before.account.get("posMode")
-        if not isinstance(pos_mode, str) or not pos_mode:
-            raise APIError(502, "account_unavailable", "Current account data is unavailable.")
-        normalized: list[dict[str, Any]] = []
-        for instrument_type in SUPPORTED_TYPES:
-            instrument_map = instruments_by_type[instrument_type]
-            for raw in positions_by_type[instrument_type]:
-                position = self._normalize_position(raw, instrument_type, pos_mode, instrument_map)
-                if position.get("size") == "0":
-                    continue
-                normalized.append(position)
-
-        seen: set[str] = set()
-        for position in normalized:
-            identity = position["identity"]
-            key = _identity_key(identity)
-            if key in seen:
-                position["identityAmbiguous"] = True
-            else:
-                position["identityAmbiguous"] = False
-                seen.add(key)
-        normalized.sort(key=lambda item: _identity_key(item["identity"]))
-        try:
-            request_guard()
-            published_identity = self.data_gateway.identity_for_display(
-                session_guard=request_guard
-            )
-            if (
-                before.fingerprint != published_identity.fingerprint
-                or before.generation != published_identity.generation
-            ):
-                raise GatewayError(
-                    409, "account_changed", "The active account changed during this request."
-                )
-            request_guard()
-            if not all(self.data_gateway.is_deadline_fresh(deadline) for deadline in deadlines):
-                raise GatewayError(
-                    503,
-                    "data_stale",
-                    "The requested data became stale before it was ready.",
-                )
-        except GatewayError as error:
-            raise APIError(error.status, error.code, error.message, headers=error.headers) from None
-        return {
-            "accountIdentifier": mask_identifier(before.account.get("uid")) or "••••",
-            "accountFingerprint": before.fingerprint,
-            "positionMode": pos_mode,
-            "positions": normalized,
-            "instruments": instruments_by_type,
-        }
+            release_reserved_admission()
+        raise APIError(503, "data_stale", "The requested data became stale before it was ready.")
 
     def _normalize_position(
         self,

@@ -928,18 +928,34 @@ class ApplicationInitializationTests(unittest.TestCase):
             def __init__(self):
                 self.now = 0.0
                 self.reads = 0
-                self.forced_identity_reads = 0
+                self.bundle_reads = 0
+                self.bundle_error_once = False
 
             def identity_for_display(self, *, session_guard, force=False):
                 session_guard()
-                if force:
-                    self.forced_identity_reads += 1
-                    if always_stale or self.forced_identity_reads == 1:
-                        self.now += 2.0
                 return GatewayIdentity(
                     account={"uid": "display-account", "posMode": "net_mode"},
                     fingerprint="display-fingerprint",
                     generation=0,
+                )
+
+            def read_display_positions(self, *, session_guard):
+                session_guard()
+                self.bundle_reads += 1
+                self.reads += 1
+                if self.bundle_error_once and self.bundle_reads == 1:
+                    raise GatewayError(503, "data_stale", "safe stale fixture")
+                deadline = self.now + 1.0
+                if always_stale or self.bundle_reads == 1:
+                    self.now += 2.0
+                return (
+                    GatewayIdentity(
+                        account={"uid": "display-account", "posMode": "net_mode"},
+                        fingerprint="display-fingerprint",
+                        generation=0,
+                    ),
+                    {kind: [] for kind in ("MARGIN", "SWAP", "FUTURES")},
+                    deadline,
                 )
 
             def read_internal_with_deadline(self, suffix, params, *, session_guard=None):
@@ -970,7 +986,7 @@ class ApplicationInitializationTests(unittest.TestCase):
             service._display_executor.shutdown(wait=True)
 
         self.assertEqual(snapshot["accountFingerprint"], "display-fingerprint")
-        self.assertEqual(service.data_gateway.reads, 12)
+        self.assertEqual(service.data_gateway.reads, 8)
 
     def test_display_snapshot_fails_stale_after_one_refresh(self) -> None:
         service = self.make_display_service(always_stale=True)
@@ -982,7 +998,58 @@ class ApplicationInitializationTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.status, 503)
         self.assertEqual(raised.exception.code, "data_stale")
-        self.assertEqual(service.data_gateway.reads, 12)
+        self.assertEqual(service.data_gateway.reads, 8)
+
+    def test_early_bundle_stale_retry_releases_admission_before_retry(self) -> None:
+        service = self.make_display_service()
+        service.data_gateway.bundle_error_once = True
+
+        class RetryAwareAdmission:
+            def __init__(self):
+                self.semaphore = threading.BoundedSemaphore(6)
+                self.lock = threading.Lock()
+                self.acquires = 0
+                self.retry_entered = threading.Event()
+                self.allow_retry = threading.Event()
+
+            def acquire(self, blocking=True):
+                with self.lock:
+                    self.acquires += 1
+                    if self.acquires == 4:
+                        self.retry_entered.set()
+                        if not self.allow_retry.wait(3):
+                            return False
+                return self.semaphore.acquire(blocking=blocking)
+
+            def release(self):
+                self.semaphore.release()
+
+            @property
+            def _value(self):
+                return self.semaphore._value
+
+        admission = RetryAwareAdmission()
+        service._display_admission = admission
+        outcome: list[object] = []
+
+        def request() -> None:
+            try:
+                outcome.append(service._fetch_display_snapshot({}))
+            except BaseException as error:
+                outcome.append(error)
+
+        worker = threading.Thread(target=request)
+        worker.start()
+        self.assertTrue(admission.retry_entered.wait(2))
+        self.assertEqual(admission._value, 6)
+        admission.allow_retry.set()
+        worker.join(5)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(len(outcome), 1)
+        self.assertFalse(isinstance(outcome[0], BaseException))
+        self.assertEqual(admission._value, 6)
+        service._display_executor.shutdown(wait=True)
 
     def test_display_snapshot_admission_is_bounded(self) -> None:
         service = self.make_display_service()
@@ -999,6 +1066,34 @@ class ApplicationInitializationTests(unittest.TestCase):
         self.assertEqual(raised.exception.status, 503)
         self.assertEqual(service.data_gateway.reads, 0)
 
+    def test_revoked_session_wins_public_metadata_gateway_error(self) -> None:
+        service = self.make_display_service()
+        revoked = threading.Event()
+
+        def require_session(_environ):
+            if revoked.is_set():
+                raise APIError(401, "authentication_required", "A valid session is required.")
+            return "session"
+
+        service._require_session = require_session
+        original_read = service.data_gateway.read_internal_with_deadline
+
+        def failing_metadata(suffix, params, *, session_guard=None):
+            if suffix == "public/instruments" and params["instType"] == "MARGIN":
+                revoked.set()
+                raise GatewayError(429, "exchange_rate_limited", "safe rate limit")
+            return original_read(suffix, params, session_guard=session_guard)
+
+        service.data_gateway.read_internal_with_deadline = failing_metadata
+        try:
+            with self.assertRaises(APIError) as raised:
+                service._fetch_display_snapshot({})
+        finally:
+            service._display_executor.shutdown(wait=True)
+
+        self.assertEqual(raised.exception.status, 401)
+        self.assertEqual(raised.exception.code, "authentication_required")
+
     def test_display_admission_releases_after_group_error(self) -> None:
         service = self.make_display_service()
         original_read = service.data_gateway.read_internal_with_deadline
@@ -1012,11 +1107,11 @@ class ApplicationInitializationTests(unittest.TestCase):
         def controlled_read(suffix, params, *, session_guard=None):
             nonlocal should_fail
             instrument_type = params["instType"]
-            if suffix == "account/positions" and instrument_type == "MARGIN" and should_fail:
+            if suffix == "public/instruments" and instrument_type == "MARGIN" and should_fail:
                 self.assertTrue(siblings_ready.wait(3))
                 should_fail = False
                 raise GatewayError(502, "exchange_unavailable", "safe failure")
-            if suffix == "account/positions" and instrument_type in {"SWAP", "FUTURES"}:
+            if suffix == "public/instruments" and instrument_type in {"SWAP", "FUTURES"}:
                 with sibling_lock:
                     sibling_types.add(instrument_type)
                     if sibling_types == {"SWAP", "FUTURES"}:
@@ -1041,13 +1136,12 @@ class ApplicationInitializationTests(unittest.TestCase):
 
         worker = threading.Thread(target=request)
         worker.start()
+        self.assertFalse(siblings_completed.wait(0.05))
+        release_siblings.set()
         worker.join(3)
         self.assertFalse(worker.is_alive())
         self.assertEqual(len(outcome), 1)
         self.assertIsInstance(outcome[0], APIError)
-        self.assertLess(service._display_admission._value, 6)
-
-        release_siblings.set()
         self.assertTrue(siblings_completed.wait(3))
         self.assertEqual(service._display_admission._value, 6)
         snapshot = service._fetch_display_snapshot({})

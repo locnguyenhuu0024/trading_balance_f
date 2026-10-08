@@ -1,0 +1,3 @@
+# Plan Validation: Orders exchange read pressure
+Status: PASS — bounded correction adopted
+VAL-001: Real transport sanitization drops HTTP-date Retry-After and clamps durations before DataGateway receives them. Four-path assumption invalidated by source evidence at backend/okx.py::OKXError/OKXClient._retry_after. REQ-003 already requires honoring valid duration/date. Add only backend/okx.py metadata sanitizer and backend/tests/test_okx_pool.py transport regression to T99; no configuration/dependency/action behavior changes. Existing user execution authorization remains applicable to this acceptance-preserving correction. Formal RED/GREEN include the actual HTTP fixture boundary; builds unchanged.

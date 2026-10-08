@@ -7,6 +7,8 @@ from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+from math import ceil, isfinite
 import re
 import threading
 import time
@@ -28,6 +30,7 @@ _ALLOWED_BARS = frozenset({"1H", "4H", "6Hutc", "1Dutc", "1Wutc"})
 _INSTRUMENT_TYPES = frozenset({"SPOT", "MARGIN", "SWAP", "FUTURES"})
 _PRIVATE_INSTRUMENT_TYPES = frozenset({"MARGIN", "SWAP", "FUTURES"})
 _RATE_LIMIT_CODES = frozenset({"50011", "50040"})
+_DISPLAY_POSITION_BUNDLE = "$display/positions"
 
 
 class GatewayError(Exception):
@@ -40,12 +43,14 @@ class GatewayError(Exception):
         message: str,
         *,
         headers: list[tuple[str, str]] | None = None,
+        rate_limit_generation: int | None = None,
     ):
         super().__init__(message)
         self.status = status
         self.code = code
         self.message = message
         self.headers = headers or []
+        self.rate_limit_generation = rate_limit_generation
 
 
 @dataclass(frozen=True)
@@ -82,6 +87,7 @@ class _Flight:
     event: threading.Event = field(default_factory=threading.Event)
     value: Any = None
     error: GatewayError | None = None
+    rate_limit_generation: int | None = None
 
 
 _ROUTES: dict[str, _Route] = {
@@ -190,6 +196,7 @@ class DataGateway:
         self._identity_condition = threading.Condition()
         self._identity: GatewayIdentity | None = None
         self._identity_deadline = 0.0
+        self._identity_cooldown_deadline = 0.0
         self._identity_generation = 0
         self._identity_flight: _Flight | None = None
 
@@ -206,39 +213,45 @@ class DataGateway:
             raise GatewayError(404, "not_found", "The requested endpoint was not found.")
         if route.private:
             self._require_session_guard(session_guard)
-        if method.upper() != "GET":
-            raise GatewayError(
-                405, "method_not_allowed", "This endpoint only accepts GET requests.",
-                headers=[("Allow", "GET")],
-            )
-        params = self._parse_query(route, query_string)
-        identity = self._identity_snapshot() if route.private else None
-        if route.private:
-            self._require_session_guard(session_guard)
-
-        if suffix in _AGGREGATE_TYPES and params.get("instType") == "ALL":
-            entry, cache_hit = self._read_aggregate(suffix, params, identity, session_guard)
-        elif suffix == "market/quotes":
-            entry, cache_hit = self._read_quotes(params)
-        elif suffix == "currency/usdt-vnd":
-            entry, cache_hit = self._read_cached(suffix, params, None)
-        else:
-            entry, cache_hit = self._read_cached(suffix, params, identity)
-
-        if route.private:
-            self._require_session_guard(session_guard)
-            if identity is None:
-                raise self._account_unavailable()
-            current = self._current_identity_for(identity)
-            if not self.is_deadline_fresh(entry.deadline):
-                if suffix in _AGGREGATE_TYPES and params.get("instType") == "ALL":
-                    raise self._data_stale()
-                entry, cache_hit = self._read_cached(suffix, params, identity)
+        try:
+            if method.upper() != "GET":
+                raise GatewayError(
+                    405, "method_not_allowed", "This endpoint only accepts GET requests.",
+                    headers=[("Allow", "GET")],
+                )
+            params = self._parse_query(route, query_string)
+            identity = self._identity_snapshot() if route.private else None
+            if route.private:
                 self._require_session_guard(session_guard)
-                current = self._current_identity_for(identity)
+
+            if suffix in _AGGREGATE_TYPES and params.get("instType") == "ALL":
+                entry, cache_hit = self._read_aggregate(suffix, params, identity, session_guard)
+            elif suffix == "market/quotes":
+                entry, cache_hit = self._read_quotes(params)
+            elif suffix == "currency/usdt-vnd":
+                entry, cache_hit = self._read_cached(suffix, params, None)
+            else:
+                entry, cache_hit = self._read_cached(suffix, params, identity)
+
+            if route.private:
+                self._require_session_guard(session_guard)
+                if identity is None:
+                    raise self._account_unavailable()
+                self._current_identity_for(identity)
                 if not self.is_deadline_fresh(entry.deadline):
-                    raise self._data_stale()
-        return self._envelope(entry, cache_hit)
+                    if suffix in _AGGREGATE_TYPES and params.get("instType") == "ALL":
+                        raise self._data_stale()
+                    entry, cache_hit = self._read_cached(suffix, params, identity)
+                    self._require_session_guard(session_guard)
+                    self._current_identity_for(identity)
+                    if not self.is_deadline_fresh(entry.deadline):
+                        raise self._data_stale()
+            return self._envelope(entry, cache_hit)
+        except GatewayError as error:
+            if route.private:
+                self._require_session_guard(session_guard)
+                error = self._supersede_rate_limit_after_invalidation(error)
+            raise error from None
 
     def read_internal(
         self,
@@ -264,19 +277,48 @@ class DataGateway:
             raise GatewayError(404, "not_found", "The requested endpoint was not found.")
         if route.private:
             self._require_session_guard(session_guard)
-        normalized = self._validate_params(route, dict(params))
-        identity = self._identity_snapshot() if route.private else None
-        if route.private:
+        try:
+            normalized = self._validate_params(route, dict(params))
+            identity = self._identity_snapshot() if route.private else None
+            if route.private:
+                self._require_session_guard(session_guard)
+            entry, _ = self._read_cached(suffix, normalized, identity)
+            if route.private:
+                self._require_session_guard(session_guard)
+                if identity is None:
+                    raise self._account_unavailable()
+                self._current_identity_for(identity)
+            if not self.is_deadline_fresh(entry.deadline):
+                raise self._data_stale()
+            return deepcopy(entry.data), entry.deadline
+        except GatewayError as error:
+            if route.private:
+                self._require_session_guard(session_guard)
+                error = self._supersede_rate_limit_after_invalidation(error)
+            raise error from None
+
+    def read_display_positions(
+        self,
+        *,
+        session_guard: SessionGuard,
+    ) -> tuple[GatewayIdentity, dict[str, list[dict[str, Any]]], float]:
+        """Read the three private position groups as one staged display observation."""
+        self._require_session_guard(session_guard)
+        try:
+            identity = self._identity_snapshot()
             self._require_session_guard(session_guard)
-        entry, _ = self._read_cached(suffix, normalized, identity)
-        if route.private:
+            entry, _cache_hit = self._read_display_position_bundle(identity)
             self._require_session_guard(session_guard)
-            if identity is None:
-                raise self._account_unavailable()
-            self._current_identity_for(identity)
-        if not self.is_deadline_fresh(entry.deadline):
-            raise self._data_stale()
-        return deepcopy(entry.data), entry.deadline
+            current = self._identity_snapshot()
+            self._ensure_identity_matches(identity, current)
+            self._require_session_guard(session_guard)
+            if not self.is_deadline_fresh(entry.deadline):
+                raise self._data_stale()
+            return current, self._unpack_display_position_bundle(entry.data), entry.deadline
+        except GatewayError as error:
+            # Authorization belongs to each waiter, even when shared exchange work failed.
+            self._require_session_guard(session_guard)
+            raise self._supersede_rate_limit_after_invalidation(error) from None
 
     def is_deadline_fresh(self, deadline: float) -> bool:
         return deadline > self._monotonic()
@@ -288,7 +330,11 @@ class DataGateway:
         force: bool = False,
     ) -> GatewayIdentity:
         self._require_session_guard(session_guard)
-        identity = self._identity_snapshot(force=force)
+        try:
+            identity = self._identity_snapshot(force=force)
+        except GatewayError as error:
+            self._require_session_guard(session_guard)
+            raise self._supersede_rate_limit_after_invalidation(error) from None
         self._require_session_guard(session_guard)
         return GatewayIdentity(
             account=deepcopy(identity.account),
@@ -540,20 +586,207 @@ class DataGateway:
             if not self.is_deadline_fresh(entry.deadline):
                 self._remove_entry_if_same(key, entry)
                 raise self._data_stale()
-            flight.value = entry
+            if flight.error is None:
+                flight.value = entry
         except GatewayError as error:
-            flight.error = error
+            if flight.error is None:
+                flight.error = error
+                flight.rate_limit_generation = error.rate_limit_generation
         except Exception:
-            flight.error = self._unavailable()
+            if flight.error is None:
+                flight.error = self._unavailable()
         finally:
             with self._cache_lock:
                 self._inflight.pop(key, None)
                 flight.event.set()
         if flight.error is not None:
-            raise flight.error
+            raise self._effective_flight_error(flight)
         if flight.value is None:
             raise self._unavailable()
         return deepcopy(flight.value), False
+
+    def _read_display_position_bundle(
+        self,
+        identity: GatewayIdentity,
+    ) -> tuple[_CacheEntry, bool]:
+        key = self._cache_key(_DISPLAY_POSITION_BUNDLE, {}, identity, True)
+        now = self._monotonic()
+        with self._cache_lock:
+            cached = self._cache.get(key)
+            if cached is not None and cached.deadline > now:
+                self._cache.move_to_end(key)
+                flight = None
+                leader = False
+                entry = cached
+                cache_hit = True
+            else:
+                if cached is not None:
+                    self._cache.pop(key, None)
+                flight = self._inflight.get(key)
+                if flight is not None:
+                    leader = False
+                    entry = None
+                    cache_hit = False
+                else:
+                    if len(self._inflight) >= self.MAX_INFLIGHT_KEYS:
+                        raise self._busy()
+                    flight = _Flight()
+                    self._inflight[key] = flight
+                    leader = True
+                    entry = None
+                    cache_hit = False
+
+        if cache_hit:
+            if not self._identity_is_current(identity):
+                raise self._account_changed()
+            if not self.is_deadline_fresh(entry.deadline):
+                raise self._data_stale()
+            return deepcopy(entry), True
+        if not leader:
+            assert flight is not None
+            return self._wait_for_flight(flight, identity, True), False
+
+        assert flight is not None
+        aggregate_acquired = False
+        try:
+            if not self._aggregate_slots.acquire(timeout=self.READ_ACQUIRE_TIMEOUT_SECONDS):
+                raise self._busy()
+            aggregate_acquired = True
+
+            futures = []
+            submit_error: Exception | None = None
+            for instrument_type in ("MARGIN", "SWAP", "FUTURES"):
+                try:
+                    futures.append(
+                        self._aggregate_executor.submit(
+                            self._load_display_position_group, instrument_type
+                        )
+                    )
+                except Exception as error:
+                    submit_error = error
+                    break
+
+            groups: dict[str, _CacheEntry] = {}
+            failure: Exception | None = submit_error
+            if submit_error is not None:
+                for future in futures:
+                    future.cancel()
+            # Drain every submitted sibling before either returning an error or
+            # starting the forced post-identity proof. Running reads retain the
+            # aggregate slot and bundle flight until the underlying request ends.
+            for index, future in enumerate(futures):
+                try:
+                    instrument_type, child_entry = future.result()
+                    groups[instrument_type] = child_entry
+                except Exception as error:
+                    if failure is None:
+                        failure = error
+                        for sibling in futures[index + 1:]:
+                            sibling.cancel()
+            if failure is not None:
+                if isinstance(failure, GatewayError):
+                    raise failure
+                raise self._unavailable() from None
+            if set(groups) != set(_PRIVATE_INSTRUMENT_TYPES):
+                raise self._unavailable()
+            if flight.error is not None:
+                raise self._effective_flight_error(flight)
+
+            # This proof starts only after all three private reads have completed.
+            after = self._identity_snapshot(force=True)
+            self._ensure_identity_matches(identity, after)
+            entry = self._display_position_bundle_entry(groups)
+            if not self.is_deadline_fresh(entry.deadline):
+                raise self._data_stale()
+            self._publish_display_position_bundle(key, entry, identity, flight)
+        except GatewayError as error:
+            if flight.error is None:
+                flight.error = error
+                flight.rate_limit_generation = error.rate_limit_generation
+        except Exception:
+            if flight.error is None:
+                flight.error = self._unavailable()
+        finally:
+            if aggregate_acquired:
+                self._aggregate_slots.release()
+            with self._cache_lock:
+                if self._inflight.get(key) is flight:
+                    self._inflight.pop(key, None)
+                flight.event.set()
+
+        if flight.error is not None:
+            raise self._effective_flight_error(flight)
+        if not isinstance(flight.value, _CacheEntry):
+            raise self._unavailable()
+        return deepcopy(flight.value), False
+
+    def _load_display_position_group(
+        self,
+        instrument_type: str,
+    ) -> tuple[str, _CacheEntry]:
+        route = _ROUTES["account/positions"]
+        params = self._validate_params(route, {"instType": instrument_type})
+        data = self._load_data("account/positions", params)
+        return instrument_type, self._new_entry(data, route)
+
+    @staticmethod
+    def _display_position_bundle_entry(
+        groups: dict[str, _CacheEntry],
+    ) -> _CacheEntry:
+        entries = [groups[kind] for kind in ("MARGIN", "SWAP", "FUTURES")]
+        return _CacheEntry(
+            data=[
+                {"instType": kind, "positions": deepcopy(groups[kind].data)}
+                for kind in ("MARGIN", "SWAP", "FUTURES")
+            ],
+            fetched_at=min(entry.fetched_at for entry in entries),
+            expires_at=min(entry.expires_at for entry in entries),
+            deadline=min(entry.deadline for entry in entries),
+            private=True,
+        )
+
+    @staticmethod
+    def _unpack_display_position_bundle(
+        data: list[Any],
+    ) -> dict[str, list[dict[str, Any]]]:
+        groups: dict[str, list[dict[str, Any]]] = {}
+        for item in data:
+            if (
+                not isinstance(item, dict)
+                or item.get("instType") not in {"MARGIN", "SWAP", "FUTURES"}
+                or not isinstance(item.get("positions"), list)
+            ):
+                raise DataGateway._account_unavailable()
+            groups[item["instType"]] = deepcopy(item["positions"])
+        if set(groups) != {"MARGIN", "SWAP", "FUTURES"}:
+            raise DataGateway._account_unavailable()
+        return groups
+
+    def _publish_display_position_bundle(
+        self,
+        key: tuple[Any, ...],
+        entry: _CacheEntry,
+        identity: GatewayIdentity,
+        flight: _Flight,
+    ) -> None:
+        if not self.is_deadline_fresh(entry.deadline):
+            raise self._data_stale()
+        with self._identity_condition:
+            current = self._identity
+            if (
+                current is None
+                or self._identity_deadline <= self._monotonic()
+                or current.fingerprint != identity.fingerprint
+                or current.generation != identity.generation
+            ):
+                raise self._account_changed()
+            with self._cache_lock:
+                if flight.error is not None:
+                    raise self._effective_flight_error(flight)
+                if not self.is_deadline_fresh(entry.deadline):
+                    raise self._data_stale()
+                self._insert_cache_locked(key, entry)
+                flight.value = deepcopy(entry)
 
     def _wait_for_flight(
         self,
@@ -564,7 +797,7 @@ class DataGateway:
         if not flight.event.wait(self.FLIGHT_WAIT_TIMEOUT_SECONDS):
             raise self._busy()
         if flight.error is not None:
-            raise flight.error
+            raise self._effective_flight_error(flight)
         if not isinstance(flight.value, _CacheEntry):
             raise self._unavailable()
         if private and not self._identity_is_current(identity):
@@ -636,10 +869,67 @@ class DataGateway:
         finally:
             self._read_slots.release()
 
+    def _effective_flight_error(self, flight: _Flight) -> GatewayError:
+        error = flight.error or self._unavailable()
+        generation = flight.rate_limit_generation
+        if generation is None:
+            generation = error.rate_limit_generation
+        if error.status == 429 and generation is not None:
+            with self._identity_condition:
+                if self._identity_generation != generation:
+                    return self._account_changed()
+        return error
+
+    def _supersede_rate_limit_after_invalidation(
+        self,
+        error: GatewayError,
+    ) -> GatewayError:
+        generation = error.rate_limit_generation
+        if error.status == 429 and generation is not None:
+            with self._identity_condition:
+                if self._identity_generation != generation:
+                    return self._account_changed()
+        return error
+
+    def _identity_cooldown_error_locked(self) -> GatewayError:
+        remaining = max(0.0, self._identity_cooldown_deadline - self._monotonic())
+        return GatewayError(
+            429,
+            "exchange_rate_limited",
+            "The exchange is rate limited. Try again later.",
+            headers=[("Retry-After", str(ceil(remaining)))],
+            rate_limit_generation=self._identity_generation,
+        )
+
+    def _retry_after_seconds(self, value: str | None) -> float:
+        if isinstance(value, str):
+            token = value.strip()
+            if re.fullmatch(r"[0-9]+", token):
+                try:
+                    duration = float(token)
+                    if isfinite(duration):
+                        return duration
+                except (OverflowError, ValueError):
+                    pass
+            try:
+                retry_at = parsedate_to_datetime(token)
+                if retry_at.tzinfo is None:
+                    retry_at = retry_at.replace(tzinfo=timezone.utc)
+                remaining = (
+                    retry_at - datetime.fromtimestamp(self._wall_clock(), tz=timezone.utc)
+                ).total_seconds()
+                if isfinite(remaining):
+                    return max(0.0, remaining)
+            except (TypeError, ValueError, OverflowError):
+                pass
+        return 1.0
+
     def _identity_snapshot(self, *, force: bool = False) -> GatewayIdentity:
         identity_generation: int | None = None
         if not force:
             with self._identity_condition:
+                if self._identity_cooldown_deadline > self._monotonic():
+                    raise self._identity_cooldown_error_locked()
                 if self._identity is not None and self._identity_deadline > self._monotonic():
                     return self._copy_identity(self._identity)
                 flight = self._identity_flight
@@ -653,11 +943,15 @@ class DataGateway:
                     identity_generation = self._identity_generation
         else:
             with self._identity_condition:
+                if self._identity_cooldown_deadline > self._monotonic():
+                    raise self._identity_cooldown_error_locked()
                 while self._identity_flight is not None:
                     flight = self._identity_flight
                     self._identity_condition.wait(self.FLIGHT_WAIT_TIMEOUT_SECONDS)
                     if self._identity_flight is flight and not flight.event.is_set():
                         raise self._busy()
+                    if self._identity_cooldown_deadline > self._monotonic():
+                        raise self._identity_cooldown_error_locked()
                 flight = _Flight()
                 self._identity_flight = flight
                 leader = True
@@ -668,7 +962,7 @@ class DataGateway:
             if not flight.event.wait(self.FLIGHT_WAIT_TIMEOUT_SECONDS):
                 raise self._busy()
             if flight.error is not None:
-                raise flight.error
+                raise self._effective_flight_error(flight)
             if flight.value is None:
                 raise self._account_unavailable()
             return self._published_identity(flight.value)
@@ -678,36 +972,55 @@ class DataGateway:
             fingerprint = self._account_fingerprint(account.get("uid")) if isinstance(account, dict) else None
             if not fingerprint:
                 raise self._account_unavailable()
+            changed = False
             with self._identity_condition:
                 if (
                     identity_generation != self._identity_generation
                     or self._identity_flight is not flight
                 ):
                     raise self._account_changed()
-                prior = self._identity
-                if prior is not None and prior.fingerprint != fingerprint:
-                    self._identity_generation += 1
-                    changed = True
+                if self._identity_cooldown_deadline > self._monotonic():
+                    cooldown_error = self._identity_cooldown_error_locked()
+                    flight.error = cooldown_error
+                    flight.rate_limit_generation = cooldown_error.rate_limit_generation
                 else:
-                    changed = False
-                identity = GatewayIdentity(
-                    account=deepcopy(account),
-                    fingerprint=fingerprint,
-                    generation=self._identity_generation,
-                )
-                self._identity = identity
-                self._identity_deadline = self._monotonic() + self.IDENTITY_TTL_SECONDS
-                flight.value = identity
+                    prior = self._identity
+                    if prior is not None and prior.fingerprint != fingerprint:
+                        self._identity_generation += 1
+                        changed = True
+                    self._identity_cooldown_deadline = 0.0
+                    identity = GatewayIdentity(
+                        account=deepcopy(account),
+                        fingerprint=fingerprint,
+                        generation=self._identity_generation,
+                    )
+                    self._identity = identity
+                    self._identity_deadline = self._monotonic() + self.IDENTITY_TTL_SECONDS
+                    flight.value = identity
             if changed:
                 self._clear_private_cache()
         except GatewayError as error:
-            flight.error = error
+            if flight.error is None:
+                flight.error = error
             self._invalidate_identity(identity_generation)
         except OKXError as error:
-            flight.error = self._map_okx_error(error)
-            self._invalidate_identity(identity_generation)
+            mapped = self._map_okx_error(error)
+            if mapped.status == 429:
+                cooldown_error = self._invalidate_identity(
+                    identity_generation,
+                    rate_limited=True,
+                    retry_after=error.retry_after,
+                )
+                if flight.error is None:
+                    flight.error = cooldown_error or self._account_changed()
+                    flight.rate_limit_generation = flight.error.rate_limit_generation
+            else:
+                if flight.error is None:
+                    flight.error = mapped
+                self._invalidate_identity(identity_generation)
         except Exception:
-            flight.error = self._account_unavailable()
+            if flight.error is None:
+                flight.error = self._account_unavailable()
             self._invalidate_identity(identity_generation)
         finally:
             with self._identity_condition:
@@ -716,7 +1029,7 @@ class DataGateway:
                 flight.event.set()
                 self._identity_condition.notify_all()
         if flight.error is not None:
-            raise flight.error
+            raise self._effective_flight_error(flight)
         if flight.value is None:
             raise self._account_unavailable()
         return self._published_identity(flight.value)
@@ -735,22 +1048,48 @@ class DataGateway:
                 raise self._account_changed()
             return self._copy_identity(current)
 
-    def _invalidate_identity(self, expected_generation: int | None = None) -> None:
+    def _invalidate_identity(
+        self,
+        expected_generation: int | None = None,
+        *,
+        rate_limited: bool = False,
+        retry_after: str | None = None,
+    ) -> GatewayError | None:
         with self._identity_condition:
+            if rate_limited:
+                now = self._monotonic()
+                delay = self._retry_after_seconds(retry_after)
+                new_deadline = now + delay
+                if not isfinite(new_deadline):
+                    new_deadline = now + 1.0
+                self._identity_cooldown_deadline = max(
+                    self._identity_cooldown_deadline,
+                    new_deadline,
+                )
             if expected_generation is not None and self._identity_generation != expected_generation:
-                return
+                return None
+            rate_error: GatewayError | None = None
             self._identity_generation += 1
             self._identity = None
             self._identity_deadline = 0.0
+            if rate_limited:
+                rate_error = self._identity_cooldown_error_locked()
             with self._cache_lock:
                 for key, entry in list(self._cache.items()):
                     if entry.private:
                         self._cache.pop(key, None)
                 for key, flight in list(self._inflight.items()):
                     if key and key[0] == "private":
-                        flight.error = self._account_changed()
+                        if rate_limited:
+                            flight.error = self._identity_cooldown_error_locked()
+                            flight.rate_limit_generation = self._identity_generation
+                        else:
+                            flight.error = self._account_changed()
+                            flight.rate_limit_generation = None
                         flight.event.set()
-                        self._inflight.pop(key, None)
+                        if not rate_limited:
+                            self._inflight.pop(key, None)
+            return rate_error
 
     def _clear_private_cache(self) -> None:
         with self._cache_lock:

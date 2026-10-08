@@ -8,6 +8,8 @@ import hashlib
 import hmac
 import http.client
 import json
+from email.utils import format_datetime, parsedate_to_datetime
+from math import isfinite
 import re
 import threading
 import time
@@ -18,6 +20,32 @@ from . import diagnostics
 
 
 _OKX_ERROR_CODE = re.compile(r"[0-9]{1,12}\Z")
+
+
+def _sanitize_retry_after(value: Any) -> str | None:
+    """Keep only finite delta-seconds or a parseable HTTP date, in canonical form."""
+    if not isinstance(value, str):
+        return None
+    token = value.strip()
+    if not token or any(ord(character) < 32 or ord(character) == 127 for character in token):
+        return None
+    if token.isascii() and token.isdecimal():
+        try:
+            delay = float(token)
+            if not isfinite(delay):
+                return None
+            return str(int(token))
+        except (ValueError, OverflowError):
+            return None
+    try:
+        retry_at = parsedate_to_datetime(token)
+        if retry_at is None:
+            return None
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=dt.timezone.utc)
+        return format_datetime(retry_at.astimezone(dt.timezone.utc), usegmt=True)
+    except (TypeError, ValueError, OverflowError):
+        return None
 
 
 def bounded_error_code(value: Any) -> str | None:
@@ -45,7 +73,7 @@ class OKXError(RuntimeError):
         self.error_code = bounded_error_code(error_code)
         self.diagnostic_category = diagnostic_category
         self.http_status = http_status if isinstance(http_status, int) and not isinstance(http_status, bool) and 100 <= http_status <= 599 else None
-        self.retry_after = retry_after if isinstance(retry_after, str) and re.fullmatch(r"[0-9]{1,5}", retry_after) else None
+        self.retry_after = _sanitize_retry_after(retry_after)
         self.ack_shape = ack_shape
 
 
@@ -65,7 +93,7 @@ class _TransportResponse(dict[str, Any]):
     ):
         super().__init__(payload)
         self.http_status = http_status
-        self.retry_after = retry_after
+        self.retry_after = _sanitize_retry_after(retry_after)
 
 
 Transport = Callable[[str, str, dict[str, str], Optional[bytes]], dict[str, Any]]
@@ -221,12 +249,7 @@ class OKXClient:
 
     @staticmethod
     def _retry_after(value: Any) -> str | None:
-        if not isinstance(value, str):
-            return None
-        token = value.strip()
-        if not re.fullmatch(r"[0-9]{1,5}", token):
-            return None
-        return str(min(int(token), 86_400))
+        return _sanitize_retry_after(value)
 
     def request(
         self,
