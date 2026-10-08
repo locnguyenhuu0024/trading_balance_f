@@ -75,6 +75,37 @@ void main() {
   });
 
   test(
+    'private HTTP errors preserve status and Retry-After metadata',
+    () async {
+      final adapter = _RecordingAdapter(
+        (_) => const _WireResponse(
+          429,
+          {'message': 'limited'},
+          headers: {
+            'retry-after': ['120'],
+          },
+        ),
+      );
+      final client = _client(adapter);
+      final session = BackendDataSession(
+        initialSession: activeSession('test-token'),
+      );
+
+      await expectLater(
+        client.get('/api/v5/account/balance', session: session),
+        throwsA(
+          isA<BackendDataException>()
+              .having((error) => error.statusCode, 'statusCode', 429)
+              .having((error) => error.retryAfter, 'retryAfter', '120'),
+        ),
+      );
+
+      expect(adapter.requests, hasLength(1));
+      session.dispose();
+    },
+  );
+
+  test(
     'unconfigured, insecure, absolute and unknown routes fail closed',
     () async {
       final adapter = _RecordingAdapter((_) => _jsonResponse({'code': '0'}));
@@ -359,9 +390,10 @@ Dio _dio(HttpClientAdapter adapter) => Dio()..httpClientAdapter = adapter;
 _WireResponse _jsonResponse(Object body) => _WireResponse(200, body);
 
 class _WireResponse {
-  const _WireResponse(this.statusCode, this.body);
+  const _WireResponse(this.statusCode, this.body, {this.headers = const {}});
   final int statusCode;
   final Object body;
+  final Map<String, List<String>> headers;
 }
 
 class _RecordingAdapter implements HttpClientAdapter {
@@ -382,6 +414,7 @@ class _RecordingAdapter implements HttpClientAdapter {
       response.statusCode,
       headers: {
         Headers.contentTypeHeader: [Headers.jsonContentType],
+        ...response.headers,
       },
     );
   }

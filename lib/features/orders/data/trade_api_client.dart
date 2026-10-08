@@ -41,7 +41,16 @@ abstract class TradeApi {
   );
 }
 
-class TradeApiClient implements TradeApi {
+/// Optional transport capability that lets foreground readers cancel a GET
+/// after every provider that owns it has been disposed.
+abstract interface class CancellableTradePositionsApi {
+  Future<TradePositionsSnapshot> getPositionsCancellable(
+    String bearerToken, {
+    required CancelToken cancelToken,
+  });
+}
+
+class TradeApiClient implements TradeApi, CancellableTradePositionsApi {
   TradeApiClient({Dio? dio, String? baseUrl})
     : _baseUrl = (baseUrl ?? tradeApiBaseUrl).trim(),
       _dio = dio;
@@ -149,11 +158,24 @@ class TradeApiClient implements TradeApi {
   }
 
   @override
-  Future<TradePositionsSnapshot> getPositions(String bearerToken) async {
+  Future<TradePositionsSnapshot> getPositions(String bearerToken) =>
+      _getPositions(bearerToken);
+
+  @override
+  Future<TradePositionsSnapshot> getPositionsCancellable(
+    String bearerToken, {
+    required CancelToken cancelToken,
+  }) => _getPositions(bearerToken, cancelToken: cancelToken);
+
+  Future<TradePositionsSnapshot> _getPositions(
+    String bearerToken, {
+    CancelToken? cancelToken,
+  }) async {
     final data = await _request(
       'GET',
       'v1/positions',
       bearerToken: bearerToken,
+      cancelToken: cancelToken,
     );
     final rawPositions = data['positions'];
     if (rawPositions is! List) {
@@ -245,6 +267,7 @@ class TradeApiClient implements TradeApi {
     String path, {
     String? bearerToken,
     Map<String, dynamic>? body,
+    CancelToken? cancelToken,
   }) async {
     if (_validatedBaseUrl == null) {
       throw const TradeApiException(
@@ -267,6 +290,7 @@ class TradeApiClient implements TradeApi {
             if (bearerToken != null) 'Authorization': 'Bearer $bearerToken',
           },
         ),
+        cancelToken: cancelToken,
       );
       final payload = tradeJsonMap(response.data);
       if (payload.isEmpty && response.data is! Map) {
@@ -281,11 +305,16 @@ class TradeApiClient implements TradeApi {
       final message = _string(payload['message']);
       throw TradeApiException(
         statusCode: error.response?.statusCode,
-        code: _string(payload['error']).isEmpty
+        retryAfter: error.response?.headers.value('retry-after'),
+        code: error.type == DioExceptionType.cancel
+            ? 'request_cancelled'
+            : _string(payload['error']).isEmpty
             ? 'network_error'
             : _string(payload['error']),
         message: message.isNotEmpty
             ? message
+            : error.type == DioExceptionType.cancel
+            ? 'The foreground read was cancelled.'
             : 'The trade API could not be reached. Check its address and network.',
         details: payload,
       );
@@ -376,10 +405,12 @@ class TradeApiException implements Exception {
     required this.code,
     required this.message,
     this.statusCode,
+    this.retryAfter,
     this.details = const {},
   });
 
   final int? statusCode;
+  final String? retryAfter;
   final String code;
   final String message;
   final Map<String, dynamic> details;

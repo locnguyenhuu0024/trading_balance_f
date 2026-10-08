@@ -19,11 +19,12 @@ class PortfolioRepository {
   PortfolioRepository(this._client, this._session);
 
   /// Gọi API lấy số dư tài khoản Trading
-  Future<OkxAccountData> getAccountBalance() async {
+  Future<OkxAccountData> getAccountBalance({CancelToken? cancelToken}) async {
     try {
       final response = await _client.get(
         '/api/v5/account/balance',
         session: _session,
+        cancelToken: cancelToken,
       );
 
       final balanceResponse = OkxBalanceResponse.fromJson(response.data);
@@ -34,16 +35,37 @@ class PortfolioRepository {
       } else {
         throw Exception('Lỗi từ OKX API: ${balanceResponse.msg}');
       }
-    } on BackendDataException {
-      rethrow;
+    } on BackendDataException catch (e) {
+      final message = switch (e.statusCode) {
+        401 => 'Phiên giao dịch đã hết hạn. Hãy đăng nhập lại.',
+        429 => 'Dữ liệu tài khoản đang bị giới hạn. Hãy thử lại sau.',
+        _ => e.message,
+      };
+      throw BackendDataException(
+        code: e.code,
+        message: message,
+        statusCode: e.statusCode,
+        retryAfter: e.retryAfter,
+      );
     } on DioException catch (e) {
+      final cancelled = e.type == DioExceptionType.cancel;
       // Xử lý các lỗi HTTP (401 sai key, 429 quá rate limit, lỗi mạng...)
-      if (e.response?.statusCode == 401) {
-        throw Exception('Phiên giao dịch đã hết hạn. Hãy đăng nhập lại.');
-      } else if (e.response?.statusCode == 429) {
-        throw Exception('Dữ liệu tài khoản đang bị giới hạn. Hãy thử lại sau.');
-      }
-      throw Exception('Không thể tải số dư từ máy chủ giao dịch.');
+      final statusCode = e.response?.statusCode;
+      final message = switch (statusCode) {
+        401 => 'Phiên giao dịch đã hết hạn. Hãy đăng nhập lại.',
+        429 => 'Dữ liệu tài khoản đang bị giới hạn. Hãy thử lại sau.',
+        _ => 'Không thể tải số dư từ máy chủ giao dịch.',
+      };
+      throw BackendDataException(
+        code: cancelled
+            ? 'request_cancelled'
+            : statusCode == null
+            ? 'network_error'
+            : 'http_error',
+        message: cancelled ? 'The foreground read was cancelled.' : message,
+        statusCode: statusCode,
+        retryAfter: e.response?.headers.value('retry-after'),
+      );
     } catch (e) {
       throw Exception('Đã xảy ra lỗi không xác định: $e');
     }

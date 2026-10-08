@@ -182,12 +182,28 @@ class BackendDataClient {
         ),
       );
     } on DioException catch (error) {
+      if (error.type == DioExceptionType.cancel) {
+        throw const BackendDataException(
+          code: 'request_cancelled',
+          message: 'The foreground read was cancelled.',
+        );
+      }
       final errorCode = error.requestOptions.extra[errorCodeExtraKey];
       if (errorCode is String) {
         throw BackendDataException(
           code: errorCode,
           message: error.message ?? 'Không thể tải dữ liệu backend.',
           statusCode: error.response?.statusCode,
+          retryAfter: error.response?.headers.value('retry-after'),
+        );
+      }
+      final statusCode = error.response?.statusCode;
+      if (statusCode != null) {
+        throw BackendDataException(
+          code: 'http_error',
+          message: error.message ?? 'Không thể tải dữ liệu backend.',
+          statusCode: statusCode,
+          retryAfter: error.response?.headers.value('retry-after'),
         );
       }
       rethrow;
@@ -563,11 +579,13 @@ class BackendDataException implements Exception {
     required this.code,
     required this.message,
     this.statusCode,
+    this.retryAfter,
   });
 
   final String code;
   final String message;
   final int? statusCode;
+  final String? retryAfter;
 
   bool get isUnauthorized => statusCode == 401;
 

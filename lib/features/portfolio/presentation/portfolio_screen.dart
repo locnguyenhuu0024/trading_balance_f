@@ -12,6 +12,7 @@ import '../../../core/theme/platform_brightness_provider.dart';
 import '../../../core/theme/pnl_color.dart';
 import '../../../core/widgets/crypto_icon.dart';
 import 'providers/portfolio_provider.dart';
+import '../../orders/presentation/providers/trade_session_provider.dart';
 import '../../settings/presentation/settings_screen.dart';
 import '../../market/presentation/providers/market_provider.dart';
 import '../../../core/network/okx_websocket_service.dart';
@@ -47,15 +48,21 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
   @override
   void initState() {
     super.initState();
-    _refreshTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      unawaited(_refreshPortfolio());
+    _refreshTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      unawaited(_refreshPortfolio(automatic: true));
     });
   }
 
-  Future<void> _refreshPortfolio() async {
+  Future<void> _refreshPortfolio({bool automatic = false}) async {
+    final tradeState = ref.read(tradeSessionProvider);
+    final currentRead = ref.read(portfolioFutureProvider);
     if (!mounted ||
+        tradeState.isLoading ||
+        !tradeState.isAuthenticated ||
         _portfolioRefreshInFlight ||
-        ref.read(portfolioFutureProvider).isLoading) {
+        currentRead.isLoading ||
+        (automatic &&
+            isTerminalForegroundReadFailure(currentRead.asError?.error))) {
       return;
     }
     _portfolioRefreshInFlight = true;
@@ -79,7 +86,8 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
   void _syncTickerSubscription(List<String> coins) {
     final nextCoins = List<String>.unmodifiable(coins);
     if (_pendingCoins != null && _sameCoins(_pendingCoins!, nextCoins)) return;
-    if (_pendingCoins == null && _sameCoins(_subscribedCoins, nextCoins)) return;
+    if (_pendingCoins == null && _sameCoins(_subscribedCoins, nextCoins))
+      return;
     _pendingCoins = nextCoins;
     if (_tickerSubscriptionScheduled) return;
     _tickerSubscriptionScheduled = true;
@@ -111,6 +119,9 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
   @override
   Widget build(BuildContext context) {
     final portfolioAsyncValue = ref.watch(portfolioFutureProvider);
+    final isSessionLoading = ref.watch(
+      tradeSessionProvider.select((state) => state.isLoading),
+    );
     final livePrices = ref.watch(livePriceProvider);
 
     final isBalanceHidden = ref.watch(hideBalanceProvider);
@@ -152,26 +163,33 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
             ref.invalidate(vndExchangeRateProvider);
             await _refreshPortfolio();
           },
-          child: portfolioAsyncValue.when(
-            skipLoadingOnReload: true,
-            loading: () =>
-                Center(child: CircularProgressIndicator(color: textColor)),
-            error: (error, stack) {
-              _syncTickerSubscription(const <String>[]);
-              return _buildErrorState(context, error.toString(), isDark);
-            },
-            data: (data) {
-              _syncTickerSubscription(data.details.map((e) => e.ccy).toList());
-              return _buildPortfolioData(
-                data,
-                livePrices,
-                isBalanceHidden,
-                isDark,
-                currency,
-                exchangeRate,
-              );
-            },
-          ),
+          child:
+              !portfolioAsyncValue.hasValue &&
+                  (isSessionLoading || portfolioAsyncValue.isLoading)
+              ? Center(child: CircularProgressIndicator(color: textColor))
+              : portfolioAsyncValue.when(
+                  skipLoadingOnReload: false,
+                  loading: () => Center(
+                    child: CircularProgressIndicator(color: textColor),
+                  ),
+                  error: (error, stack) {
+                    _syncTickerSubscription(const <String>[]);
+                    return _buildErrorState(context, error.toString(), isDark);
+                  },
+                  data: (data) {
+                    _syncTickerSubscription(
+                      data.details.map((e) => e.ccy).toList(),
+                    );
+                    return _buildPortfolioData(
+                      data,
+                      livePrices,
+                      isBalanceHidden,
+                      isDark,
+                      currency,
+                      exchangeRate,
+                    );
+                  },
+                ),
         ),
       ),
     );

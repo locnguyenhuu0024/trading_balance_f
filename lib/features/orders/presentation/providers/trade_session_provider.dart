@@ -4,9 +4,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/network/backend_data_client.dart';
 import '../../../../core/network/backend_data_session.dart';
+import '../../../../core/network/foreground_read_gate.dart';
 import '../../data/trade_api_client.dart';
 
 final tradeApiProvider = Provider<TradeApi>((ref) => TradeApiClient());
+
+final foregroundReadGateProvider = Provider<ForegroundReadGate>((ref) {
+  final gate = ForegroundReadGate();
+  ref.onDispose(gate.dispose);
+  return gate;
+});
 
 final tradeSessionProvider =
     StateNotifierProvider<TradeSessionController, TradeSessionState>((ref) {
@@ -49,10 +56,15 @@ final backendDataClientProvider = Provider<BackendDataClient>((ref) {
 
 final tradePositionsProvider =
     FutureProvider.autoDispose<TradePositionsSnapshot>((ref) async {
-      final tradeState = ref.watch(tradeSessionProvider);
-      final backendSession = ref.watch(backendDataSessionProvider);
+      final isSessionLoading = ref.watch(
+        tradeSessionProvider.select((state) => state.isLoading),
+      );
+      final sessionGeneration = ref.watch(
+        backendDataSessionProvider.select((session) => session.generation),
+      );
+      final backendSession = ref.read(backendDataSessionProvider);
       final session = backendSession.current;
-      if (tradeState.isLoading) {
+      if (isSessionLoading) {
         throw const TradeApiException(
           code: 'session_loading',
           message: 'Đang kiểm tra phiên giao dịch. Vui lòng đợi một chút.',
@@ -64,11 +76,34 @@ final tradePositionsProvider =
           message: 'Vui lòng đăng nhập để xem vị thế giao dịch.',
         );
       }
-      final generation = backendSession.generation;
+      final generation = sessionGeneration;
+      final api = ref.read(tradeApiProvider);
+      final gate = ref.read(foregroundReadGateProvider);
+      var callerActive = true;
+      final lease = gate.acquire<TradePositionsSnapshot>(
+        sessionIdentity: backendSession,
+        generation: generation,
+        requestKey: 'orders/positions/authenticated',
+        canStart: () =>
+            callerActive &&
+            !ref.read(tradeSessionProvider).isLoading &&
+            backendSession.matches(generation, session),
+        load: (cancelToken) => api is CancellableTradePositionsApi
+            ? (api as CancellableTradePositionsApi).getPositionsCancellable(
+                session.bearerToken,
+                cancelToken: cancelToken,
+              )
+            : api.getPositions(session.bearerToken),
+        isTransientFailure: isTransientForegroundReadFailure,
+        isCancellationFailure: isForegroundReadCancellation,
+        retryAfter: foregroundReadRetryAfter,
+      );
+      ref.onDispose(() {
+        callerActive = false;
+        lease.release();
+      });
       try {
-        final snapshot = await ref
-            .read(tradeApiProvider)
-            .getPositions(session.bearerToken);
+        final snapshot = await lease.future;
         if (!backendSession.matches(generation, session)) {
           throw const BackendDataException(
             code: 'session_changed',
@@ -78,7 +113,8 @@ final tradePositionsProvider =
         }
         return snapshot;
       } on TradeApiException catch (error) {
-        if (error.isUnauthorized &&
+        if (callerActive &&
+            error.isUnauthorized &&
             backendSession.matches(generation, session) &&
             _sameTradeSession(
               ref.read(tradeSessionProvider).session,
@@ -89,6 +125,62 @@ final tradePositionsProvider =
         rethrow;
       }
     });
+
+bool isTransientForegroundReadFailure(Object error) {
+  final statusCode = switch (error) {
+    BackendDataException(:final statusCode) => statusCode,
+    TradeApiException(:final statusCode) => statusCode,
+    _ => null,
+  };
+  if (statusCode == 429 || statusCode == 408 || statusCode == 425) return true;
+  if (statusCode != null) return statusCode >= 500;
+  return switch (error) {
+    BackendDataException(code: 'network_error') => true,
+    TradeApiException(code: 'network_error') => true,
+    _ => false,
+  };
+}
+
+bool isForegroundReadCancellation(Object error) => switch (error) {
+  BackendDataException(code: 'request_cancelled') => true,
+  TradeApiException(code: 'request_cancelled') => true,
+  _ => false,
+};
+
+bool isTerminalForegroundReadFailure(Object? error) {
+  if (error == null) return false;
+  final statusCode = switch (error) {
+    BackendDataException(:final statusCode) => statusCode,
+    TradeApiException(:final statusCode) => statusCode,
+    _ => null,
+  };
+  if (statusCode == 401 || statusCode == 403) return true;
+  final code = switch (error) {
+    BackendDataException(:final code) => code,
+    TradeApiException(:final code) => code,
+    _ => null,
+  };
+  return const {
+    'api_not_configured',
+    'authentication_required',
+    'session_loading',
+    'session_changed',
+    'session_expired',
+    'route_not_registered',
+    'destination_forbidden',
+    'exchange_credentials_forbidden',
+  }.contains(code);
+}
+
+Duration? foregroundReadRetryAfter(Object error, DateTime now) {
+  return switch (error) {
+    BackendDataException(statusCode: 429, :final retryAfter) =>
+      ForegroundReadGate.parseRetryAfter(retryAfter, now),
+    TradeApiException(statusCode: 429, :final retryAfter) =>
+      ForegroundReadGate.parseRetryAfter(retryAfter, now),
+    _ => null,
+  };
+}
 
 bool _sameTradeSession(TradeSession? left, TradeSession right) =>
     left != null &&
