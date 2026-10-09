@@ -105,7 +105,7 @@ void main() {
     },
   );
 
-  testWidgets('positions filters reflow beside close-all without overflow', (
+  testWidgets('positions filters stay compact beside close-all without overflow', (
     tester,
   ) async {
     await tester.runAsync(_loadOrdersPreviewFonts);
@@ -118,6 +118,11 @@ void main() {
         width: 320.0,
         textScale: 1.0,
         screenshot: 'orders-filters-mobile-320.png',
+      ),
+      (
+        width: 320.0,
+        textScale: 1.6,
+        screenshot: 'orders-filters-mobile-320-scale-1.6.png',
       ),
       (
         width: 390.0,
@@ -155,20 +160,50 @@ void main() {
       final typeRect = tester.getRect(
         find.byKey(const Key('order-type-select')),
       );
+      final statusFaceRect = tester.getRect(
+        find.byKey(const Key('order-tab-select-face')),
+      );
+      final typeFaceRect = tester.getRect(
+        find.byKey(const Key('order-type-select-face')),
+      );
+      final selectedTypeRect = tester.getRect(find.text('FUTURES'));
+      final typeIconRect = tester.getRect(
+        find.byKey(const Key('order-type-select-icon')),
+      );
       final closeAllRect = tester.getRect(find.byTooltip('Đóng tất cả vị thế'));
       final refreshRect = tester.getRect(
         find.byKey(const Key('orders-manual-refresh')),
       );
-      final isStacked = width < 600 || scenario.textScale > 1.2;
-      if (isStacked) {
-        expect(typeRect.top, greaterThanOrEqualTo(statusRect.bottom));
-        expect(closeAllRect.bottom, closeTo(typeRect.bottom, 2));
-      } else {
-        expect(statusRect.top, typeRect.top);
-        expect(statusRect.right, lessThan(typeRect.left));
-        expect(typeRect.right, lessThan(closeAllRect.left));
-        expect(closeAllRect.bottom, closeTo(typeRect.bottom, 2));
-      }
+      expect(statusRect.top, typeRect.top);
+      expect(statusRect.top, closeAllRect.top);
+      expect(statusRect.right, lessThanOrEqualTo(typeRect.left));
+      expect(typeRect.right, lessThanOrEqualTo(closeAllRect.left));
+      expect(statusRect.width, lessThanOrEqualTo(140));
+      expect(typeRect.width, lessThanOrEqualTo(140));
+      expect(statusRect.height, 48);
+      expect(typeRect.height, 48);
+      expect(statusFaceRect.height, 40);
+      expect(typeFaceRect.height, 40);
+      expect(
+        (selectedTypeRect.center.dy - typeFaceRect.center.dy).abs(),
+        lessThanOrEqualTo(2),
+        reason:
+            'Selected value center ${selectedTypeRect.center.dy} must align with face center ${typeFaceRect.center.dy} at scale ${scenario.textScale}',
+      );
+      expect(
+        (typeIconRect.center.dy - typeFaceRect.center.dy).abs(),
+        lessThanOrEqualTo(2),
+        reason:
+            'Chevron center ${typeIconRect.center.dy} must align with face center ${typeFaceRect.center.dy} at scale ${scenario.textScale}',
+      );
+      expect(typeRect.left - statusRect.right, 6);
+      expect(closeAllRect.left - typeRect.right, 6);
+      expect(find.byTooltip('Trạng thái'), findsOneWidget);
+      expect(find.byTooltip('Loại giao dịch'), findsOneWidget);
+      expect(
+        tester.widget<Text>(find.text('FUTURES')).semanticsLabel,
+        'FUTURES',
+      );
       expect(statusRect.left, greaterThanOrEqualTo(0));
       expect(typeRect.left, greaterThanOrEqualTo(0));
       expect(statusRect.right, lessThanOrEqualTo(width));
@@ -403,7 +438,7 @@ Widget _positionsOrdersScreen({double textScale = 1.0}) {
   final api = TradeApiClient(baseUrl: 'https://trade.example');
   return ProviderScope(
     overrides: [
-      orderFilterProvider.overrideWith((ref) => 'MARGIN'),
+      orderFilterProvider.overrideWith((ref) => 'FUTURES'),
       orderTabProvider.overrideWith((ref) => OrderTab.positions),
       tradeApiProvider.overrideWithValue(api),
       tradeSessionProvider.overrideWith(

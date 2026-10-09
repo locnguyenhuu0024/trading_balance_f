@@ -75,31 +75,32 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(AppTokens.radiusMedium),
           ),
-          minimumSize: const Size(48, 48),
-          maximumSize: const Size(48, 48),
+          minimumSize: const Size(36, 36),
+          maximumSize: const Size(36, 36),
+          tapTargetSize: MaterialTapTargetSize.padded,
           padding: EdgeInsets.zero,
         ),
-        icon: const Icon(Icons.warning_amber_rounded, size: 20),
+        icon: const Icon(Icons.warning_amber_rounded, size: 18),
       ),
     );
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         AppTokens.space3,
-        AppTokens.space2,
-        AppTokens.space3,
         AppTokens.space1,
+        AppTokens.space3,
+        0,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (widget.filterControls != null)
             Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                Expanded(child: widget.filterControls!),
+                Flexible(child: widget.filterControls!),
                 if (canShowCloseAll) ...[
-                  const SizedBox(width: AppTokens.space2),
+                  const SizedBox(width: 6),
                   closeAllButton,
                 ],
               ],
