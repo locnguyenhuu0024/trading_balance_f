@@ -17,9 +17,7 @@ import 'package:trading_balance_f/features/orders/data/okx_order_model.dart';
 import 'package:trading_balance_f/features/orders/data/okx_position_model.dart';
 import 'package:trading_balance_f/features/orders/presentation/providers/order_provider.dart';
 import 'package:trading_balance_f/features/portfolio/data/okx_balance_model.dart';
-import 'package:trading_balance_f/features/portfolio/application/risk_monitor_bridge.dart';
 import 'package:trading_balance_f/features/portfolio/presentation/providers/portfolio_provider.dart';
-import 'package:trading_balance_f/features/portfolio/presentation/providers/risk_dashboard_provider.dart';
 import 'package:trading_balance_f/features/settings/presentation/settings_screen.dart';
 import 'package:trading_balance_f/features/support_resistance/data/watchlist_store.dart';
 import 'package:trading_balance_f/features/support_resistance/domain/models.dart';
@@ -57,8 +55,6 @@ void main() {
   testWidgets('shows all primary destinations and switches selected content', (
     tester,
   ) async {
-    final riskOwner = InMemoryRiskMonitorOwner();
-    addTearDown(riskOwner.dispose);
     final watchlist = WatchlistController(
       store: WatchlistStore(storage: _MemoryWatchlistStorage()),
       loadActiveInstruments: (marketMode) async =>
@@ -90,10 +86,6 @@ void main() {
           themeModeProvider.overrideWith((ref) => ThemeMode.light),
           supportResistanceWatchlistProvider.overrideWith((ref) => watchlist),
           supportResistanceLevelsProvider.overrideWith((ref) => levels),
-          riskMonitorOwnerProvider.overrideWithValue(riskOwner),
-          riskMonitorBridgeProvider.overrideWithValue(
-            RiskMonitorBridge(riskOwner),
-          ),
         ],
         child: const MaterialApp(home: MainNavigationShell()),
       ),
@@ -105,7 +97,7 @@ void main() {
     expect(find.text('Lệnh'), findsNothing);
     expect(find.text('Thị trường'), findsNothing);
     expect(find.text('Cài đặt'), findsNothing);
-    expect(TradingNavigationBar.items, hasLength(8));
+    expect(TradingNavigationBar.items, hasLength(7));
     expect(find.byKey(const Key('navigation-destination-5')), findsOneWidget);
     expect(find.byKey(const Key('navigation-destination-6')), findsOneWidget);
     expect(find.byTooltip('Chiến Thuật'), findsOneWidget);
@@ -129,15 +121,10 @@ void main() {
 
     await tester.tap(find.byKey(const Key('navigation-destination-5')));
     await tester.pump();
-    expect(find.text('Trang tổng quan rủi ro'), findsOneWidget);
-    expect(find.text('Risk'), findsOneWidget);
+    expect(find.text('Hỗ trợ và kháng cự'), findsOneWidget);
+    expect(find.text('Risk'), findsNothing);
 
     await tester.tap(find.byKey(const Key('navigation-destination-6')));
-    await tester.pump(const Duration(milliseconds: 250));
-    expect(find.text('Hỗ trợ và kháng cự'), findsOneWidget);
-    expect(find.text('Chọn coin để bắt đầu'), findsOneWidget);
-
-    await tester.tap(find.byKey(const Key('navigation-destination-7')));
     await tester.pump(const Duration(milliseconds: 250));
     expect(
       find.text(
@@ -149,7 +136,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('eighth destination stays reachable at narrow widths', (
+  testWidgets('seventh destination stays reachable at narrow widths', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(320, 800);
@@ -183,8 +170,8 @@ void main() {
           ? const Key('navigation-bar-horizontal-scroll')
           : const Key('floating-navigation-horizontal-scroll');
       final destinationKey = isFixed
-          ? const Key('navigation-destination-7')
-          : const Key('floating-navigation-destination-7');
+          ? const Key('navigation-destination-6')
+          : const Key('floating-navigation-destination-6');
 
       expect(find.byKey(scrollKey), findsOneWidget);
       await tester.drag(find.byKey(scrollKey), const Offset(-1000, 0));
@@ -292,9 +279,9 @@ void main() {
         'orders',
         'market',
         'settings',
-        'risk',
         'bmag',
         'support',
+        'strategy',
       ];
 
       for (final mode in [
@@ -338,16 +325,16 @@ void main() {
         await tester.pumpAndSettle();
 
         expect(find.text('Screen 1'), findsOneWidget);
-        final riskDestination = find.byTooltip('Risk');
+        final supportDestination = find.byTooltip('Hỗ trợ');
         final bmagDestination = find.byTooltip('BMAG');
         expect(
-          tester.getCenter(riskDestination).dx,
-          lessThan(tester.getCenter(bmagDestination).dx),
+          tester.getCenter(bmagDestination).dx,
+          lessThan(tester.getCenter(supportDestination).dx),
         );
 
-        await tester.tap(riskDestination);
+        await tester.tap(supportDestination);
         await tester.pumpAndSettle();
-        expect(find.text('Screen 5'), findsOneWidget);
+        expect(find.text('Screen 6'), findsOneWidget);
         await tester.tap(bmagDestination);
         await tester.pumpAndSettle();
         expect(find.text('Screen 1'), findsOneWidget);
@@ -358,7 +345,7 @@ void main() {
     },
   );
 
-  testWidgets('seventh destination opens the support and resistance screen', (
+  testWidgets('sixth visible destination opens the support and resistance screen', (
     tester,
   ) async {
     final watchlist = WatchlistController(
@@ -387,7 +374,7 @@ void main() {
       ),
     );
     await tester.pump();
-    await tester.tap(find.byKey(const Key('navigation-destination-6')));
+    await tester.tap(find.byKey(const Key('navigation-destination-5')));
     await tester.pump(const Duration(milliseconds: 250));
 
     expect(find.text('Hỗ trợ và kháng cự'), findsOneWidget);

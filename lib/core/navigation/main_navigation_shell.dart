@@ -5,7 +5,6 @@ import '../../features/fractal_tracker/presentation/fractal_screen.dart';
 import '../../features/market/presentation/market_screen.dart';
 import '../../features/orders/presentation/orders_screen.dart';
 import '../../features/portfolio/presentation/portfolio_screen.dart';
-import '../../features/portfolio/presentation/risk_dashboard_screen.dart';
 import '../../features/settings/presentation/settings_screen.dart';
 import '../../features/support_resistance/presentation/support_resistance_screen.dart';
 import '../../features/strategy/presentation/strategy_screen.dart';
@@ -46,8 +45,6 @@ class _MainNavigationShellState extends ConsumerState<MainNavigationShell> {
         return const MarketScreen();
       case 4:
         return const SettingsScreen();
-      case 5:
-        return const RiskDashboardScreen();
       case 6:
         return const SupportResistanceScreen();
       case 7:

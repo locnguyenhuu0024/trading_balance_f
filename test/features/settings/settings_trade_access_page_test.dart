@@ -22,7 +22,7 @@ class _FakeStorage extends SecureStorageHelper {
   String? apiKey;
   String? secretKey;
   String? passphrase;
-  final Completer<void>? loadGate;
+  Completer<void>? loadGate;
   Completer<void>? saveGate;
   bool failLoad = false;
   bool failSave = false;
@@ -125,6 +125,7 @@ void main() {
     );
     await _settlePage(tester, storage);
 
+    expect(find.byTooltip('Làm mới dữ liệu'), findsOneWidget);
     expect(find.text('Đã lưu thông tin API trên thiết bị'), findsOneWidget);
     expect(find.text('Thay đổi key'), findsOneWidget);
     expect(find.text('saved-api-value'), findsNothing);
@@ -144,6 +145,18 @@ void main() {
         )
         .controller!;
     expect(bundleController.text, isEmpty);
+    const pendingEditorText = 'unsaved editor contents';
+    await tester.enterText(
+      find.byKey(const Key('settings-okx-credential-bundle')),
+      pendingEditorText,
+    );
+
+    await _tap(tester, find.byTooltip('Làm mới dữ liệu'));
+    expect(bundleController.text, pendingEditorText);
+    expect(
+      find.byKey(const Key('settings-okx-credential-bundle')),
+      findsOneWidget,
+    );
 
     await _tap(
       tester,
@@ -160,6 +173,44 @@ void main() {
     await _settlePage(tester, storage);
     expect(find.text('Đã lưu thông tin API trên thiết bị'), findsOneWidget);
   });
+
+  testWidgets(
+    'API summary refresh discards a stale read after editing starts',
+    (tester) async {
+      final storage = _FakeStorage(
+        apiKey: 'saved-api',
+        secretKey: 'saved-secret',
+        passphrase: 'saved-pass',
+      );
+      await _settlePage(tester, storage);
+
+      final gate = Completer<void>();
+      storage.loadGate = gate;
+      storage.apiKey = null;
+      storage.secretKey = null;
+      storage.passphrase = null;
+      await _tap(tester, find.byTooltip('Làm mới dữ liệu'));
+      await tester.pump();
+      storage.apiKey = 'saved-api';
+      storage.secretKey = 'saved-secret';
+      storage.passphrase = 'saved-pass';
+
+      await _tap(
+        tester,
+        find.byKey(const Key('settings-change-okx-credentials')),
+      );
+      gate.complete();
+      await tester.pump();
+      await tester.pump();
+
+      await _tap(
+        tester,
+        find.byKey(const Key('settings-cancel-okx-replacement')),
+      );
+      expect(find.text('Đã lưu thông tin API trên thiết bị'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
 
   testWidgets('pastes multiline credentials and saves exact trimmed values', (
     tester,
@@ -288,6 +339,14 @@ void main() {
         find.byKey(const Key('settings-change-okx-credentials')),
       );
       await _tap(tester, find.byKey(const Key('settings-paste-okx-clipboard')));
+      expect(
+        tester
+            .widget<IconButton>(
+              find.byKey(const Key('settings-trade-access-manual-refresh')),
+            )
+            .onPressed,
+        isNull,
+      );
 
       final bundleField = find.byKey(
         const Key('settings-okx-credential-bundle'),
@@ -511,6 +570,15 @@ void main() {
     );
     await _tap(tester, find.byKey(const Key('settings-save-okx-credentials')));
     await tester.pump();
+
+    expect(
+      tester
+          .widget<IconButton>(
+            find.byKey(const Key('settings-trade-access-manual-refresh')),
+          )
+          .onPressed,
+      isNull,
+    );
 
     expect(tester.widget<TextFormField>(bundleField).enabled, isFalse);
     expect(

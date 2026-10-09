@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/pnl_color.dart';
+import '../../../core/widgets/manual_refresh_button.dart';
 import '../../orders/data/trade_api_client.dart';
 import '../../orders/presentation/providers/trade_session_provider.dart';
 import '../domain/strategy_draft_entries.dart';
@@ -90,12 +91,11 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
             ),
             icon: const Icon(Icons.settings_outlined),
           ),
-          if (dashboard != null)
-            IconButton(
-              tooltip: 'Làm mới danh sách',
-              onPressed: dashboard.isLoading ? null : dashboard.refresh,
-              icon: const Icon(Icons.refresh),
-            ),
+          ManualRefreshButton(
+            buttonKey: const Key('strategy-manual-refresh'),
+            onRefresh: dashboard?.refresh,
+            isBusy: dashboard?.isLoading ?? false,
+          ),
         ],
       ),
       body: SafeArea(

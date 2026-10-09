@@ -29,6 +29,7 @@ void main() {
     expect(find.byKey(const Key('order-tab-select')), findsOneWidget);
     expect(find.byType(TradeAccountControls), findsOneWidget);
     expect(find.byTooltip('Đóng tất cả vị thế'), findsNothing);
+    expect(find.byTooltip('Làm mới dữ liệu'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
   });
@@ -113,6 +114,7 @@ void main() {
 
       expect(find.byType(TradeAccountControls), findsOneWidget);
       expect(find.byTooltip('Đóng tất cả vị thế'), findsOneWidget);
+      expect(find.byTooltip('Làm mới dữ liệu'), findsOneWidget);
       expect(find.text('Đóng tất cả vị thế'), findsNothing);
 
       final statusRect = tester.getRect(
@@ -122,6 +124,9 @@ void main() {
         find.byKey(const Key('order-type-select')),
       );
       final closeAllRect = tester.getRect(find.byTooltip('Đóng tất cả vị thế'));
+      final refreshRect = tester.getRect(
+        find.byKey(const Key('orders-manual-refresh')),
+      );
       expect(statusRect.top, typeRect.top);
       expect(statusRect.right, lessThan(typeRect.left));
       expect(typeRect.right, lessThan(closeAllRect.left));
@@ -129,10 +134,100 @@ void main() {
       expect(closeAllRect.height, 48);
       expect(closeAllRect.center.dy, closeTo(typeRect.center.dy, 2));
       expect(closeAllRect.right, lessThanOrEqualTo(width));
+      expect(refreshRect.width, 48);
+      expect(refreshRect.height, 48);
+      expect(refreshRect.right, lessThanOrEqualTo(width));
       expect(tester.takeException(), isNull);
 
       await tester.pumpWidget(const SizedBox.shrink());
     }
+  });
+
+  testWidgets('RED-102 signed-out orders keeps refresh visible and disabled', (
+    tester,
+  ) async {
+    final api = TradeApiClient(baseUrl: 'https://trade.example');
+    var reads = 0;
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          orderFilterProvider.overrideWith((ref) => 'ALL'),
+          orderTabProvider.overrideWith((ref) => OrderTab.positions),
+          tradeApiProvider.overrideWithValue(api),
+          tradeSessionProvider.overrideWith(
+            (ref) => TradeSessionController(api),
+          ),
+          positionsFutureProvider.overrideWith((ref) async {
+            reads++;
+            return [];
+          }),
+          themeModeProvider.overrideWith((ref) => ThemeMode.light),
+          currencyProvider.overrideWith((ref) => CurrencyDisplayMode.usd),
+          vndExchangeRateProvider.overrideWith((ref) async => 25400),
+        ],
+        child: const MaterialApp(home: OrdersScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final refresh = find.byTooltip('Làm mới dữ liệu');
+    expect(refresh, findsOneWidget);
+    expect(
+      tester
+          .widget<IconButton>(find.byKey(const Key('orders-manual-refresh')))
+          .onPressed,
+      isNull,
+    );
+    final readsBeforeTap = reads;
+    await tester.tap(refresh);
+    await tester.pump();
+    expect(reads, readsBeforeTap);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('manual refresh reloads the active positions provider only', (
+    tester,
+  ) async {
+    final api = TradeApiClient(baseUrl: 'https://trade.example');
+    var positionLoads = 0;
+    var orderLoads = 0;
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          orderFilterProvider.overrideWith((ref) => 'MARGIN'),
+          orderTabProvider.overrideWith((ref) => OrderTab.positions),
+          tradeApiProvider.overrideWithValue(api),
+          tradeSessionProvider.overrideWith(
+            (ref) => _AuthenticatedTradeSessionController(api),
+          ),
+          tradePositionsProvider.overrideWith((ref) async {
+            positionLoads++;
+            return const TradePositionsSnapshot(
+              accountIdentifier: 'test-account',
+              positions: [],
+            );
+          }),
+          ordersFutureProvider.overrideWith((ref) async {
+            orderLoads++;
+            return const [];
+          }),
+          themeModeProvider.overrideWith((ref) => ThemeMode.light),
+          currencyProvider.overrideWith((ref) => CurrencyDisplayMode.usd),
+          vndExchangeRateProvider.overrideWith((ref) async => 25400),
+        ],
+        child: const MaterialApp(home: OrdersScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(positionLoads, 1);
+
+    await tester.tap(find.byKey(const Key('orders-manual-refresh')));
+    await tester.pumpAndSettle();
+
+    expect(positionLoads, 2);
+    expect(orderLoads, 0);
+    expect(find.text('MARGIN'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 
   testWidgets('automatic polling stops after a terminal configuration error', (
@@ -264,9 +359,9 @@ Widget _positionsOrdersScreen() {
         (ref) => _AuthenticatedTradeSessionController(api),
       ),
       tradePositionsProvider.overrideWith(
-        (ref) async => TradePositionsSnapshot(
+        (ref) async => const TradePositionsSnapshot(
           accountIdentifier: 'test-account',
-          positions: const [],
+          positions: [],
         ),
       ),
       themeModeProvider.overrideWith((ref) => ThemeMode.light),

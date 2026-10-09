@@ -5,7 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:trading_balance_f/features/orders/presentation/providers/trade_session_provider.dart';
 
-import '../../../portfolio/data/risk/risk_request_coordinator.dart';
+import '../../../../core/network/request_coordinator.dart';
 import '../../data/market_repository.dart';
 import '../../data/watchlist_store.dart';
 import '../../domain/models.dart';
@@ -243,7 +243,7 @@ final supportResistanceMarketRepositoryProvider =
       final client = ref.watch(backendDataClientProvider);
       return SupportResistanceRepository(
         client,
-        requestCoordinator: ref.watch(riskRequestCoordinatorProvider),
+        requestCoordinator: ref.watch(requestCoordinatorProvider),
       );
     });
 

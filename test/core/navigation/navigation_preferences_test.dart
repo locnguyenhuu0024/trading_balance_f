@@ -66,7 +66,6 @@ void main() {
           'orders',
           'market',
           'settings',
-          'risk',
           'bmag',
           'support',
           'strategy',
@@ -78,27 +77,45 @@ void main() {
       expect(decoded.enabledDestinationIds, ['home', 'settings']);
     });
 
+    test('drops removed destinations from legacy saved navigation', () {
+      final decoded = NavigationPreferences.decode(
+        '{"version":1,"mode":"floating","edge":"right",'
+        '"enabledDestinationIds":["home","risk","support"],'
+        '"destinationOrderIds":["support","risk","home"]}',
+      );
+
+      expect(decoded.enabledDestinationIds, ['home', 'settings', 'support']);
+      expect(decoded.destinationOrderIds, [
+        'support',
+        'home',
+        'bmag',
+        'orders',
+        'market',
+        'settings',
+        'strategy',
+      ]);
+    });
+
     test(
       'normalizes partial destination order without losing sibling values',
       () {
         final decoded = NavigationPreferences.decode(
           '{"version":1,"mode":"floating","edge":"right",'
           '"buttonScale":1.1,"buttonOpacity":0.75,'
-          '"enabledDestinationIds":["orders","risk"],'
-          '"destinationOrderIds":["risk","unknown","bmag","risk"]}',
+          '"enabledDestinationIds":["orders","support"],'
+          '"destinationOrderIds":["support","unknown","bmag","support"]}',
         );
 
         expect(decoded.destinationOrderIds, [
-          'risk',
+          'support',
           'bmag',
           'home',
           'orders',
           'market',
           'settings',
-          'support',
           'strategy',
         ]);
-        expect(decoded.enabledDestinationIds, ['orders', 'settings', 'risk']);
+        expect(decoded.enabledDestinationIds, ['orders', 'settings', 'support']);
         expect(decoded.displayMode, NavigationDisplayMode.floating);
         expect(decoded.floatingEdge, NavigationEdge.right);
         expect(decoded.buttonScale, 1.1);
@@ -112,7 +129,7 @@ void main() {
           '{"version":1,"mode":"floating","edge":"right",'
           '"enabledDestinationIds":["risk","unknown","risk"]}',
         ).enabledDestinationIds,
-        ['settings', 'risk'],
+        NavigationPreferences.defaults.enabledDestinationIds,
       );
       expect(
         NavigationPreferences.decode(

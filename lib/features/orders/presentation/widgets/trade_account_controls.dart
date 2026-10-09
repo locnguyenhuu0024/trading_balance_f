@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/security/secure_storage_helper.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/theme/pnl_color.dart';
 import '../../data/trade_api_client.dart';
@@ -697,12 +698,15 @@ class TradeSessionControls extends ConsumerStatefulWidget {
 class _TradeSessionControlsState extends ConsumerState<TradeSessionControls> {
   bool _busy = false;
   bool _logoutPending = false;
+  String? _loginErrorOverride;
 
   @override
   Widget build(BuildContext context) {
     final palette = AppPalette.of(context);
     final api = ref.watch(tradeApiProvider);
     final sessionState = ref.watch(tradeSessionProvider);
+    final displayedSessionError =
+        _loginErrorOverride ?? sessionState.errorMessage;
     final session = sessionState.session;
     final isAuthenticated = sessionState.isAuthenticated;
     final hasActiveSession = (session?.isActive ?? false) || _logoutPending;
@@ -763,17 +767,17 @@ class _TradeSessionControlsState extends ConsumerState<TradeSessionControls> {
                 const LinearProgressIndicator(minHeight: 2),
               ],
             ],
-            if (sessionState.errorMessage != null) ...[
+            if (displayedSessionError != null) ...[
               const SizedBox(height: 8),
               Text(
-                sessionState.errorMessage!,
+                displayedSessionError,
                 style: TextStyle(color: palette.negative, fontSize: 12),
               ),
             ],
             if (api.supportsSessionRestoration &&
                 !isAuthenticated &&
                 !sessionState.isLoading &&
-                sessionState.errorMessage != null) ...[
+                displayedSessionError != null) ...[
               const SizedBox(height: AppTokens.space2),
               OutlinedButton(
                 onPressed: _busy ? null : _restore,
@@ -788,18 +792,71 @@ class _TradeSessionControlsState extends ConsumerState<TradeSessionControls> {
   }
 
   Future<void> _login() async {
-    final credentials = await showDialog<_TradeCredentials>(
+    final api = ref.read(tradeApiProvider);
+    if (mounted) setState(() => _loginErrorOverride = null);
+    final scope = api is TradeApiRememberPasswordScope
+        ? (api as TradeApiRememberPasswordScope).rememberedPasswordScope
+        : null;
+    bool isCurrentEndpoint(String expectedScope) {
+      if (!mounted) return false;
+      final currentApi = ref.read(tradeApiProvider);
+      return identical(currentApi, api) &&
+          currentApi is TradeApiRememberPasswordScope &&
+          (currentApi as TradeApiRememberPasswordScope)
+                  .rememberedPasswordScope ==
+              expectedScope;
+    }
+
+    await showDialog<void>(
       context: context,
-      builder: (context) => const _TradeLoginDialog(),
+      builder: (context) => _TradeLoginDialog(
+        passwordScope: scope,
+        storage: ref.read(secureStorageProvider),
+        authenticate: (password, totp) async {
+          if (!mounted ||
+              !identical(ref.read(tradeApiProvider), api) ||
+              (scope != null && !isCurrentEndpoint(scope))) {
+            if (mounted) {
+              setState(
+                () => _loginErrorOverride =
+                    'API đã thay đổi. Hãy mở lại biểu mẫu đăng nhập.',
+              );
+            }
+            return null;
+          }
+          final loggedIn = await ref
+              .read(tradeSessionProvider.notifier)
+              .login(password: password, totp: totp);
+          if (!mounted) return null;
+          if (!loggedIn) {
+            setState(
+              () => _loginErrorOverride =
+                  'Không thể đăng nhập. Kiểm tra thông tin rồi thử lại.',
+            );
+            return null;
+          }
+          if (!identical(ref.read(tradeApiProvider), api) ||
+              (scope != null && !isCurrentEndpoint(scope))) {
+            setState(
+              () => _loginErrorOverride =
+                  'API đã thay đổi. Hãy mở lại biểu mẫu đăng nhập.',
+            );
+            return null;
+          }
+          final session = ref.read(tradeSessionProvider).session;
+          setState(() => _loginErrorOverride = null);
+          if (session != null) ref.invalidate(tradePositionsProvider);
+          return session;
+        },
+        isCurrentEndpoint: (expectedScope) => isCurrentEndpoint(expectedScope),
+        isCurrentSession: (expectedSession) {
+          if (!mounted) return false;
+          final current = ref.read(tradeSessionProvider);
+          return current.isAuthenticated &&
+              identical(current.session, expectedSession);
+        },
+      ),
     );
-    if (credentials == null || !mounted) return;
-    setState(() => _busy = true);
-    final loggedIn = await ref
-        .read(tradeSessionProvider.notifier)
-        .login(password: credentials.password, totp: credentials.totp);
-    if (!mounted) return;
-    if (loggedIn) ref.invalidate(tradePositionsProvider);
-    setState(() => _busy = false);
   }
 
   Future<void> _logout() async {
@@ -825,15 +882,21 @@ class _TradeSessionControlsState extends ConsumerState<TradeSessionControls> {
   }
 }
 
-class _TradeCredentials {
-  const _TradeCredentials(this.password, this.totp);
-
-  final String password;
-  final String totp;
-}
-
 class _TradeLoginDialog extends StatefulWidget {
-  const _TradeLoginDialog();
+  const _TradeLoginDialog({
+    required this.passwordScope,
+    required this.storage,
+    required this.authenticate,
+    required this.isCurrentEndpoint,
+    required this.isCurrentSession,
+  });
+
+  final String? passwordScope;
+  final SecureStorageHelper storage;
+  final Future<TradeSession?> Function(String password, String totp)
+  authenticate;
+  final bool Function(String scope) isCurrentEndpoint;
+  final bool Function(TradeSession session) isCurrentSession;
 
   @override
   State<_TradeLoginDialog> createState() => _TradeLoginDialogState();
@@ -842,63 +905,363 @@ class _TradeLoginDialog extends StatefulWidget {
 class _TradeLoginDialogState extends State<_TradeLoginDialog> {
   final _passwordController = TextEditingController();
   final _totpController = TextEditingController();
+  final _passwordFocusNode = FocusNode();
+  final _totpFocusNode = FocusNode();
+  bool _obscurePassword = true;
+  bool _passwordTouched = false;
+  bool _loginAttemptStarted = false;
+  bool _rememberPassword = false;
+  bool _storageReady = false;
+  bool _storageAvailable = false;
+  bool _storageMutationPending = false;
+  bool _optOutDeleteFailed = false;
+  bool _submitting = false;
+  bool _authenticated = false;
   String? _error;
+  String? _storageMessage;
+
+  bool get _canRemember =>
+      widget.passwordScope != null && _storageReady && _storageAvailable;
+
+  @override
+  void initState() {
+    super.initState();
+    final scope = widget.passwordScope;
+    if (scope == null || scope.trim().isEmpty) {
+      _storageReady = true;
+      _storageMessage = 'Không thể lưu mật khẩu cho API này.';
+    } else {
+      _storageMessage =
+          'Đang kiểm tra trạng thái lưu mật khẩu. Bạn vẫn có thể đăng nhập.';
+      _loadRememberedPassword(scope);
+    }
+  }
 
   @override
   void dispose() {
     _passwordController.dispose();
     _totpController.dispose();
+    _passwordFocusNode.dispose();
+    _totpFocusNode.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Đăng nhập API giao dịch'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            controller: _passwordController,
-            obscureText: true,
-            autofillHints: const [AutofillHints.password],
-            decoration: const InputDecoration(labelText: 'Mật khẩu'),
-          ),
-          TextField(
-            controller: _totpController,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-              labelText: 'Mã TOTP gồm 6 chữ số',
+    return PopScope(
+      canPop: !_submitting,
+      child: AlertDialog(
+        title: const Text('Đăng nhập API giao dịch'),
+        scrollable: true,
+        content: SizedBox(
+          width: 380,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  key: const ValueKey('trade-login-password'),
+                  controller: _passwordController,
+                  focusNode: _passwordFocusNode,
+                  enabled: !_submitting,
+                  obscureText: _obscurePassword,
+                  autofillHints: const [AutofillHints.password],
+                  textInputAction: TextInputAction.next,
+                  onChanged: (_) => _passwordTouched = true,
+                  onSubmitted: (_) => _totpFocusNode.requestFocus(),
+                  decoration: InputDecoration(
+                    labelText: 'Mật khẩu',
+                    suffixIcon: IconButton(
+                      key: const ValueKey('trade-login-toggle-password'),
+                      tooltip: _obscurePassword
+                          ? 'Hiện mật khẩu'
+                          : 'Ẩn mật khẩu',
+                      onPressed: () =>
+                          setState(() => _obscurePassword = !_obscurePassword),
+                      icon: Icon(
+                        _obscurePassword
+                            ? Icons.visibility
+                            : Icons.visibility_off,
+                      ),
+                    ),
+                  ),
+                ),
+                TextField(
+                  key: const ValueKey('trade-login-otp'),
+                  controller: _totpController,
+                  focusNode: _totpFocusNode,
+                  enabled: !_submitting,
+                  keyboardType: TextInputType.number,
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: (_) => _submit(),
+                  decoration: const InputDecoration(
+                    labelText: 'Mã TOTP gồm 6 chữ số',
+                  ),
+                ),
+                const SizedBox(height: 8),
+                CheckboxListTile(
+                  key: const ValueKey('trade-login-remember-password'),
+                  contentPadding: EdgeInsets.zero,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  value: _rememberPassword,
+                  onChanged:
+                      !_canRemember ||
+                          _submitting ||
+                          _storageMutationPending ||
+                          _authenticated
+                      ? null
+                      : _setRememberPassword,
+                  title: const Text('Lưu mật khẩu trên thiết bị này'),
+                ),
+                if (_storageMessage != null)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      _storageMessage!,
+                      style: TextStyle(color: AppPalette.of(context).muted),
+                    ),
+                  ),
+                if (_error != null) ...[
+                  const SizedBox(height: 8),
+                  Semantics(
+                    liveRegion: true,
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        _error!,
+                        style: TextStyle(
+                          color: AppPalette.of(context).negative,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+                if (_submitting) ...[
+                  const SizedBox(height: 8),
+                  const LinearProgressIndicator(minHeight: 2),
+                ],
+              ],
             ),
           ),
-          if (_error != null) ...[
-            const SizedBox(height: 8),
-            Text(
-              _error!,
-              style: TextStyle(color: AppPalette.of(context).negative),
-            ),
-          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: _submitting ? null : () => Navigator.of(context).pop(),
+            child: Text(_authenticated ? 'Đóng' : 'Hủy'),
+          ),
+          FilledButton(
+            onPressed:
+                _submitting ||
+                    _storageMutationPending ||
+                    _optOutDeleteFailed ||
+                    _authenticated
+                ? null
+                : _submit,
+            child: Text(_authenticated ? 'Đã đăng nhập' : 'Đăng nhập'),
+          ),
         ],
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Hủy'),
-        ),
-        FilledButton(onPressed: _submit, child: const Text('Đăng nhập')),
-      ],
     );
   }
 
-  void _submit() {
+  Future<void> _loadRememberedPassword(String scope) async {
+    try {
+      final password = await widget.storage.getRememberedTradePassword(scope);
+      if (!mounted) return;
+      if (!widget.isCurrentEndpoint(scope)) {
+        setState(() {
+          _storageReady = true;
+          _storageMessage = 'Không thể dùng mật khẩu đã lưu cho API hiện tại.';
+        });
+        return;
+      }
+      setState(() {
+        _storageReady = true;
+        _storageAvailable = true;
+        _storageMessage = null;
+        if (!_loginAttemptStarted &&
+            !_passwordTouched &&
+            password != null &&
+            password.isNotEmpty) {
+          _passwordController.text = password;
+          _rememberPassword = true;
+        }
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _storageReady = true;
+        _storageMessage =
+            'Không thể đọc trạng thái lưu mật khẩu. Bạn vẫn có thể đăng nhập.';
+      });
+    }
+  }
+
+  Future<void> _setRememberPassword(bool? value) async {
+    if (value == null || _submitting || _storageMutationPending) return;
+    final scope = widget.passwordScope;
+    if (scope == null) return;
+    if (value) {
+      setState(() {
+        _rememberPassword = true;
+        _storageMessage = null;
+        _optOutDeleteFailed = false;
+      });
+      return;
+    }
+
+    setState(() {
+      _storageMutationPending = true;
+      _storageMessage = null;
+      _error = null;
+    });
+    try {
+      await widget.storage.deleteRememberedTradePassword(scope);
+      if (!mounted) return;
+      setState(() {
+        _rememberPassword = false;
+        _storageMutationPending = false;
+        _optOutDeleteFailed = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _storageMutationPending = false;
+        _optOutDeleteFailed = true;
+        _storageMessage =
+            'Không thể xóa mật khẩu đã lưu. Mật khẩu vẫn được giữ.';
+      });
+    }
+  }
+
+  Future<void> _submit() async {
+    if (_submitting ||
+        _storageMutationPending ||
+        _optOutDeleteFailed ||
+        _authenticated) {
+      return;
+    }
     final password = _passwordController.text;
-    final totp = _totpController.text.trim();
-    if (password.isEmpty || !RegExp(r'^\d{6}$').hasMatch(totp)) {
+    final totp = _totpController.text;
+    _totpController.clear();
+    if (password.isEmpty) {
+      _passwordFocusNode.requestFocus();
       setState(() => _error = 'Nhập mật khẩu và mã TOTP gồm đúng 6 chữ số.');
       return;
     }
-    _passwordController.clear();
-    _totpController.clear();
-    Navigator.of(context).pop(_TradeCredentials(password, totp));
+    if (!RegExp(r'^[0-9]{6}$').hasMatch(totp)) {
+      _totpFocusNode.requestFocus();
+      setState(() => _error = 'Nhập mật khẩu và mã TOTP gồm đúng 6 chữ số.');
+      return;
+    }
+
+    setState(() {
+      _submitting = true;
+      _loginAttemptStarted = true;
+      _error = null;
+    });
+    try {
+      final scope = widget.passwordScope;
+      if (!_rememberPassword &&
+          scope != null &&
+          _storageReady &&
+          _storageAvailable) {
+        setState(() => _storageMutationPending = true);
+        try {
+          await widget.storage.deleteRememberedTradePassword(scope);
+        } catch (_) {
+          if (mounted) {
+            setState(() {
+              _rememberPassword = true;
+              _optOutDeleteFailed = true;
+              _storageMessage =
+                  'Không thể xóa mật khẩu đã lưu. Mật khẩu vẫn được giữ.';
+            });
+          }
+          return;
+        } finally {
+          if (mounted) setState(() => _storageMutationPending = false);
+        }
+      }
+      final session = await widget.authenticate(password, totp);
+      if (!mounted) return;
+      if (session == null) {
+        setState(
+          () => _error = 'Không thể đăng nhập. Kiểm tra thông tin rồi thử lại.',
+        );
+        return;
+      }
+      setState(() => _authenticated = true);
+      if (!_rememberPassword) {
+        Navigator.of(context).pop();
+        return;
+      }
+
+      if (scope == null ||
+          !_canRemember ||
+          !widget.isCurrentEndpoint(scope) ||
+          !widget.isCurrentSession(session)) {
+        setState(
+          () => _error = 'Phiên hoặc API đã thay đổi. Mật khẩu không được lưu.',
+        );
+        return;
+      }
+      late final String savedVersion;
+      try {
+        savedVersion = await widget.storage.saveRememberedTradePassword(
+          scope,
+          password,
+        );
+      } catch (_) {
+        if (!mounted) return;
+        setState(
+          () => _error =
+              'Đăng nhập thành công, nhưng không thể lưu mật khẩu trên thiết bị.',
+        );
+        return;
+      }
+      if (!mounted) {
+        try {
+          await widget.storage.deleteRememberedTradePasswordIfVersion(
+            scope,
+            savedVersion,
+          );
+        } catch (_) {}
+        return;
+      }
+      if (!widget.isCurrentEndpoint(scope) ||
+          !widget.isCurrentSession(session)) {
+        try {
+          await widget.storage.deleteRememberedTradePasswordIfVersion(
+            scope,
+            savedVersion,
+          );
+        } catch (_) {
+          if (mounted) {
+            setState(
+              () => _error =
+                  'Phiên hoặc API đã thay đổi. Không thể xóa mật khẩu vừa lưu; hãy thử lại trong biểu mẫu đăng nhập.',
+            );
+          }
+          return;
+        }
+        if (mounted) {
+          setState(
+            () =>
+                _error = 'Phiên hoặc API đã thay đổi. Mật khẩu không được lưu.',
+          );
+        }
+        return;
+      }
+      Navigator.of(context).pop();
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () => _error = 'Không thể đăng nhập. Kiểm tra thông tin rồi thử lại.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
   }
 }

@@ -9,7 +9,7 @@ import 'package:trading_balance_f/core/theme/app_theme.dart';
 import 'package:trading_balance_f/core/theme/pnl_color.dart';
 import 'package:trading_balance_f/features/orders/data/trade_api_client.dart';
 import 'package:trading_balance_f/features/orders/presentation/providers/trade_session_provider.dart';
-import 'package:trading_balance_f/features/portfolio/data/risk/risk_request_coordinator.dart';
+import 'package:trading_balance_f/core/network/request_coordinator.dart';
 import 'package:trading_balance_f/features/strategy/data/strategy_api_client.dart';
 import 'package:trading_balance_f/features/strategy/data/strategy_market_repository.dart';
 import 'package:trading_balance_f/features/strategy/domain/strategy_models.dart';
@@ -229,6 +229,7 @@ void main() {
     await _pumpFrames(tester);
 
     expect(find.text('Chiến Thuật'), findsOneWidget);
+    expect(find.byTooltip('Làm mới dữ liệu'), findsOneWidget);
     expect(find.text('Chiến thuật đã lưu'), findsNothing);
     expect(find.text('Dựng chiến thuật tự động'), findsNothing);
 
@@ -236,11 +237,13 @@ void main() {
     final automaticAction = find.byKey(
       const Key('strategy-automatic-create-button'),
     );
+    final refreshAction = find.byKey(const Key('strategy-manual-refresh'));
     expect(manualAction, findsOneWidget);
     expect(automaticAction, findsOneWidget);
+    expect(refreshAction, findsOneWidget);
     expect(find.byTooltip('Dựng chiến thuật tự động'), findsOneWidget);
 
-    for (final action in [manualAction, automaticAction]) {
+    for (final action in [manualAction, automaticAction, refreshAction]) {
       final rect = tester.getRect(action);
       expect(rect.width, greaterThanOrEqualTo(48));
       expect(rect.height, greaterThanOrEqualTo(48));
@@ -265,6 +268,36 @@ void main() {
     await tester.tap(find.byKey(const Key('strategy-automatic-close')));
     await tester.pumpAndSettle();
   });
+
+  testWidgets(
+    'RED-102 signed-out strategy keeps refresh visible and disabled',
+    (tester) async {
+      final api = TradeApiClient(baseUrl: 'https://trade.example');
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            tradeApiProvider.overrideWithValue(api),
+            tradeSessionProvider.overrideWith(
+              (ref) => TradeSessionController(api),
+            ),
+          ],
+          child: const MaterialApp(home: StrategyScreen()),
+        ),
+      );
+      await _pumpFrames(tester);
+
+      expect(find.byTooltip('Làm mới dữ liệu'), findsOneWidget);
+      expect(
+        tester
+            .widget<IconButton>(
+              find.byKey(const Key('strategy-manual-refresh')),
+            )
+            .onPressed,
+        isNull,
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
 
   testWidgets('candidate drafts offer review and cannot be applied directly', (
     tester,
@@ -2369,7 +2402,7 @@ class _FakeMarketRepository extends StrategyMarketRepository {
   _FakeMarketRepository()
     : super(
         BackendDataClient(dio: Dio(), baseUrl: 'https://data.example'),
-        requestCoordinator: RiskRequestCoordinator(
+        requestCoordinator: RequestCoordinator(
           minimumSpacing: Duration.zero,
           delay: (_) async {},
         ),

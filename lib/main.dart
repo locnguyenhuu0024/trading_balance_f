@@ -34,12 +34,12 @@ void main() async {
     );
   }
 
-  // BẢO VỆ 1: Chỉ khởi tạo Background Service nếu KHÔNG PHẢI là Web
+  // Retire the legacy background service before restoring app preferences.
   if (!kIsWeb) {
     try {
-      await initializeBackgroundService();
-    } catch (e) {
-      debugPrint('Lỗi khởi tạo Background Service: $e');
+      await retireBackgroundService();
+    } catch (_) {
+      debugPrint('Could not retire the legacy background service.');
     }
   }
 
@@ -338,7 +338,6 @@ class WebStorageHelper extends SecureStorageHelper {
       _prefs.setString('OKX_SECRET_KEY', secretKey),
       _prefs.setString('OKX_PASSPHRASE', passphrase),
     ]);
-    CredentialMutationBus.notify();
   }
 
   @override
@@ -438,6 +437,5 @@ class WebStorageHelper extends SecureStorageHelper {
       _prefs.remove('OKX_SECRET_KEY'),
       _prefs.remove('OKX_PASSPHRASE'),
     ]);
-    CredentialMutationBus.notify();
   }
 }

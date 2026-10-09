@@ -285,6 +285,12 @@ void main() {
     await tester.pumpAndSettle();
     expect(loadCount, 1);
     expect(find.byKey(const Key('levels-sparse-BTC-USDT')), findsOneWidget);
+    expect(find.byTooltip('Làm mới dữ liệu'), findsOneWidget);
+    final refreshRect = tester.getRect(
+      find.byKey(const Key('support-resistance-refresh')),
+    );
+    expect(refreshRect.width, greaterThanOrEqualTo(48));
+    expect(refreshRect.height, greaterThanOrEqualTo(48));
 
     await tester.pump(const Duration(minutes: 2));
     await tester.pump();
@@ -305,6 +311,55 @@ void main() {
     await tester.pump();
 
     expect(loadCount, 2);
+  });
+
+  testWidgets('manual refresh disables while the level read is pending', (
+    tester,
+  ) async {
+    final instruments = _instruments();
+    final watchlist = await _watchlistController(
+      instruments: instruments,
+      spotIds: const <String>['BTC-USDT'],
+    );
+    final pending = Completer<SupportResistanceMarketSnapshot>();
+    var loadCount = 0;
+    final levels = SupportResistanceLevelsController(
+      loadLevels:
+          ({required marketMode, required instrumentId, required timeframe}) {
+            loadCount++;
+            if (loadCount == 1) {
+              return Future.value(
+                _screenSnapshot(marketMode, instrumentId, timeframe),
+              );
+            }
+            return pending.future;
+          },
+    );
+    await tester.pumpWidget(_screenApp(watchlist, levels, instruments));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('support-resistance-refresh')));
+    await tester.pump();
+    expect(loadCount, 2);
+    expect(
+      tester
+          .widget<IconButton>(
+            find.byKey(const Key('support-resistance-refresh')),
+          )
+          .onPressed,
+      isNull,
+    );
+
+    pending.complete(
+      _screenSnapshot(
+        SupportResistanceMarketMode.spot,
+        'BTC-USDT',
+        SupportResistanceTimeframe.h6,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(loadCount, 2);
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 
   testWidgets('RED-30 a late market response cannot replace live coin cards', (

@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:trading_balance_f/core/network/backend_data_client.dart';
 import 'package:trading_balance_f/features/orders/presentation/providers/trade_session_provider.dart';
 
-import '../../portfolio/data/risk/risk_request_coordinator.dart';
+import '../../../core/network/request_coordinator.dart';
 import '../domain/strategy_calculator.dart';
 import '../domain/strategy_models.dart';
 
@@ -26,7 +26,7 @@ class StrategyMarketRepository {
   static const maximumPublicTickerAge = Duration(seconds: 15);
 
   final BackendDataClient _client;
-  final RiskRequestCoordinator requestCoordinator;
+  final RequestCoordinator requestCoordinator;
   final StrategyMarketClock clock;
   final StrategyLevelCalculator calculator;
   final Map<String, DateTime> _lastTickerTimestamps = {};
@@ -246,14 +246,14 @@ class StrategyMarketRepository {
         '$endpoint?${keyEntries.map((e) => '${e.key}=${e.value}').join('&')}';
     try {
       return await requestCoordinator.run<Response<dynamic>>(
-        lane: RiskRequestLane.public,
+        lane: RequestLane.public,
         key: key,
         request: () => _client.get(
           endpoint,
           queryParameters: query,
         ),
       );
-    } on RiskRequestBackoffException {
+    } on RequestBackoffException {
       throw const StrategyMarketException(
         'Public market requests are backing off.',
       );
@@ -361,6 +361,6 @@ final strategyMarketRepositoryProvider = Provider<StrategyMarketRepository>((
   final client = ref.watch(backendDataClientProvider);
   return StrategyMarketRepository(
     client,
-    requestCoordinator: ref.watch(riskRequestCoordinatorProvider),
+    requestCoordinator: ref.watch(requestCoordinatorProvider),
   );
 });

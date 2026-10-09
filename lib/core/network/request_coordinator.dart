@@ -2,24 +2,25 @@ import 'dart:async';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:trading_balance_f/core/network/backend_data_client.dart';
 
 /// Endpoint classes are deliberately small.  Authenticated and public work
 /// must not share credentials, but each class still has one scheduler and one
 /// backoff state so another position cannot bypass a rate-limit response.
-enum RiskRequestLane { authenticated, public }
+enum RequestLane { authenticated, public }
 
-typedef RiskRequestClock = DateTime Function();
-typedef RiskRequestDelay = Future<void> Function(Duration duration);
+typedef RequestClock = DateTime Function();
+typedef RequestDelay = Future<void> Function(Duration duration);
 
-final riskRequestCoordinatorProvider = Provider<RiskRequestCoordinator>((ref) {
-  return RiskRequestCoordinator();
+final requestCoordinatorProvider = Provider<RequestCoordinator>((ref) {
+  return RequestCoordinator();
 });
 
 /// A request was rejected by the coordinator before it reached the adapter.
 /// The error contains only safe scheduling metadata; it never stores request
 /// headers, payloads, or credentials.
-class RiskRequestBackoffException implements Exception {
-  const RiskRequestBackoffException({
+class RequestBackoffException implements Exception {
+  const RequestBackoffException({
     required this.lane,
     required this.key,
     required this.retryAt,
@@ -28,7 +29,7 @@ class RiskRequestBackoffException implements Exception {
     this.cause,
   });
 
-  final RiskRequestLane lane;
+  final RequestLane lane;
   final String key;
   final DateTime retryAt;
   final Duration? retryAfter;
@@ -37,14 +38,14 @@ class RiskRequestBackoffException implements Exception {
 
   @override
   String toString() =>
-      'RiskRequestBackoffException (HTTP $statusCode): '
+      'RequestBackoffException (HTTP $statusCode): '
       '${lane.name} lane is backing off until ${retryAt.toUtc().toIso8601String()}';
 }
 
 /// The first request that receives HTTP 429 closes its lane immediately. The
 /// original error is retained only as an opaque cause for local debugging.
-class RiskRequestRateLimitException extends RiskRequestBackoffException {
-  const RiskRequestRateLimitException({
+class RequestRateLimitException extends RequestBackoffException {
+  const RequestRateLimitException({
     required super.lane,
     required super.key,
     required super.retryAt,
@@ -54,9 +55,9 @@ class RiskRequestRateLimitException extends RiskRequestBackoffException {
   });
 }
 
-/// Safe, read-only scheduler state exposed for typed UI/monitor metadata.
-class RiskRequestLaneState {
-  const RiskRequestLaneState({
+/// Safe, read-only scheduler state exposed to typed consumers.
+class RequestLaneState {
+  const RequestLaneState({
     required this.lane,
     required this.isClosed,
     required this.activeRequests,
@@ -66,7 +67,7 @@ class RiskRequestLaneState {
     required this.consecutiveRateLimits,
   });
 
-  final RiskRequestLane lane;
+  final RequestLane lane;
   final bool isClosed;
   final int activeRequests;
   final DateTime? lastStartedAt;
@@ -77,15 +78,15 @@ class RiskRequestLaneState {
   bool get isBackingOff => isClosed && retryAt != null;
 }
 
-/// Shared request foundation for risk repositories.
+/// Shared scheduler for authenticated and public backend reads.
 ///
 /// Calls are keyed and single-flight, then serialized per endpoint class. A
 /// successful call is allowed only after the minimum inter-request spacing;
 /// an HTTP 429 closes the entire lane before any queued work can start.
-class RiskRequestCoordinator {
-  RiskRequestCoordinator({
-    RiskRequestClock? clock,
-    RiskRequestDelay? delay,
+class RequestCoordinator {
+  RequestCoordinator({
+    RequestClock? clock,
+    RequestDelay? delay,
     this.minimumSpacing = const Duration(milliseconds: 250),
     this.backoffSchedule = const <Duration>[
       Duration(seconds: 30),
@@ -112,14 +113,14 @@ class RiskRequestCoordinator {
     }
   }
 
-  final RiskRequestClock clock;
-  final RiskRequestDelay delay;
+  final RequestClock clock;
+  final RequestDelay delay;
   final Duration minimumSpacing;
   final List<Duration> backoffSchedule;
 
-  final Map<RiskRequestLane, _RiskLaneState> _lanes = {
-    RiskRequestLane.authenticated: _RiskLaneState(),
-    RiskRequestLane.public: _RiskLaneState(),
+  final Map<RequestLane, _RequestLaneState> _lanes = {
+    RequestLane.authenticated: _RequestLaneState(),
+    RequestLane.public: _RequestLaneState(),
   };
   final Map<String, Future<Object?>> _inFlight = <String, Future<Object?>>{};
 
@@ -128,7 +129,7 @@ class RiskRequestCoordinator {
   /// [key] is stable for the request's endpoint and query. Calls with the
   /// same lane/key share one future; distinct keys remain serialized by lane.
   Future<T> run<T>({
-    required RiskRequestLane lane,
+    required RequestLane lane,
     required String key,
     required Future<T> Function() request,
   }) {
@@ -145,7 +146,7 @@ class RiskRequestCoordinator {
     final closedUntil = state.closedUntil;
     if (closedUntil != null && now.isBefore(closedUntil)) {
       return Future<T>.error(
-        RiskRequestBackoffException(
+        RequestBackoffException(
           lane: lane,
           key: normalizedKey,
           retryAt: closedUntil,
@@ -174,7 +175,7 @@ class RiskRequestCoordinator {
             state,
             retryAfter: _retryAfter(error),
           );
-          throw RiskRequestRateLimitException(
+          throw RequestRateLimitException(
             lane: lane,
             key: normalizedKey,
             retryAt: retryAt,
@@ -213,23 +214,23 @@ class RiskRequestCoordinator {
   /// Alias used by repository adapters that describe a scheduled operation as
   /// a request rather than a run.
   Future<T> request<T>({
-    required RiskRequestLane lane,
+    required RequestLane lane,
     required String key,
     required Future<T> Function() operation,
   }) => run(lane: lane, key: key, request: operation);
 
   /// Alias retained for callers that use queue terminology.
   Future<T> enqueue<T>({
-    required RiskRequestLane lane,
+    required RequestLane lane,
     required String key,
     required Future<T> Function() operation,
   }) => run(lane: lane, key: key, request: operation);
 
-  RiskRequestLaneState stateFor(RiskRequestLane lane) {
+  RequestLaneState stateFor(RequestLane lane) {
     final state = _lanes[lane]!;
     final now = clock().toUtc();
     final retryAt = state.closedUntil;
-    return RiskRequestLaneState(
+    return RequestLaneState(
       lane: lane,
       isClosed: retryAt != null && now.isBefore(retryAt),
       activeRequests: state.activeRequests,
@@ -244,28 +245,28 @@ class RiskRequestCoordinator {
     );
   }
 
-  RiskRequestLaneState laneState(RiskRequestLane lane) => stateFor(lane);
+  RequestLaneState laneState(RequestLane lane) => stateFor(lane);
 
-  bool isBackingOff(RiskRequestLane lane) => stateFor(lane).isBackingOff;
+  bool isBackingOff(RequestLane lane) => stateFor(lane).isBackingOff;
 
-  DateTime? retryAtFor(RiskRequestLane lane) => stateFor(lane).retryAt;
+  DateTime? retryAtFor(RequestLane lane) => stateFor(lane).retryAt;
 
-  Duration? retryAfterFor(RiskRequestLane lane) => stateFor(lane).retryAfter;
+  Duration? retryAfterFor(RequestLane lane) => stateFor(lane).retryAfter;
 
   /// Clear a lane's backoff after credential rotation or an explicit owner
   /// reset. In-flight work is intentionally not cancelled.
-  void clearLane(RiskRequestLane lane) {
+  void clearLane(RequestLane lane) {
     final state = _lanes[lane]!;
     state.closedUntil = null;
     state.consecutiveRateLimits = 0;
   }
 
   void clear() {
-    clearLane(RiskRequestLane.authenticated);
-    clearLane(RiskRequestLane.public);
+    clearLane(RequestLane.authenticated);
+    clearLane(RequestLane.public);
   }
 
-  Duration _spacingWait(_RiskLaneState state, DateTime now) {
+  Duration _spacingWait(_RequestLaneState state, DateTime now) {
     final last = state.lastStartedAt;
     if (last == null) return Duration.zero;
     final elapsed = now.difference(last);
@@ -273,12 +274,12 @@ class RiskRequestCoordinator {
     return minimumSpacing - elapsed;
   }
 
-  void _throwIfClosed(RiskRequestLane lane, String key, _RiskLaneState state) {
+  void _throwIfClosed(RequestLane lane, String key, _RequestLaneState state) {
     final retryAt = state.closedUntil;
     if (retryAt == null) return;
     final now = clock().toUtc();
     if (!now.isBefore(retryAt)) return;
-    throw RiskRequestBackoffException(
+    throw RequestBackoffException(
       lane: lane,
       key: key,
       retryAt: retryAt,
@@ -287,8 +288,8 @@ class RiskRequestCoordinator {
   }
 
   DateTime _closeLane(
-    RiskRequestLane lane,
-    _RiskLaneState state, {
+    RequestLane lane,
+    _RequestLaneState state, {
     required Duration? retryAfter,
   }) {
     final now = clock().toUtc();
@@ -311,15 +312,22 @@ class RiskRequestCoordinator {
   }
 
   int? _statusCode(Object error) {
-    if (error is RiskRequestBackoffException) return error.statusCode;
+    if (error is RequestBackoffException) return error.statusCode;
+    if (error is BackendDataException) return error.statusCode;
     if (error is DioException) return error.response?.statusCode;
     return null;
   }
 
   Duration? _retryAfter(Object error) {
-    if (error is RiskRequestBackoffException) return error.retryAfter;
-    if (error is! DioException) return null;
-    final raw = error.response?.headers.value('retry-after')?.trim();
+    if (error is RequestBackoffException) return error.retryAfter;
+    String? raw;
+    if (error is BackendDataException) {
+      raw = error.retryAfter?.trim();
+    } else if (error is DioException) {
+      raw = error.response?.headers.value('retry-after')?.trim();
+    } else {
+      return null;
+    }
     if (raw == null || raw.isEmpty) return null;
     final seconds = int.tryParse(raw);
     if (seconds != null && seconds >= 0) {
@@ -410,7 +418,7 @@ class RiskRequestCoordinator {
   }
 }
 
-class _RiskLaneState {
+class _RequestLaneState {
   Future<void> tail = Future<void>.value();
   DateTime? lastStartedAt;
   DateTime? closedUntil;

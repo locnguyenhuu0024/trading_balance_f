@@ -1,29 +1,15 @@
 // File Name: secure_storage_helper.dart
 // File Path: lib/core/security/secure_storage_helper.dart
 
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'dart:async';
 
 import '../navigation/navigation_preferences.dart';
 import '../timezone/app_time_zone.dart';
 import '../typography/app_text_scale.dart';
-
-/// Broadcasts credential mutations to the single risk owner.  The payload is
-/// intentionally empty: account identity is resolved by the next monitor
-/// capture and no secret crosses the lifecycle boundary.
-final class CredentialMutationBus {
-  CredentialMutationBus._();
-
-  static final StreamController<void> _controller =
-      StreamController<void>.broadcast();
-
-  static Stream<void> get changes => _controller.stream;
-
-  static void notify() {
-    if (!_controller.isClosed) _controller.add(null);
-  }
-}
 
 /// Provider cung cấp instance của SecureStorageHelper
 final secureStorageProvider = Provider<SecureStorageHelper>((ref) {
@@ -52,6 +38,113 @@ class SecureStorageHelper {
   static const String _navigationPreferences = 'NAVIGATION_PREFERENCES';
   static const String _timeZoneId = 'TIME_ZONE_ID';
   static const String _appTextScale = 'APP_TEXT_SCALE';
+  static const String _rememberedTradePasswordPrefix =
+      'REMEMBERED_TRADE_PASSWORD_V1_';
+  final Map<String, Future<void>> _rememberedTradePasswordTails = {};
+  int _rememberedTradePasswordVersion = 0;
+
+  /// Reads a remembered trade password from platform secure storage.
+  Future<String?> getRememberedTradePassword(String endpoint) {
+    final key = _rememberedTradePasswordKey(endpoint);
+    return _withRememberedTradePasswordLock(key, () async {
+      final record = await _storage.read(key: key);
+      if (record == null) return null;
+      final decoded = _decodeRememberedTradePassword(record);
+      if (decoded == null || decoded.password.isEmpty) return null;
+      return decoded.password;
+    });
+  }
+
+  /// Saves a remembered trade password in platform secure storage.
+  Future<String> saveRememberedTradePassword(String endpoint, String password) {
+    if (password.isEmpty) {
+      throw ArgumentError.value(password, 'password', 'Must not be empty.');
+    }
+    final key = _rememberedTradePasswordKey(endpoint);
+    return _withRememberedTradePasswordLock(key, () async {
+      final version =
+          '${DateTime.now().microsecondsSinceEpoch}-${++_rememberedTradePasswordVersion}';
+      await _storage.write(
+        key: key,
+        value: jsonEncode({'version': version, 'password': password}),
+      );
+      return version;
+    });
+  }
+
+  /// Deletes a remembered password without affecting other endpoint scopes.
+  Future<void> deleteRememberedTradePassword(String endpoint) {
+    final key = _rememberedTradePasswordKey(endpoint);
+    return _withRememberedTradePasswordLock(
+      key,
+      () => _storage.delete(key: key),
+    );
+  }
+
+  /// Deletes a completed write only if no newer write replaced it.
+  Future<bool> deleteRememberedTradePasswordIfVersion(
+    String endpoint,
+    String version,
+  ) {
+    final key = _rememberedTradePasswordKey(endpoint);
+    return _withRememberedTradePasswordLock(key, () async {
+      final record = _decodeRememberedTradePassword(
+        await _storage.read(key: key) ?? '',
+      );
+      if (record?.version != version) return false;
+      await _storage.delete(key: key);
+      return true;
+    });
+  }
+
+  Future<T> _withRememberedTradePasswordLock<T>(
+    String key,
+    Future<T> Function() action,
+  ) async {
+    final previous = _rememberedTradePasswordTails[key];
+    final completion = Completer<void>();
+    final tail = completion.future;
+    _rememberedTradePasswordTails[key] = tail;
+    if (previous != null) await previous;
+    try {
+      return await action();
+    } finally {
+      completion.complete();
+      if (identical(_rememberedTradePasswordTails[key], tail)) {
+        _rememberedTradePasswordTails.remove(key);
+      }
+    }
+  }
+
+  ({String version, String password})? _decodeRememberedTradePassword(
+    String value,
+  ) {
+    try {
+      final decoded = jsonDecode(value);
+      if (decoded is Map &&
+          decoded['version'] is String &&
+          decoded['password'] is String) {
+        return (
+          version: decoded['version'] as String,
+          password: decoded['password'] as String,
+        );
+      }
+    } on FormatException {
+      return null;
+    }
+    return null;
+  }
+
+  String _rememberedTradePasswordKey(String endpoint) {
+    final normalizedEndpoint = endpoint.trim();
+    if (normalizedEndpoint.isEmpty) {
+      throw ArgumentError.value(endpoint, 'endpoint', 'Must not be empty.');
+    }
+    final encodedEndpoint = base64Url
+        .encode(utf8.encode(normalizedEndpoint))
+        .replaceAll('=', '');
+    return '$_rememberedTradePasswordPrefix$encodedEndpoint';
+  }
 
   /// Lưu trữ OKX Credentials
   Future<void> saveOkxCredentials({
@@ -64,7 +157,6 @@ class SecureStorageHelper {
       _storage.write(key: _okxSecretKey, value: secretKey),
       _storage.write(key: _okxPassphrase, value: passphrase),
     ]);
-    CredentialMutationBus.notify();
   }
 
   /// Lấy cấu hình Ẩn số dư mặc định
@@ -155,6 +247,5 @@ class SecureStorageHelper {
       _storage.delete(key: _okxSecretKey),
       _storage.delete(key: _okxPassphrase),
     ]);
-    CredentialMutationBus.notify();
   }
 }
