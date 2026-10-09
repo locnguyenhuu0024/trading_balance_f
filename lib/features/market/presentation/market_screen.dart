@@ -5,7 +5,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
-import '../../../core/network/dio_client.dart';
+import 'package:trading_balance_f/core/network/backend_data_client.dart';
+import 'package:trading_balance_f/features/orders/presentation/providers/trade_session_provider.dart';
 import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/crypto_icon.dart';
@@ -45,10 +46,9 @@ class MarketTicker {
 final marketListProvider = FutureProvider.autoDispose<List<MarketTicker>>((
   ref,
 ) async {
-  final dio = ref.watch(dioProvider);
+  final client = ref.watch(backendDataClientProvider);
 
-  // Gọi API Public (Không cần truyền 'requiresAuth: true')
-  final response = await dio.get(
+  final response = await client.get(
     '/api/v5/market/tickers',
     queryParameters: {'instType': 'SPOT'},
   );

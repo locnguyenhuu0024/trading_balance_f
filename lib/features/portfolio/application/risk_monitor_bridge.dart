@@ -1721,6 +1721,8 @@ abstract final class RiskMonitorWire {
   static const String command = 'risk.monitor.command.v1';
   static const String acknowledgement = 'risk.monitor.ack.v1';
   static const String state = 'risk.monitor.state.v1';
+  static const String sessionInput = 'risk.monitor.session.input.v1';
+  static const String sessionAck = 'risk.monitor.session.ack.v1';
 
   static Map<String, dynamic> encodeCommand(RiskMonitorCommand value) =>
       <String, dynamic>{'protocol': command, 'command': value.toWire()};

@@ -3,7 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/widgets/crypto_icon.dart';
+import '../../orders/presentation/providers/trade_session_provider.dart';
 import '../application/risk_monitor_bridge.dart';
+import '../application/risk_monitor_runtime.dart';
 import '../domain/risk/action_plan.dart';
 import '../domain/risk/risk_engine.dart';
 import '../domain/risk/risk_history.dart';
@@ -56,6 +58,7 @@ class _RiskDashboardScreenState extends ConsumerState<RiskDashboardScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || _startRequested) return;
       _startRequested = true;
+      if (!_productionSessionAvailable()) return;
       final state = _bridge.currentState;
       if (!state.isRunning) {
         _bridge.start(commandId: riskCommandId('home-start'));
@@ -64,6 +67,7 @@ class _RiskDashboardScreenState extends ConsumerState<RiskDashboardScreen> {
   }
 
   Future<void> _refresh() async {
+    if (!_productionSessionAvailable()) return;
     final state = _bridge.currentState;
     final result = state.isRunning
         ? await _bridge.send(
@@ -83,6 +87,11 @@ class _RiskDashboardScreenState extends ConsumerState<RiskDashboardScreen> {
   @override
   Widget build(BuildContext context) {
     final hidden = ref.watch(hideBalanceProvider);
+    final authReason =
+        widget.bridge != null ||
+            ref.read(riskMonitorOwnerProvider) is! RiskMonitorRuntime
+        ? null
+        : _productionAuthReason();
     if (widget.bridge != null) {
       return StreamBuilder<RiskMonitorViewState>(
         stream: widget.bridge!.states,
@@ -91,18 +100,42 @@ class _RiskDashboardScreenState extends ConsumerState<RiskDashboardScreen> {
           context,
           snapshot.data ?? widget.bridge!.currentState,
           hidden,
+          authReason,
         ),
       );
     }
     final stateAsync = ref.watch(riskMonitorViewStateProvider);
     final state = stateAsync.valueOrNull ?? _bridge.currentState;
-    return _buildScreen(context, state, hidden);
+    return _buildScreen(context, state, hidden, authReason);
+  }
+
+  bool _productionSessionAvailable() {
+    if (widget.bridge != null ||
+        ref.read(riskMonitorOwnerProvider) is! RiskMonitorRuntime) {
+      return true;
+    }
+    return ref.read(backendDataSessionProvider).current != null;
+  }
+
+  String? _productionAuthReason() {
+    final tradeState = ref.watch(tradeSessionProvider);
+    final session = ref.watch(backendDataSessionProvider).current;
+    if (tradeState.isLoading) {
+      return 'Đang kiểm tra phiên giao dịch. Vui lòng đợi một chút.';
+    }
+    if (session != null) return null;
+    if (tradeState.errorMessage?.contains('Phiên giao dịch đã hết hạn') ==
+        true) {
+      return 'Phiên giao dịch đã hết hạn. Hãy đăng nhập lại để tiếp tục.';
+    }
+    return 'Vui lòng đăng nhập để bắt đầu hoặc làm mới dữ liệu rủi ro.';
   }
 
   Widget _buildScreen(
     BuildContext context,
     RiskMonitorViewState state,
     bool hidden,
+    String? authReason,
   ) {
     final theme = Theme.of(context);
     final background = theme.colorScheme.surface;
@@ -183,6 +216,7 @@ class _RiskDashboardScreenState extends ConsumerState<RiskDashboardScreen> {
             summaries: summaries,
             previousCheck: state.previousCheck,
             bridge: _bridge,
+            authReason: authReason,
             hideValues: hidden,
             onPlanChanged: (_) => setState(() {}),
             onSettingsChanged: (_) => setState(() {}),
@@ -205,6 +239,7 @@ class _DashboardBody extends StatelessWidget {
     required this.summaries,
     required this.previousCheck,
     required this.bridge,
+    required this.authReason,
     required this.hideValues,
     required this.onPlanChanged,
     required this.onSettingsChanged,
@@ -221,6 +256,7 @@ class _DashboardBody extends StatelessWidget {
   final List<RiskDailySummary> summaries;
   final RiskSessionComparison? previousCheck;
   final RiskMonitorBridge bridge;
+  final String? authReason;
   final bool hideValues;
   final ValueChanged<RiskPlan> onPlanChanged;
   final ValueChanged<RiskSettings> onSettingsChanged;
@@ -251,6 +287,7 @@ class _DashboardBody extends StatelessWidget {
                     _MonitorStatus(
                       state: state,
                       hideValues: hideValues,
+                      authReason: authReason,
                       onRefresh: onRefresh,
                     ),
                     const SizedBox(height: 10),
@@ -266,6 +303,7 @@ class _DashboardBody extends StatelessWidget {
                       _UnavailableDashboard(
                         state: state,
                         hideValues: hideValues,
+                        authReason: authReason,
                         onRefresh: onRefresh,
                       )
                     else ...[
@@ -340,6 +378,7 @@ class _DashboardBody extends StatelessWidget {
       summaries: detailsState.summaries ?? const <RiskDailySummary>[],
       previousCheck: detailsState.previousCheck,
       bridge: bridge,
+      authReason: authReason,
       hideValues: hideValues,
       selectedEpisodeKey: entry.episodeKey,
       onPlanChanged: onPlanChanged,
@@ -1423,11 +1462,13 @@ class _MonitorStatus extends StatelessWidget {
   const _MonitorStatus({
     required this.state,
     required this.onRefresh,
+    this.authReason,
     this.hideValues = false,
   });
 
   final RiskMonitorViewState state;
   final Future<void> Function() onRefresh;
+  final String? authReason;
   final bool hideValues;
 
   @override
@@ -1498,7 +1539,21 @@ class _MonitorStatus extends StatelessWidget {
                 riskRedactRiskText(riskViError(state.lastError), hideValues),
                 style: TextStyle(color: theme.colorScheme.error, fontSize: 12),
               ),
-            TextButton(onPressed: onRefresh, child: Text(riskVi('refresh'))),
+            if (authReason != null)
+              Text(
+                authReason!,
+                key: const Key('risk-auth-disabled-reason'),
+                style: TextStyle(color: theme.colorScheme.error, fontSize: 12),
+              ),
+            Tooltip(
+              message: authReason ?? riskVi('refresh'),
+              child: TextButton(
+                onPressed: authReason == null ? onRefresh : null,
+                child: Text(
+                  state.isRunning ? riskVi('refresh') : 'Bắt đầu theo dõi',
+                ),
+              ),
+            ),
           ],
         ),
       ),
@@ -1938,11 +1993,13 @@ class _UnavailableDashboard extends StatelessWidget {
   const _UnavailableDashboard({
     required this.state,
     required this.onRefresh,
+    this.authReason,
     this.hideValues = false,
   });
 
   final RiskMonitorViewState state;
   final Future<void> Function() onRefresh;
+  final String? authReason;
   final bool hideValues;
 
   @override
@@ -1980,11 +2037,26 @@ class _UnavailableDashboard extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             Text(riskRedactRiskText(riskViError(body), hideValues)),
+            if (authReason != null) ...[
+              const SizedBox(height: 6),
+              Text(
+                authReason!,
+                key: const Key('risk-auth-disabled-reason'),
+                style: TextStyle(color: theme.colorScheme.error),
+              ),
+            ],
             const SizedBox(height: 12),
-            ElevatedButton.icon(
-              onPressed: onRefresh,
-              icon: const Icon(Icons.refresh),
-              label: Text(riskVi('refreshRiskData')),
+            Tooltip(
+              message: authReason ?? riskVi('refreshRiskData'),
+              child: ElevatedButton.icon(
+                onPressed: authReason == null ? onRefresh : null,
+                icon: const Icon(Icons.refresh),
+                label: Text(
+                  state.isRunning
+                      ? riskVi('refreshRiskData')
+                      : 'Bắt đầu theo dõi',
+                ),
+              ),
             ),
           ],
         ),

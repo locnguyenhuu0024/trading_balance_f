@@ -44,39 +44,35 @@ class OrdersScreen extends ConsumerStatefulWidget {
 
 class _OrdersScreenState extends ConsumerState<OrdersScreen> {
   Timer? _refreshTimer;
-  int _allRefreshTicks = 0;
 
   @override
   void initState() {
     super.initState();
-    _refreshTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+    _refreshTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       final currentTab = ref.read(orderTabProvider);
       final currentFilter = ref.read(orderFilterProvider);
 
       final tradeSession = ref.read(tradeSessionProvider);
       if (tradeSession.session != null && !tradeSession.isAuthenticated) {
         ref.read(tradeSessionProvider.notifier).expire();
+        return;
       }
+      if (tradeSession.isLoading || !tradeSession.isAuthenticated) return;
 
       if (currentTab == OrderTab.positions && currentFilter == 'SPOT') return;
 
-      if (currentFilter == 'ALL') {
-        _allRefreshTicks++;
-        if (_allRefreshTicks < 5) return;
-        _allRefreshTicks = 0;
-      } else {
-        _allRefreshTicks = 0;
+      final currentRead = currentTab == OrderTab.positions
+          ? (tradeSession.isAuthenticated
+                ? ref.read(tradePositionsProvider)
+                : ref.read(positionsFutureProvider))
+          : ref.read(ordersFutureProvider);
+      if (currentRead.isLoading ||
+          isTerminalForegroundReadFailure(currentRead.asError?.error)) {
+        return;
       }
 
-      final isLoading = currentTab == OrderTab.positions
-          ? (ref.read(tradeSessionProvider).isAuthenticated
-                ? ref.read(tradePositionsProvider).isLoading
-                : ref.read(positionsFutureProvider).isLoading)
-          : ref.read(ordersFutureProvider).isLoading;
-      if (isLoading) return;
-
       if (currentTab == OrderTab.positions) {
-        if (ref.read(tradeSessionProvider).isAuthenticated) {
+        if (tradeSession.isAuthenticated) {
           ref.invalidate(tradePositionsProvider);
         } else {
           ref.invalidate(positionsFutureProvider);
@@ -104,9 +100,8 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     final timeZoneId = ref.watch(appTimeZoneProvider);
     final exchangeRate = ref.watch(vndExchangeRateProvider).value ?? 25400.0;
     final isBalanceHidden = ref.watch(hideBalanceProvider);
-    final isTradeAuthenticated = ref
-        .watch(tradeSessionProvider)
-        .isAuthenticated;
+    final tradeSessionState = ref.watch(tradeSessionProvider);
+    final isTradeAuthenticated = tradeSessionState.isAuthenticated;
 
     final palette = AppPalette.of(context);
     final bgColor = palette.background;
@@ -210,7 +205,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
   ) {
     final palette = AppPalette.forBrightness(isDark);
     if (currentTab == OrderTab.positions) {
-      final hasTradeSession = ref.watch(tradeSessionProvider).isAuthenticated;
+      final tradeState = ref.watch(tradeSessionProvider);
       if (filter == 'SPOT') {
         return Column(
           children: [
@@ -226,7 +221,11 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
         );
       }
 
-      if (hasTradeSession) {
+      if (tradeState.isLoading) {
+        return Center(child: CircularProgressIndicator(color: palette.ink));
+      }
+
+      if (tradeState.isAuthenticated) {
         final positionsAsyncValue = ref.watch(tradePositionsProvider);
         return Column(
           children: [
@@ -236,7 +235,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                 backgroundColor: palette.raised,
                 onRefresh: () async => ref.invalidate(tradePositionsProvider),
                 child: positionsAsyncValue.when(
-                  skipLoadingOnReload: true,
+                  skipLoadingOnReload: false,
                   loading: () => Center(
                     child: CircularProgressIndicator(color: palette.ink),
                   ),
@@ -292,7 +291,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
               backgroundColor: palette.raised,
               onRefresh: () async => ref.invalidate(positionsFutureProvider),
               child: positionsAsyncValue.when(
-                skipLoadingOnReload: true,
+                skipLoadingOnReload: false,
                 loading: () => Center(
                   child: CircularProgressIndicator(color: palette.ink),
                 ),
@@ -330,13 +329,16 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
         ],
       );
     } else {
+      if (ref.watch(tradeSessionProvider).isLoading) {
+        return Center(child: CircularProgressIndicator(color: palette.ink));
+      }
       final ordersAsyncValue = ref.watch(ordersFutureProvider);
       final orderList = RefreshIndicator(
         color: palette.ink,
         backgroundColor: palette.raised,
         onRefresh: () async => ref.invalidate(ordersFutureProvider),
         child: ordersAsyncValue.when(
-          skipLoadingOnReload: true,
+          skipLoadingOnReload: false,
           loading: () =>
               Center(child: CircularProgressIndicator(color: palette.ink)),
           error: (error, stack) => Center(

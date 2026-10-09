@@ -6,7 +6,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:trading_balance_f/core/network/backend_data_session.dart';
+import 'package:trading_balance_f/features/orders/data/trade_api_client.dart';
+import 'package:trading_balance_f/features/orders/presentation/providers/trade_session_provider.dart';
+import 'package:trading_balance_f/features/portfolio/application/risk_monitor.dart';
 import 'package:trading_balance_f/features/portfolio/application/risk_monitor_bridge.dart';
+import 'package:trading_balance_f/features/portfolio/application/risk_monitor_runtime.dart';
 import 'package:trading_balance_f/features/portfolio/domain/risk/action_plan.dart';
 import 'package:trading_balance_f/features/portfolio/domain/risk/risk_engine.dart';
 import 'package:trading_balance_f/features/portfolio/domain/risk/risk_events.dart';
@@ -26,6 +31,7 @@ import 'package:trading_balance_f/features/portfolio/presentation/widgets/risk/r
 import 'package:trading_balance_f/features/settings/presentation/settings_screen.dart';
 
 import 'fixtures/risk_test_fixtures.dart';
+import 'fixtures/risk_monitor_fixtures.dart';
 
 Future<void> main() async {
   final screenshotFontFamily = await _loadScreenshotFont();
@@ -64,6 +70,80 @@ Future<void> main() async {
     expect(owner.dispatchCalls, 0);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'RED-008 production runtime keeps Start and Refresh visible but disabled without a session',
+    (tester) async {
+      late FakeRiskSource source;
+      late BackendDataSession session;
+      late RiskMonitor monitor;
+      late RiskMonitorRuntime runtime;
+      late _CountingRiskMonitorOwner displayOwner;
+      await tester.runAsync(() async {
+        final clock = FakeRiskClock();
+        source = FakeRiskSource(
+          clock: clock,
+          position: () => syntheticRiskPosition(observedAt: clock.value),
+        );
+        session = BackendDataSession();
+        monitor = RiskMonitor(
+          dataSource: source,
+          persistence: FakeRiskPersistence(),
+          clock: clock.now,
+        );
+        runtime = RiskMonitorRuntime(
+          monitor: monitor,
+          backendDataSession: session,
+        );
+        displayOwner = _countingOwner(RiskMonitorViewState());
+        await Future<void>.delayed(Duration.zero);
+      });
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+        await tester.runAsync(() async {
+          await displayOwner.dispose();
+          await runtime.dispose();
+        });
+        session.dispose();
+      });
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            riskMonitorOwnerProvider.overrideWithValue(runtime),
+            riskMonitorBridgeProvider.overrideWithValue(
+              RiskMonitorBridge(displayOwner),
+            ),
+            riskMonitorViewStateProvider.overrideWith(
+              (ref) =>
+                  Stream<RiskMonitorViewState>.value(displayOwner.currentState),
+            ),
+            backendDataSessionProvider.overrideWith((ref) => session),
+            tradeApiProvider.overrideWithValue(TradeApiClient(baseUrl: '')),
+            themeModeProvider.overrideWith((ref) => ThemeMode.light),
+            hideBalanceProvider.overrideWith((ref) => false),
+          ],
+          child: const MaterialApp(home: RiskDashboardScreen()),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.textContaining('Vui lòng đăng nhập'), findsWidgets);
+      expect(find.byKey(const Key('risk-auth-disabled-reason')), findsWidgets);
+      final statusStart = find.widgetWithText(TextButton, 'Bắt đầu theo dõi');
+      final unavailableStart = find.widgetWithText(
+        ElevatedButton,
+        'Bắt đầu theo dõi',
+      );
+      expect(tester.widget<TextButton>(statusStart).onPressed, isNull);
+      expect(tester.widget<ElevatedButton>(unavailableStart).onPressed, isNull);
+      expect(source.positionCalls, 0);
+      expect(displayOwner.dispatchCalls, 0);
+      expect(runtime.currentState.isRunning, isFalse);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('GREEN-003 collapsible all-position dashboard', (tester) async {
     tester.view.physicalSize = const Size(320, 844);

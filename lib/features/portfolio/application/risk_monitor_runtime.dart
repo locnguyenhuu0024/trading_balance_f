@@ -4,7 +4,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 
+import '../../../core/network/backend_data_session.dart';
 import '../../../core/services/background_service.dart';
+import '../../orders/data/trade_api_client.dart';
 import '../domain/risk/risk_models.dart';
 import 'risk_monitor.dart';
 import 'risk_monitor_bridge.dart';
@@ -12,6 +14,11 @@ import 'risk_monitor_bridge.dart';
 enum RiskRuntimePlatformKind { android, ios, web, desktop }
 
 typedef RiskRuntimeClock = DateTime Function();
+typedef _RiskBackendSessionSnapshot = ({
+  int generation,
+  int fenceEpoch,
+  TradeSession? session,
+});
 
 class RiskRuntimeOwnership {
   const RiskRuntimeOwnership({
@@ -60,6 +67,32 @@ abstract interface class RiskRuntimeServiceHealth {
 abstract interface class RiskRuntimePlatformDisposable {
   Future<void> dispose();
 }
+
+abstract interface class RiskRuntimeSessionHandoff {
+  Future<RiskServiceSessionHandoffAck> handoffSession(
+    TradeSession? session, {
+    int? foregroundGeneration,
+  });
+}
+
+class RiskServiceSessionHandoffAck {
+  const RiskServiceSessionHandoffAck({
+    required this.generation,
+    required this.accepted,
+    required this.active,
+    required this.status,
+  });
+
+  final int generation;
+  final bool accepted;
+  final bool active;
+  final String status;
+}
+
+typedef _RiskServiceSessionContext = ({
+  int? foregroundGeneration,
+  TradeSession? expectedSession,
+});
 
 /// Default non-native seam. Production Android uses
 /// [FlutterBackgroundRiskRuntimeAdapter]; tests and unsupported hosts can use
@@ -112,10 +145,16 @@ class DefaultRiskRuntimePlatformAdapter
 /// A typed UI-side proxy for the actual service-isolate RiskMonitor owner.
 /// Every command is acknowledged by id; duplicate ids are answered from the
 /// proxy cache without sending a second mutation to the service.
-class RiskServiceOwnerProxy implements RiskMonitorOwner, RiskMonitorDisposable {
+class RiskServiceOwnerProxy
+    implements
+        RiskMonitorOwner,
+        RiskMonitorDisposable,
+        RiskRuntimeSessionHandoff {
   RiskServiceOwnerProxy({
     required this.channel,
     this.onDisconnected,
+    this.backendDataSession,
+    this.onSessionExpired,
     this.handshakeTimeout = const Duration(seconds: 5),
     Duration? livenessTimeout,
     Duration? silenceTimeout,
@@ -152,6 +191,13 @@ class RiskServiceOwnerProxy implements RiskMonitorOwner, RiskMonitorDisposable {
           onDone: _markDisconnected,
           onError: (_, __) => _markDisconnected(),
         );
+    _sessionAckSubscription = channel
+        .on(RiskMonitorWire.sessionAck)
+        .listen(
+          _onSessionAck,
+          onDone: _markDisconnected,
+          onError: (_, __) => _markDisconnected(),
+        );
     _clock = clock ?? DateTime.now;
     _lastActivityAt = _now();
     _silenceTimer = Timer.periodic(
@@ -162,6 +208,8 @@ class RiskServiceOwnerProxy implements RiskMonitorOwner, RiskMonitorDisposable {
 
   final RiskServiceChannel channel;
   final void Function()? onDisconnected;
+  final BackendDataSession? backendDataSession;
+  final void Function()? onSessionExpired;
   final Duration handshakeTimeout;
   final Duration livenessTimeout;
   final Duration commandCompletionTimeout;
@@ -180,6 +228,7 @@ class RiskServiceOwnerProxy implements RiskMonitorOwner, RiskMonitorDisposable {
   StreamSubscription<Map<String, dynamic>?>? _ackSubscription;
   StreamSubscription<Map<String, dynamic>?>? _handshakeSubscription;
   StreamSubscription<Map<String, dynamic>?>? _heartbeatSubscription;
+  StreamSubscription<Map<String, dynamic>?>? _sessionAckSubscription;
   Completer<bool>? _handshake;
   Timer? _handshakeTimer;
   Timer? _silenceTimer;
@@ -190,6 +239,22 @@ class RiskServiceOwnerProxy implements RiskMonitorOwner, RiskMonitorDisposable {
   );
   bool _disposed = false;
   bool _disconnected = false;
+  int _sessionGenerationWatermark = 0;
+  int _lastAllocatedSessionGeneration = 0;
+  int? _acknowledgedSessionGeneration;
+  int? _activeSessionGeneration;
+  bool _sessionAware = false;
+  final Map<int, Completer<RiskServiceSessionHandoffAck>> _pendingSessionAcks =
+      <int, Completer<RiskServiceSessionHandoffAck>>{};
+  final Map<int, _RiskServiceSessionContext> _sessionHandoffContexts =
+      <int, _RiskServiceSessionContext>{};
+
+  int get sessionGenerationWatermark => _sessionGenerationWatermark;
+
+  bool get sessionAcknowledgedActive =>
+      _activeSessionGeneration != null &&
+      _activeSessionGeneration == _lastAllocatedSessionGeneration &&
+      _acknowledgedSessionGeneration == _lastAllocatedSessionGeneration;
 
   void _touchActivity() {
     _lastActivityAt = _now();
@@ -234,6 +299,147 @@ class RiskServiceOwnerProxy implements RiskMonitorOwner, RiskMonitorDisposable {
     return completer.future;
   }
 
+  void _onSessionAck(Map<String, dynamic>? payload) {
+    if (_disposed || _disconnected || payload == null) return;
+    final generation = payload['generation'];
+    final accepted = payload['accepted'];
+    final active = payload['active'];
+    final status = payload['status'];
+    if (payload['protocol'] != RiskMonitorWire.sessionAck ||
+        generation is! int ||
+        generation < 0 ||
+        accepted is! bool ||
+        active is! bool ||
+        status is! String ||
+        payload.keys.length != 5) {
+      _markDisconnected();
+      return;
+    }
+    _touchActivity();
+    if (generation > _sessionGenerationWatermark) {
+      _sessionGenerationWatermark = generation;
+    }
+    final pending = _pendingSessionAcks.remove(generation);
+    if (accepted &&
+        active &&
+        pending != null &&
+        generation == _lastAllocatedSessionGeneration) {
+      _activeSessionGeneration = generation;
+    } else if (_activeSessionGeneration == generation &&
+        (!accepted ||
+            !active ||
+            generation != _lastAllocatedSessionGeneration)) {
+      _activeSessionGeneration = null;
+    }
+    if ((accepted &&
+            pending != null &&
+            generation == _lastAllocatedSessionGeneration) ||
+        (status == 'expired' &&
+            generation == _lastAllocatedSessionGeneration)) {
+      _acknowledgedSessionGeneration = generation;
+    }
+    final acknowledgement = RiskServiceSessionHandoffAck(
+      generation: generation,
+      accepted: accepted,
+      active: active,
+      status: status,
+    );
+    if (pending != null && !pending.isCompleted) {
+      pending.complete(acknowledgement);
+    }
+    if (status == 'expired' && generation == _lastAllocatedSessionGeneration) {
+      _activeSessionGeneration = null;
+      final context = _sessionHandoffContexts[generation];
+      final session = backendDataSession;
+      final foregroundGeneration = context?.foregroundGeneration;
+      final expectedSession = context?.expectedSession;
+      if (session == null ||
+          (foregroundGeneration != null &&
+              expectedSession != null &&
+              session.matches(foregroundGeneration, expectedSession))) {
+        onSessionExpired?.call();
+      }
+    }
+  }
+
+  @override
+  Future<RiskServiceSessionHandoffAck> handoffSession(
+    TradeSession? session, {
+    int? foregroundGeneration,
+  }) async {
+    if (_disposed || _disconnected) {
+      return RiskServiceSessionHandoffAck(
+        generation: _sessionGenerationWatermark,
+        accepted: false,
+        active: false,
+        status: 'unavailable',
+      );
+    }
+    _sessionAware = true;
+    _acknowledgedSessionGeneration = null;
+    _activeSessionGeneration = null;
+    _state = RiskMonitorViewState(
+      isRunning: false,
+      backgroundAvailable: _state.backgroundAvailable,
+      ownerLabel: _state.ownerLabel,
+      quality: const RiskQuality.unavailable(
+        reason: 'Phiên giao dịch đã thay đổi. Hãy tải lại dữ liệu.',
+      ),
+      lastError: 'Phiên giao dịch đã thay đổi. Hãy đăng nhập lại.',
+      requestStatus: RiskMonitorRequestStatus.unavailable,
+    );
+    _publish(_state);
+    final generation =
+        (_sessionGenerationWatermark > _lastAllocatedSessionGeneration
+            ? _sessionGenerationWatermark
+            : _lastAllocatedSessionGeneration) +
+        1;
+    _lastAllocatedSessionGeneration = generation;
+    final active = session != null && session.isActive;
+    _sessionHandoffContexts
+      ..clear()
+      ..[generation] = (
+        foregroundGeneration: foregroundGeneration,
+        expectedSession: active ? session : null,
+      );
+    final completer = Completer<RiskServiceSessionHandoffAck>();
+    _pendingSessionAcks[generation] = completer;
+    final payload = <String, dynamic>{
+      'protocol': RiskMonitorWire.sessionInput,
+      'generation': generation,
+      'active': active,
+      if (active) 'token': session.bearerToken,
+      if (active) 'accountIdentifier': session.accountIdentifier,
+      if (active) 'expiresAt': session.expiresAt.toUtc().toIso8601String(),
+    };
+    try {
+      // Enqueue synchronously so a logout/account switch fences the service
+      // before any later command can reach its serialized command tail.
+      channel.invoke(RiskMonitorWire.sessionInput, payload);
+    } catch (_) {
+      _pendingSessionAcks.remove(generation);
+      _markDisconnected();
+      return RiskServiceSessionHandoffAck(
+        generation: generation,
+        accepted: false,
+        active: false,
+        status: 'unavailable',
+      );
+    }
+    return completer.future.timeout(
+      handshakeTimeout,
+      onTimeout: () {
+        _pendingSessionAcks.remove(generation);
+        return RiskServiceSessionHandoffAck(
+          generation: generation,
+          accepted: false,
+          active: false,
+          status: 'timeout',
+        );
+      },
+    );
+  }
+
   void _onHandshake(Map<String, dynamic>? payload) {
     if (_disposed || _disconnected || payload == null) return;
     final protocol = payload['protocol']?.toString();
@@ -242,6 +448,22 @@ class RiskServiceOwnerProxy implements RiskMonitorOwner, RiskMonitorDisposable {
       return;
     }
     _touchActivity();
+    final appliedGeneration = payload['appliedSessionGeneration'];
+    if (payload.containsKey('appliedSessionGeneration') &&
+        (appliedGeneration is! int || appliedGeneration < 0)) {
+      _markDisconnected();
+      return;
+    }
+    if (appliedGeneration is int) {
+      _sessionGenerationWatermark =
+          appliedGeneration > _sessionGenerationWatermark
+          ? appliedGeneration
+          : _sessionGenerationWatermark;
+      _lastAllocatedSessionGeneration =
+          _lastAllocatedSessionGeneration > _sessionGenerationWatermark
+          ? _lastAllocatedSessionGeneration
+          : _sessionGenerationWatermark;
+    }
     final ok = payload['backgroundAvailable'] == true;
     final error = payload['error']?.toString();
     _state = _state.copyWith(
@@ -269,6 +491,12 @@ class RiskServiceOwnerProxy implements RiskMonitorOwner, RiskMonitorDisposable {
 
   void _onState(Map<String, dynamic>? payload) {
     if (_disposed || _disconnected || payload == null) return;
+    if (_sessionAware) {
+      final generation = payload['appliedSessionGeneration'];
+      if (generation is! int || generation != _acknowledgedSessionGeneration) {
+        return;
+      }
+    }
     _touchActivity();
     try {
       _state = RiskMonitorWire.decodeState(payload);
@@ -282,9 +510,24 @@ class RiskServiceOwnerProxy implements RiskMonitorOwner, RiskMonitorDisposable {
     if (_disposed || _disconnected || payload == null) return;
     _touchActivity();
     try {
-      final result = RiskMonitorWire.decodeAck(payload);
-      _state = result.state;
-      _publish(_state);
+      final decoded = RiskMonitorWire.decodeAck(payload);
+      final generation = payload['appliedSessionGeneration'];
+      final currentSessionState =
+          !_sessionAware ||
+          (generation is int && generation == _acknowledgedSessionGeneration);
+      final result = currentSessionState
+          ? decoded
+          : RiskMonitorCommandResult(
+              commandId: decoded.commandId,
+              status: decoded.status,
+              state: _state,
+              message: decoded.message,
+              replayed: decoded.replayed,
+            );
+      if (currentSessionState) {
+        _state = result.state;
+        _publish(_state);
+      }
       final pending = _pending.remove(result.commandId);
       if (pending != null && !pending.isCompleted) pending.complete(result);
       _results[result.commandId] = result;
@@ -312,6 +555,21 @@ class RiskServiceOwnerProxy implements RiskMonitorOwner, RiskMonitorDisposable {
       }
     }
     _pending.clear();
+    _acknowledgedSessionGeneration = null;
+    _activeSessionGeneration = null;
+    for (final pending in _pendingSessionAcks.values) {
+      if (!pending.isCompleted) {
+        pending.complete(
+          RiskServiceSessionHandoffAck(
+            generation: _sessionGenerationWatermark,
+            accepted: false,
+            active: false,
+            status: 'disconnected',
+          ),
+        );
+      }
+    }
+    _pendingSessionAcks.clear();
     _state = _state.copyWith(
       isRunning: false,
       backgroundAvailable: false,
@@ -388,10 +646,24 @@ class RiskServiceOwnerProxy implements RiskMonitorOwner, RiskMonitorDisposable {
     await _ackSubscription?.cancel();
     await _handshakeSubscription?.cancel();
     await _heartbeatSubscription?.cancel();
+    await _sessionAckSubscription?.cancel();
     for (final pending in _pending.values) {
       if (!pending.isCompleted) pending.complete(_failed('Service disposed'));
     }
     _pending.clear();
+    for (final pending in _pendingSessionAcks.values) {
+      if (!pending.isCompleted) {
+        pending.complete(
+          RiskServiceSessionHandoffAck(
+            generation: _sessionGenerationWatermark,
+            accepted: false,
+            active: false,
+            status: 'disposed',
+          ),
+        );
+      }
+    }
+    _pendingSessionAcks.clear();
     await _states.close();
   }
 }
@@ -404,10 +676,15 @@ class FlutterBackgroundRiskRuntimeAdapter
         RiskRuntimePlatformAdapter,
         RiskRuntimeServiceHealth,
         RiskRuntimePlatformDisposable {
-  FlutterBackgroundRiskRuntimeAdapter({FlutterBackgroundService? service})
-    : service = service ?? FlutterBackgroundService();
+  FlutterBackgroundRiskRuntimeAdapter({
+    FlutterBackgroundService? service,
+    this.backendSession,
+    this.onSessionExpired,
+  }) : service = service ?? FlutterBackgroundService();
 
   final FlutterBackgroundService service;
+  final BackendDataSession? backendSession;
+  final void Function()? onSessionExpired;
   final StreamController<void> _reconnects = StreamController<void>.broadcast();
   RiskServiceOwnerProxy? _proxy;
   bool _released = false;
@@ -435,9 +712,26 @@ class FlutterBackgroundRiskRuntimeAdapter
     }
     try {
       _released = false;
+      final initialSession = _captureSession();
+      if (backendSession != null && initialSession == null) {
+        return const RiskRuntimeOwnership.unavailable(
+          reason: 'Vui lòng đăng nhập để xem dữ liệu rủi ro.',
+        );
+      }
       var running = await service.isRunning();
+      if (!_sessionSnapshotMatches(initialSession)) {
+        return const RiskRuntimeOwnership.unavailable(
+          reason: 'Phiên giao dịch đã thay đổi. Hãy thử lại.',
+        );
+      }
       if (!running) {
         final started = await service.startService();
+        if (!_sessionSnapshotMatches(initialSession)) {
+          service.invoke('stopService');
+          return const RiskRuntimeOwnership.unavailable(
+            reason: 'Phiên giao dịch đã thay đổi. Hãy thử lại.',
+          );
+        }
         if (!started) {
           final stopped = await confirmServiceStopped();
           return RiskRuntimeOwnership.unavailable(
@@ -447,6 +741,12 @@ class FlutterBackgroundRiskRuntimeAdapter
           );
         }
         running = await service.isRunning();
+        if (!_sessionSnapshotMatches(initialSession)) {
+          service.invoke('stopService');
+          return const RiskRuntimeOwnership.unavailable(
+            reason: 'Phiên giao dịch đã thay đổi. Hãy thử lại.',
+          );
+        }
       }
       if (!running) {
         final stopped = await confirmServiceStopped();
@@ -458,6 +758,8 @@ class FlutterBackgroundRiskRuntimeAdapter
       }
       final proxy = RiskServiceOwnerProxy(
         channel: FlutterBackgroundServiceChannel(service),
+        backendDataSession: backendSession,
+        onSessionExpired: onSessionExpired,
         onDisconnected: () {
           if (!_released && !_reconnects.isClosed) _reconnects.add(null);
         },
@@ -475,6 +777,64 @@ class FlutterBackgroundRiskRuntimeAdapter
           reason: 'Android service handshake unavailable',
         );
       }
+      if (!_sessionSnapshotMatches(initialSession)) {
+        final latestSession = _captureSession();
+        if (backendSession != null && latestSession != null) {
+          await proxy.handoffSession(
+            latestSession.$2,
+            foregroundGeneration: latestSession.$1,
+          );
+        } else if (backendSession != null) {
+          await proxy.handoffSession(
+            null,
+            foregroundGeneration: backendSession!.generation,
+          );
+        }
+        await proxy.dispose();
+        await confirmServiceStopped();
+        return const RiskRuntimeOwnership.unavailable(
+          reason: 'Phiên giao dịch đã thay đổi. Hãy thử lại.',
+        );
+      }
+      if (backendSession != null) {
+        final handoffSnapshot = _captureSession();
+        if (handoffSnapshot == null) {
+          await proxy.handoffSession(
+            null,
+            foregroundGeneration: backendSession!.generation,
+          );
+          await proxy.dispose();
+          await confirmServiceStopped();
+          return const RiskRuntimeOwnership.unavailable(
+            reason: 'Vui lòng đăng nhập để xem dữ liệu rủi ro.',
+          );
+        }
+        final acknowledgement = await proxy.handoffSession(
+          handoffSnapshot.$2,
+          foregroundGeneration: handoffSnapshot.$1,
+        );
+        if (!acknowledgement.accepted ||
+            !acknowledgement.active ||
+            !_sessionSnapshotMatches(handoffSnapshot)) {
+          final latestSession = _captureSession();
+          if (latestSession != null) {
+            await proxy.handoffSession(
+              latestSession.$2,
+              foregroundGeneration: latestSession.$1,
+            );
+          } else {
+            await proxy.handoffSession(
+              null,
+              foregroundGeneration: backendSession!.generation,
+            );
+          }
+          await proxy.dispose();
+          await confirmServiceStopped();
+          return const RiskRuntimeOwnership.unavailable(
+            reason: 'Phiên giao dịch đã thay đổi. Hãy thử lại.',
+          );
+        }
+      }
       return RiskRuntimeOwnership(
         granted: true,
         ownerLabel: 'android-service',
@@ -487,6 +847,22 @@ class FlutterBackgroundRiskRuntimeAdapter
         reason: 'Android service platform is unavailable',
       );
     }
+  }
+
+  (int, TradeSession)? _captureSession() {
+    final session = backendSession;
+    if (session == null) return null;
+    session.expireIfNeeded();
+    final current = session.current;
+    return current == null ? null : (session.generation, current);
+  }
+
+  bool _sessionSnapshotMatches((int, TradeSession)? snapshot) {
+    final session = backendSession;
+    if (session == null) return snapshot == null;
+    if (snapshot == null) return false;
+    session.expireIfNeeded();
+    return session.matches(snapshot.$1, snapshot.$2);
   }
 
   @override
@@ -573,6 +949,7 @@ class RiskMonitorRuntime implements RiskMonitorOwner, RiskMonitorDisposable {
     required this.monitor,
     RiskRuntimePlatformAdapter? platform,
     this.androidServiceOwner,
+    this.backendDataSession,
     Stream<void>? credentialChanges,
     RiskLifecycleAdapter? lifecycle,
     RiskRuntimeClock? clock,
@@ -607,21 +984,30 @@ class RiskMonitorRuntime implements RiskMonitorOwner, RiskMonitorDisposable {
         }
       });
     }
+    final session = backendDataSession;
+    if (session != null) {
+      _backendSessionSubscription = session.changes.listen((_) {
+        _handleBackendSessionChanged();
+      });
+    }
     _lifecycleSubscription = _lifecycle.changes.listen(_handleLifecycle);
   }
 
   final RiskMonitor monitor;
   final RiskRuntimePlatformAdapter platform;
   final RiskMonitorOwner? androidServiceOwner;
+  final BackendDataSession? backendDataSession;
   final Stream<void>? _credentialChanges;
   final RiskLifecycleAdapter _lifecycle;
   final RiskRuntimeClock _clock;
   final StreamController<RiskMonitorViewState> _states;
 
   RiskMonitorOwner? _activeOwner;
+  RiskMonitorOwner? _sessionFencedOwner;
   StreamSubscription<RiskMonitorViewState>? _ownerSubscription;
   StreamSubscription<void>? _reconnectSubscription;
   StreamSubscription<void>? _credentialSubscription;
+  StreamSubscription<void>? _backendSessionSubscription;
   StreamSubscription<AppLifecycleState>? _lifecycleSubscription;
   final Map<String, RiskMonitorCommandResult> _results =
       <String, RiskMonitorCommandResult>{};
@@ -637,6 +1023,98 @@ class RiskMonitorRuntime implements RiskMonitorOwner, RiskMonitorDisposable {
   RiskMonitorCommand? _lastStart;
   int _lifecycleEpoch = 0;
   int _lifecycleCommandSequence = 0;
+  int _backendSessionFenceEpoch = 0;
+
+  void _handleBackendSessionChanged() {
+    if (_disposed) return;
+    _backendSessionFenceEpoch++;
+    _lastStart = null;
+    final session = backendDataSession;
+    session?.expireIfNeeded();
+    final current = session?.current;
+    final owner = _activeOwner;
+    final sessionAwareOwner = owner is RiskRuntimeSessionHandoff ? owner : null;
+    if (sessionAwareOwner != null) _sessionFencedOwner = sessionAwareOwner;
+    final previousState = _state;
+    monitor.invalidateCredentials(
+      reason: current == null
+          ? 'Phiên giao dịch đã hết hạn. Hãy đăng nhập lại.'
+          : 'Phiên giao dịch đã thay đổi. Hãy bắt đầu theo dõi lại.',
+    );
+    if (sessionAwareOwner != null) {
+      final handoffOwner = sessionAwareOwner as RiskRuntimeSessionHandoff;
+      _state = monitor.currentState.copyWith(
+        ownerLabel: previousState.ownerLabel,
+        backgroundAvailable: previousState.backgroundAvailable,
+      );
+      if (!_states.isClosed) _states.add(_state);
+      final snapshot = _captureBackendSession();
+      unawaited(
+        handoffOwner
+            .handoffSession(current, foregroundGeneration: snapshot?.generation)
+            .then<void>((acknowledgement) {
+              if (_disposed ||
+                  !identical(_sessionFencedOwner, sessionAwareOwner) ||
+                  !_backendSessionSnapshotMatches(snapshot)) {
+                return;
+              }
+              final expectedActive = snapshot?.session != null;
+              if (!acknowledgement.accepted ||
+                  acknowledgement.active != expectedActive) {
+                return;
+              }
+              _sessionFencedOwner = null;
+              _state = sessionAwareOwner.currentState;
+              if (!_states.isClosed) _states.add(_state);
+            }, onError: (_) {}),
+      );
+    }
+  }
+
+  _RiskBackendSessionSnapshot? _captureBackendSession() {
+    final session = backendDataSession;
+    if (session == null) return null;
+    session.expireIfNeeded();
+    return (
+      generation: session.generation,
+      fenceEpoch: _backendSessionFenceEpoch,
+      session: session.current,
+    );
+  }
+
+  bool _backendSessionSnapshotMatches(_RiskBackendSessionSnapshot? snapshot) {
+    final session = backendDataSession;
+    if (session == null) return snapshot == null;
+    if (snapshot == null || snapshot.fenceEpoch != _backendSessionFenceEpoch) {
+      return false;
+    }
+    session.expireIfNeeded();
+    final expected = snapshot.session;
+    if (expected == null) return session.generation == snapshot.generation;
+    return session.matches(snapshot.generation, expected);
+  }
+
+  bool _backendSessionSnapshotActive(_RiskBackendSessionSnapshot? snapshot) {
+    if (backendDataSession == null) return true;
+    return snapshot?.session != null &&
+        _backendSessionSnapshotMatches(snapshot);
+  }
+
+  bool _requiresBackendSession(RiskMonitorCommandType type) =>
+      backendDataSession != null &&
+      const <RiskMonitorCommandType>{
+        RiskMonitorCommandType.start,
+        RiskMonitorCommandType.refresh,
+        RiskMonitorCommandType.reconnect,
+        RiskMonitorCommandType.uiResume,
+      }.contains(type);
+
+  String _backendSessionUnavailableReason() {
+    final current = backendDataSession?.current;
+    return current == null
+        ? 'Vui lòng đăng nhập để xem dữ liệu rủi ro.'
+        : 'Phiên giao dịch đã thay đổi. Hãy thử lại.';
+  }
 
   String _nextLifecycleCommandId(String prefix) {
     _lifecycleCommandSequence++;
@@ -662,10 +1140,12 @@ class RiskMonitorRuntime implements RiskMonitorOwner, RiskMonitorDisposable {
   Future<void> _attachOwner(RiskMonitorOwner owner) async {
     await _ownerSubscription?.cancel();
     _activeOwner = owner;
+    _sessionFencedOwner = null;
     _state = owner.currentState;
     if (!_states.isClosed) _states.add(_state);
     _ownerSubscription = owner.states.listen((state) {
       if (_disposed) return;
+      if (identical(owner, _sessionFencedOwner)) return;
       _state = state;
       if (!_states.isClosed) _states.add(state);
     });
@@ -698,24 +1178,51 @@ class RiskMonitorRuntime implements RiskMonitorOwner, RiskMonitorDisposable {
         replayed: true,
       );
     }
-    if (command.type == RiskMonitorCommandType.start) {
-      _lastStart = command;
+    final requiresBackendSession = _requiresBackendSession(command.type);
+    final sessionSnapshot = requiresBackendSession
+        ? _captureBackendSession()
+        : null;
+    if (requiresBackendSession &&
+        !_backendSessionSnapshotActive(sessionSnapshot)) {
+      final result = _failed(command, _backendSessionUnavailableReason());
+      _results[command.id] = result;
+      return result;
     }
     late final RiskMonitorCommandResult result;
     if (command.type == RiskMonitorCommandType.start) {
-      result = await _start(command);
+      result = await _start(command, sessionSnapshot: sessionSnapshot);
+      if (result.accepted && _backendSessionSnapshotMatches(sessionSnapshot)) {
+        _lastStart = command;
+      } else {
+        _lastStart = null;
+      }
     } else if (!_ownershipAcquired) {
       result = _failed(command, 'Monitor owner is not available');
     } else {
-      result = await (_activeOwner ?? monitor).dispatch(command);
+      final dispatched = await (_activeOwner ?? monitor).dispatch(command);
+      result =
+          requiresBackendSession &&
+              !_backendSessionSnapshotMatches(sessionSnapshot)
+          ? _failed(command, _backendSessionUnavailableReason())
+          : dispatched;
     }
     _results[command.id] = result;
     return result;
   }
 
-  Future<RiskMonitorCommandResult> _start(RiskMonitorCommand command) async {
+  Future<RiskMonitorCommandResult> _start(
+    RiskMonitorCommand command, {
+    required _RiskBackendSessionSnapshot? sessionSnapshot,
+  }) async {
+    if (!_backendSessionSnapshotActive(sessionSnapshot)) {
+      return _failed(command, _backendSessionUnavailableReason());
+    }
     if (!_ownershipAcquired) {
       final ownership = await platform.acquireOwnership();
+      if (!_backendSessionSnapshotActive(sessionSnapshot)) {
+        if (ownership.granted) await platform.releaseOwnership();
+        return _failed(command, _backendSessionUnavailableReason());
+      }
       if (!ownership.granted) {
         monitor.setRuntimeStatus(
           ownerLabel: ownership.ownerLabel,
@@ -745,11 +1252,41 @@ class RiskMonitorRuntime implements RiskMonitorOwner, RiskMonitorDisposable {
         monitor.setBackgroundMode(ownership.backgroundAvailable);
       }
     }
-    return (_activeOwner ?? monitor).dispatch(command);
+    if (!_backendSessionSnapshotActive(sessionSnapshot)) {
+      return _failed(command, _backendSessionUnavailableReason());
+    }
+    final result = await (_activeOwner ?? monitor).dispatch(command);
+    if (!_backendSessionSnapshotActive(sessionSnapshot)) {
+      return _failed(command, _backendSessionUnavailableReason());
+    }
+    return result;
   }
 
   Future<void> _handlePlatformReconnect() async {
     if (_disposed || !_ownershipAcquired) return;
+    final sessionSnapshot =
+        _requiresBackendSession(RiskMonitorCommandType.start)
+        ? _captureBackendSession()
+        : null;
+    if (!_backendSessionSnapshotActive(sessionSnapshot)) {
+      _lastStart = null;
+      _ownershipAcquired = false;
+      final owner = _activeOwner;
+      if (owner != null && !identical(owner, monitor)) {
+        try {
+          await owner.dispatch(
+            RiskMonitorCommand.stop(
+              id: 'runtime-auth-session-stop-${DateTime.now().microsecondsSinceEpoch}',
+            ),
+          );
+        } catch (_) {}
+        if (owner is RiskMonitorDisposable) {
+          await (owner as RiskMonitorDisposable).dispose();
+        }
+      }
+      await _confirmServiceStopped();
+      return;
+    }
     if (platform.kind != RiskRuntimePlatformKind.android) {
       if (_activeOwner != null) {
         await dispatch(
@@ -757,6 +1294,7 @@ class RiskMonitorRuntime implements RiskMonitorOwner, RiskMonitorDisposable {
             id: 'runtime-reconnect-${DateTime.now().microsecondsSinceEpoch}',
           ),
         );
+        if (!_backendSessionSnapshotActive(sessionSnapshot)) return;
       }
       return;
     }
@@ -773,12 +1311,28 @@ class RiskMonitorRuntime implements RiskMonitorOwner, RiskMonitorDisposable {
           id: 'runtime-service-loss-stop-${DateTime.now().microsecondsSinceEpoch}',
         ),
       );
+      if (!_backendSessionSnapshotActive(sessionSnapshot)) {
+        if (old is RiskMonitorDisposable) {
+          await (old as RiskMonitorDisposable).dispose();
+        }
+        await _confirmServiceStopped();
+        return;
+      }
       if (old is RiskMonitorDisposable) {
         await (old as RiskMonitorDisposable).dispose();
       }
+      if (!_backendSessionSnapshotActive(sessionSnapshot)) {
+        await _confirmServiceStopped();
+        return;
+      }
     }
     await _confirmServiceStopped();
+    if (!_backendSessionSnapshotActive(sessionSnapshot)) return;
     final recovered = await platform.acquireOwnership();
+    if (!_backendSessionSnapshotActive(sessionSnapshot)) {
+      if (recovered.granted) await platform.releaseOwnership();
+      return;
+    }
     if (!recovered.granted) {
       await _confirmServiceStopped();
       monitor.setRuntimeStatus(
@@ -791,9 +1345,16 @@ class RiskMonitorRuntime implements RiskMonitorOwner, RiskMonitorDisposable {
     }
     _ownershipAcquired = true;
     final owner = recovered.owner ?? androidServiceOwner;
-    if (owner != null) await _attachOwner(owner);
+    if (owner != null) {
+      await _attachOwner(owner);
+      if (!_backendSessionSnapshotActive(sessionSnapshot)) {
+        await platform.releaseOwnership();
+        _ownershipAcquired = false;
+        return;
+      }
+    }
     final last = _lastStart;
-    if (last != null) {
+    if (last != null && _backendSessionSnapshotActive(sessionSnapshot)) {
       await (_activeOwner ?? monitor).dispatch(
         RiskMonitorCommand.start(
           id: 'runtime-service-restart-${DateTime.now().microsecondsSinceEpoch}',
@@ -801,6 +1362,9 @@ class RiskMonitorRuntime implements RiskMonitorOwner, RiskMonitorDisposable {
           episodeKey: last.episodeKey,
         ),
       );
+      if (!_backendSessionSnapshotActive(sessionSnapshot)) {
+        _lastStart = null;
+      }
     }
   }
 
@@ -920,6 +1484,7 @@ class RiskMonitorRuntime implements RiskMonitorOwner, RiskMonitorDisposable {
     await _ownerSubscription?.cancel();
     await _reconnectSubscription?.cancel();
     await _credentialSubscription?.cancel();
+    await _backendSessionSubscription?.cancel();
     await _lifecycleSubscription?.cancel();
     _resumeTimer?.cancel();
     _resumeTimer = null;

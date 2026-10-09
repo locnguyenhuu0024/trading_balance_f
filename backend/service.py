@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 import hmac
 from http.cookies import CookieError, SimpleCookie
 import ipaddress
@@ -17,6 +18,8 @@ from decimal import Decimal, InvalidOperation, ROUND_DOWN
 from typing import Any, Callable
 from urllib.parse import urlsplit
 
+from .currency import CurrencyTransport
+from .data_gateway import DataGateway, GatewayError
 from .okx import OKXClient, OKXError, OKXTransportError, Transport, bounded_error_code
 from .security import (
     matching_totp_counter,
@@ -165,6 +168,7 @@ class TradeService:
         settings: RuntimeSettings,
         *,
         transport: Transport | None = None,
+        currency_transport: CurrencyTransport | None = None,
         clock: Callable[[], float] = time.time,
     ):
         self.settings = settings
@@ -177,6 +181,17 @@ class TradeService:
             transport=transport,
             clock=clock,
         )
+        self.data_gateway = DataGateway(
+            self.okx,
+            account_fingerprint=self._account_fingerprint,
+            currency_transport=currency_transport,
+            wall_clock=clock,
+        )
+        self._display_executor = ThreadPoolExecutor(
+            max_workers=len(SUPPORTED_TYPES),
+            thread_name_prefix="position-display",
+        )
+        self._display_admission = threading.BoundedSemaphore(2 * len(SUPPORTED_TYPES))
         from .strategy import StrategyService
 
         self.strategy = StrategyService(self)
@@ -201,12 +216,29 @@ class TradeService:
             return 200, {"status": "logged_out"}, [("Set-Cookie", self._cleared_session_cookie())]
         if method == "GET" and path == "/v1/positions":
             self._require_session(environ)
-            return 200, self._positions_response(), []
+            snapshot = self._fetch_display_snapshot(environ)
+            return 200, self._positions_response(snapshot), []
+        if path.startswith("/v1/data/"):
+            try:
+                payload = self.data_gateway.handle(
+                    method,
+                    path[len("/v1/data/"):],
+                    str(environ.get("QUERY_STRING", "")),
+                    session_guard=lambda: self._require_session(environ),
+                )
+            except GatewayError as error:
+                raise APIError(error.status, error.code, error.message, headers=error.headers) from None
+            return 200, payload, []
         if path == "/v1/strategies" or path.startswith("/v1/strategies/"):
             self._require_session(environ)
             if method == "POST":
                 self._check_action_rate("strategies", source)
             request_guard = lambda: self._require_session(environ)
+            if method == "POST":
+                try:
+                    return 200, self.strategy.dispatch(method, path, body, request_guard=request_guard), []
+                finally:
+                    self.data_gateway.invalidate_private()
             return 200, self.strategy.dispatch(method, path, body, request_guard=request_guard), []
         if method == "POST" and path == "/v1/actions/prepare":
             self._require_session(environ)
@@ -215,7 +247,10 @@ class TradeService:
         if method == "POST" and path == "/v1/actions/execute":
             self._require_session(environ)
             self._check_action_rate("execute", source)
-            return 200, self._execute(body), []
+            try:
+                return 200, self._execute(body), []
+            finally:
+                self.data_gateway.invalidate_private()
         match = re.fullmatch(r"/v1/actions/result/([A-Za-z0-9_-]{8,64})", path)
         if method == "GET" and match:
             self._require_session(environ)
@@ -485,6 +520,170 @@ class TradeService:
             "instruments": instruments_by_type,
         }
 
+    def _fetch_display_snapshot(self, environ: dict[str, Any]) -> dict[str, Any]:
+        request_guard = lambda: self._require_session(environ)
+
+        def read_instruments(
+            instrument_type: str,
+        ) -> tuple[dict[str, dict[str, Any]], float]:
+            instruments, instruments_deadline = self.data_gateway.read_internal_with_deadline(
+                "public/instruments",
+                {"instType": instrument_type},
+            )
+            instrument_map = {
+                str(item.get("instId")): item for item in instruments if item.get("instId")
+            }
+            return instrument_map, instruments_deadline
+
+        admission_reserved = 0
+        submitted_futures: dict[str, Future[Any]] = {}
+
+        def release_reserved_admission() -> None:
+            nonlocal admission_reserved
+            for _ in range(admission_reserved):
+                self._display_admission.release()
+            admission_reserved = 0
+
+        try:
+            for attempt in range(2):
+                request_guard()
+                submitted_futures = {}
+                for _ in SUPPORTED_TYPES:
+                    if not self._display_admission.acquire(blocking=False):
+                        raise GatewayError(
+                            503,
+                            "data_unavailable",
+                            "The requested data is temporarily unavailable.",
+                        )
+                    admission_reserved += 1
+
+                try:
+                    before, positions_by_type, positions_deadline = (
+                        self.data_gateway.read_display_positions(session_guard=request_guard)
+                    )
+                except GatewayError as error:
+                    if error.code == "data_stale" and attempt == 0:
+                        release_reserved_admission()
+                        continue
+                    raise
+
+                for instrument_type in SUPPORTED_TYPES:
+                    future = self._display_executor.submit(read_instruments, instrument_type)
+                    admission_reserved -= 1
+                    future.add_done_callback(lambda _future: self._display_admission.release())
+                    submitted_futures[instrument_type] = future
+
+                instruments_by_type: dict[str, dict[str, dict[str, Any]]] = {}
+                deadlines: list[float] = [positions_deadline]
+                failure: Exception | None = None
+                for instrument_type in SUPPORTED_TYPES:
+                    try:
+                        instruments, deadline = submitted_futures[instrument_type].result(timeout=45)
+                        instruments_by_type[instrument_type] = instruments
+                        deadlines.append(deadline)
+                    except Exception as error:
+                        if failure is None:
+                            failure = error
+                if failure is not None:
+                    raise failure
+
+                current_identity = self.data_gateway.identity_for_display(
+                    session_guard=request_guard
+                )
+                if (
+                    before.fingerprint != current_identity.fingerprint
+                    or before.generation != current_identity.generation
+                ):
+                    raise GatewayError(
+                        409, "account_changed", "The active account changed during this request."
+                    )
+                if all(self.data_gateway.is_deadline_fresh(deadline) for deadline in deadlines):
+                    pos_mode = before.account.get("posMode")
+                    if not isinstance(pos_mode, str) or not pos_mode:
+                        raise APIError(502, "account_unavailable", "Current account data is unavailable.")
+                    normalized: list[dict[str, Any]] = []
+                    for instrument_type in SUPPORTED_TYPES:
+                        instrument_map = instruments_by_type[instrument_type]
+                        for raw in positions_by_type[instrument_type]:
+                            position = self._normalize_position(
+                                raw, instrument_type, pos_mode, instrument_map
+                            )
+                            if position.get("size") == "0":
+                                continue
+                            normalized.append(position)
+
+                    seen: set[str] = set()
+                    for position in normalized:
+                        identity = position["identity"]
+                        key = _identity_key(identity)
+                        if key in seen:
+                            position["identityAmbiguous"] = True
+                        else:
+                            position["identityAmbiguous"] = False
+                            seen.add(key)
+                    normalized.sort(key=lambda item: _identity_key(item["identity"]))
+
+                    request_guard()
+                    published_identity = self.data_gateway.identity_for_display(
+                        session_guard=request_guard
+                    )
+                    if (
+                        before.fingerprint != published_identity.fingerprint
+                        or before.generation != published_identity.generation
+                    ):
+                        raise GatewayError(
+                            409, "account_changed", "The active account changed during this request."
+                        )
+                    request_guard()
+                    if not all(
+                        self.data_gateway.is_deadline_fresh(deadline)
+                        for deadline in deadlines
+                    ):
+                        if attempt == 0:
+                            release_reserved_admission()
+                            continue
+                        raise GatewayError(
+                            503,
+                            "data_stale",
+                            "The requested data became stale before it was ready.",
+                        )
+                    return {
+                        "accountIdentifier": mask_identifier(before.account.get("uid")) or "••••",
+                        "accountFingerprint": before.fingerprint,
+                        "positionMode": pos_mode,
+                        "positions": normalized,
+                        "instruments": instruments_by_type,
+                    }
+                if attempt == 1:
+                    raise GatewayError(
+                        503,
+                        "data_stale",
+                        "The requested data became stale before it was ready.",
+                    )
+        except GatewayError as error:
+            for future in submitted_futures.values():
+                future.cancel()
+            request_guard()
+            raise APIError(error.status, error.code, error.message, headers=error.headers) from None
+        except FutureTimeoutError:
+            for future in submitted_futures.values():
+                future.cancel()
+            request_guard()
+            raise APIError(503, "data_unavailable", "The requested data is temporarily unavailable.") from None
+        except APIError:
+            for future in submitted_futures.values():
+                future.cancel()
+            request_guard()
+            raise
+        except Exception:
+            for future in submitted_futures.values():
+                future.cancel()
+            request_guard()
+            raise APIError(502, "exchange_unavailable", "Current account data is unavailable.") from None
+        finally:
+            release_reserved_admission()
+        raise APIError(503, "data_stale", "The requested data became stale before it was ready.")
+
     def _normalize_position(
         self,
         raw: dict[str, Any],
@@ -629,8 +828,9 @@ class TradeService:
                 return True, None
         return False, "unsupported_action"
 
-    def _positions_response(self) -> dict[str, Any]:
-        snapshot = self._fetch_snapshot()
+    def _positions_response(self, snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
+        if snapshot is None:
+            snapshot = self._fetch_snapshot()
         positions: list[dict[str, Any]] = []
         for position in snapshot["positions"]:
             public = _public_position(position)

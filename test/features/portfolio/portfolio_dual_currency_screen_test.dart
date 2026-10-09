@@ -13,6 +13,8 @@ import 'package:trading_balance_f/features/portfolio/presentation/portfolio_scre
 import 'package:trading_balance_f/features/portfolio/presentation/portfolio_details_screen.dart';
 import 'package:trading_balance_f/features/portfolio/presentation/providers/portfolio_provider.dart';
 import 'package:trading_balance_f/features/portfolio/presentation/widgets/portfolio_currency_amount.dart';
+import 'package:trading_balance_f/features/orders/data/trade_api_client.dart';
+import 'package:trading_balance_f/features/orders/presentation/providers/trade_session_provider.dart';
 import 'package:trading_balance_f/features/settings/presentation/settings_screen.dart';
 
 class _FakeOkxWebsocketService extends OkxWebsocketService {
@@ -61,6 +63,7 @@ void main() {
       details: [OkxCoinDetail(ccy: 'BTC', eq: '1', eqUsd: '100', upl: '0')],
     );
     final pending = <Completer<OkxAccountData>>[];
+    final api = TradeApiClient(baseUrl: 'https://trade.example');
     var loadCalls = 0;
 
     await tester.pumpWidget(
@@ -72,6 +75,10 @@ void main() {
             pending.add(request);
             return request.future;
           }),
+          tradeApiProvider.overrideWithValue(api),
+          tradeSessionProvider.overrideWith(
+            (ref) => _PortfolioAuthenticatedSessionController(api),
+          ),
           livePriceProvider.overrideWith((ref) => LivePriceNotifier()),
           okxWebsocketProvider.overrideWithValue(_FakeOkxWebsocketService()),
           currencyProvider.overrideWith((ref) => CurrencyDisplayMode.usdtVnd),
@@ -91,8 +98,9 @@ void main() {
     pending.first.complete(account);
     await tester.pump();
     await tester.pump();
-    await tester.pump(const Duration(seconds: 1));
+    await tester.pump(const Duration(seconds: 5));
     expect(loadCalls, 2);
+    expect(find.byKey(const Key('portfolio-asset-summary')), findsOneWidget);
 
     pending.last.complete(account);
     await tester.pump();
@@ -100,7 +108,7 @@ void main() {
   });
 
   test(
-    'live price disposal cancels its stream and releases the socket',
+    'live price disposal cancels its poll stream without starting polling',
     () async {
       final canceled = Completer<void>();
       final stream = StreamController<dynamic>.broadcast(
@@ -117,7 +125,7 @@ void main() {
       );
       final listener = container.listen(livePriceProvider, (_, _) {});
 
-      expect(service.connectCalls, 1);
+      expect(service.connectCalls, 0);
       listener.close();
       await container.pump();
       await canceled.future.timeout(const Duration(seconds: 1));
@@ -295,4 +303,16 @@ void main() {
 
     await tester.pumpWidget(const SizedBox.shrink());
   });
+}
+
+class _PortfolioAuthenticatedSessionController extends TradeSessionController {
+  _PortfolioAuthenticatedSessionController(super.api) {
+    state = TradeSessionState(
+      session: TradeSession(
+        bearerToken: 'test-token',
+        accountIdentifier: 'test-account',
+        expiresAt: DateTime.now().add(const Duration(hours: 1)),
+      ),
+    );
+  }
 }

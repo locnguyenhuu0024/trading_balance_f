@@ -8,6 +8,7 @@ import hmac
 import sqlite3
 import threading
 import time
+from contextlib import closing
 import urllib.error
 import urllib.request
 from decimal import Decimal
@@ -117,6 +118,8 @@ class FakeOKX:
             if uid is not None:
                 account["uid"] = uid
             return {"code": "0", "data": [account]}
+        if method == "GET" and parsed.path == "/api/v5/account/balance":
+            return {"code": "0", "data": [{"totalEq": "0", "details": []}]}
         if method == "GET" and parsed.path == "/api/v5/account/positions":
             instrument_type = params["instType"]
             if (
@@ -247,7 +250,7 @@ class TradeApiTests(unittest.TestCase):
     def simulate_interrupted_operation(
         self, operation_id: str, *, completed_targets: int = 0
     ) -> dict:
-        with sqlite3.connect(self.settings.operation_db_path) as connection:
+        with closing(sqlite3.connect(self.settings.operation_db_path)) as connection, connection:
             row = connection.execute(
                 "SELECT payload_json FROM operations WHERE operation_id=?", (operation_id,)
             ).fetchone()
@@ -367,6 +370,18 @@ class TradeApiTests(unittest.TestCase):
         self.assertEqual(status, 401)
         self.assertEqual(self.exchange.write_count, 0)
 
+    def test_red_expired_session_cannot_read_cached_private_gateway_data(self) -> None:
+        token = self.login()
+        status, _ = self.request("GET", "/v1/data/account/balance", token=token)
+        self.assertEqual(status, 200)
+        calls_after_initial_read = len(self.exchange.calls)
+
+        self.now += 28_800
+        status, _ = self.request("GET", "/v1/data/account/balance", token=token)
+
+        self.assertEqual(status, 401)
+        self.assertEqual(len(self.exchange.calls), calls_after_initial_read)
+
     def test_red_login_cookie_restores_the_fixed_eight_hour_bearer_session(self) -> None:
         code = _totp_at(TOTP_SECRET, int(self.now // 30))
         status, login = self.request("POST", "/v1/login", {"password": PASSWORD, "totp": code})
@@ -383,7 +398,7 @@ class TradeApiTests(unittest.TestCase):
         self.assertIn("Max-Age=28800", cookie_parts)
         self.assertFalse(any(part.lower().startswith("domain=") for part in cookie_parts))
 
-        with sqlite3.connect(self.settings.operation_db_path) as connection:
+        with closing(sqlite3.connect(self.settings.operation_db_path)) as connection, connection:
             expires_at = connection.execute(
                 "SELECT expires_at FROM sessions WHERE token_hash=?",
                 (token_digest(login["token"], SIGNING_KEY),),
@@ -399,7 +414,7 @@ class TradeApiTests(unittest.TestCase):
         self.assertEqual(restored["accountIdentifier"], login["accountIdentifier"])
         status, _ = self.request("GET", "/v1/positions", token=login["token"])
         self.assertEqual(status, 200)
-        with sqlite3.connect(self.settings.operation_db_path) as connection:
+        with closing(sqlite3.connect(self.settings.operation_db_path)) as connection, connection:
             unchanged_expiry = connection.execute(
                 "SELECT expires_at FROM sessions WHERE token_hash=?",
                 (token_digest(login["token"], SIGNING_KEY),),
@@ -552,14 +567,14 @@ class TradeApiTests(unittest.TestCase):
         self.assertEqual(status, 502)
         self.assertEqual(result["error"], "account_identity_unavailable")
         self.assertEqual(self.exchange.write_count, 0)
-        with sqlite3.connect(self.settings.operation_db_path) as connection:
+        with closing(sqlite3.connect(self.settings.operation_db_path)) as connection, connection:
             count = connection.execute("SELECT COUNT(*) FROM operations").fetchone()[0]
         self.assertEqual(count, 0)
 
     def test_red_legacy_operation_without_account_fingerprint_stays_unresolved(self) -> None:
         token = self.login()
         prepared = self.prepare(token, "close_position", targetIdentity=self.swap_identity())
-        with sqlite3.connect(self.settings.operation_db_path) as connection:
+        with closing(sqlite3.connect(self.settings.operation_db_path)) as connection, connection:
             row = connection.execute(
                 "SELECT payload_json FROM operations WHERE operation_id=?",
                 (prepared["operationId"],),
@@ -592,7 +607,7 @@ class TradeApiTests(unittest.TestCase):
     def test_red_execute_rejects_legacy_operation_without_account_fingerprint(self) -> None:
         token = self.login()
         prepared = self.prepare(token, "close_position", targetIdentity=self.swap_identity())
-        with sqlite3.connect(self.settings.operation_db_path) as connection:
+        with closing(sqlite3.connect(self.settings.operation_db_path)) as connection, connection:
             row = connection.execute(
                 "SELECT payload_json FROM operations WHERE operation_id=?",
                 (prepared["operationId"],),
@@ -617,7 +632,7 @@ class TradeApiTests(unittest.TestCase):
     def test_red_result_reconciliation_rejects_changed_account(self) -> None:
         token = self.login()
         prepared = self.prepare(token, "close_position", targetIdentity=self.swap_identity())
-        with sqlite3.connect(self.settings.operation_db_path) as connection:
+        with closing(sqlite3.connect(self.settings.operation_db_path)) as connection, connection:
             connection.execute(
                 "UPDATE operations SET status='IN_PROGRESS', results_json=? WHERE operation_id=?",
                 (
@@ -747,7 +762,7 @@ class TradeApiTests(unittest.TestCase):
         prepared = self.prepare(token, "dca", targetIdentity=self.swap_identity(), size="1")
         self.assertEqual(prepared["summary"]["targets"][0]["normalizedSize"], "1")
         self.assertNotIn("accountFingerprint", json.dumps(prepared))
-        with sqlite3.connect(self.settings.operation_db_path) as connection:
+        with closing(sqlite3.connect(self.settings.operation_db_path)) as connection, connection:
             row = connection.execute(
                 "SELECT payload_json FROM operations WHERE operation_id=?",
                 (prepared["operationId"],),
@@ -1280,7 +1295,7 @@ class TradeApiTests(unittest.TestCase):
     def test_red_close_all_interrupted_after_targets_requires_same_account_final_check(self) -> None:
         token = self.login()
         prepared = self.prepare(token, "close_all")
-        with sqlite3.connect(self.settings.operation_db_path) as connection:
+        with closing(sqlite3.connect(self.settings.operation_db_path)) as connection, connection:
             row = connection.execute(
                 "SELECT payload_json FROM operations WHERE operation_id=?",
                 (prepared["operationId"],),

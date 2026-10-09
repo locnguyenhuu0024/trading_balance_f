@@ -3,41 +3,38 @@
 
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../core/network/dio_client.dart';
+import '../../../core/network/backend_data_client.dart';
+import '../../../core/network/backend_data_session.dart';
+import '../presentation/providers/trade_session_provider.dart';
 import 'okx_order_model.dart';
 import 'okx_position_model.dart'; // Thêm dòng import này
 
 final orderRepositoryProvider = Provider<OrderRepository>((ref) {
-  final dio = ref.watch(dioProvider);
-  return OrderRepository(dio);
+  final client = ref.watch(backendDataClientProvider);
+  final session = ref.watch(backendDataSessionProvider);
+  return OrderRepository(client, session);
 });
 
 class OrderRepository {
-  final Dio _dio;
+  OrderRepository(this._client, this._session);
 
-  static const _allPositionTypes = ['MARGIN', 'SWAP', 'FUTURES'];
-  static const _allOrderTypes = ['SPOT', 'MARGIN', 'SWAP', 'FUTURES'];
-
-  OrderRepository(this._dio);
+  final BackendDataClient _client;
+  final BackendDataSession _session;
 
   /// Lấy danh sách VỊ THẾ MỞ (Open Positions - Margin, Futures, Swap)
-  Future<List<OkxPosition>> getOpenPositions({required String instType}) async {
+  Future<List<OkxPosition>> getOpenPositions({
+    required String instType,
+    CancelToken? cancelToken,
+  }) async {
     // SPOT không có vị thế mở, nên nếu filter là SPOT thì trả về mảng rỗng
     if (instType == 'SPOT') return [];
-    if (instType == 'ALL') {
-      final positionsByType = await Future.wait(
-        _allPositionTypes.map((type) => getOpenPositions(instType: type)),
-      );
-      return positionsByType.expand((positions) => positions).toList();
-    }
 
     try {
-      final response = await _dio.get(
+      final response = await _client.get(
         '/api/v5/account/positions',
-        queryParameters: {
-          'instType': instType,
-        },
-        options: Options(extra: {'requiresAuth': true}),
+        queryParameters: {'instType': instType},
+        session: _session,
+        cancelToken: cancelToken,
       );
 
       final data = response.data;
@@ -47,6 +44,8 @@ class OrderRepository {
       } else {
         throw Exception('Lỗi từ OKX API: ${data['msg']}');
       }
+    } on BackendDataException catch (e) {
+      _mapBackendError(e);
     } on DioException catch (e) {
       _handleDioError(e);
       rethrow;
@@ -54,24 +53,22 @@ class OrderRepository {
   }
 
   /// Lấy danh sách lệnh ĐANG CHỜ (Active/Pending)
-  Future<List<OkxOrder>> getPendingOrders({required String instType}) async {
-    if (instType == 'ALL') {
-      final ordersByType = await Future.wait(
-        _allOrderTypes.map((type) => getPendingOrders(instType: type)),
-      );
-      return _sortNewestFirst(ordersByType.expand((orders) => orders).toList());
-    }
-
+  Future<List<OkxOrder>> getPendingOrders({
+    required String instType,
+    CancelToken? cancelToken,
+  }) async {
     try {
-      final response = await _dio.get(
+      final response = await _client.get(
         '/api/v5/trade/orders-pending',
-        queryParameters: {
-          'instType': instType,
-        },
-        options: Options(extra: {'requiresAuth': true}),
+        queryParameters: {'instType': instType},
+        session: _session,
+        cancelToken: cancelToken,
       );
 
-      return _parseResponse(response.data);
+      final orders = _parseResponse(response.data);
+      return instType == 'ALL' ? _sortNewestFirst(orders) : orders;
+    } on BackendDataException catch (e) {
+      _mapBackendError(e);
     } on DioException catch (e) {
       _handleDioError(e);
       rethrow;
@@ -79,24 +76,22 @@ class OrderRepository {
   }
 
   /// Lấy danh sách LỊCH SỬ lệnh (7 ngày qua)
-  Future<List<OkxOrder>> getOrdersHistory({required String instType}) async {
-    if (instType == 'ALL') {
-      final ordersByType = await Future.wait(
-        _allOrderTypes.map((type) => getOrdersHistory(instType: type)),
-      );
-      return _sortNewestFirst(ordersByType.expand((orders) => orders).toList());
-    }
-
+  Future<List<OkxOrder>> getOrdersHistory({
+    required String instType,
+    CancelToken? cancelToken,
+  }) async {
     try {
-      final response = await _dio.get(
+      final response = await _client.get(
         '/api/v5/trade/orders-history',
-        queryParameters: {
-          'instType': instType,
-        },
-        options: Options(extra: {'requiresAuth': true}),
+        queryParameters: {'instType': instType},
+        session: _session,
+        cancelToken: cancelToken,
       );
 
-      return _parseResponse(response.data);
+      final orders = _parseResponse(response.data);
+      return instType == 'ALL' ? _sortNewestFirst(orders) : orders;
+    } on BackendDataException catch (e) {
+      _mapBackendError(e);
     } on DioException catch (e) {
       _handleDioError(e);
       rethrow;
@@ -134,9 +129,36 @@ class OrderRepository {
 
   // --- Hàm hỗ trợ xử lý lỗi dùng chung ---
   void _handleDioError(DioException e) {
-    if (e.response?.statusCode == 401) {
-      throw Exception('API Key không hợp lệ hoặc thiếu quyền.');
-    }
-    throw Exception('Lỗi kết nối: ${e.message}');
+    final cancelled = e.type == DioExceptionType.cancel;
+    final statusCode = e.response?.statusCode;
+    final message = switch (statusCode) {
+      401 => 'Phiên giao dịch đã hết hạn. Hãy đăng nhập lại.',
+      429 => 'Dữ liệu giao dịch đang bị giới hạn. Hãy thử lại sau.',
+      _ => 'Không thể tải dữ liệu giao dịch từ máy chủ.',
+    };
+    throw BackendDataException(
+      code: cancelled
+          ? 'request_cancelled'
+          : statusCode == null
+          ? 'network_error'
+          : 'http_error',
+      message: cancelled ? 'The foreground read was cancelled.' : message,
+      statusCode: statusCode,
+      retryAfter: e.response?.headers.value('retry-after'),
+    );
+  }
+
+  Never _mapBackendError(BackendDataException error) {
+    final message = switch (error.statusCode) {
+      401 => 'Phiên giao dịch đã hết hạn. Hãy đăng nhập lại.',
+      429 => 'Dữ liệu giao dịch đang bị giới hạn. Hãy thử lại sau.',
+      _ => error.message,
+    };
+    throw BackendDataException(
+      code: error.code,
+      message: message,
+      statusCode: error.statusCode,
+      retryAfter: error.retryAfter,
+    );
   }
 }

@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:trading_balance_f/core/network/backend_data_client.dart';
 import 'package:trading_balance_f/features/orders/data/trade_api_client.dart';
 import 'package:trading_balance_f/features/orders/presentation/providers/trade_session_provider.dart';
 import 'package:trading_balance_f/features/portfolio/data/risk/risk_request_coordinator.dart';
@@ -642,7 +643,7 @@ Map<String, dynamic> _retryOrder({
 class _FakeMarketRepository extends StrategyMarketRepository {
   _FakeMarketRepository()
     : super(
-        Dio(BaseOptions(baseUrl: 'https://www.okx.com')),
+        BackendDataClient(dio: Dio(), baseUrl: 'https://data.example'),
         requestCoordinator: RiskRequestCoordinator(
           minimumSpacing: Duration.zero,
           delay: (_) async {},
