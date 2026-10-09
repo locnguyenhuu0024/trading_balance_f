@@ -5,7 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/network/backend_data_client.dart';
 import 'package:trading_balance_f/features/orders/data/trade_api_client.dart';
 import 'package:trading_balance_f/features/orders/presentation/providers/trade_session_provider.dart';
-import 'package:trading_balance_f/features/portfolio/data/risk/risk_request_coordinator.dart';
+import 'package:trading_balance_f/core/network/request_coordinator.dart';
 import 'package:trading_balance_f/features/strategy/data/strategy_api_client.dart';
 import 'package:trading_balance_f/features/strategy/data/strategy_market_repository.dart';
 import 'package:trading_balance_f/features/strategy/domain/strategy_models.dart';
@@ -1494,7 +1494,7 @@ class _FakeStrategyMarketRepository extends StrategyMarketRepository {
   _FakeStrategyMarketRepository()
     : super(
         BackendDataClient(dio: Dio(), baseUrl: 'https://data.example'),
-        requestCoordinator: RiskRequestCoordinator(
+        requestCoordinator: RequestCoordinator(
           minimumSpacing: Duration.zero,
           delay: (_) async {},
         ),

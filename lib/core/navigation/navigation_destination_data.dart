@@ -25,7 +25,6 @@ const navigationBmagId = 'bmag';
 const navigationOrdersId = 'orders';
 const navigationMarketId = 'market';
 const navigationSettingsId = 'settings';
-const navigationRiskId = 'risk';
 const navigationSupportId = 'support';
 const navigationStrategyId = 'strategy';
 
@@ -36,7 +35,6 @@ const navigationDestinationIds = <String>[
   navigationOrdersId,
   navigationMarketId,
   navigationSettingsId,
-  navigationRiskId,
   navigationSupportId,
   navigationStrategyId,
 ];
@@ -76,13 +74,6 @@ const navigationItems = <NavigationItemData>[
     label: 'Cài đặt',
     icon: Icons.settings_outlined,
     selectedIcon: Icons.settings,
-  ),
-  NavigationItemData(
-    id: navigationRiskId,
-    screenIndex: 5,
-    label: 'Risk',
-    icon: Icons.shield_outlined,
-    selectedIcon: Icons.shield,
   ),
   NavigationItemData(
     id: navigationSupportId,

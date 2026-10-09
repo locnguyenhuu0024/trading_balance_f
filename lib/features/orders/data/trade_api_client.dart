@@ -50,7 +50,16 @@ abstract interface class CancellableTradePositionsApi {
   });
 }
 
-class TradeApiClient implements TradeApi, CancellableTradePositionsApi {
+/// Optional capability for APIs that provide a validated password scope.
+abstract interface class TradeApiRememberPasswordScope {
+  String? get rememberedPasswordScope;
+}
+
+class TradeApiClient
+    implements
+        TradeApi,
+        CancellableTradePositionsApi,
+        TradeApiRememberPasswordScope {
   TradeApiClient({Dio? dio, String? baseUrl})
     : _baseUrl = (baseUrl ?? tradeApiBaseUrl).trim(),
       _dio = dio;
@@ -60,6 +69,9 @@ class TradeApiClient implements TradeApi, CancellableTradePositionsApi {
 
   @override
   bool get isConfigured => _validatedBaseUrl != null;
+
+  @override
+  String? get rememberedPasswordScope => _validatedBaseUrl;
 
   @override
   bool get supportsSessionRestoration =>

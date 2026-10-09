@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/security/secure_storage_helper.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/manual_refresh_button.dart';
 import '../../orders/presentation/widgets/trade_account_controls.dart';
 import '../domain/okx_credential_bundle.dart';
 
@@ -29,12 +30,14 @@ class _SettingsTradeAccessPageState
   bool _isLoading = true;
   bool _isSaving = false;
   bool _isPastingFromClipboard = false;
+  bool _isRefreshingSavedSummary = false;
   bool _hasCompleteSavedCredentials = false;
   bool _isEditing = true;
   bool _isManualEntry = false;
   int _credentialUiGeneration = 0;
   String? _loadError;
   String? _saveError;
+  String? _refreshError;
 
   bool get _inputsEnabled =>
       !_isLoading &&
@@ -84,6 +87,42 @@ class _SettingsTradeAccessPageState
         _isEditing = true;
         _loadError = 'Không thể tải thông tin API đã lưu. Hãy thử lại.';
       });
+    }
+  }
+
+  Future<void> _refreshSavedSummary() async {
+    if (_isLoading ||
+        _isSaving ||
+        _isPastingFromClipboard ||
+        _isRefreshingSavedSummary) {
+      return;
+    }
+    final requestGeneration = ++_credentialUiGeneration;
+    setState(() {
+      _isRefreshingSavedSummary = true;
+      _refreshError = null;
+    });
+    try {
+      final storage = ref.read(secureStorageProvider);
+      final values = await Future.wait([
+        storage.getOkxApiKey(),
+        storage.getOkxSecretKey(),
+        storage.getOkxPassphrase(),
+      ]);
+      if (!mounted || requestGeneration != _credentialUiGeneration) return;
+      setState(() {
+        _hasCompleteSavedCredentials = values.every(
+          (value) => value != null && value.trim().isNotEmpty,
+        );
+        _loadError = null;
+      });
+    } catch (_) {
+      if (!mounted || requestGeneration != _credentialUiGeneration) return;
+      setState(() {
+        _refreshError = 'Không thể làm mới thông tin API đã lưu. Hãy thử lại.';
+      });
+    } finally {
+      if (mounted) setState(() => _isRefreshingSavedSummary = false);
     }
   }
 
@@ -246,11 +285,32 @@ class _SettingsTradeAccessPageState
     final mutedColor = theme.colorScheme.onSurfaceVariant;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('API và giao dịch')),
+      appBar: AppBar(
+        title: const Text('API và giao dịch'),
+        actions: [
+          ManualRefreshButton(
+            buttonKey: const Key('settings-trade-access-manual-refresh'),
+            onRefresh: _refreshSavedSummary,
+            isBusy:
+                _isLoading ||
+                _isSaving ||
+                _isPastingFromClipboard ||
+                _isRefreshingSavedSummary,
+          ),
+        ],
+      ),
       body: NavigationContentFrame(
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
+            if (_refreshError != null) ...[
+              Text(
+                _refreshError!,
+                key: const Key('settings-okx-refresh-error'),
+                style: TextStyle(color: AppPalette.of(context).negative),
+              ),
+              const SizedBox(height: 8),
+            ],
             Padding(
               padding: const EdgeInsets.only(left: 8, bottom: 8),
               child: Text(

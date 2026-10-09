@@ -6,7 +6,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:trading_balance_f/core/network/backend_data_client.dart';
 import 'package:trading_balance_f/features/orders/presentation/providers/trade_session_provider.dart';
-import 'package:flutter_background_service/flutter_background_service.dart';
 import '../../../core/currency/currency_display_mode.dart';
 import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/navigation/navigation_destination_data.dart';
@@ -16,6 +15,7 @@ import '../../../core/security/secure_storage_helper.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/timezone/app_time_zone.dart';
 import '../../../core/typography/app_text_scale.dart';
+import '../../../core/widgets/manual_refresh_button.dart';
 import '../../fractal_tracker/presentation/providers/fractal_provider.dart';
 import '../../portfolio/presentation/portfolio_screen.dart';
 import 'settings_trade_access_page.dart';
@@ -25,7 +25,6 @@ final themeModeProvider = StateProvider<ThemeMode>((ref) => ThemeMode.system);
 final currencyProvider = StateProvider<String>((ref) => 'USD');
 final defaultHideBalanceProvider = StateProvider<bool>((ref) => false);
 final biometricAuthProvider = StateProvider<bool>((ref) => true);
-final backgroundServiceProvider = StateProvider<bool>((ref) => false);
 
 // --- Provider lấy tỷ giá ---
 final vndExchangeRateProvider = FutureProvider<double>((ref) async {
@@ -73,6 +72,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _isSavingTimeZone = false;
   bool _isSavingAppTextScale = false;
   bool _hasUserChangedAppTextScale = false;
+  bool _isRefreshingExchangeRate = false;
+
+  Future<void> _refreshExchangeRate() async {
+    if (_isRefreshingExchangeRate) return;
+    setState(() => _isRefreshingExchangeRate = true);
+    try {
+      ref.invalidate(vndExchangeRateProvider);
+      await ref.read(vndExchangeRateProvider.future);
+    } catch (_) {
+      // The exchange-rate provider keeps its local fallback available.
+    } finally {
+      if (mounted) setState(() => _isRefreshingExchangeRate = false);
+    }
+  }
 
   @override
   void initState() {
@@ -94,13 +107,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       // Keep the current/root scale when the optional setting cannot be read.
     }
 
-    var isServiceRunning = false;
-    try {
-      isServiceRunning = await FlutterBackgroundService().isRunning();
-    } catch (_) {
-      // Keep the service toggle off when the platform service is unavailable.
-    }
-
     if (mounted) {
       // Khôi phục trạng thái lên UI
       ref.read(defaultHideBalanceProvider.notifier).state = hideBalance;
@@ -115,7 +121,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       if (!_hasUserChangedAppTextScale) {
         ref.read(appTextScaleProvider.notifier).state = appTextScale;
       }
-      ref.read(backgroundServiceProvider.notifier).state = isServiceRunning;
     }
   }
 
@@ -218,6 +223,88 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
+  Widget _buildTimeZoneTile({
+    required String timeZoneId,
+    required Color textColor,
+    required Color cardColor,
+    required Color sectionTitleColor,
+    required bool compact,
+  }) {
+    final dropdown = DropdownButtonHideUnderline(
+      child: DropdownButton<String>(
+        key: const Key('settings-timezone-select'),
+        isExpanded: compact,
+        value: AppTimeZone.normalizeId(timeZoneId),
+        dropdownColor: cardColor,
+        icon: Icon(
+          Icons.unfold_more_rounded,
+          color: sectionTitleColor,
+          size: 20,
+        ),
+        style: TextStyle(
+          color: textColor,
+          fontSize: 13,
+          fontWeight: FontWeight.bold,
+        ),
+        alignment: AlignmentDirectional.centerEnd,
+        items: AppTimeZone.options
+            .map(
+              (option) => DropdownMenuItem<String>(
+                value: option.id,
+                child: Text(
+                  '${option.label} (${option.id})',
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            )
+            .toList(),
+        onChanged: _isSavingTimeZone
+            ? null
+            : (String? value) {
+                if (value != null) _saveTimeZone(value);
+              },
+      ),
+    );
+
+    return ListTile(
+      contentPadding: compact ? EdgeInsets.zero : null,
+      minLeadingWidth: compact ? 28 : null,
+      horizontalTitleGap: compact ? 8 : null,
+      leading: Icon(Icons.schedule_outlined, color: textColor, size: 22),
+      title: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            'Múi giờ',
+            style: TextStyle(
+              color: textColor,
+              fontWeight: FontWeight.w500,
+              fontSize: 14,
+            ),
+          ),
+          IconButton(
+            key: const Key('settings-timezone-info-button'),
+            tooltip: 'Thông tin múi giờ',
+            visualDensity: VisualDensity.standard,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(
+              minWidth: AppTokens.minimumTouchTarget,
+              minHeight: AppTokens.minimumTouchTarget,
+            ),
+            icon: Icon(
+              Icons.help_outline_rounded,
+              color: sectionTitleColor,
+              size: 18,
+            ),
+            onPressed: _showTimeZoneInfo,
+          ),
+        ],
+      ),
+      subtitle: compact ? dropdown : null,
+      trailing: compact ? null : dropdown,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final themeMode = ref.watch(themeModeProvider);
@@ -247,6 +334,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           'Cài đặt',
           style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
         ),
+        actions: [
+          ManualRefreshButton(
+            buttonKey: const Key('settings-manual-refresh'),
+            onRefresh: _refreshExchangeRate,
+            isBusy: _isRefreshingExchangeRate || exchangeRateAsync.isLoading,
+          ),
+        ],
       ),
       body: NavigationContentFrame(
         child: SingleChildScrollView(
@@ -328,72 +422,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       ),
                     ),
                     Divider(height: 1, color: palette.border, indent: 52),
-                    ListTile(
-                      leading: Icon(
-                        Icons.schedule_outlined,
-                        color: textColor,
-                        size: 22,
-                      ),
-                      title: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            'Múi giờ',
-                            style: TextStyle(
-                              color: textColor,
-                              fontWeight: FontWeight.w500,
-                              fontSize: 14,
-                            ),
-                          ),
-                          IconButton(
-                            key: const Key('settings-timezone-info-button'),
-                            tooltip: 'Thông tin múi giờ',
-                            visualDensity: VisualDensity.standard,
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(
-                              minWidth: AppTokens.minimumTouchTarget,
-                              minHeight: AppTokens.minimumTouchTarget,
-                            ),
-                            icon: Icon(
-                              Icons.help_outline_rounded,
-                              color: sectionTitleColor,
-                              size: 18,
-                            ),
-                            onPressed: _showTimeZoneInfo,
-                          ),
-                        ],
-                      ),
-                      trailing: DropdownButtonHideUnderline(
-                        child: DropdownButton<String>(
-                          key: const Key('settings-timezone-select'),
-                          value: AppTimeZone.normalizeId(timeZoneId),
-                          dropdownColor: cardColor,
-                          icon: Icon(
-                            Icons.unfold_more_rounded,
-                            color: sectionTitleColor,
-                            size: 20,
-                          ),
-                          style: TextStyle(
-                            color: textColor,
-                            fontSize: 13,
-                            fontWeight: FontWeight.bold,
-                          ),
-                          alignment: AlignmentDirectional.centerEnd,
-                          items: AppTimeZone.options
-                              .map(
-                                (option) => DropdownMenuItem<String>(
-                                  value: option.id,
-                                  child: Text('${option.label} (${option.id})'),
-                                ),
-                              )
-                              .toList(),
-                          onChanged: _isSavingTimeZone
-                              ? null
-                              : (String? value) {
-                                  if (value != null) _saveTimeZone(value);
-                                },
-                        ),
-                      ),
+                    _buildTimeZoneTile(
+                      timeZoneId: timeZoneId,
+                      textColor: textColor,
+                      cardColor: cardColor,
+                      sectionTitleColor: sectionTitleColor,
+                      compact: MediaQuery.sizeOf(context).width < 360,
                     ),
                     Divider(
                       height: 1,

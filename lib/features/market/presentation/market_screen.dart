@@ -10,6 +10,7 @@ import 'package:trading_balance_f/features/orders/presentation/providers/trade_s
 import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/crypto_icon.dart';
+import '../../../core/widgets/manual_refresh_button.dart';
 import '../../portfolio/presentation/portfolio_screen.dart'; // Lấy trạng thái Dark Mode
 
 // --- Model dữ liệu nội bộ cho Market ---
@@ -83,6 +84,21 @@ class MarketScreen extends ConsumerStatefulWidget {
 }
 
 class _MarketScreenState extends ConsumerState<MarketScreen> {
+  bool _refreshInFlight = false;
+
+  Future<void> _refreshMarket() async {
+    if (_refreshInFlight) return;
+    setState(() => _refreshInFlight = true);
+    try {
+      ref.invalidate(marketListProvider);
+      await ref.read(marketListProvider.future);
+    } catch (_) {
+      // The watched provider renders the read error.
+    } finally {
+      if (mounted) setState(() => _refreshInFlight = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = ref.watch(isDarkModeProvider);
@@ -106,15 +122,19 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
           'Thị trường (Top 50)',
           style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
         ),
-        actions: [],
+        actions: [
+          ManualRefreshButton(
+            buttonKey: const Key('market-manual-refresh'),
+            onRefresh: _refreshMarket,
+            isBusy: _refreshInFlight || marketAsync.isLoading,
+          ),
+        ],
       ),
       body: NavigationContentFrame(
         child: RefreshIndicator(
           color: palette.ink,
           backgroundColor: palette.raised,
-          onRefresh: () async {
-            return ref.invalidate(marketListProvider);
-          },
+          onRefresh: _refreshMarket,
           child: marketAsync.when(
             loading: () =>
                 Center(child: CircularProgressIndicator(color: textColor)),

@@ -22,6 +22,9 @@ Verdict: PENDING | PASS | REWORK | BLOCKED
 - focused Codex retry/probe: N/A | PASS | FAIL — <concise evidence>
 - external verification command/evidence: <N/A | secret-free command + user-reported exit code/status + concise non-secret output>
 - external verification accepted: N/A | YES | NO | OBSOLETE — <reason>
+- frontend level: F0 | F1 | F2 | F3 | N/A
+- frontend design brief: <path/status | N/A>
+- frontend visual review: <path/status | N/A>
 
 ## Contract Mapping
 
@@ -90,6 +93,21 @@ Rules:
 - Code/build failures require localization and bounded remediation when they remain within approved scope.
 - A proven unrelated/pre-existing build failure that requires scope expansion yields `BLOCKED`, not `PASS`.
 - A genuine pre-build environment/toolchain failure sets the build gate to `BLOCKED_ENVIRONMENT` and the audit verdict to `BLOCKED`, not `PASS`.
+
+## Frontend Quality Gate
+
+Required: YES | NO
+Approved design brief conformance: PASS | FAIL | N/A
+Repository design-system consistency: PASS | FAIL | N/A
+Pinned web-interface-guidelines audit: PASS | FINDINGS | BLOCKED | N/A
+React/Next performance review: PASS | FINDINGS | N/A
+Composition/API review: PASS | FINDINGS | N/A
+View-transition/reduced-motion review: PASS | FINDINGS | N/A
+Rendered visual evidence required: YES | NO
+Rendered visual review: PASS | REWORK | UNAVAILABLE | BLOCKED_EVIDENCE | N/A
+Out-of-scope redesign/dependency expansion: NO | YES
+
+A final `PASS` is forbidden when an applicable blocking frontend finding remains unresolved. When appearance itself is an acceptance criterion, code inspection alone cannot establish visual PASS.
 
 ## Findings
 

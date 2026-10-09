@@ -4,7 +4,7 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/network/backend_data_client.dart';
-import 'package:trading_balance_f/features/portfolio/data/risk/risk_request_coordinator.dart';
+import 'package:trading_balance_f/core/network/request_coordinator.dart';
 import 'package:trading_balance_f/features/support_resistance/data/market_repository.dart';
 import 'package:trading_balance_f/features/support_resistance/domain/models.dart';
 
@@ -384,7 +384,7 @@ SupportResistanceRepository _repository(
       dio: Dio()..httpClientAdapter = adapter,
       baseUrl: 'https://data.example',
     ),
-    requestCoordinator: RiskRequestCoordinator(
+    requestCoordinator: RequestCoordinator(
       clock: () => now,
       minimumSpacing: Duration.zero,
     ),

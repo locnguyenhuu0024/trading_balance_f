@@ -63,10 +63,10 @@ Default routing when the runtime supports explicit main-model selection:
 
 | Reasoning | Orchestration | Main coordinator |
 | --- | --- | --- |
-| `STANDARD` | `LOW` | `gpt-6-sol` / `medium` |
-| `HARD` | `LOW` | `gpt-6-sol` / `high` |
-| `STANDARD` | `HIGH` | `gpt-6-sol` / `medium` |
-| `HARD` | `HIGH` | `gpt-6-sol` / `medium`, with hard bounded reasoning delegated to `gpt-6-sol` / `high` or higher reasoning subagents |
+| `STANDARD` | `LOW` | `gpt-6.1-sol` / `medium` |
+| `HARD` | `LOW` | `gpt-6.1-sol` / `high` |
+| `STANDARD` | `HIGH` | `gpt-6.1-sol` / `medium` |
+| `HARD` | `HIGH` | `gpt-6.1-sol` / `medium`, with hard bounded reasoning delegated to `gpt-6.1-sol` / `high` or higher reasoning subagents |
 
 Do not map planning tier directly to coordinator model. A Tier-L decision can still be one hard reasoning problem suited to Sol High; a Tier-M change can become orchestration-heavy when it has many independent tasks and integration waves. If the current runtime fixes the main model, treat this table as best-effort routing guidance, not a reason to block planning.
 
@@ -92,7 +92,7 @@ A workstream is **material** when it requires its own repository evidence, desig
 
 When **two or more material workstreams are independently analyzable**, dispatch separate reasoning subagents for those workstreams before finalizing the specification/plan, when child dispatch is available.
 
-Special rule: **material frontend + material backend automatically requires at least two separate reasoning workstreams**. For normal feature planning, route each to `R2` / `gpt-6-sol` / `medium` by default. Use `R1` only for genuinely routine bounded analysis; use `R3+` only when that workstream's technical reasoning independently warrants escalation.
+Special rule: **material frontend + material backend automatically requires at least two separate reasoning workstreams**. For normal feature planning, route each to `R2` / `gpt-6.1-sol` / `medium` by default. Use `R1` only for genuinely routine bounded analysis; use `R3+` only when that workstream's technical reasoning independently warrants escalation.
 
 Each subagent returns a bounded proposal/evidence package keyed to relevant stable IDs; it does not finalize product semantics, approve architecture, or directly own the canonical artifact. The coordinator performs fan-in, reconciles contradictions, resolves source-of-truth precedence, synthesizes frontend/backend/API/data interfaces, deduplicates prose, and writes/finalizes the canonical specification/plan.
 

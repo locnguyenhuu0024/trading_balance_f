@@ -1,7 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:trading_balance_f/core/network/backend_data_client.dart';
 
-import '../../portfolio/data/risk/risk_request_coordinator.dart';
+import '../../../core/network/request_coordinator.dart';
 import '../domain/level_calculator.dart';
 import '../domain/models.dart';
 
@@ -25,7 +25,7 @@ class SupportResistanceRepository {
   static const int maximumCandleCount = 300;
 
   final BackendDataClient _client;
-  final RiskRequestCoordinator requestCoordinator;
+  final RequestCoordinator requestCoordinator;
   final SupportResistanceRepositoryClock clock;
   final SupportResistanceCalculator calculator;
 
@@ -307,14 +307,14 @@ class SupportResistanceRepository {
   }) async {
     try {
       return await requestCoordinator.run<Response<dynamic>>(
-        lane: RiskRequestLane.public,
+        lane: RequestLane.public,
         key: _requestKey(endpoint, queryParameters),
         request: () => _client.get(
           endpoint,
           queryParameters: queryParameters,
         ),
       );
-    } on RiskRequestBackoffException catch (error) {
+    } on RequestBackoffException catch (error) {
       throw SupportResistanceRepositoryException(
         failure: SupportResistanceRepositoryFailure.rateLimited,
         message: 'Public market request is backing off',

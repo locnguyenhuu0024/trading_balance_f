@@ -56,6 +56,151 @@ class _TrackingOkxWebsocketService extends OkxWebsocketService {
 }
 
 void main() {
+  testWidgets('manual Portfolio refresh waits for the current read', (
+    tester,
+  ) async {
+    const account = OkxAccountData(
+      details: [OkxCoinDetail(ccy: 'BTC', eq: '1', eqUsd: '100', upl: '0')],
+    );
+    final api = TradeApiClient(baseUrl: 'https://trade.example');
+    var loadCalls = 0;
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          portfolioFutureProvider.overrideWith((ref) async {
+            loadCalls++;
+            return account;
+          }),
+          tradeApiProvider.overrideWithValue(api),
+          tradeSessionProvider.overrideWith(
+            (ref) => _PortfolioAuthenticatedSessionController(api),
+          ),
+          livePriceProvider.overrideWith((ref) => LivePriceNotifier()),
+          okxWebsocketProvider.overrideWithValue(_FakeOkxWebsocketService()),
+          currencyProvider.overrideWith((ref) => CurrencyDisplayMode.usd),
+          vndExchangeRateProvider.overrideWith((ref) async => 25400),
+          themeModeProvider.overrideWith((ref) => ThemeMode.light),
+          hideBalanceProvider.overrideWith((ref) => false),
+        ],
+        child: const MaterialApp(home: PortfolioScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(loadCalls, 1);
+    expect(find.byTooltip('Làm mới dữ liệu'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('portfolio-manual-refresh')));
+    await tester.pumpAndSettle();
+    expect(loadCalls, 2);
+    expect(find.byKey(const Key('portfolio-asset-summary')), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('Portfolio toolbar and pull refresh share one pending read', (
+    tester,
+  ) async {
+    const account = OkxAccountData(
+      details: [OkxCoinDetail(ccy: 'BTC', eq: '1', eqUsd: '100', upl: '0')],
+    );
+    final api = TradeApiClient(baseUrl: 'https://trade.example');
+    final pendingRate = Completer<double>();
+    var rateLoads = 0;
+    var portfolioLoads = 0;
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          portfolioFutureProvider.overrideWith((ref) async {
+            portfolioLoads++;
+            return account;
+          }),
+          tradeApiProvider.overrideWithValue(api),
+          tradeSessionProvider.overrideWith(
+            (ref) => _PortfolioAuthenticatedSessionController(api),
+          ),
+          livePriceProvider.overrideWith((ref) => LivePriceNotifier()),
+          okxWebsocketProvider.overrideWithValue(_FakeOkxWebsocketService()),
+          currencyProvider.overrideWith((ref) => CurrencyDisplayMode.usd),
+          vndExchangeRateProvider.overrideWith((ref) {
+            rateLoads++;
+            return rateLoads == 1
+                ? Future<double>.value(25400)
+                : pendingRate.future;
+          }),
+          themeModeProvider.overrideWith((ref) => ThemeMode.light),
+          hideBalanceProvider.overrideWith((ref) => false),
+        ],
+        child: const MaterialApp(home: PortfolioScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(rateLoads, 1);
+    expect(portfolioLoads, 1);
+
+    await tester.tap(find.byKey(const Key('portfolio-manual-refresh')));
+    await tester.pump();
+    expect(rateLoads, 2);
+    await tester
+        .widget<RefreshIndicator>(find.byType(RefreshIndicator))
+        .onRefresh();
+    expect(rateLoads, 2);
+    expect(portfolioLoads, 1);
+
+    pendingRate.complete(25500);
+    await tester.pumpAndSettle();
+    expect(portfolioLoads, 2);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('Portfolio disposal during rate refresh starts no balance read', (
+    tester,
+  ) async {
+    const account = OkxAccountData(
+      details: [OkxCoinDetail(ccy: 'BTC', eq: '1', eqUsd: '100', upl: '0')],
+    );
+    final api = TradeApiClient(baseUrl: 'https://trade.example');
+    final pendingRate = Completer<double>();
+    var rateLoads = 0;
+    var portfolioLoads = 0;
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          portfolioFutureProvider.overrideWith((ref) async {
+            portfolioLoads++;
+            return account;
+          }),
+          tradeApiProvider.overrideWithValue(api),
+          tradeSessionProvider.overrideWith(
+            (ref) => _PortfolioAuthenticatedSessionController(api),
+          ),
+          livePriceProvider.overrideWith((ref) => LivePriceNotifier()),
+          okxWebsocketProvider.overrideWithValue(_FakeOkxWebsocketService()),
+          currencyProvider.overrideWith((ref) => CurrencyDisplayMode.usd),
+          vndExchangeRateProvider.overrideWith((ref) {
+            rateLoads++;
+            return rateLoads == 1
+                ? Future<double>.value(25400)
+                : pendingRate.future;
+          }),
+          themeModeProvider.overrideWith((ref) => ThemeMode.light),
+          hideBalanceProvider.overrideWith((ref) => false),
+        ],
+        child: const MaterialApp(home: PortfolioScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('portfolio-manual-refresh')));
+    await tester.pump();
+    expect(rateLoads, 2);
+    await tester.pumpWidget(const SizedBox.shrink());
+    pendingRate.complete(25500);
+    await tester.pump();
+    await tester.pump();
+
+    expect(portfolioLoads, 1);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('Portfolio refresh waits for its loading request to finish', (
     tester,
   ) async {
@@ -91,6 +236,7 @@ void main() {
     );
     await tester.pump();
     expect(loadCalls, 1);
+    expect(find.byTooltip('Làm mới dữ liệu'), findsOneWidget);
 
     await tester.pump(const Duration(seconds: 5));
     expect(loadCalls, 1);
@@ -199,10 +345,19 @@ void main() {
       details: [OkxCoinDetail(ccy: 'BTC', eq: '1', eqUsd: '100', upl: '0.1')],
     );
 
+    final api = TradeApiClient(baseUrl: 'https://trade.example');
+    var loadCalls = 0;
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          portfolioFutureProvider.overrideWith((ref) async => account),
+          portfolioFutureProvider.overrideWith((ref) async {
+            loadCalls++;
+            return account;
+          }),
+          tradeApiProvider.overrideWithValue(api),
+          tradeSessionProvider.overrideWith(
+            (ref) => _PortfolioAuthenticatedSessionController(api),
+          ),
           livePriceProvider.overrideWith((ref) => LivePriceNotifier()),
           okxWebsocketProvider.overrideWithValue(_FakeOkxWebsocketService()),
           currencyProvider.overrideWith((ref) => CurrencyDisplayMode.usdtVnd),
@@ -218,6 +373,11 @@ void main() {
     await tester.tap(find.byKey(const Key('portfolio-reveal-pnl')));
     await tester.pump();
 
+    expect(find.text('+10.00 USDT'), findsOneWidget);
+    expect(find.byTooltip('Làm mới dữ liệu'), findsOneWidget);
+    await tester.tap(find.byTooltip('Làm mới dữ liệu'));
+    await tester.pumpAndSettle();
+    expect(loadCalls, 2);
     expect(find.text('+10.00 USDT'), findsOneWidget);
     expect(
       tester.widget<Text>(find.text('+10.00 USDT')).style?.color,

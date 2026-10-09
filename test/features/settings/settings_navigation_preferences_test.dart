@@ -304,7 +304,6 @@ void main() {
       'orders',
       'market',
       'settings',
-      'risk',
       'support',
       'strategy',
     ]) {
@@ -348,7 +347,7 @@ void main() {
     );
   });
 
-  testWidgets('reorders BMAG after Risk from the navigation drag handle', (
+  testWidgets('reorders BMAG after Support from the navigation drag handle', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(800, 1200);
@@ -362,9 +361,9 @@ void main() {
     await tester.pumpAndSettle();
 
     final bmagHandle = find.byKey(const Key('settings-navigation-drag-bmag'));
-    final riskRow = find.byKey(const Key('settings-navigation-visible-risk'));
+    final supportRow = find.byKey(const Key('settings-navigation-visible-support'));
     final dragDistance =
-        tester.getTopLeft(riskRow).dy - tester.getCenter(bmagHandle).dy + 4;
+        tester.getTopLeft(supportRow).dy - tester.getCenter(bmagHandle).dy + 4;
     await tester.drag(bmagHandle, Offset(0, dragDistance));
     await tester.pumpAndSettle();
 
@@ -374,9 +373,8 @@ void main() {
       'orders',
       'market',
       'settings',
-      'risk',
-      'bmag',
       'support',
+      'bmag',
       'strategy',
     ]);
     expect(
@@ -386,7 +384,7 @@ void main() {
       greaterThan(
         tester
             .getTopLeft(
-              find.byKey(const Key('settings-navigation-visible-risk')),
+              find.byKey(const Key('settings-navigation-visible-support')),
             )
             .dy,
       ),
@@ -407,9 +405,9 @@ void main() {
     await tester.pumpAndSettle();
 
     final bmagHandle = find.byKey(const Key('settings-navigation-drag-bmag'));
-    final riskRow = find.byKey(const Key('settings-navigation-visible-risk'));
+    final supportRow = find.byKey(const Key('settings-navigation-visible-support'));
     final dragDistance =
-        tester.getTopLeft(riskRow).dy - tester.getCenter(bmagHandle).dy + 4;
+        tester.getTopLeft(supportRow).dy - tester.getCenter(bmagHandle).dy + 4;
     await tester.drag(bmagHandle, Offset(0, dragDistance));
     await tester.pumpAndSettle();
 
@@ -435,7 +433,7 @@ void main() {
       greaterThan(
         tester
             .getTopLeft(
-              find.byKey(const Key('settings-navigation-visible-risk')),
+              find.byKey(const Key('settings-navigation-visible-support')),
             )
             .dy,
       ),

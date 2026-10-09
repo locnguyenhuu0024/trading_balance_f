@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -122,6 +124,7 @@ void main() {
     await tester.pump();
     await tester.pump();
 
+    expect(find.byTooltip('Làm mới dữ liệu'), findsOneWidget);
     expect(find.text(r'$0.09117'), findsOneWidget);
     expect(find.text('Mở: 123.4567'), findsOneWidget);
     expect(find.text('🔥 1,234,567.89'), findsOneWidget);
@@ -147,6 +150,42 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  testWidgets('manual Fractal refresh waits for the selected data read', (
+    tester,
+  ) async {
+    final refreshResult = Completer<List<FractalData>>();
+    var loads = 0;
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          fractalDataProvider.overrideWith((ref) async {
+            loads++;
+            if (loads == 1) return [_fractalDataWithPrices()];
+            return refreshResult.future;
+          }),
+        ],
+        child: const MaterialApp(home: FractalScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip('Làm mới dữ liệu'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('fractal-manual-refresh')));
+    await tester.pump();
+    expect(loads, 2);
+    expect(
+      tester
+          .widget<IconButton>(find.byKey(const Key('fractal-manual-refresh')))
+          .onPressed,
+      isNull,
+    );
+    refreshResult.complete([_fractalDataWithPrices()]);
+    await tester.pump();
+    await tester.pump();
+    expect(loads, 2);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets(
     'keeps populated Fractal content usable at 320px with large text',
     (tester) async {
@@ -165,6 +204,12 @@ void main() {
           await tester.pump();
 
           expect(find.text('MA TRẬN ĐỒNG PHA (CONFLUENCE)'), findsOneWidget);
+          final refreshRect = tester.getRect(
+            find.byKey(const Key('fractal-manual-refresh')),
+          );
+          expect(refreshRect.width, 48);
+          expect(refreshRect.height, 48);
+          expect(refreshRect.right, lessThanOrEqualTo(320));
           expect(find.text('LIVE'), findsOneWidget);
           expect(find.text('Tiến trình thời gian:'), findsOneWidget);
           await tester.ensureVisible(find.text('Q1'));

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -64,5 +66,49 @@ void main() {
     expect(tickerCalls, 2);
     expect(websocket.connectCalls, 0);
     expect(websocket.subscribeCalls, 0);
+  });
+
+  testWidgets('RED-102 manual market refresh waits and coalesces taps', (
+    tester,
+  ) async {
+    final refreshResult = Completer<List<MarketTicker>>();
+    var tickerCalls = 0;
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          marketListProvider.overrideWith((ref) async {
+            tickerCalls++;
+            if (tickerCalls == 1) return <MarketTicker>[];
+            return refreshResult.future;
+          }),
+          okxWebsocketProvider.overrideWithValue(
+            _RecordingOkxWebsocketService(),
+          ),
+          isDarkModeProvider.overrideWithValue(false),
+        ],
+        child: const MaterialApp(home: MarketScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final refresh = find.byTooltip('Làm mới dữ liệu');
+    expect(refresh, findsOneWidget);
+    await tester.tap(refresh);
+    await tester.pump();
+    expect(tickerCalls, 2);
+    await tester
+        .widget<RefreshIndicator>(find.byType(RefreshIndicator))
+        .onRefresh();
+    expect(tickerCalls, 2);
+    expect(
+      tester
+          .widget<IconButton>(find.byKey(const Key('market-manual-refresh')))
+          .onPressed,
+      isNull,
+    );
+    refreshResult.complete(<MarketTicker>[]);
+    await tester.pumpAndSettle();
+    expect(tickerCalls, 2);
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 }

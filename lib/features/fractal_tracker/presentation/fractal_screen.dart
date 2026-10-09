@@ -9,6 +9,7 @@ import '../../../core/formatting/adaptive_number_format.dart';
 import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/timezone/app_time_zone.dart';
+import '../../../core/widgets/manual_refresh_button.dart';
 import 'providers/fractal_provider.dart';
 import '../data/fractal_model.dart';
 
@@ -22,14 +23,33 @@ class FractalScreen extends ConsumerStatefulWidget {
 
 class _FractalScreenState extends ConsumerState<FractalScreen> {
   Timer? _timer;
+  bool _manualRefreshInFlight = false;
 
   @override
   void initState() {
     super.initState();
     // THÊM MỚI: Tự động invalidate (làm mới) provider mỗi 1 giây
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (_manualRefreshInFlight || ref.read(fractalDataProvider).isLoading) {
+        return;
+      }
       ref.invalidate(fractalDataProvider);
     });
+  }
+
+  Future<void> _refreshFractal() async {
+    if (_manualRefreshInFlight || ref.read(fractalDataProvider).isLoading) {
+      return;
+    }
+    setState(() => _manualRefreshInFlight = true);
+    try {
+      ref.invalidate(fractalDataProvider);
+      await ref.read(fractalDataProvider.future);
+    } catch (_) {
+      // The watched provider renders the read error.
+    } finally {
+      if (mounted) setState(() => _manualRefreshInFlight = false);
+    }
   }
 
   @override
@@ -86,9 +106,10 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
             onPressed: () =>
                 _showCoinSelector(context, ref, selectedCoin, isDark),
           ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: () => ref.invalidate(fractalDataProvider),
+          ManualRefreshButton(
+            buttonKey: const Key('fractal-manual-refresh'),
+            onRefresh: _refreshFractal,
+            isBusy: _manualRefreshInFlight || fractalAsync.isLoading,
           ),
         ],
       ),
@@ -108,7 +129,7 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
             return RefreshIndicator(
               color: palette.ink,
               backgroundColor: palette.raised,
-              onRefresh: () async => ref.invalidate(fractalDataProvider),
+              onRefresh: _refreshFractal,
               child: ListView(
                 padding: const EdgeInsets.all(AppTokens.space4),
                 physics: const AlwaysScrollableScrollPhysics(),

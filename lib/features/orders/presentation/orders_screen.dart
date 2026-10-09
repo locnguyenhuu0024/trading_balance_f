@@ -10,6 +10,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/pnl_color.dart';
 import '../../../core/timezone/app_time_zone.dart';
 import '../../../core/widgets/crypto_icon.dart';
+import '../../../core/widgets/manual_refresh_button.dart';
 import 'providers/order_provider.dart';
 import 'providers/order_cancellation_flow_provider.dart';
 import '../data/okx_order_model.dart';
@@ -44,6 +45,7 @@ class OrdersScreen extends ConsumerStatefulWidget {
 
 class _OrdersScreenState extends ConsumerState<OrdersScreen> {
   Timer? _refreshTimer;
+  bool _manualRefreshInFlight = false;
 
   @override
   void initState() {
@@ -89,6 +91,39 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     super.dispose();
   }
 
+  Future<void> _refreshCurrentRead() async {
+    final tradeSession = ref.read(tradeSessionProvider);
+    if (tradeSession.session != null && !tradeSession.isAuthenticated) {
+      ref.read(tradeSessionProvider.notifier).expire();
+      return;
+    }
+    if (tradeSession.isLoading || !tradeSession.isAuthenticated) return;
+
+    final currentTab = ref.read(orderTabProvider);
+    final currentFilter = ref.read(orderFilterProvider);
+    if (currentTab == OrderTab.positions && currentFilter == 'SPOT') return;
+
+    final currentRead = currentTab == OrderTab.positions
+        ? ref.read(tradePositionsProvider)
+        : ref.read(ordersFutureProvider);
+    if (currentRead.isLoading || _manualRefreshInFlight) return;
+
+    setState(() => _manualRefreshInFlight = true);
+    try {
+      if (currentTab == OrderTab.positions) {
+        ref.invalidate(tradePositionsProvider);
+        await ref.read(tradePositionsProvider.future);
+      } else {
+        ref.invalidate(ordersFutureProvider);
+        await ref.read(ordersFutureProvider.future);
+      }
+    } catch (_) {
+      // The current tab provider renders its read error.
+    } finally {
+      if (mounted) setState(() => _manualRefreshInFlight = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final currentFilter = ref.watch(orderFilterProvider);
@@ -102,6 +137,14 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     final isBalanceHidden = ref.watch(hideBalanceProvider);
     final tradeSessionState = ref.watch(tradeSessionProvider);
     final isTradeAuthenticated = tradeSessionState.isAuthenticated;
+    final isCurrentReadLoading = switch (currentTab) {
+      OrderTab.positions when currentFilter == 'SPOT' => false,
+      OrderTab.positions when tradeSessionState.isLoading => false,
+      OrderTab.positions when isTradeAuthenticated =>
+        ref.watch(tradePositionsProvider).isLoading,
+      OrderTab.positions => ref.watch(positionsFutureProvider).isLoading,
+      _ => ref.watch(ordersFutureProvider).isLoading,
+    };
 
     final palette = AppPalette.of(context);
     final bgColor = palette.background;
@@ -160,6 +203,22 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
             ),
           ],
         ),
+        actions: [
+          ManualRefreshButton(
+            buttonKey: const Key('orders-manual-refresh'),
+            onRefresh:
+                isTradeAuthenticated &&
+                    !tradeSessionState.isLoading &&
+                    !(currentTab == OrderTab.positions &&
+                        currentFilter == 'SPOT')
+                ? _refreshCurrentRead
+                : null,
+            isBusy:
+                _manualRefreshInFlight ||
+                tradeSessionState.isLoading ||
+                isCurrentReadLoading,
+          ),
+        ],
       ),
       body: NavigationContentFrame(
         child: Column(
@@ -233,7 +292,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
               child: RefreshIndicator(
                 color: palette.ink,
                 backgroundColor: palette.raised,
-                onRefresh: () async => ref.invalidate(tradePositionsProvider),
+                onRefresh: _refreshCurrentRead,
                 child: positionsAsyncValue.when(
                   skipLoadingOnReload: false,
                   loading: () => Center(
@@ -289,7 +348,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
             child: RefreshIndicator(
               color: palette.ink,
               backgroundColor: palette.raised,
-              onRefresh: () async => ref.invalidate(positionsFutureProvider),
+              onRefresh: _refreshCurrentRead,
               child: positionsAsyncValue.when(
                 skipLoadingOnReload: false,
                 loading: () => Center(
@@ -336,7 +395,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       final orderList = RefreshIndicator(
         color: palette.ink,
         backgroundColor: palette.raised,
-        onRefresh: () async => ref.invalidate(ordersFutureProvider),
+        onRefresh: _refreshCurrentRead,
         child: ordersAsyncValue.when(
           skipLoadingOnReload: false,
           loading: () =>

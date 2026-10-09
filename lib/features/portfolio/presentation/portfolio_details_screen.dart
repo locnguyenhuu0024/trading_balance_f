@@ -7,7 +7,9 @@ import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/pnl_color.dart';
 import '../../../core/widgets/crypto_icon.dart';
+import '../../../core/widgets/manual_refresh_button.dart';
 import '../../market/presentation/providers/market_provider.dart';
+import '../../orders/presentation/providers/trade_session_provider.dart';
 import '../../settings/presentation/settings_screen.dart';
 import '../data/okx_balance_model.dart';
 import '../presentation/widgets/portfolio_currency_amount.dart';
@@ -28,11 +30,33 @@ class PortfolioDetailsScreen extends ConsumerStatefulWidget {
 class _PortfolioDetailsScreenState
     extends ConsumerState<PortfolioDetailsScreen> {
   bool _pnlRevealed = false;
+  bool _isRefreshInFlight = false;
+
+  Future<void> _refreshPortfolio() async {
+    final session = ref.read(tradeSessionProvider);
+    if (!mounted ||
+        session.isLoading ||
+        !session.isAuthenticated ||
+        _isRefreshInFlight ||
+        ref.read(portfolioFutureProvider).isLoading) {
+      return;
+    }
+    setState(() => _isRefreshInFlight = true);
+    try {
+      ref.invalidate(portfolioFutureProvider);
+      await ref.read(portfolioFutureProvider.future);
+    } catch (_) {
+      // The watched provider displays the read error.
+    } finally {
+      if (mounted) setState(() => _isRefreshInFlight = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final async = ref.watch(portfolioFutureProvider);
     final hidden = ref.watch(hideBalanceProvider);
+    final session = ref.watch(tradeSessionProvider);
     final currency = ref.watch(currencyProvider);
     final rate = ref.watch(vndExchangeRateProvider).value ?? 25400.0;
     final palette = AppPalette.of(context);
@@ -46,6 +70,13 @@ class _PortfolioDetailsScreenState
         elevation: 0,
         title: const Text('Portfolio details'),
         actions: [
+          ManualRefreshButton(
+            buttonKey: const Key('portfolio-details-manual-refresh'),
+            onRefresh: session.isAuthenticated && !session.isLoading
+                ? _refreshPortfolio
+                : null,
+            isBusy: _isRefreshInFlight || async.isLoading,
+          ),
           IconButton(
             tooltip: hidden ? 'Show amounts' : 'Hide amounts',
             icon: Icon(hidden ? Icons.visibility_off : Icons.visibility),
@@ -69,6 +100,7 @@ class _PortfolioDetailsScreenState
             hidden: hidden,
             pnlRevealed: _pnlRevealed,
             onRevealPnl: () => setState(() => _pnlRevealed = true),
+            onRefresh: _refreshPortfolio,
           ),
         ),
       ),
@@ -85,6 +117,7 @@ class _DetailsContent extends StatelessWidget {
     required this.hidden,
     required this.pnlRevealed,
     required this.onRevealPnl,
+    required this.onRefresh,
   });
 
   final OkxAccountData account;
@@ -94,6 +127,7 @@ class _DetailsContent extends StatelessWidget {
   final bool hidden;
   final bool pnlRevealed;
   final VoidCallback onRevealPnl;
+  final Future<void> Function() onRefresh;
 
   @override
   Widget build(BuildContext context) {
@@ -127,7 +161,7 @@ class _DetailsContent extends StatelessWidget {
     return RefreshIndicator(
       color: palette.ink,
       backgroundColor: palette.raised,
-      onRefresh: () async => refetchPortfolio(context),
+      onRefresh: onRefresh,
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
         children: [
@@ -245,14 +279,6 @@ class _DetailsContent extends StatelessWidget {
         ],
       ),
     );
-  }
-
-  Future<void> refetchPortfolio(BuildContext context) async {
-    // A refresh is a provider invalidation, keeping the details screen on the
-    // same account namespace without adding any new API semantics.
-    final container = ProviderScope.containerOf(context, listen: false);
-    container.invalidate(portfolioFutureProvider);
-    await Future<void>.delayed(Duration.zero);
   }
 }
 

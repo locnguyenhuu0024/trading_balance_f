@@ -13,6 +13,10 @@ Plan: `<path>`
 Plan Steps: P<...>
 Requirements: REQ-<...>
 Acceptance Criteria: AC-<...>
+Frontend Level: F0 | F1 | F2 | F3 | N/A
+Frontend Design Brief: `<path | N/A>`
+Required Frontend Guidance: <frontend-design | web-design-guidelines | react-best-practices | composition-patterns | react-view-transitions | N/A>
+Visual Review Required: YES | NO
 
 ## 1. Dispatch Compliance
 
@@ -78,6 +82,21 @@ Agents do not apply protected configuration/environment changes.
 Planned action: <none | target file/path + location/section/key + exact non-secret snippet with <SET_BY_USER> placeholders + environment/scope + reason + validation/restart>
 Discovered additional action during execution: <none | same schema; if target/location/semantics unknown, BLOCKED and ask user>
 Blocks verification until user applies: YES | NO
+
+## Frontend Gate — frontend variant
+
+Approved visual/design decisions fixed before executor dispatch: YES | N/A
+Existing design-system primitives to reuse: <paths/components/tokens | N/A>
+Pinned web-guidelines audit required after implementation: YES | NO
+React/Next performance review required: YES | NO
+Composition review required: YES | NO
+View-transition review required: YES | NO
+
+Executor rules:
+- implement the approved visual contract; do not invent new aesthetic/product semantics;
+- do not add packages/framework features solely because a third-party skill mentions them;
+- preserve reduced-motion, keyboard/focus and responsive requirements in scope;
+- if exact visual intent is missing for F2/F3, return `BLOCKED` rather than improvising.
 
 ## 8. Tests
 
@@ -163,6 +182,8 @@ Report blocker + evidence + affected IDs + coordinator decision required.
 - [ ] return compact executor report
 - [ ] confirm no protected configuration/environment file content was read or modified
 - [ ] report External Configuration / Environment Actions as none or fully specified
+- [ ] satisfy applicable frontend skill gates without out-of-scope redesign/dependency expansion
+- [ ] report visual-review handoff requirement/evidence status
 
 ## 12. Coordinator Audit
 

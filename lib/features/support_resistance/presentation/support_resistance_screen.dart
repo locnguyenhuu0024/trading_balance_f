@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/formatting/adaptive_number_format.dart';
 import '../../../core/navigation/navigation_content_frame.dart';
+import '../../../core/widgets/manual_refresh_button.dart';
 import '../data/watchlist_store.dart';
 import '../domain/models.dart';
 import 'providers/levels_provider.dart';
@@ -21,6 +22,17 @@ class SupportResistanceScreen extends ConsumerStatefulWidget {
 class _SupportResistanceScreenState
     extends ConsumerState<SupportResistanceScreen> {
   String? _lastSelectionSignature;
+  bool _isRefreshing = false;
+
+  Future<void> _refreshLevels() async {
+    if (_isRefreshing) return;
+    setState(() => _isRefreshing = true);
+    try {
+      await ref.read(supportResistanceLevelsProvider).refresh();
+    } finally {
+      if (mounted) setState(() => _isRefreshing = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -71,17 +83,16 @@ class _SupportResistanceScreenState
                         ),
                       ),
                     ),
-                    IconButton(
-                      key: const Key('support-resistance-refresh'),
-                      tooltip: 'Làm mới dữ liệu',
-                      onPressed: instrumentIds.isEmpty
-                          ? null
-                          : () => unawaited(
-                              ref
-                                  .read(supportResistanceLevelsProvider)
-                                  .refresh(),
-                            ),
-                      icon: const Icon(Icons.refresh),
+                    ManualRefreshButton(
+                      buttonKey: const Key('support-resistance-refresh'),
+                      onRefresh: instrumentIds.isEmpty ? null : _refreshLevels,
+                      isBusy:
+                          _isRefreshing ||
+                          keys.any(
+                            (key) =>
+                                levels.stateFor(key)?.status ==
+                                SupportResistanceLevelsStatus.loading,
+                          ),
                     ),
                   ],
                 ),

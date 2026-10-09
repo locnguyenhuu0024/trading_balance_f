@@ -2,7 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:trading_balance_f/core/security/secure_storage_helper.dart';
 import 'package:trading_balance_f/core/theme/pnl_color.dart';
 import 'package:trading_balance_f/features/orders/data/okx_position_model.dart';
 import 'package:trading_balance_f/features/orders/data/trade_api_client.dart';
@@ -64,6 +66,8 @@ class _FakeTradeApi implements TradeApi {
     this.sessionRestorationSupported = false,
     this.restoredSession,
     this.restoreGate,
+    this.loginGate,
+    this.loginFailure,
     this.logoutFailure,
   });
 
@@ -90,6 +94,8 @@ class _FakeTradeApi implements TradeApi {
   String? lastPercentage;
   final TradeSession? restoredSession;
   final Completer<TradeSession>? restoreGate;
+  final Completer<TradeSession>? loginGate;
+  TradeApiException? loginFailure;
   TradeApiException? logoutFailure;
   Map<String, dynamic>? preparedIdentityOverride;
   String executeStatus = 'SUCCEEDED';
@@ -107,6 +113,10 @@ class _FakeTradeApi implements TradeApi {
     loginCalls++;
     passwordSeen = password;
     totpSeen = totp;
+    final failure = loginFailure;
+    if (failure != null) throw failure;
+    final gate = loginGate;
+    if (gate != null) return gate.future;
     return TradeSession(
       bearerToken: 'in-memory-test-token',
       accountIdentifier: '••••-42',
@@ -275,6 +285,81 @@ class _FakeTradeApi implements TradeApi {
   }
 }
 
+class _RememberableFakeTradeApi extends _FakeTradeApi
+    implements TradeApiRememberPasswordScope {
+  _RememberableFakeTradeApi({
+    this.passwordScope,
+    super.loginGate,
+    super.loginFailure,
+  });
+
+  String? passwordScope;
+
+  @override
+  String? get rememberedPasswordScope => passwordScope;
+}
+
+class _FakeRememberedPasswordStorage extends SecureStorageHelper {
+  _FakeRememberedPasswordStorage() : super(const FlutterSecureStorage());
+
+  final Map<String, String> passwords = {};
+  final Map<String, String> passwordVersions = {};
+  final List<String> readScopes = [];
+  final List<String> deletedScopes = [];
+  final List<Map<String, String>> saveAttempts = [];
+  Completer<void>? readGate;
+  Completer<void>? saveGate;
+  Completer<void>? deleteGate;
+  bool failRead = false;
+  bool failSave = false;
+  bool failDelete = false;
+  int _version = 0;
+
+  @override
+  Future<String?> getRememberedTradePassword(String endpoint) async {
+    readScopes.add(endpoint);
+    final gate = readGate;
+    if (gate != null) await gate.future;
+    if (failRead) throw StateError('storage read failed');
+    return passwords[endpoint];
+  }
+
+  @override
+  Future<String> saveRememberedTradePassword(
+    String endpoint,
+    String password,
+  ) async {
+    saveAttempts.add({'endpoint': endpoint, 'password': password});
+    final gate = saveGate;
+    if (gate != null) await gate.future;
+    if (failSave) throw StateError('storage write failed');
+    passwords[endpoint] = password;
+    final version = 'fake-version-${++_version}';
+    passwordVersions[endpoint] = version;
+    return version;
+  }
+
+  @override
+  Future<void> deleteRememberedTradePassword(String endpoint) async {
+    deletedScopes.add(endpoint);
+    final gate = deleteGate;
+    if (gate != null) await gate.future;
+    if (failDelete) throw StateError('storage delete failed');
+    passwords.remove(endpoint);
+    passwordVersions.remove(endpoint);
+  }
+
+  @override
+  Future<bool> deleteRememberedTradePasswordIfVersion(
+    String endpoint,
+    String version,
+  ) async {
+    if (passwordVersions[endpoint] != version) return false;
+    await deleteRememberedTradePassword(endpoint);
+    return true;
+  }
+}
+
 class _FakeSessionController extends TradeSessionController {
   _FakeSessionController(super.api, {bool authenticated = true}) {
     if (authenticated) {
@@ -299,13 +384,21 @@ Widget _tradeApp({
   bool showActions = true,
   bool showAccountControls = false,
   bool showSessionControls = false,
+  SecureStorageHelper? storage,
+  void Function(_FakeSessionController)? onSessionController,
 }) {
   return ProviderScope(
     overrides: [
       tradeApiProvider.overrideWithValue(api),
-      tradeSessionProvider.overrideWith(
-        (ref) => _FakeSessionController(api, authenticated: authenticated),
-      ),
+      if (storage != null) secureStorageProvider.overrideWithValue(storage),
+      tradeSessionProvider.overrideWith((ref) {
+        final controller = _FakeSessionController(
+          api,
+          authenticated: authenticated,
+        );
+        onSessionController?.call(controller);
+        return controller;
+      }),
       tradePositionsProvider.overrideWith((ref) async {
         api.positionReads++;
         return TradePositionsSnapshot(
@@ -968,6 +1061,900 @@ void main() {
         expect(find.text('in-memory-test-token'), findsNothing);
       },
     );
+
+    testWidgets(
+      'legacy APIs sign in with remembering disabled and safe feedback',
+      (tester) async {
+        final api = _FakeTradeApi();
+        final storage = _FakeRememberedPasswordStorage();
+        await tester.pumpWidget(
+          _tradeApp(
+            api: api,
+            storage: storage,
+            authenticated: false,
+            showActions: false,
+            showSessionControls: true,
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.text('Đăng nhập'));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Lưu mật khẩu trên thiết bị này'), findsOneWidget);
+        expect(
+          tester.widget<CheckboxListTile>(find.byType(CheckboxListTile)).value,
+          isFalse,
+        );
+        expect(
+          tester
+              .widget<CheckboxListTile>(find.byType(CheckboxListTile))
+              .onChanged,
+          isNull,
+        );
+        expect(
+          find.text('Không thể lưu mật khẩu cho API này.'),
+          findsOneWidget,
+        );
+
+        await tester.enterText(
+          find.byKey(const ValueKey('trade-login-password')),
+          'legacy-password',
+        );
+        await tester.enterText(
+          find.byKey(const ValueKey('trade-login-otp')),
+          '123456',
+        );
+        await tester.tap(find.text('Đăng nhập').last);
+        await tester.pumpAndSettle();
+
+        expect(api.loginCalls, 1);
+        expect(storage.saveAttempts, isEmpty);
+      },
+    );
+
+    testWidgets('GREEN-002 remembers password only after successful auth', (
+      tester,
+    ) async {
+      const scope = 'https://trade.example/';
+      final gate = Completer<TradeSession>();
+      final api = _RememberableFakeTradeApi(
+        passwordScope: scope,
+        loginGate: gate,
+      );
+      final storage = _FakeRememberedPasswordStorage();
+      await tester.pumpWidget(
+        _tradeApp(
+          api: api,
+          storage: storage,
+          authenticated: false,
+          showActions: false,
+          showSessionControls: true,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Đăng nhập'));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<CheckboxListTile>(find.byType(CheckboxListTile)).value,
+        isFalse,
+      );
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const ValueKey('trade-login-password')),
+            )
+            .obscureText,
+        isTrue,
+      );
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const ValueKey('trade-login-otp')))
+            .controller!
+            .text,
+        isEmpty,
+      );
+      await tester.tap(find.byType(CheckboxListTile));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('trade-login-password')),
+        'remember-this-password',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('trade-login-otp')),
+        '012345',
+      );
+      await tester.tap(find.text('Đăng nhập').last);
+      await tester.pump();
+
+      expect(api.loginCalls, 1);
+      expect(api.totpSeen, '012345');
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const ValueKey('trade-login-otp')))
+            .controller!
+            .text,
+        isEmpty,
+      );
+      expect(find.text('Đăng nhập API giao dịch'), findsOneWidget);
+      expect(storage.saveAttempts, isEmpty);
+      expect(
+        tester.widget<FilledButton>(find.byType(FilledButton).last).onPressed,
+        isNull,
+      );
+
+      gate.complete(
+        TradeSession(
+          bearerToken: 'test-token',
+          accountIdentifier: '••••-42',
+          expiresAt: DateTime.now().add(const Duration(minutes: 10)),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(storage.passwords[scope], 'remember-this-password');
+      expect(storage.saveAttempts, [
+        {'endpoint': scope, 'password': 'remember-this-password'},
+      ]);
+      expect(find.text('test-token'), findsNothing);
+      expect(find.text('Đăng nhập API giao dịch'), findsNothing);
+    });
+
+    testWidgets('GREEN-002 prefill is masked and opt-out deletes immediately', (
+      tester,
+    ) async {
+      const scope = 'https://trade.example/';
+      final api = _RememberableFakeTradeApi(passwordScope: scope);
+      final storage = _FakeRememberedPasswordStorage()
+        ..passwords[scope] = 'saved-password';
+      await tester.pumpWidget(
+        _tradeApp(
+          api: api,
+          storage: storage,
+          authenticated: false,
+          showActions: false,
+          showSessionControls: true,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Đăng nhập'));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<CheckboxListTile>(find.byType(CheckboxListTile)).value,
+        isTrue,
+      );
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const ValueKey('trade-login-password')),
+            )
+            .controller!
+            .text,
+        'saved-password',
+      );
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const ValueKey('trade-login-password')),
+            )
+            .obscureText,
+        isTrue,
+      );
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const ValueKey('trade-login-otp')))
+            .controller!
+            .text,
+        isEmpty,
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('trade-login-toggle-password')),
+      );
+      await tester.pump();
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const ValueKey('trade-login-password')),
+            )
+            .obscureText,
+        isFalse,
+      );
+      await tester.tap(find.byType(CheckboxListTile));
+      await tester.pumpAndSettle();
+
+      expect(storage.deletedScopes, [scope]);
+      expect(storage.passwords.containsKey(scope), isFalse);
+      expect(
+        tester.widget<CheckboxListTile>(find.byType(CheckboxListTile)).value,
+        isFalse,
+      );
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const ValueKey('trade-login-password')),
+            )
+            .controller!
+            .text,
+        'saved-password',
+      );
+      await tester.tap(find.text('Hủy'));
+      await tester.pumpAndSettle();
+      expect(storage.passwords.containsKey(scope), isFalse);
+      expect(api.loginCalls, 0);
+    });
+
+    testWidgets('GREEN-002 opt-out deletion survives later auth failure', (
+      tester,
+    ) async {
+      const scope = 'https://trade.example/';
+      final api = _RememberableFakeTradeApi(
+        passwordScope: scope,
+        loginFailure: const TradeApiException(
+          code: 'auth_failed',
+          message: 'Authentication failed.',
+        ),
+      );
+      final storage = _FakeRememberedPasswordStorage()
+        ..passwords[scope] = 'saved-password';
+      await tester.pumpWidget(
+        _tradeApp(
+          api: api,
+          storage: storage,
+          authenticated: false,
+          showActions: false,
+          showSessionControls: true,
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Đăng nhập'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byType(CheckboxListTile));
+      await tester.pumpAndSettle();
+      expect(storage.passwords.containsKey(scope), isFalse);
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const ValueKey('trade-login-password')),
+            )
+            .controller!
+            .text,
+        'saved-password',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('trade-login-otp')),
+        '123456',
+      );
+      await tester.tap(find.text('Đăng nhập').last);
+      await tester.pumpAndSettle();
+
+      expect(api.loginCalls, 1);
+      expect(api.passwordSeen, 'saved-password');
+      expect(storage.passwords, isEmpty);
+      expect(storage.saveAttempts, isEmpty);
+    });
+
+    testWidgets('GREEN-002 invalid OTP sends no request and clears the field', (
+      tester,
+    ) async {
+      final api = _FakeTradeApi();
+      await tester.pumpWidget(
+        _tradeApp(
+          api: api,
+          authenticated: false,
+          showActions: false,
+          showSessionControls: true,
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Đăng nhập'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('trade-login-password')),
+        'test-password',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('trade-login-otp')),
+        '12345',
+      );
+      await tester.tap(find.text('Đăng nhập').last);
+      await tester.pump();
+
+      expect(api.loginCalls, 0);
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const ValueKey('trade-login-otp')))
+            .controller!
+            .text,
+        isEmpty,
+      );
+      expect(
+        find.text('Nhập mật khẩu và mã TOTP gồm đúng 6 chữ số.'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets(
+      'GREEN-002 failed auth keeps stored password and hides API text',
+      (tester) async {
+        const scope = 'https://trade.example/';
+        final api = _RememberableFakeTradeApi(
+          passwordScope: scope,
+          loginFailure: const TradeApiException(
+            code: 'auth_failed',
+            message: 'SECRET-PASSWORD-LEAK',
+          ),
+        );
+        final storage = _FakeRememberedPasswordStorage()
+          ..passwords[scope] = 'saved-password';
+        await tester.pumpWidget(
+          _tradeApp(
+            api: api,
+            storage: storage,
+            authenticated: false,
+            showActions: false,
+            showSessionControls: true,
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Đăng nhập'));
+        await tester.pumpAndSettle();
+        await tester.enterText(
+          find.byKey(const ValueKey('trade-login-otp')),
+          '123456',
+        );
+        await tester.tap(find.text('Đăng nhập').last);
+        await tester.pumpAndSettle();
+
+        expect(api.loginCalls, 1);
+        expect(storage.passwords[scope], 'saved-password');
+        expect(storage.saveAttempts, isEmpty);
+        expect(find.text('SECRET-PASSWORD-LEAK'), findsNothing);
+        expect(
+          find.text('Không thể đăng nhập. Kiểm tra thông tin rồi thử lại.'),
+          findsWidgets,
+        );
+      },
+    );
+
+    testWidgets(
+      'GREEN-002 storage failures show safe feedback and keep auth usable',
+      (tester) async {
+        const scope = 'https://trade.example/';
+        final api = _RememberableFakeTradeApi(passwordScope: scope);
+        final storage = _FakeRememberedPasswordStorage()..failRead = true;
+        await tester.pumpWidget(
+          _tradeApp(
+            api: api,
+            storage: storage,
+            authenticated: false,
+            showActions: false,
+            showSessionControls: true,
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Đăng nhập'));
+        await tester.pumpAndSettle();
+
+        expect(
+          tester
+              .widget<CheckboxListTile>(find.byType(CheckboxListTile))
+              .onChanged,
+          isNull,
+        );
+        expect(
+          find.text(
+            'Không thể đọc trạng thái lưu mật khẩu. Bạn vẫn có thể đăng nhập.',
+          ),
+          findsOneWidget,
+        );
+        await tester.enterText(
+          find.byKey(const ValueKey('trade-login-password')),
+          'manual-password',
+        );
+        await tester.enterText(
+          find.byKey(const ValueKey('trade-login-otp')),
+          '123456',
+        );
+        await tester.tap(find.text('Đăng nhập').last);
+        await tester.pumpAndSettle();
+
+        expect(api.loginCalls, 1);
+        expect(storage.saveAttempts, isEmpty);
+        expect(storage.deletedScopes, isEmpty);
+        expect(find.text('Đăng nhập API giao dịch'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'RED-103 read and delete failures still allow manual authentication',
+      (tester) async {
+        const scope = 'https://trade.example/';
+        final api = _RememberableFakeTradeApi(
+          passwordScope: scope,
+          loginFailure: const TradeApiException(
+            code: 'auth_failed',
+            message: 'SECRET-PASSWORD-LEAK',
+          ),
+        );
+        final storage = _FakeRememberedPasswordStorage()
+          ..failRead = true
+          ..failDelete = true;
+        await tester.pumpWidget(
+          _tradeApp(
+            api: api,
+            storage: storage,
+            authenticated: false,
+            showActions: false,
+            showSessionControls: true,
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Đăng nhập'));
+        await tester.pumpAndSettle();
+
+        final rememberTile = tester.widget<CheckboxListTile>(
+          find.byType(CheckboxListTile),
+        );
+        expect(rememberTile.onChanged, isNull);
+        expect(
+          find.text(
+            'Không thể đọc trạng thái lưu mật khẩu. Bạn vẫn có thể đăng nhập.',
+          ),
+          findsOneWidget,
+        );
+        await tester.enterText(
+          find.byKey(const ValueKey('trade-login-password')),
+          'manual-password',
+        );
+        await tester.enterText(
+          find.byKey(const ValueKey('trade-login-otp')),
+          '123456',
+        );
+        await tester.tap(find.text('Đăng nhập').last);
+        await tester.pumpAndSettle();
+
+        expect(api.loginCalls, 1);
+        expect(api.passwordSeen, 'manual-password');
+        expect(storage.deletedScopes, isEmpty);
+        expect(storage.saveAttempts, isEmpty);
+        expect(find.text('SECRET-PASSWORD-LEAK'), findsNothing);
+        expect(
+          find.text('Không thể đăng nhập. Kiểm tra thông tin rồi thử lại.'),
+          findsWidgets,
+        );
+      },
+    );
+
+    testWidgets(
+      'RED-103 pending initial read allows auth and late read keeps manual input',
+      (tester) async {
+        const scope = 'https://trade.example/';
+        final api = _RememberableFakeTradeApi(
+          passwordScope: scope,
+          loginFailure: const TradeApiException(
+            code: 'auth_failed',
+            message: 'Authentication failed.',
+          ),
+        );
+        final storage = _FakeRememberedPasswordStorage()
+          ..passwords[scope] = 'late-saved-password'
+          ..failDelete = true
+          ..readGate = Completer<void>();
+        await tester.pumpWidget(
+          _tradeApp(
+            api: api,
+            storage: storage,
+            authenticated: false,
+            showActions: false,
+            showSessionControls: true,
+          ),
+        );
+        await tester.pump();
+        await tester.tap(find.text('Đăng nhập'));
+        await tester.pump();
+
+        expect(
+          tester
+              .widget<CheckboxListTile>(find.byType(CheckboxListTile))
+              .onChanged,
+          isNull,
+        );
+        expect(
+          find.text(
+            'Đang kiểm tra trạng thái lưu mật khẩu. Bạn vẫn có thể đăng nhập.',
+          ),
+          findsOneWidget,
+        );
+        await tester.enterText(
+          find.byKey(const ValueKey('trade-login-password')),
+          'manual-password',
+        );
+        await tester.enterText(
+          find.byKey(const ValueKey('trade-login-otp')),
+          '123456',
+        );
+        await tester.tap(find.text('Đăng nhập').last);
+        await tester.pumpAndSettle();
+
+        storage.readGate!.complete();
+        await tester.pumpAndSettle();
+
+        expect(api.loginCalls, 1);
+        expect(api.passwordSeen, 'manual-password');
+        expect(storage.deletedScopes, isEmpty);
+        expect(storage.saveAttempts, isEmpty);
+        expect(
+          tester
+              .widget<TextField>(
+                find.byKey(const ValueKey('trade-login-password')),
+              )
+              .controller!
+              .text,
+          'manual-password',
+        );
+        expect(
+          tester.widget<CheckboxListTile>(find.byType(CheckboxListTile)).value,
+          isFalse,
+        );
+        expect(find.text('late-saved-password'), findsNothing);
+        expect(
+          find.text('Không thể đăng nhập. Kiểm tra thông tin rồi thử lại.'),
+          findsWidgets,
+        );
+      },
+    );
+
+    testWidgets(
+      'GREEN-002 failed opt-out deletion stays checked and blocks auth',
+      (tester) async {
+        const scope = 'https://trade.example/';
+        final api = _RememberableFakeTradeApi(passwordScope: scope);
+        final storage = _FakeRememberedPasswordStorage()
+          ..passwords[scope] = 'saved-password'
+          ..failDelete = true;
+        await tester.pumpWidget(
+          _tradeApp(
+            api: api,
+            storage: storage,
+            authenticated: false,
+            showActions: false,
+            showSessionControls: true,
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Đăng nhập'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byType(CheckboxListTile));
+        await tester.pumpAndSettle();
+
+        expect(storage.passwords[scope], 'saved-password');
+        expect(
+          tester.widget<CheckboxListTile>(find.byType(CheckboxListTile)).value,
+          isTrue,
+        );
+        expect(
+          find.text('Không thể xóa mật khẩu đã lưu. Mật khẩu vẫn được giữ.'),
+          findsOneWidget,
+        );
+        expect(api.loginCalls, 0);
+        expect(
+          tester.widget<FilledButton>(find.byType(FilledButton).last).onPressed,
+          isNull,
+        );
+        await tester.enterText(
+          find.byKey(const ValueKey('trade-login-otp')),
+          '123456',
+        );
+        await tester.testTextInput.receiveAction(TextInputAction.done);
+        await tester.pump();
+        expect(api.loginCalls, 0);
+      },
+    );
+
+    testWidgets(
+      'GREEN-002 save failure stays signed in with generic feedback',
+      (tester) async {
+        const scope = 'https://trade.example/';
+        final api = _RememberableFakeTradeApi(passwordScope: scope);
+        final storage = _FakeRememberedPasswordStorage()..failSave = true;
+        await tester.pumpWidget(
+          _tradeApp(
+            api: api,
+            storage: storage,
+            authenticated: false,
+            showActions: false,
+            showSessionControls: true,
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Đăng nhập'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byType(CheckboxListTile));
+        await tester.pumpAndSettle();
+        await tester.enterText(
+          find.byKey(const ValueKey('trade-login-password')),
+          'secret-for-save',
+        );
+        await tester.enterText(
+          find.byKey(const ValueKey('trade-login-otp')),
+          '123456',
+        );
+        await tester.tap(find.text('Đăng nhập').last);
+        await tester.pumpAndSettle();
+
+        expect(api.loginCalls, 1);
+        expect(storage.passwords, isEmpty);
+        expect(find.textContaining('Đã đăng nhập: ••••-42'), findsOneWidget);
+        expect(
+          find.text(
+            'Đăng nhập thành công, nhưng không thể lưu mật khẩu trên thiết bị.',
+          ),
+          findsOneWidget,
+        );
+        expect(
+          tester
+              .widget<TextField>(
+                find.byKey(const ValueKey('trade-login-password')),
+              )
+              .obscureText,
+          isTrue,
+        );
+      },
+    );
+
+    testWidgets('GREEN-002 endpoint changed before submit sends no password', (
+      tester,
+    ) async {
+      const scope = 'https://trade.example/';
+      final api = _RememberableFakeTradeApi(passwordScope: scope);
+      final storage = _FakeRememberedPasswordStorage();
+      await tester.pumpWidget(
+        _tradeApp(
+          api: api,
+          storage: storage,
+          authenticated: false,
+          showActions: false,
+          showSessionControls: true,
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Đăng nhập'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('trade-login-password')),
+        'endpoint-secret',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('trade-login-otp')),
+        '123456',
+      );
+      api.passwordScope = 'https://other.example/';
+      await tester.tap(find.text('Đăng nhập').last);
+      await tester.pumpAndSettle();
+
+      expect(api.loginCalls, 0);
+      expect(api.passwordSeen, isNull);
+      expect(storage.saveAttempts, isEmpty);
+      expect(
+        find.text('API đã thay đổi. Hãy mở lại biểu mẫu đăng nhập.'),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const ValueKey('trade-login-password')),
+            )
+            .obscureText,
+        isTrue,
+      );
+    });
+
+    testWidgets('GREEN-002 changed endpoint fences pending remembered save', (
+      tester,
+    ) async {
+      const scope = 'https://trade.example/';
+      final gate = Completer<TradeSession>();
+      final api = _RememberableFakeTradeApi(
+        passwordScope: scope,
+        loginGate: gate,
+      );
+      final storage = _FakeRememberedPasswordStorage();
+      await tester.pumpWidget(
+        _tradeApp(
+          api: api,
+          storage: storage,
+          authenticated: false,
+          showActions: false,
+          showSessionControls: true,
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Đăng nhập'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byType(CheckboxListTile));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('trade-login-password')),
+        'endpoint-password',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('trade-login-otp')),
+        '123456',
+      );
+      await tester.tap(find.text('Đăng nhập').last);
+      await tester.pump();
+      api.passwordScope = 'https://other.example/';
+      gate.complete(
+        TradeSession(
+          bearerToken: 'test-token',
+          accountIdentifier: '••••-42',
+          expiresAt: DateTime.now().add(const Duration(minutes: 10)),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(storage.saveAttempts, isEmpty);
+      expect(storage.passwords, isEmpty);
+      expect(
+        find.text('API đã thay đổi. Hãy mở lại biểu mẫu đăng nhập.'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('GREEN-002 session expiry removes a stale secure write', (
+      tester,
+    ) async {
+      const scope = 'https://trade.example/';
+      final api = _RememberableFakeTradeApi(passwordScope: scope);
+      final storage = _FakeRememberedPasswordStorage()
+        ..saveGate = Completer<void>();
+      _FakeSessionController? sessionController;
+      await tester.pumpWidget(
+        _tradeApp(
+          api: api,
+          storage: storage,
+          authenticated: false,
+          showActions: false,
+          showSessionControls: true,
+          onSessionController: (controller) => sessionController = controller,
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Đăng nhập'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byType(CheckboxListTile));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('trade-login-password')),
+        'session-password',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('trade-login-otp')),
+        '123456',
+      );
+      await tester.tap(find.text('Đăng nhập').last);
+      await tester.pump();
+      expect(storage.saveAttempts, hasLength(1));
+
+      sessionController!.state = const TradeSessionState();
+      storage.saveGate!.complete();
+      await tester.pumpAndSettle();
+
+      expect(storage.passwords, isEmpty);
+      expect(storage.deletedScopes, [scope]);
+      expect(
+        find.text('Phiên hoặc API đã thay đổi. Mật khẩu không được lưu.'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('GREEN-002 reports failed stale-save cleanup safely', (
+      tester,
+    ) async {
+      const scope = 'https://trade.example/';
+      final api = _RememberableFakeTradeApi(passwordScope: scope);
+      final storage = _FakeRememberedPasswordStorage()
+        ..saveGate = Completer<void>()
+        ..failDelete = true;
+      await tester.pumpWidget(
+        _tradeApp(
+          api: api,
+          storage: storage,
+          authenticated: false,
+          showActions: false,
+          showSessionControls: true,
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Đăng nhập'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byType(CheckboxListTile));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('trade-login-password')),
+        'stale-save-password',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('trade-login-otp')),
+        '123456',
+      );
+      await tester.tap(find.text('Đăng nhập').last);
+      await tester.pump();
+      expect(storage.saveAttempts, hasLength(1));
+
+      api.passwordScope = 'https://other.example/';
+      storage.saveGate!.complete();
+      await tester.pumpAndSettle();
+
+      expect(storage.passwords[scope], 'stale-save-password');
+      expect(
+        find.text(
+          'Phiên hoặc API đã thay đổi. Không thể xóa mật khẩu vừa lưu; hãy thử lại trong biểu mẫu đăng nhập.',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const ValueKey('trade-login-password')),
+            )
+            .obscureText,
+        isTrue,
+      );
+    });
+
+    testWidgets('GREEN-002 disposed login completion never saves password', (
+      tester,
+    ) async {
+      const scope = 'https://trade.example/';
+      final gate = Completer<TradeSession>();
+      final api = _RememberableFakeTradeApi(
+        passwordScope: scope,
+        loginGate: gate,
+      );
+      final storage = _FakeRememberedPasswordStorage();
+      await tester.pumpWidget(
+        _tradeApp(
+          api: api,
+          storage: storage,
+          authenticated: false,
+          showActions: false,
+          showSessionControls: true,
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Đăng nhập'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byType(CheckboxListTile));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('trade-login-password')),
+        'disposed-password',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('trade-login-otp')),
+        '123456',
+      );
+      await tester.tap(find.text('Đăng nhập').last);
+      await tester.pump();
+      expect(api.loginCalls, 1);
+
+      await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+      gate.complete(
+        TradeSession(
+          bearerToken: 'test-token',
+          accountIdentifier: '••••-42',
+          expiresAt: DateTime.now().add(const Duration(minutes: 10)),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      expect(storage.saveAttempts, isEmpty);
+      expect(storage.passwords, isEmpty);
+    });
 
     testWidgets('Positions directs signed-out users to Settings', (
       tester,

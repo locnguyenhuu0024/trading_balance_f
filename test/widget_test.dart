@@ -34,7 +34,7 @@ void main() {
     );
   }
 
-  testWidgets('root navigation exposes eight destinations and selected label', (
+  testWidgets('root navigation exposes seven destinations and selected label', (
     tester,
   ) async {
     await tester.pumpWidget(shellApp());
@@ -45,7 +45,6 @@ void main() {
       'orders',
       'market',
       'settings',
-      'risk',
       'support',
       'strategy',
     ]);
@@ -64,15 +63,10 @@ void main() {
 
     await tester.tap(find.byKey(const Key('navigation-destination-5')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('destination-body-5')), findsOneWidget);
-    expect(find.text('Risk'), findsOneWidget);
-
-    await tester.tap(find.byKey(const Key('navigation-destination-6')));
-    await tester.pumpAndSettle();
     expect(find.byKey(const Key('destination-body-6')), findsOneWidget);
     expect(find.text('Hỗ trợ'), findsOneWidget);
 
-    await tester.tap(find.byKey(const Key('navigation-destination-7')));
+    await tester.tap(find.byKey(const Key('navigation-destination-6')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('destination-body-7')), findsOneWidget);
     expect(find.text('Chiến Thuật'), findsOneWidget);
@@ -149,7 +143,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     tester.view.devicePixelRatio = 1;
-    const cases = <(double, double)>[(390, 46.75), (800, 50.6)];
+    const cases = <(double, double)>[(390, 50.6), (800, 50.6)];
 
     for (final testCase in cases) {
       tester.view.physicalSize = Size(testCase.$1, 844);

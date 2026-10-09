@@ -4,6 +4,10 @@ Status: DRAFT | BLOCKED_ON_CLARIFICATION | READY_FOR_APPROVAL | APPROVED | COMPL
 Date: YYYY-MM-DD
 Tier: S
 
+Frontend Level: F0 | F1 | N/A
+Required Frontend Guidance: <web-design-guidelines | react-best-practices | composition-patterns | react-view-transitions | N/A>
+Visual Review Required: YES | NO
+
 ## Objective
 <one observable outcome>
 
@@ -42,6 +46,13 @@ T01 implements P01. Use `SMALL_TASK_TEMPLATE.md`.
 Executor Class: E0 | E1 | E2
 Target Route: Luna High | Luna XHigh | Luna Max
 Choose from implementation entropy; Tier S does not automatically mean E0.
+
+## Frontend Gate
+
+- [ ] visual treatment preserved unless explicitly in scope
+- [ ] existing design-system tokens/components reused where applicable
+- [ ] required web/accessibility/performance guidance identified
+- [ ] no dependency or broad redesign introduced implicitly
 
 ## Approval Gate
 - [ ] no material ambiguity

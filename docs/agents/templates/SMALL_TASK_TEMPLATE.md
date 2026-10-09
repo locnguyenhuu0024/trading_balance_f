@@ -2,6 +2,9 @@
 
 Status: PENDING | READY | EXECUTING | VERIFYING | PASS | REWORK | BLOCKED | BLOCKED_ROUTE
 Plan: <path>#P01
+Frontend Level: F0 | F1 | N/A
+Required Frontend Guidance: <web-design-guidelines | react-best-practices | composition-patterns | react-view-transitions | N/A>
+Visual Review Required: YES | NO
 Agent Role: implementation_executor
 Executor Class: E0 | E1 | E2
 Target Model: gpt-6-luna
@@ -25,6 +28,15 @@ Forbidden: unrelated refactors/contracts/dependencies/files outside allowed scop
 2. <mechanical step>
 
 Preserve: <invariant/behavior>
+
+## Frontend Gate
+
+Visual treatment preserved unless explicitly in scope: YES | NO | N/A
+Existing design-system primitives reused: YES | NO | N/A
+Pinned web-guidelines audit required: YES | NO
+React/performance or composition review required: YES | NO
+
+Do not broaden a small task into redesign work. If material visual choices become unresolved, return `BLOCKED` for coordinator reclassification to F2/F3.
 
 ## Verify
 Inner loop: use the narrowest diagnostic test/check while editing; it is not formal evidence.
@@ -65,6 +77,7 @@ Return `BLOCKED` if a design decision, missing information, contradictory non-pr
 - [ ] report changed files/results/blockers
 - [ ] confirm no protected configuration/environment content was read or modified
 - [ ] report external configuration/environment action as none or fully specified
+- [ ] satisfy applicable frontend guidance/audit gate
 
 ## Coordinator Audit
 Acceptance/scope: PENDING

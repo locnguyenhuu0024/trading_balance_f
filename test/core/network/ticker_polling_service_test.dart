@@ -6,7 +6,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/network/backend_data_client.dart';
 import 'package:trading_balance_f/core/network/okx_websocket_service.dart';
-import 'package:trading_balance_f/features/portfolio/data/risk/risk_request_coordinator.dart';
+import 'package:trading_balance_f/core/network/request_coordinator.dart';
 
 void main() {
   test(
@@ -232,7 +232,7 @@ OkxWebsocketService _service(
     dio: Dio()..httpClientAdapter = adapter,
     baseUrl: 'https://data.example',
   ),
-  requestCoordinator: RiskRequestCoordinator(
+  requestCoordinator: RequestCoordinator(
     minimumSpacing: Duration.zero,
     delay: (_) async {},
   ),

@@ -11,6 +11,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/platform_brightness_provider.dart';
 import '../../../core/theme/pnl_color.dart';
 import '../../../core/widgets/crypto_icon.dart';
+import '../../../core/widgets/manual_refresh_button.dart';
 import 'providers/portfolio_provider.dart';
 import '../../orders/presentation/providers/trade_session_provider.dart';
 import '../../settings/presentation/settings_screen.dart';
@@ -39,6 +40,7 @@ class PortfolioScreen extends ConsumerStatefulWidget {
 
 class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
   bool _portfolioRefreshInFlight = false;
+  bool _pageRefreshInFlight = false;
   bool _tickerSubscriptionScheduled = false;
   List<String> _subscribedCoins = const <String>[];
   List<String>? _pendingCoins;
@@ -73,6 +75,36 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
       // The watched provider renders refresh errors in the screen.
     } finally {
       if (mounted) _portfolioRefreshInFlight = false;
+    }
+  }
+
+  Future<void> _refreshPortfolioAndRate() async {
+    final tradeState = ref.read(tradeSessionProvider);
+    if (!mounted ||
+        tradeState.isLoading ||
+        !tradeState.isAuthenticated ||
+        _portfolioRefreshInFlight ||
+        _pageRefreshInFlight ||
+        ref.read(portfolioFutureProvider).isLoading) {
+      return;
+    }
+    setState(() => _pageRefreshInFlight = true);
+    try {
+      final rate = ref.read(vndExchangeRateProvider);
+      if (rate.isLoading) {
+        await ref.read(vndExchangeRateProvider.future);
+      } else {
+        ref.invalidate(vndExchangeRateProvider);
+        await ref.read(vndExchangeRateProvider.future);
+      }
+    } catch (_) {
+      // The exchange-rate provider keeps its local fallback available.
+    }
+    if (!mounted) return;
+    try {
+      await _refreshPortfolio();
+    } finally {
+      if (mounted) setState(() => _pageRefreshInFlight = false);
     }
   }
 
@@ -122,6 +154,9 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
     final isSessionLoading = ref.watch(
       tradeSessionProvider.select((state) => state.isLoading),
     );
+    final isSessionAuthenticated = ref.watch(
+      tradeSessionProvider.select((state) => state.isAuthenticated),
+    );
     final livePrices = ref.watch(livePriceProvider);
 
     final isBalanceHidden = ref.watch(hideBalanceProvider);
@@ -143,6 +178,17 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
         elevation: 0,
         centerTitle: true,
         actions: [
+          ManualRefreshButton(
+            buttonKey: const Key('portfolio-manual-refresh'),
+            onRefresh: isSessionAuthenticated && !isSessionLoading
+                ? _refreshPortfolioAndRate
+                : null,
+            isBusy:
+                _pageRefreshInFlight ||
+                _portfolioRefreshInFlight ||
+                portfolioAsyncValue.isLoading ||
+                exchangeRateAsync.isLoading,
+          ),
           IconButton(
             icon: Icon(
               isBalanceHidden ? Icons.visibility_off : Icons.visibility,
@@ -159,10 +205,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
         child: RefreshIndicator(
           color: palette.ink,
           backgroundColor: palette.raised,
-          onRefresh: () async {
-            ref.invalidate(vndExchangeRateProvider);
-            await _refreshPortfolio();
-          },
+          onRefresh: _refreshPortfolioAndRate,
           child:
               !portfolioAsyncValue.hasValue &&
                   (isSessionLoading || portfolioAsyncValue.isLoading)

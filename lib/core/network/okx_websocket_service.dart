@@ -5,7 +5,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../features/orders/presentation/providers/trade_session_provider.dart';
-import '../../features/portfolio/data/risk/risk_request_coordinator.dart';
+import 'request_coordinator.dart';
 import 'backend_data_client.dart';
 
 /// A cancellable owner of a set of public ticker subscriptions.
@@ -30,12 +30,12 @@ class TickerPollingSubscription {
 class OkxWebsocketService {
   OkxWebsocketService({
     BackendDataClient? client,
-    RiskRequestCoordinator? requestCoordinator,
+    RequestCoordinator? requestCoordinator,
     Duration pollInterval = const Duration(seconds: 1),
     Duration maximumQuoteAge = OkxWebsocketService.maximumQuoteAge,
     DateTime Function()? clock,
   }) : _client = client,
-       _requestCoordinator = requestCoordinator ?? RiskRequestCoordinator(),
+       _requestCoordinator = requestCoordinator ?? RequestCoordinator(),
        _pollInterval = pollInterval,
        _maximumQuoteAge = maximumQuoteAge,
        _clock = clock ?? DateTime.now {
@@ -59,7 +59,7 @@ class OkxWebsocketService {
   static const Duration maximumQuoteAge = Duration(seconds: 15);
 
   final BackendDataClient? _client;
-  final RiskRequestCoordinator _requestCoordinator;
+  final RequestCoordinator _requestCoordinator;
   final Duration _pollInterval;
   final Duration _maximumQuoteAge;
   final DateTime Function() _clock;
@@ -189,7 +189,7 @@ class OkxWebsocketService {
           final batch = instrumentIds.skip(offset).take(100).toList();
           try {
             final response = await _requestCoordinator.run<Response<dynamic>>(
-              lane: RiskRequestLane.public,
+              lane: RequestLane.public,
               key: '/v1/data/market/quotes?instIds=${batch.join(',')}',
               request: () => client.get(
                 '/api/v5/market/quotes',
@@ -359,7 +359,7 @@ class OkxWebsocketService {
 final okxWebsocketProvider = Provider.autoDispose<OkxWebsocketService>((ref) {
   final service = OkxWebsocketService(
     client: ref.watch(backendDataClientProvider),
-    requestCoordinator: ref.watch(riskRequestCoordinatorProvider),
+    requestCoordinator: ref.watch(requestCoordinatorProvider),
   );
   ref.onDispose(service.disconnect);
   return service;
