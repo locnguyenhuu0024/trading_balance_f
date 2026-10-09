@@ -13,6 +13,9 @@ Observed Effective Model: <runtime value | unavailable>
 Observed Effective Effort: <runtime value | unavailable>
 Dispatch Route Status: MATCH | MISMATCH | UNVERIFIABLE | ROUTE_UNAVAILABLE
 Escalation: none | E0->E1 | E1->E2 | exceptional — <evidence/reason>
+Frontend Level: F0 | F1 | F2 | F3 | N/A
+Frontend Guidance Applied: <identifiers | N/A>
+Visual Review Handoff: REQUIRED | NOT_REQUIRED | EVIDENCE_UNAVAILABLE
 
 Route compliance rule:
 - `INHERITED`, `MISMATCH`, or `ROUTE_UNAVAILABLE` must not be reported as normal `DONE`; stop further mutation and return the route failure to the coordinator.
@@ -71,6 +74,15 @@ External verification: none | required | evidence_received | obsolete_after_loca
 - local Integrated Auth later succeeded: YES | NO
 - coordinator evidence acceptance: PENDING | ACCEPTED | REJECTED | OBSOLETE — <reason>
 
+Frontend implementation evidence:
+- approved design brief followed: PASS | FAIL | N/A
+- existing design-system conventions respected: PASS | FAIL | N/A
+- pinned web-guidelines self-check: PASS | FINDINGS | N/A
+- React/performance review: PASS | FINDINGS | N/A
+- composition review: PASS | FINDINGS | N/A
+- view-transition/reduced-motion review: PASS | FINDINGS | N/A
+- visual evidence produced by executor: <none | identifiers only; do not embed image bodies>
+
 Protected configuration boundary:
 - protected config/environment content read: NO
 - protected config/environment file modified by agent: NO
@@ -114,5 +126,6 @@ Telemetry envelope (for coordinator logging; no chain-of-thought):
 - verification_level: <V1 | V2 | V3 | V4 | N/A>
 - usage: <input/output/reasoning/cache tokens + cost when runtime exposes them; otherwise null>
 - error_category: <none | environment | transport | verification | contract | route_mismatch | route_unavailable | other>
+- frontend: <F-level + skill identifiers + audit/visual status only; no source/screenshot bodies>
 
 The coordinator may add `result_use` and `route_assessment` after fan-in/audit. Do not include chain-of-thought, full prompts, secrets, protected configuration contents, source-code bodies, diffs, or raw command output in this envelope.

@@ -39,9 +39,9 @@ Recommended shape:
   "actual_reasoning_agents": 2,
   "fanout_compliance": "PASS",
   "fanout_skip_reason": null,
-  "configured_model": "gpt-6-sol",
+  "configured_model": "gpt-6.1-sol",
   "configured_effort": "medium",
-  "requested_model": "gpt-6-sol",
+  "requested_model": "gpt-6.1-sol",
   "requested_effort": "medium",
   "route_binding_mode": "EXPLICIT",
   "parent_route_inherited": false,
@@ -64,7 +64,7 @@ Recommended shape:
     "cached_tokens": null,
     "cost": null,
     "currency": null
-  },
+  } ,
   "summary": "Plan validation found no blocking mismatch."
 }
 ```
@@ -88,6 +88,7 @@ Use the smallest useful set:
 - `environment_blocker`
 - `orchestration_transport_error`
 - `telemetry_degraded`
+- `frontend_design_classified`, `frontend_design_brief_ready`, `frontend_guidelines_audited`, `frontend_visual_review_completed`
 
 Do not create a telemetry event for every shell command, file read, or internal thought.
 
@@ -179,5 +180,6 @@ At minimum compute:
 - external-verification rate;
 - unresolved-design leakage to executors (contract/ambiguity blockers);
 - duration and runtime-reported token/cost per accepted task/workflow when available.
+- frontend F0/F1/F2/F3 distribution; design-brief compliance; web-guidelines finding rate; visual-review PASS/REWORK/UNAVAILABLE distribution when applicable.
 
 Interpret cost/performance only after separating model failures from environment, transport, security-boundary, and contract/design failures.

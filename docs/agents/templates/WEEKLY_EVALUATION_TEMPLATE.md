@@ -12,8 +12,13 @@ Data quality: COMPLETE | PARTIAL — <missing fields/events>
 - agent runs: <main / reasoning / executor / auditor>
 - first-pass executor success: <...%>
 - model/effort escalations: <count / rate>
+- JEV decision-plane: <used count / fallback count / high-confidence auto-route count>
+- JEV fallback reasons: <top reason codes; no raw state or probabilities>
 - environment/toolchain/transport incidents: <count>
 - runtime-reported cost/tokens coverage: <...% of runs>
+- frontend F0/F1/F2/F3 distribution: <...>
+- frontend design-brief compliance: <...%>
+- frontend visual-review PASS / REWORK / UNAVAILABLE: <...>
 
 ## 2. Routing Effectiveness
 
@@ -21,7 +26,7 @@ Data quality: COMPLETE | PARTIAL — <missing fields/events>
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | C1 Sol Medium | | | | | | | | | |
 | C2 Sol High | | | | | | | | | |
-| C3 Astra Low | | | | | | | | | |
+| C3 Sol Medium | | | | | | | | | |
 | R0 | | | | | | | | | |
 | R1 | | | | | | | | | |
 | R2 Sol Medium | | | | | | | | | |
@@ -57,7 +62,16 @@ Data quality: COMPLETE | PARTIAL — <missing fields/events>
 - orchestration transport errors: <...>
 - SSPI constraint activations / self-clears: <...>
 
-## 6. P/P Findings
+## 6. Frontend Quality
+
+- F2/F3 tasks with approved design brief before execution: <...%>
+- applicable UI changes with pinned web-guidelines audit: <...%>
+- visual-review evidence available when required: <...%>
+- blocking accessibility/interaction findings discovered only after execution: <count>
+- out-of-scope redesign/dependency expansion incidents: <count>
+- third-party skill loads by identifier and adoption usefulness: <...>
+
+## 7. P/P Findings
 
 Keep / increase usage:
 - <route + evidence>
@@ -71,7 +85,7 @@ Escalation threshold changes:
 Decomposition / fan-out changes:
 - <proposal + evidence>
 
-## 7. Next Optimization Decisions
+## 8. Next Optimization Decisions
 
 | Decision | Evidence | Expected benefit | Risk | Action |
 |---|---|---|---|---|

@@ -71,6 +71,23 @@ Rules:
 - The coordinator owns final cross-layer synthesis and canonical plan text.
 - A required fan-out must be `PASS`, or have a permitted `EXCEPTION`/`UNAVAILABLE` state with the exact skip reason, before this plan becomes `READY_FOR_APPROVAL`.
 
+## Frontend Design Gate — frontend variant
+
+Frontend Level: F0 | F1 | F2 | F3 | N/A
+Frontend Design Brief: `<path | N/A>`
+Brief Status: N/A | DRAFT | READY_FOR_APPROVAL | APPROVED | BLOCKED
+Required guidance: <frontend-design | web-design-guidelines | react-best-practices | composition-patterns | react-view-transitions | N/A>
+Visual Review Required: YES | NO
+Pinned Web Guidelines Audit Required: YES | NO
+Repository design-system evidence: <tokens/components/conventions inspected | N/A>
+Open visual/product decisions: none | <D-/Q- IDs>
+
+Rules:
+- F2/F3 cannot enter implementation with unresolved material visual/product decisions.
+- Third-party guidance is progressive; do not load every compiled skill by default.
+- Existing product design-system conventions outrank novelty unless redesign is explicitly approved.
+- Dependency additions or version changes must be explicit plan scope, never implied by a skill.
+
 ## 5. Dependency Graph
 
 ```text
