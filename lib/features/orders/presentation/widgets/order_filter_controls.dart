@@ -19,6 +19,11 @@ class OrderFilterControls extends StatelessWidget {
   final ValueChanged<OrderTab> onTabChanged;
   final ValueChanged<String> onFilterChanged;
 
+  static const _tabs = <(OrderTab, String)>[
+    (OrderTab.positions, 'Vị thế'),
+    (OrderTab.pending, 'Đang chờ'),
+    (OrderTab.history, 'Lịch sử'),
+  ];
   static const _filters = ['ALL', 'SPOT', 'MARGIN', 'SWAP', 'FUTURES'];
 
   @override
@@ -27,121 +32,168 @@ class OrderFilterControls extends StatelessWidget {
     final surfaceColor = palette.raised;
     final textColor = palette.ink;
     final borderColor = palette.border;
+    final focusBorderColor = Theme.of(context).colorScheme.primary;
 
-    final tabSelect = DropdownButtonFormField<OrderTab>(
-      key: const Key('order-tab-select'),
-      initialValue: currentTab,
-      isExpanded: true,
-      dropdownColor: surfaceColor,
-      decoration: _decoration(
-        'Trạng thái',
-        surfaceColor,
-        borderColor,
-        textColor,
-      ),
-      icon: Icon(Icons.unfold_more_rounded, color: textColor),
-      style: Theme.of(context).textTheme.bodyMedium!.copyWith(
-        color: textColor,
-        fontSize: 14,
-        fontWeight: FontWeight.w700,
-      ),
-      items: const [
-        DropdownMenuItem(value: OrderTab.positions, child: Text('Vị thế')),
-        DropdownMenuItem(value: OrderTab.pending, child: Text('Đang chờ')),
-        DropdownMenuItem(value: OrderTab.history, child: Text('Lịch sử')),
-      ],
-      onChanged: (value) {
-        if (value != null) onTabChanged(value);
-      },
-    );
-
-    final filterSelect = DropdownButtonFormField<String>(
-      key: const Key('order-type-select'),
-      initialValue: currentFilter,
-      isExpanded: true,
-      dropdownColor: surfaceColor,
-      decoration: _decoration(
-        'Loại giao dịch',
-        surfaceColor,
-        borderColor,
-        textColor,
-      ),
-      icon: Icon(Icons.unfold_more_rounded, color: textColor),
-      style: Theme.of(context).textTheme.bodyMedium!.copyWith(
-        color: textColor,
-        fontSize: 14,
-        fontWeight: FontWeight.w700,
-      ),
-      items: _filters
-          .map((filter) => DropdownMenuItem(value: filter, child: Text(filter)))
-          .toList(),
-      onChanged: (value) {
-        if (value != null) onFilterChanged(value);
-      },
-    );
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        if (constraints.maxWidth < 340 ||
-            MediaQuery.textScalerOf(context).scale(1) > 1.2) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              tabSelect,
-              const SizedBox(height: AppTokens.space3),
-              filterSelect,
-            ],
-          );
-        }
-
-        if (constraints.maxWidth < 600) {
-          return Row(
-            children: [
-              Expanded(child: tabSelect),
-              const SizedBox(width: AppTokens.space2),
-              Expanded(child: filterSelect),
-            ],
-          );
-        }
-
-        return Row(
+    final tabLabel = _tabs.firstWhere((option) => option.$1 == currentTab).$2;
+    final tabSelect = Semantics(
+      label: 'Trạng thái',
+      value: tabLabel,
+      child: Tooltip(
+        message: 'Trạng thái',
+        child: Stack(
           children: [
-            Expanded(child: tabSelect),
-            const SizedBox(width: AppTokens.space3),
-            Expanded(child: filterSelect),
+            Positioned.fill(
+              top: 4,
+              bottom: 4,
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  key: const Key('order-tab-select-face'),
+                  decoration: _faceDecoration(surfaceColor, borderColor),
+                ),
+              ),
+            ),
+            DropdownButtonFormField<OrderTab>(
+              key: const Key('order-tab-select'),
+              initialValue: currentTab,
+              isDense: true,
+              isExpanded: true,
+              focusColor: Colors.transparent,
+              dropdownColor: surfaceColor,
+              decoration: _decoration(focusBorderColor),
+              icon: Icon(
+                Icons.unfold_more_rounded,
+                key: const Key('order-tab-select-icon'),
+                color: textColor,
+                size: 18,
+              ),
+              style: Theme.of(context).textTheme.bodyMedium!.copyWith(
+                color: textColor,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
+              items: _tabs
+                  .map(
+                    (option) => DropdownMenuItem(
+                      value: option.$1,
+                      child: Text(option.$2),
+                    ),
+                  )
+                  .toList(),
+              selectedItemBuilder: (context) => _tabs
+                  .map(
+                    (option) => Text(
+                      option.$2,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      softWrap: false,
+                      semanticsLabel: option.$2,
+                    ),
+                  )
+                  .toList(),
+              onChanged: (value) {
+                if (value != null) onTabChanged(value);
+              },
+            ),
           ],
-        );
-      },
+        ),
+      ),
+    );
+
+    final filterSelect = Semantics(
+      label: 'Loại giao dịch',
+      value: currentFilter,
+      child: Tooltip(
+        message: 'Loại giao dịch',
+        child: Stack(
+          children: [
+            Positioned.fill(
+              top: 4,
+              bottom: 4,
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  key: const Key('order-type-select-face'),
+                  decoration: _faceDecoration(surfaceColor, borderColor),
+                ),
+              ),
+            ),
+            DropdownButtonFormField<String>(
+              key: const Key('order-type-select'),
+              initialValue: currentFilter,
+              isDense: true,
+              isExpanded: true,
+              focusColor: Colors.transparent,
+              dropdownColor: surfaceColor,
+              decoration: _decoration(focusBorderColor),
+              icon: Icon(
+                Icons.unfold_more_rounded,
+                key: const Key('order-type-select-icon'),
+                color: textColor,
+                size: 18,
+              ),
+              style: Theme.of(context).textTheme.bodyMedium!.copyWith(
+                color: textColor,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
+              items: _filters
+                  .map(
+                    (filter) =>
+                        DropdownMenuItem(value: filter, child: Text(filter)),
+                  )
+                  .toList(),
+              selectedItemBuilder: (context) => _filters
+                  .map(
+                    (filter) => Text(
+                      filter,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      softWrap: false,
+                      semanticsLabel: filter,
+                    ),
+                  )
+                  .toList(),
+              onChanged: (value) {
+                if (value != null) onFilterChanged(value);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 286),
+      child: Row(
+        children: [
+          Expanded(child: tabSelect),
+          const SizedBox(width: 6),
+          Expanded(child: filterSelect),
+        ],
+      ),
     );
   }
 
-  InputDecoration _decoration(
-    String label,
-    Color surfaceColor,
-    Color borderColor,
-    Color textColor,
-  ) {
+  InputDecoration _decoration(Color focusBorderColor) {
     return InputDecoration(
-      labelText: label,
-      labelStyle: TextStyle(color: textColor),
       filled: true,
-      fillColor: surfaceColor,
+      fillColor: Colors.transparent,
       isDense: true,
-      constraints: const BoxConstraints(
-        minHeight: AppTokens.minimumTouchTarget,
-      ),
-      contentPadding: const EdgeInsets.symmetric(
-        horizontal: AppTokens.space3,
-        vertical: AppTokens.space3,
-      ),
-      border: OutlineInputBorder(
+      constraints: const BoxConstraints(minHeight: 48, maxHeight: 48),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+      border: InputBorder.none,
+      enabledBorder: InputBorder.none,
+      focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(AppTokens.radiusMedium),
-        borderSide: BorderSide(color: borderColor),
+        borderSide: BorderSide(color: focusBorderColor, width: 2),
       ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(AppTokens.radiusMedium),
-        borderSide: BorderSide(color: borderColor),
-      ),
+    );
+  }
+
+  BoxDecoration _faceDecoration(Color surfaceColor, Color borderColor) {
+    return BoxDecoration(
+      color: surfaceColor,
+      border: Border.all(color: borderColor),
+      borderRadius: BorderRadius.circular(AppTokens.radiusMedium),
     );
   }
 }

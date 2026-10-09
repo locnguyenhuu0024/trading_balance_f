@@ -832,6 +832,10 @@ void main() {
           button.style?.side?.resolve({}),
           BorderSide(color: expectedColor, width: 1),
         );
+        expect(button.style?.minimumSize?.resolve({}), const Size(36, 36));
+        expect(button.style?.maximumSize?.resolve({}), const Size(36, 36));
+        expect(button.style?.tapTargetSize, MaterialTapTargetSize.padded);
+        expect((button.icon as Icon).size, 18);
         final shape = button.style?.shape?.resolve({});
         expect(shape, isA<RoundedRectangleBorder>());
         expect(
