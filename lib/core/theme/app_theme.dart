@@ -185,6 +185,9 @@ class AppTheme {
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: palette.surface,
+        constraints: const BoxConstraints(
+          minHeight: AppTokens.minimumTouchTarget,
+        ),
         contentPadding: const EdgeInsets.symmetric(
           horizontal: AppTokens.space4,
           vertical: AppTokens.space3,

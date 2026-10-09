@@ -19,47 +19,66 @@ import 'core/services/background_service.dart';
 import 'core/theme/app_theme.dart';
 import 'core/timezone/app_time_zone.dart';
 import 'core/typography/app_text_scale.dart';
+import 'core/widgets/app_page_transition.dart';
+import 'core/widgets/app_startup.dart';
 import 'features/portfolio/presentation/portfolio_screen.dart'
     show hideBalanceProvider;
 import 'features/settings/presentation/settings_screen.dart';
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+@immutable
+class AppStartupData {
+  const AppStartupData({
+    required this.secureStorage,
+    required this.requireBiometrics,
+    required this.hideBalanceDefault,
+    required this.themeMode,
+    required this.currency,
+    required this.timeZoneId,
+    required this.appTextScale,
+    required this.navigationPreferences,
+  });
 
+  final SecureStorageHelper secureStorage;
+  final bool requireBiometrics;
+  final bool hideBalanceDefault;
+  final ThemeMode themeMode;
+  final String currency;
+  final String timeZoneId;
+  final double appTextScale;
+  final NavigationPreferences navigationPreferences;
+}
+
+Future<AppStartupData> initializeAppStartup({
+  bool isWeb = kIsWeb,
+  Future<SharedPreferences> Function()? loadWebPreferences,
+  SecureStorageHelper Function()? createNativeStorage,
+  void Function()? initializeTimeZone,
+  Future<void> Function()? retireLegacyBackgroundService,
+}) async {
   try {
-    AppTimeZone.initialize();
-  } catch (e) {
-    debugPrint(
-      'Falling back to UTC after time-zone initialization failure: $e',
-    );
+    (initializeTimeZone ?? AppTimeZone.initialize)();
+  } catch (_) {
+    debugPrint('Time-zone initialization failed; using the UTC fallback.');
   }
 
   // Retire the legacy background service before restoring app preferences.
-  if (!kIsWeb) {
+  if (!isWeb) {
     try {
-      await retireBackgroundService();
+      await (retireLegacyBackgroundService ?? retireBackgroundService)();
     } catch (_) {
       debugPrint('Could not retire the legacy background service.');
     }
   }
 
-  // BẢO VỆ 2: Khởi tạo Storage an toàn tuyệt đối cho Web
   SecureStorageHelper helper;
 
-  if (kIsWeb) {
-    // Nếu là Web, dùng SharedPreferences để lưu trữ bền vững trên LocalStorage của trình duyệt
-    final prefs = await SharedPreferences.getInstance();
+  if (isWeb) {
+    final prefs = await (loadWebPreferences ?? SharedPreferences.getInstance)();
     helper = WebStorageHelper(prefs);
   } else {
-    // Nếu là Mobile, dùng Secure Storage thật
-    const storage = FlutterSecureStorage(
-      aOptions: AndroidOptions(encryptedSharedPreferences: true),
-      iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock),
-    );
-    helper = SecureStorageHelper(storage);
+    helper = (createNativeStorage ?? _createNativeSecureStorage)();
   }
 
-  // Thiết lập giá trị mặc định
   bool bioAuth = false;
   bool hideBalanceDefault = false;
   String themeModeStr = 'system';
@@ -74,22 +93,20 @@ void main() async {
     themeModeStr = await helper.getThemeMode();
     currencyStr = await helper.getCurrency();
     timeZoneId = await helper.getTimeZoneId();
-  } catch (e) {
-    debugPrint('Bỏ qua lỗi đọc Storage: $e');
+  } catch (_) {
+    debugPrint('Legacy preference restoration failed; using safe defaults.');
   }
 
   try {
     appTextScale = await helper.getAppTextScale();
-  } catch (e) {
-    debugPrint('Bỏ qua lỗi đọc cỡ chữ ứng dụng: $e');
+  } catch (_) {
+    debugPrint('App text-scale restoration failed; using the default.');
   }
 
-  // Keep this read independent from legacy preferences. A failed theme or
-  // credential read must not prevent navigation from rendering its saved mode.
   try {
     navigationPreferences = await helper.getNavigationPreferences();
-  } catch (e) {
-    debugPrint('Bỏ qua lỗi đọc tùy chọn điều hướng: $e');
+  } catch (_) {
+    debugPrint('Navigation preference restoration failed; using defaults.');
   }
 
   final initialThemeMode = themeModeStr == 'dark'
@@ -97,23 +114,52 @@ void main() async {
       : (themeModeStr == 'light' ? ThemeMode.light : ThemeMode.system);
   final initialTimeZoneId = AppTimeZone.normalizeId(timeZoneId);
 
-  runApp(
-    ProviderScope(
-      overrides: [
-        // QUAN TRỌNG: Ép toàn bộ các module khác (OKX Interceptor, Settings) phải dùng chung bản Mock Helper này trên Web
-        secureStorageProvider.overrideWithValue(helper),
+  return AppStartupData(
+    secureStorage: helper,
+    requireBiometrics: isWeb ? false : bioAuth,
+    hideBalanceDefault: hideBalanceDefault,
+    themeMode: initialThemeMode,
+    currency: currencyStr,
+    timeZoneId: initialTimeZoneId,
+    appTextScale: appTextScale,
+    navigationPreferences: navigationPreferences,
+  );
+}
 
-        hideBalanceProvider.overrideWith((ref) => hideBalanceDefault),
-        themeModeProvider.overrideWith((ref) => initialThemeMode),
-        currencyProvider.overrideWith((ref) => currencyStr),
-        appTimeZoneProvider.overrideWith((ref) => initialTimeZoneId),
-        appTextScaleProvider.overrideWith((ref) => appTextScale),
-        navigationPreferencesInitialProvider.overrideWithValue(
-          navigationPreferences,
-        ),
-      ],
-      // Nếu là Web, luôn vào thẳng Portfolio (bỏ qua sinh trắc học)
-      child: TradingBalanceApp(requireBiometrics: kIsWeb ? false : bioAuth),
+SecureStorageHelper _createNativeSecureStorage() {
+  const storage = FlutterSecureStorage(
+    aOptions: AndroidOptions(encryptedSharedPreferences: true),
+    iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock),
+  );
+  return SecureStorageHelper(storage);
+}
+
+Widget buildInitializedApp(AppStartupData startup, {Widget? home}) {
+  return ProviderScope(
+    overrides: [
+      secureStorageProvider.overrideWithValue(startup.secureStorage),
+      hideBalanceProvider.overrideWith((ref) => startup.hideBalanceDefault),
+      themeModeProvider.overrideWith((ref) => startup.themeMode),
+      currencyProvider.overrideWith((ref) => startup.currency),
+      appTimeZoneProvider.overrideWith((ref) => startup.timeZoneId),
+      appTextScaleProvider.overrideWith((ref) => startup.appTextScale),
+      navigationPreferencesInitialProvider.overrideWithValue(
+        startup.navigationPreferences,
+      ),
+    ],
+    child: TradingBalanceApp(
+      requireBiometrics: startup.requireBiometrics,
+      home: home,
+    ),
+  );
+}
+
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(
+    AppStartup<AppStartupData>(
+      initialize: initializeAppStartup,
+      builder: (context, startup) => buildInitializedApp(startup),
     ),
   );
 }
@@ -135,8 +181,12 @@ class TradingBalanceApp extends ConsumerWidget {
     return MaterialApp(
       title: 'Crypto Portfolio',
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.light,
-      darkTheme: AppTheme.dark,
+      theme: AppTheme.light.copyWith(
+        pageTransitionsTheme: AppPageTransitions.theme,
+      ),
+      darkTheme: AppTheme.dark.copyWith(
+        pageTransitionsTheme: AppPageTransitions.theme,
+      ),
       themeMode: ref.watch(themeModeProvider),
       builder: (context, child) {
         final mediaQuery = MediaQuery.maybeOf(context);

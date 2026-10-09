@@ -13,6 +13,7 @@ import 'navigation_destination_data.dart';
 import 'navigation_preferences.dart';
 import 'navigation_preferences_provider.dart';
 import 'navigation_presentation_host.dart';
+import '../widgets/app_page_transition.dart';
 
 typedef NavigationDestinationBodyBuilder =
     Widget Function(BuildContext context, int index);
@@ -130,7 +131,13 @@ class _MainNavigationShellState extends ConsumerState<MainNavigationShell> {
             }
           }
         },
-        child: _buildSelectedScreen(context, selectedScreenIndex),
+        child: AppDestinationTransition(
+          destinationId: selectedScreenIndex,
+          child: KeyedSubtree(
+            key: ValueKey<int>(selectedScreenIndex),
+            child: _buildSelectedScreen(context, selectedScreenIndex),
+          ),
+        ),
       ),
     );
   }

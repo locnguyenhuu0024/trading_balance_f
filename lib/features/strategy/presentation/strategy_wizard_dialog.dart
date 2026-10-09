@@ -5,6 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../orders/data/trade_api_client.dart';
 import '../../orders/presentation/providers/trade_session_provider.dart';
+import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/responsive_form_content.dart';
 import '../data/strategy_api_client.dart';
 import '../data/strategy_market_repository.dart';
 import '../domain/strategy_models.dart';
@@ -49,6 +51,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
   StrategyMarketSnapshot? _snapshot;
   StrategyInterval _interval = StrategyInterval.h6;
   _StrategyDirection _direction = _StrategyDirection.long;
+  _StrategyDirection _candidateDirection = _StrategyDirection.both;
   StrategyAllocation _allocation = StrategyAllocation.equal;
   String? _instrumentId;
   String? _marketError;
@@ -61,9 +64,11 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
   bool _isLoadingLevels = false;
   bool _isRequestingPreview = false;
   bool _isSaving = false;
+  bool _isSavingDraft = false;
   int _marketGeneration = 0;
   int _inputGeneration = 0;
   String? _candidateDraftId;
+  bool _candidateScopeValid = true;
 
   bool get _isReviewingCandidates => widget.initialCandidateDraft != null;
 
@@ -90,10 +95,19 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
   }
 
   void _initializeCandidateDraft(Map<String, dynamic> draft) {
+    _candidateScopeValid = false;
     try {
-      final aiGeneration = _asMap(draft['aiGeneration']).isNotEmpty
+      final rawSnapshot = _asMap(draft['snapshot']);
+      final hasTopGeneration = draft.containsKey('aiGeneration');
+      if ((hasTopGeneration && draft['aiGeneration'] is! Map) ||
+          (!hasTopGeneration &&
+              rawSnapshot.containsKey('aiGeneration') &&
+              rawSnapshot['aiGeneration'] is! Map)) {
+        throw const FormatException('invalid saved candidate scope');
+      }
+      final aiGeneration = hasTopGeneration
           ? _asMap(draft['aiGeneration'])
-          : _asMap(_asMap(draft['snapshot'])['aiGeneration']);
+          : _asMap(rawSnapshot['aiGeneration']);
       final instrumentId = _text(draft['instrumentId']).isNotEmpty
           ? _text(draft['instrumentId'])
           : _text(aiGeneration['instrumentId']);
@@ -103,6 +117,18 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
       final interval = StrategyInterval.values.where(
         (value) => value.bar == intervalText,
       );
+      final rawDirection = aiGeneration['direction'];
+      final candidateDirection = !aiGeneration.containsKey('direction')
+          ? _StrategyDirection.both
+          : switch (rawDirection) {
+              'long' => _StrategyDirection.long,
+              'short' => _StrategyDirection.short,
+              'both' => _StrategyDirection.both,
+              _ => throw const FormatException('invalid candidate direction'),
+            };
+      _candidateDirection = candidateDirection;
+      _direction = candidateDirection;
+      _candidateScopeValid = true;
       final referenceText = _text(aiGeneration['referencePrice']);
       final reference = StrategyDecimal.tryParse(referenceText);
       final snapshotData = _asMap(aiGeneration['evaluationSnapshot']);
@@ -147,7 +173,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
       _candidateDraftId = draftId;
       _instrumentId = instrumentId;
       _interval = selectedInterval;
-      _direction = _StrategyDirection.both;
+      _direction = _candidateDirection;
       _isLoadingInstruments = false;
       _instruments = [
         StrategyInstrument(
@@ -174,6 +200,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
         resistances: resistances,
       );
     } on Object catch (_) {
+      _candidateScopeValid = false;
       _isLoadingInstruments = false;
       _marketError = 'Bản chụp ứng viên đã lưu không thể mở để xem xét.';
     }
@@ -186,7 +213,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
   }) {
     _selected.clear();
     _entries.clear();
-    _direction = _StrategyDirection.both;
+    _direction = _candidateDirection;
     if (rawRecommendation == null) {
       _selectionNotice =
           'Không có đề xuất Jev đã lưu; mọi mức bắt đầu chưa chọn.';
@@ -218,6 +245,14 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
 
     final longIds = List<String>.from(rawLongIds);
     final shortIds = List<String>.from(rawShortIds);
+    if ((_candidateDirection == _StrategyDirection.short &&
+            longIds.isNotEmpty) ||
+        (_candidateDirection == _StrategyDirection.long &&
+            shortIds.isNotEmpty)) {
+      _selectionNotice =
+          'Đề xuất đã lưu vượt quá phạm vi hướng giao dịch; mọi mức đã được bỏ chọn.';
+      return;
+    }
     final allIds = [...longIds, ...shortIds];
     if (allIds.toSet().length != allIds.length) {
       _selectionNotice =
@@ -261,11 +296,13 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
     }
     final hasLong = longIds.isNotEmpty;
     final hasShort = shortIds.isNotEmpty;
-    _direction = switch ((hasLong, hasShort)) {
-      (true, false) => _StrategyDirection.long,
-      (false, true) => _StrategyDirection.short,
-      _ => _StrategyDirection.both,
-    };
+    _direction = !hasLong && !hasShort
+        ? _candidateDirection
+        : switch ((hasLong, hasShort)) {
+            (true, false) => _StrategyDirection.long,
+            (false, true) => _StrategyDirection.short,
+            _ => _StrategyDirection.both,
+          };
     if (allIds.isEmpty) {
       _selectionNotice =
           'Không có mức nào đạt tiêu chí Jev; bạn có thể chọn thủ công.';
@@ -441,6 +478,11 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
   }
 
   void _changeDirection(_StrategyDirection direction) {
+    if (_isReviewingCandidates &&
+        _candidateDirection != _StrategyDirection.both &&
+        direction != _candidateDirection) {
+      return;
+    }
     setState(() {
       _direction = direction;
       final allowed = _allowedSides;
@@ -452,11 +494,22 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
     });
   }
 
-  Set<StrategySide> get _allowedSides => switch (_direction) {
-    _StrategyDirection.long => {StrategySide.long},
-    _StrategyDirection.short => {StrategySide.short},
-    _StrategyDirection.both => {StrategySide.long, StrategySide.short},
-  };
+  Set<StrategySide> get _allowedSides {
+    final current = switch (_direction) {
+      _StrategyDirection.long => {StrategySide.long},
+      _StrategyDirection.short => {StrategySide.short},
+      _StrategyDirection.both => {StrategySide.long, StrategySide.short},
+    };
+    final candidate = switch (_candidateDirection) {
+      _StrategyDirection.long => {StrategySide.long},
+      _StrategyDirection.short => {StrategySide.short},
+      _StrategyDirection.both => {StrategySide.long, StrategySide.short},
+    };
+    return current.intersection(candidate);
+  }
+
+  bool get _candidateDirectionIsFixed =>
+      _isReviewingCandidates && _candidateDirection != _StrategyDirection.both;
 
   void _toggleLevel(StrategySide side, StrategyLevel level, bool selected) {
     final parsedPrice = StrategyDecimal.tryParse(level.priceText);
@@ -760,6 +813,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
     if (!_canActOnPreview) return;
     setState(() {
       _isSaving = true;
+      _isSavingDraft = true;
       _workflowError = null;
     });
     try {
@@ -782,6 +836,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
       _expireSessionIfUnauthorized(error);
       setState(() {
         _isSaving = false;
+        _isSavingDraft = false;
         _workflowError = _safeError(error);
       });
     }
@@ -851,6 +906,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
     if (!_canActOnPreview) return;
     setState(() {
       _isSaving = true;
+      _isSavingDraft = false;
       _workflowError = null;
     });
     try {
@@ -915,6 +971,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
       _expireSessionIfUnauthorized(error);
       setState(() {
         _isSaving = false;
+        _isSavingDraft = false;
         _workflowError = _safeError(error);
       });
     }
@@ -957,17 +1014,22 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
           maxHeight: MediaQuery.sizeOf(context).height * 0.9,
         ),
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
             _buildHeader(context),
             const Divider(height: 1),
-            Expanded(
+            Flexible(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.all(16),
-                child: switch (_step) {
-                  0 => _buildSelectionStep(context),
-                  1 => _buildBudgetStep(context),
-                  _ => _buildReviewStep(context),
-                },
+                child: ResponsiveFormContent(
+                  maxWidth: 760,
+                  padding: EdgeInsets.zero,
+                  child: switch (_step) {
+                    0 => _buildSelectionStep(context),
+                    1 => _buildBudgetStep(context),
+                    _ => _buildReviewStep(context),
+                  },
+                ),
               ),
             ),
             const Divider(height: 1),
@@ -1037,6 +1099,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
             isEmpty: _instrumentId == null,
             decoration: InputDecoration(
               labelText: 'Hợp đồng USDT SWAP',
+              floatingLabelBehavior: FloatingLabelBehavior.always,
               enabled: pickerEnabled,
               suffixIcon: const Icon(Icons.search),
             ),
@@ -1064,24 +1127,32 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
         ),
         const SizedBox(height: 12),
         DropdownButtonFormField<_StrategyDirection>(
+          isExpanded: true,
           key: const Key('strategy-direction-select'),
           value: _direction,
           decoration: const InputDecoration(labelText: 'Phía giao dịch'),
-          items: const [
-            DropdownMenuItem(
-              value: _StrategyDirection.long,
-              child: Text('Long'),
-            ),
-            DropdownMenuItem(
-              value: _StrategyDirection.short,
-              child: Text('Short'),
-            ),
-            DropdownMenuItem(
-              value: _StrategyDirection.both,
-              child: Text('Long và Short'),
-            ),
-          ],
-          onChanged: _isSaving
+          items: !_candidateScopeValid
+              ? [
+                  DropdownMenuItem(
+                    value: _direction,
+                    child: const Text('Không rõ chiều'),
+                  ),
+                ]
+              : [
+                  for (final direction in _StrategyDirection.values)
+                    if (!_candidateDirectionIsFixed ||
+                        direction == _candidateDirection)
+                      DropdownMenuItem(
+                        value: direction,
+                        child: Text(switch (direction) {
+                          _StrategyDirection.long => 'Long',
+                          _StrategyDirection.short => 'Short',
+                          _StrategyDirection.both => 'Long&Short',
+                        }),
+                      ),
+                ],
+          onChanged:
+              _isSaving || _candidateDirectionIsFixed || !_candidateScopeValid
               ? null
               : (value) {
                   if (value != null) _changeDirection(value);
@@ -1089,7 +1160,11 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
         ),
         const SizedBox(height: 12),
         if (_isLoadingInstruments || _isLoadingLevels)
-          const LinearProgressIndicator(),
+          FormPendingStatus(
+            label: _isLoadingInstruments
+                ? 'Đang tải danh sách hợp đồng…'
+                : 'Đang tải mức giá…',
+          ),
         if (_marketError != null)
           _WizardNotice(
             message: _marketError!,
@@ -1284,8 +1359,15 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
         ],
         const SizedBox(height: 12),
         DropdownButtonFormField<StrategyAllocation>(
+          isExpanded: true,
+          itemHeight: null,
           value: _allocation,
           decoration: const InputDecoration(labelText: 'Phân bổ giữa các lệnh'),
+          selectedItemBuilder: (context) => const [
+            _AllocationSelectedLabel('Đều nhau'),
+            _AllocationSelectedLabel('Tăng dần từ điểm vào'),
+            _AllocationSelectedLabel('Giảm dần từ điểm vào'),
+          ],
           items: const [
             DropdownMenuItem(
               value: StrategyAllocation.equal,
@@ -1379,7 +1461,11 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
 
   Widget _buildFooter(BuildContext context) => Padding(
     padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-    child: Row(
+    child: Wrap(
+      alignment: WrapAlignment.end,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: AppTokens.space2,
+      runSpacing: AppTokens.space2,
       children: [
         TextButton(
           onPressed: _isSaving || _isRequestingPreview
@@ -1392,7 +1478,6 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
                 }),
           child: Text(_step == 0 ? 'Hủy' : 'Quay lại'),
         ),
-        const Spacer(),
         if (_step == 0)
           FilledButton(
             key: const Key('strategy-next-step-one'),
@@ -1405,34 +1490,30 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
             child: const Text('Tiếp theo'),
           )
         else if (_step == 1)
-          FilledButton(
+          AsyncFormButton(
             key: const Key('strategy-request-preview'),
             onPressed: !_isSessionCurrent || _isRequestingPreview
                 ? null
                 : _requestPreview,
-            child: _isRequestingPreview
-                ? const SizedBox.square(
-                    dimension: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Text('Xem lại lệnh'),
+            isBusy: _isRequestingPreview,
+            label: 'Xem lại lệnh',
+            busyLabel: 'Đang tính bản xem trước…',
           )
         else ...[
-          OutlinedButton(
+          AsyncFormButton(
             key: const Key('strategy-save-draft'),
             onPressed: _canActOnPreview ? _saveDraft : null,
-            child: const Text('Lưu bản nháp'),
+            isBusy: _isSavingDraft,
+            label: 'Lưu bản nháp',
+            busyLabel: 'Đang lưu bản nháp…',
+            outlined: true,
           ),
-          const SizedBox(width: 8),
-          FilledButton(
+          AsyncFormButton(
             key: const Key('strategy-apply-now'),
             onPressed: _canActOnPreview ? _applyNow : null,
-            child: _isSaving
-                ? const SizedBox.square(
-                    dimension: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Text('Áp dụng ngay'),
+            isBusy: _isSaving && !_isSavingDraft,
+            label: 'Áp dụng ngay',
+            busyLabel: 'Đang áp dụng…',
           ),
         ],
       ],
@@ -1838,6 +1919,23 @@ class _SubmissionModeSummary extends StatelessWidget {
           const SizedBox(height: 4),
           Text(mode.explanation),
         ],
+      ),
+    ),
+  );
+}
+
+class _AllocationSelectedLabel extends StatelessWidget {
+  const _AllocationSelectedLabel(this.label);
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    label: label,
+    child: ExcludeSemantics(
+      child: Align(
+        alignment: AlignmentDirectional.centerStart,
+        child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
       ),
     ),
   );

@@ -3,12 +3,24 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/widgets/responsive_form_content.dart';
 import '../../orders/data/trade_api_client.dart';
 import '../../orders/presentation/providers/trade_session_provider.dart';
 import '../data/strategy_api_client.dart';
 import '../data/strategy_market_repository.dart';
 import '../domain/strategy_models.dart';
 import 'providers/strategy_dashboard_provider.dart';
+
+enum _AutomaticDirection {
+  long('long', 'Long'),
+  short('short', 'Short'),
+  both('both', 'Long&Short');
+
+  const _AutomaticDirection(this.value, this.label);
+
+  final String value;
+  final String label;
+}
 
 class StrategyAutomaticDraftDialog extends ConsumerStatefulWidget {
   const StrategyAutomaticDraftDialog({
@@ -30,6 +42,7 @@ class _StrategyAutomaticDraftDialogState
   List<StrategyInstrument> _instruments = const [];
   String? _instrumentId;
   StrategyInterval? _interval;
+  _AutomaticDirection _direction = _AutomaticDirection.both;
   String? _requestId;
   String? _error;
   bool _isLoading = true;
@@ -120,6 +133,15 @@ class _StrategyAutomaticDraftDialogState
     });
   }
 
+  void _selectDirection(_AutomaticDirection? value) {
+    if (value == null || value == _direction) return;
+    setState(() {
+      _direction = value;
+      _requestId = null;
+      _error = null;
+    });
+  }
+
   Future<void> _createCandidates() async {
     if (!_canGenerate) return;
     final api = ref.read(strategyApiProvider);
@@ -144,14 +166,21 @@ class _StrategyAutomaticDraftDialogState
         instrumentId: instrumentId,
         interval: interval.bar,
         requestId: requestId,
+        direction: _direction.value,
       );
       if (!mounted || !_isSessionCurrent) return;
       final draft = _candidateDraft(response);
+      final generation = _asStringMap(draft?['aiGeneration']);
+      final returnedDirection = _text(generation?['direction']);
+      final hasReturnedDirection =
+          generation?.containsKey('direction') ?? false;
       if (draft == null ||
           draft['instrumentId'] != instrumentId ||
           draft['interval'] != interval.bar ||
           _text(_asStringMap(draft['aiGeneration'])?['requestId']) !=
-              requestId) {
+              requestId ||
+          (!hasReturnedDirection && _direction != _AutomaticDirection.both) ||
+          (hasReturnedDirection && returnedDirection != _direction.value)) {
         throw const StrategyApiException(
           code: 'invalid_response',
           message: 'Máy chủ trả về bản xem xét chiến thuật không hợp lệ.',
@@ -222,73 +251,101 @@ class _StrategyAutomaticDraftDialogState
             Flexible(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    InkWell(
-                      key: const Key('strategy-automatic-instrument-picker'),
-                      onTap: _isLoading || _isGenerating || !_isSessionCurrent
-                          ? null
-                          : _pickInstrument,
-                      borderRadius: BorderRadius.circular(4),
-                      child: InputDecorator(
-                        isEmpty: _instrumentId == null,
-                        decoration: InputDecoration(
-                          labelText: 'Hợp đồng USDT SWAP',
-                          enabled:
-                              !_isLoading &&
-                              !_isGenerating &&
-                              _isSessionCurrent,
-                          suffixIcon: const Icon(Icons.search),
+                child: ResponsiveFormContent(
+                  maxWidth: 560,
+                  padding: EdgeInsets.zero,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      InkWell(
+                        key: const Key('strategy-automatic-instrument-picker'),
+                        onTap: _isLoading || _isGenerating || !_isSessionCurrent
+                            ? null
+                            : _pickInstrument,
+                        borderRadius: BorderRadius.circular(4),
+                        child: InputDecorator(
+                          isEmpty: _instrumentId == null,
+                          decoration: InputDecoration(
+                            labelText: 'Hợp đồng USDT SWAP',
+                            floatingLabelBehavior: FloatingLabelBehavior.always,
+                            enabled:
+                                !_isLoading &&
+                                !_isGenerating &&
+                                _isSessionCurrent,
+                            suffixIcon: const Icon(Icons.search),
+                          ),
+                          child: Text(_instrumentId ?? 'Chọn coin'),
                         ),
-                        child: Text(_instrumentId ?? 'Chọn coin'),
                       ),
-                    ),
-                    const SizedBox(height: 12),
-                    DropdownButtonFormField<StrategyInterval>(
-                      key: const Key('strategy-automatic-interval-select'),
-                      initialValue: _interval,
-                      decoration: const InputDecoration(
-                        labelText: 'Khung nến UTC',
-                      ),
-                      items:
-                          const [
-                                StrategyInterval.h6,
-                                StrategyInterval.d1,
-                                StrategyInterval.w1,
-                              ]
-                              .map(
-                                (value) => DropdownMenuItem(
-                                  value: value,
-                                  child: Text(value.label),
-                                ),
-                              )
-                              .toList(growable: false),
-                      onChanged:
-                          _isLoading || _isGenerating || !_isSessionCurrent
-                          ? null
-                          : _selectInterval,
-                    ),
-                    if (_isLoading) ...[
-                      const SizedBox(height: 16),
-                      const LinearProgressIndicator(),
-                    ],
-                    if (_error != null) ...[
                       const SizedBox(height: 12),
-                      Card(
-                        color: Theme.of(context).colorScheme.errorContainer,
-                        child: ListTile(
-                          dense: true,
-                          leading: const Icon(Icons.warning_amber),
-                          title: Text(_error!),
+                      DropdownButtonFormField<StrategyInterval>(
+                        key: const Key('strategy-automatic-interval-select'),
+                        initialValue: _interval,
+                        decoration: const InputDecoration(
+                          labelText: 'Khung nến UTC',
                         ),
+                        items:
+                            const [
+                                  StrategyInterval.h6,
+                                  StrategyInterval.d1,
+                                  StrategyInterval.w1,
+                                ]
+                                .map(
+                                  (value) => DropdownMenuItem(
+                                    value: value,
+                                    child: Text(value.label),
+                                  ),
+                                )
+                                .toList(growable: false),
+                        onChanged:
+                            _isLoading || _isGenerating || !_isSessionCurrent
+                            ? null
+                            : _selectInterval,
+                      ),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<_AutomaticDirection>(
+                        isExpanded: true,
+                        key: const Key('strategy-automatic-direction-select'),
+                        initialValue: _direction,
+                        decoration: const InputDecoration(
+                          labelText: 'Phía giao dịch',
+                        ),
+                        items: _AutomaticDirection.values
+                            .map(
+                              (direction) => DropdownMenuItem(
+                                value: direction,
+                                child: Text(direction.label),
+                              ),
+                            )
+                            .toList(growable: false),
+                        onChanged:
+                            _isLoading || _isGenerating || !_isSessionCurrent
+                            ? null
+                            : _selectDirection,
+                      ),
+                      if (_isLoading) ...[
+                        const SizedBox(height: 16),
+                        const FormPendingStatus(
+                          label: 'Đang tải danh sách hợp đồng…',
+                        ),
+                      ],
+                      if (_error != null) ...[
+                        const SizedBox(height: 12),
+                        Card(
+                          color: Theme.of(context).colorScheme.errorContainer,
+                          child: ListTile(
+                            dense: true,
+                            leading: const Icon(Icons.warning_amber),
+                            title: Text(_error!),
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Không tạo hoặc gửi lệnh ở bước này. Bản nháp sẽ tự lưu sau khi tạo; đề xuất Jev chọn tối đa 5 mức cho mỗi phía, không bù phần thiếu. Bạn có thể sửa lựa chọn khi xem lại.',
                       ),
                     ],
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Không tạo hoặc gửi lệnh ở bước này. Bản nháp sẽ tự lưu sau khi tạo; đề xuất Jev chọn tối đa 5 mức cho mỗi phía, không bù phần thiếu. Bạn có thể sửa lựa chọn khi xem lại.',
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ),
@@ -306,16 +363,13 @@ class _StrategyAutomaticDraftDialogState
                         : () => Navigator.of(context).pop(),
                     child: const Text('Hủy'),
                   ),
-                  FilledButton.icon(
+                  AsyncFormButton(
                     key: const Key('strategy-automatic-generate'),
                     onPressed: _canGenerate ? _createCandidates : null,
-                    icon: _isGenerating
-                        ? const SizedBox.square(
-                            dimension: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.auto_awesome_outlined),
-                    label: Text(_isGenerating ? 'Đang dựng…' : 'Tạo ứng viên'),
+                    isBusy: _isGenerating,
+                    label: 'Tạo ứng viên',
+                    busyLabel: 'Đang dựng…',
+                    icon: Icons.auto_awesome_outlined,
                   ),
                 ],
               ),
@@ -340,11 +394,19 @@ class _StrategyAutomaticDraftDialogState
     final nested =
         _asStringMap(response['strategy']) ?? _asStringMap(response['draft']);
     final draft = nested ?? response;
+    final snapshot = _asStringMap(draft['snapshot']);
+    final hasTopGeneration = draft.containsKey('aiGeneration');
+    if ((hasTopGeneration && draft['aiGeneration'] is! Map) ||
+        (!hasTopGeneration &&
+            snapshot?.containsKey('aiGeneration') == true &&
+            snapshot?['aiGeneration'] is! Map)) {
+      return null;
+    }
     final stage = _text(draft['draftStage']);
     final id = _text(draft['id']).trim();
-    final aiGeneration =
-        _asStringMap(draft['aiGeneration']) ??
-        _asStringMap(_asStringMap(draft['snapshot'])?['aiGeneration']);
+    final aiGeneration = hasTopGeneration
+        ? _asStringMap(draft['aiGeneration'])
+        : _asStringMap(snapshot?['aiGeneration']);
     if (stage != 'candidates' ||
         id.isEmpty ||
         draft['status'] != 'DRAFT' ||

@@ -1576,7 +1576,7 @@ void main() {
           '123456',
         );
         await tester.tap(find.text('Đăng nhập').last);
-        await tester.pumpAndSettle();
+        await tester.pump(const Duration(milliseconds: 100));
 
         storage.readGate!.complete();
         await tester.pumpAndSettle();

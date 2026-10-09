@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/widgets/responsive_form_content.dart';
 import '../data/strategy_api_client.dart';
 import '../domain/strategy_models.dart';
 import '../../orders/presentation/providers/trade_session_provider.dart';
@@ -236,106 +237,115 @@ class _StrategyRetryDialogState extends ConsumerState<StrategyRetryDialog> {
               const Divider(height: 1),
               Expanded(
                 child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _lineageSummary(candidates),
-                      const SizedBox(height: 12),
-                      if (_loading) const LinearProgressIndicator(),
-                      if (_error != null) ...[
-                        _Notice(message: _error!, isError: true),
-                        const SizedBox(height: 10),
-                      ],
-                      if (candidates?.blockedReason case final String reason)
-                        _Notice(message: _blockMessage(reason), isError: true),
-                      if (candidates != null) ...[
-                        Text(
-                          'Chọn 1–10 lệnh theo mã lệnh nguồn. Lệnh đủ điều kiện được chọn rõ ràng; danh sách dài hơn 10 lệnh không tự rút gọn.',
-                          style: Theme.of(context).textTheme.bodyMedium,
-                        ),
-                        const SizedBox(height: 8),
-                        Text('Đã chọn: ${_selectedIds.length} / 10'),
-                        const SizedBox(height: 8),
-                        for (final candidate in candidates.candidates)
-                          _candidateTile(candidate),
-                      ],
-                      if (preview != null) ...[
-                        const SizedBox(height: 16),
-                        const Divider(),
-                        Text(
-                          _draft == null
-                              ? 'Bản xem trước cố định'
-                              : 'Bản xem trước đã liên kết với ${_draft!.id}',
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          'Giá tham chiếu hiện tại ${StrategyNumberFormatter.amount(preview.raw['currentPrice'], placeholder: '—')} · ${_text(preview.raw['quoteTimestamp'])}',
-                        ),
-                        _RetryCostSummary(preview: preview),
-                        const SizedBox(height: 8),
-                        for (
-                          var index = 0;
-                          index < preview.orders.length;
-                          index++
-                        )
-                          _RetryOrderTile(
-                            index: index + 1,
-                            order: preview.orders[index],
-                          ),
-                      ],
-                      if (_draft != null) ...[
+                  child: ResponsiveFormContent(
+                    maxWidth: 720,
+                    padding: const EdgeInsets.all(20),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _lineageSummary(candidates),
                         const SizedBox(height: 12),
-                        _Notice(
-                          message:
-                              'Đã tạo bản gửi lại ${_draft!.id}. Bản nguồn ${widget.flow.sourceStrategyId} vẫn được giữ trong lịch sử.',
-                        ),
-                      ],
-                      if (widget.flow.createAttempted && _draft == null)
-                        const _Notice(
-                          message:
-                              'Yêu cầu tạo bản gửi lại đã được gửi. Không gửi lại trong phiên này; hãy làm mới trạng thái để xem bản liên kết.',
-                          isError: true,
-                        ),
-                      if (widget.flow.prepareAttempted && _prepared == null)
-                        const _Notice(
-                          message:
-                              'Kết quả chuẩn bị chưa rõ. Bản chưa gửi vẫn còn trong lịch sử; làm mới để kiểm tra và không xin mã xác nhận mới.',
-                          isError: true,
-                        ),
-                      if (_prepared != null) ...[
-                        const Divider(height: 28),
-                        Text(
-                          'Xác nhận chính xác một lần',
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          'Bản gửi lại: ${_text(_prepared!['id'])} · Nguồn: ${widget.flow.sourceStrategyId}',
-                        ),
-                        Text(
-                          'Cơ chế gửi đã cố định: ${StrategyLimitOrderSubmissionMode.parse(_prepared!['submissionMode'])?.label ?? 'không khả dụng'}',
-                        ),
-                        _PreparedRetryCosts(prepared: _prepared!),
-                        for (
-                          var index = 0;
-                          index < (_prepared!['orders'] as List).length;
-                          index++
-                        )
-                          _RetryOrderTile(
-                            index: index + 1,
-                            order: Map<String, dynamic>.from(
-                              (_prepared!['orders'] as List)[index] as Map,
-                            ),
+                        if (_loading)
+                          const FormPendingStatus(
+                            label: 'Đang tải lệnh đủ điều kiện gửi lại…',
                           ),
-                        const SizedBox(height: 8),
-                        const _Notice(
-                          message:
-                              'Nếu hủy hoặc phiên thay đổi, bản PREPARED vẫn còn trong lịch sử và sẽ hết hạn theo quy tắc hiện hành. Không tự xóa, tạo lại hoặc xin mã xác nhận khác.',
-                        ),
+                        if (_error != null) ...[
+                          _Notice(message: _error!, isError: true),
+                          const SizedBox(height: 10),
+                        ],
+                        if (candidates?.blockedReason case final String reason)
+                          _Notice(
+                            message: _blockMessage(reason),
+                            isError: true,
+                          ),
+                        if (candidates != null) ...[
+                          Text(
+                            'Chọn 1–10 lệnh theo mã lệnh nguồn. Lệnh đủ điều kiện được chọn rõ ràng; danh sách dài hơn 10 lệnh không tự rút gọn.',
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          ),
+                          const SizedBox(height: 8),
+                          Text('Đã chọn: ${_selectedIds.length} / 10'),
+                          const SizedBox(height: 8),
+                          for (final candidate in candidates.candidates)
+                            _candidateTile(candidate),
+                        ],
+                        if (preview != null) ...[
+                          const SizedBox(height: 16),
+                          const Divider(),
+                          Text(
+                            _draft == null
+                                ? 'Bản xem trước cố định'
+                                : 'Bản xem trước đã liên kết với ${_draft!.id}',
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Giá tham chiếu hiện tại ${StrategyNumberFormatter.amount(preview.raw['currentPrice'], placeholder: '—')} · ${_text(preview.raw['quoteTimestamp'])}',
+                          ),
+                          _RetryCostSummary(preview: preview),
+                          const SizedBox(height: 8),
+                          for (
+                            var index = 0;
+                            index < preview.orders.length;
+                            index++
+                          )
+                            _RetryOrderTile(
+                              index: index + 1,
+                              order: preview.orders[index],
+                            ),
+                        ],
+                        if (_draft != null) ...[
+                          const SizedBox(height: 12),
+                          _Notice(
+                            message:
+                                'Đã tạo bản gửi lại ${_draft!.id}. Bản nguồn ${widget.flow.sourceStrategyId} vẫn được giữ trong lịch sử.',
+                          ),
+                        ],
+                        if (widget.flow.createAttempted && _draft == null)
+                          const _Notice(
+                            message:
+                                'Yêu cầu tạo bản gửi lại đã được gửi. Không gửi lại trong phiên này; hãy làm mới trạng thái để xem bản liên kết.',
+                            isError: true,
+                          ),
+                        if (widget.flow.prepareAttempted && _prepared == null)
+                          const _Notice(
+                            message:
+                                'Kết quả chuẩn bị chưa rõ. Bản chưa gửi vẫn còn trong lịch sử; làm mới để kiểm tra và không xin mã xác nhận mới.',
+                            isError: true,
+                          ),
+                        if (_prepared != null) ...[
+                          const Divider(height: 28),
+                          Text(
+                            'Xác nhận chính xác một lần',
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Bản gửi lại: ${_text(_prepared!['id'])} · Nguồn: ${widget.flow.sourceStrategyId}',
+                          ),
+                          Text(
+                            'Cơ chế gửi đã cố định: ${StrategyLimitOrderSubmissionMode.parse(_prepared!['submissionMode'])?.label ?? 'không khả dụng'}',
+                          ),
+                          _PreparedRetryCosts(prepared: _prepared!),
+                          for (
+                            var index = 0;
+                            index < (_prepared!['orders'] as List).length;
+                            index++
+                          )
+                            _RetryOrderTile(
+                              index: index + 1,
+                              order: Map<String, dynamic>.from(
+                                (_prepared!['orders'] as List)[index] as Map,
+                              ),
+                            ),
+                          const SizedBox(height: 8),
+                          const _Notice(
+                            message:
+                                'Nếu hủy hoặc phiên thay đổi, bản PREPARED vẫn còn trong lịch sử và sẽ hết hạn theo quy tắc hiện hành. Không tự xóa, tạo lại hoặc xin mã xác nhận khác.',
+                          ),
+                        ],
                       ],
-                    ],
+                    ),
                   ),
                 ),
               ),
@@ -356,7 +366,7 @@ class _StrategyRetryDialogState extends ConsumerState<StrategyRetryDialog> {
                         preview == null &&
                         !widget.flow.createAttempted &&
                         candidates.blockedReason == null)
-                      FilledButton(
+                      AsyncFormButton(
                         key: const Key('strategy-retry-preview'),
                         onPressed:
                             ownsVisibleSession &&
@@ -365,12 +375,12 @@ class _StrategyRetryDialogState extends ConsumerState<StrategyRetryDialog> {
                                 _selectedIds.length <= 10
                             ? _previewSelection
                             : null,
-                        child: _previewing
-                            ? const _ButtonProgress()
-                            : const Text('Xem lại lệnh đã chọn'),
+                        label: 'Xem lại lệnh đã chọn',
+                        busyLabel: 'Đang xem lại lệnh…',
+                        isBusy: _previewing,
                       ),
                     if (preview != null && _draft == null)
-                      FilledButton(
+                      AsyncFormButton(
                         key: const Key('strategy-retry-create'),
                         onPressed:
                             ownsVisibleSession &&
@@ -378,12 +388,12 @@ class _StrategyRetryDialogState extends ConsumerState<StrategyRetryDialog> {
                                 !widget.flow.createAttempted
                             ? _createDraft
                             : null,
-                        child: _creating
-                            ? const _ButtonProgress()
-                            : const Text('Tạo bản gửi lại liên kết'),
+                        label: 'Tạo bản gửi lại liên kết',
+                        busyLabel: 'Đang tạo bản gửi lại…',
+                        isBusy: _creating,
                       ),
                     if (_draft != null && _prepared == null)
-                      FilledButton(
+                      AsyncFormButton(
                         key: const Key('strategy-retry-prepare'),
                         onPressed:
                             ownsVisibleSession &&
@@ -391,12 +401,12 @@ class _StrategyRetryDialogState extends ConsumerState<StrategyRetryDialog> {
                                 !widget.flow.prepareAttempted
                             ? _prepareChild
                             : null,
-                        child: _preparing
-                            ? const _ButtonProgress()
-                            : const Text('Chuẩn bị xác nhận'),
+                        label: 'Chuẩn bị xác nhận',
+                        busyLabel: 'Đang chuẩn bị xác nhận…',
+                        isBusy: _preparing,
                       ),
                     if (_prepared != null)
-                      FilledButton(
+                      AsyncFormButton(
                         key: const Key('strategy-retry-execute-once'),
                         onPressed:
                             ownsVisibleSession &&
@@ -404,9 +414,9 @@ class _StrategyRetryDialogState extends ConsumerState<StrategyRetryDialog> {
                                 !widget.flow.executeAttempted
                             ? _executeOnce
                             : null,
-                        child: _executing
-                            ? const _ButtonProgress()
-                            : const Text('Xác nhận và gửi một lần'),
+                        label: 'Xác nhận và gửi một lần',
+                        busyLabel: 'Đang gửi một lần…',
+                        isBusy: _executing,
                       ),
                   ],
                 ),
@@ -622,17 +632,6 @@ class _Notice extends StatelessWidget {
       borderRadius: BorderRadius.circular(8),
     ),
     child: Text(message),
-  );
-}
-
-class _ButtonProgress extends StatelessWidget {
-  const _ButtonProgress();
-
-  @override
-  Widget build(BuildContext context) => const SizedBox(
-    width: 18,
-    height: 18,
-    child: CircularProgressIndicator(strokeWidth: 2),
   );
 }
 

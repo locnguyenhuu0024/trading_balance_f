@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/app_theme.dart';
+import '../../../../core/widgets/responsive_form_content.dart';
 import '../../data/okx_position_model.dart';
 import '../../data/trade_api_client.dart';
 import '../providers/position_action_flow_provider.dart';
@@ -126,7 +127,7 @@ class PositionActionControls extends ConsumerWidget {
         ),
         if (isBusy) ...[
           const SizedBox(height: 8),
-          const LinearProgressIndicator(minHeight: 2),
+          const FormPendingStatus(label: 'Đang xử lý thao tác vị thế…'),
         ],
         if (disabledReasons.isNotEmpty) ...[
           const SizedBox(height: 6),
@@ -270,13 +271,21 @@ class _TradeActionInputDialogState extends State<_TradeActionInputDialog> {
     };
     return AlertDialog(
       title: Text(widget.title),
-      content: TextField(
-        controller: _controller,
-        autofocus: true,
-        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-        inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
-        decoration: InputDecoration(labelText: hint),
-        onSubmitted: (value) => Navigator.of(context).pop(value.trim()),
+      scrollable: true,
+      content: ResponsiveFormContent(
+        maxWidth: 560,
+        padding: EdgeInsets.zero,
+        child: TextField(
+          key: const Key('trade-action-input'),
+          controller: _controller,
+          autofocus: true,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          inputFormatters: [
+            FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
+          ],
+          decoration: InputDecoration(labelText: hint),
+          onSubmitted: (value) => Navigator.of(context).pop(value.trim()),
+        ),
       ),
       actions: [
         TextButton(

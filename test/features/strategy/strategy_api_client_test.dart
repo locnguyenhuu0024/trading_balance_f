@@ -51,9 +51,35 @@ void main() {
         'instrumentId': 'BTC-USDT-SWAP',
         'interval': '1Dutc',
         'requestId': 'auto-request_123456',
+        'direction': 'both',
       });
     },
   );
+
+  test('automatic draft direction is sent for every supported scope', () async {
+    for (final direction in ['long', 'short', 'both']) {
+      final adapter = _TradeAdapter();
+      final client = StrategyApiClient(
+        baseUrl: 'https://trade.example.com',
+        dio: Dio(BaseOptions())..httpClientAdapter = adapter,
+      );
+
+      await client.createAutomaticDrafts(
+        'current-session-token',
+        instrumentId: 'BTC-USDT-SWAP',
+        interval: '1Dutc',
+        requestId: 'auto-request_123456',
+        direction: direction,
+      );
+
+      expect(adapter.requests.single.data, {
+        'instrumentId': 'BTC-USDT-SWAP',
+        'interval': '1Dutc',
+        'requestId': 'auto-request_123456',
+        'direction': direction,
+      });
+    }
+  });
 
   test('automatic draft requests reject unsupported intervals and IDs', () {
     final adapter = _TradeAdapter();
@@ -77,6 +103,16 @@ void main() {
         instrumentId: 'BTC-USDT-SWAP',
         interval: '6Hutc',
         requestId: 'short',
+      ),
+      throwsA(isA<StrategyApiException>()),
+    );
+    expect(
+      () => client.createAutomaticDrafts(
+        'current-session-token',
+        instrumentId: 'BTC-USDT-SWAP',
+        interval: '6Hutc',
+        requestId: 'automatic-request-123',
+        direction: 'both-sides',
       ),
       throwsA(isA<StrategyApiException>()),
     );

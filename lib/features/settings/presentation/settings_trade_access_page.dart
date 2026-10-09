@@ -8,6 +8,7 @@ import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/security/secure_storage_helper.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/manual_refresh_button.dart';
+import '../../../core/widgets/responsive_form_content.dart';
 import '../../orders/presentation/widgets/trade_account_controls.dart';
 import '../domain/okx_credential_bundle.dart';
 
@@ -301,37 +302,44 @@ class _SettingsTradeAccessPageState
       ),
       body: NavigationContentFrame(
         child: ListView(
-          padding: const EdgeInsets.all(16),
           children: [
-            if (_refreshError != null) ...[
-              Text(
-                _refreshError!,
-                key: const Key('settings-okx-refresh-error'),
-                style: TextStyle(color: AppPalette.of(context).negative),
-              ),
-              const SizedBox(height: 8),
-            ],
-            Padding(
-              padding: const EdgeInsets.only(left: 8, bottom: 8),
-              child: Text(
-                'CẤU HÌNH API (CHỈ ĐỌC)',
-                style: TextStyle(
-                  color: mutedColor,
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                ),
+            ResponsiveFormContent(
+              maxWidth: 560,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (_refreshError != null) ...[
+                    Text(
+                      _refreshError!,
+                      key: const Key('settings-okx-refresh-error'),
+                      style: TextStyle(color: AppPalette.of(context).negative),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                  Padding(
+                    padding: const EdgeInsets.only(left: 8, bottom: 8),
+                    child: Text(
+                      'CẤU HÌNH API (CHỈ ĐỌC)',
+                      style: TextStyle(
+                        color: mutedColor,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  if (_isLoading)
+                    _loadingCard()
+                  else if (_loadError != null)
+                    _loadErrorCard()
+                  else if (_hasCompleteSavedCredentials && !_isEditing)
+                    _savedSummaryCard()
+                  else
+                    _credentialEditorCard(mutedColor),
+                  const SizedBox(height: 24),
+                  const TradeSessionControls(),
+                ],
               ),
             ),
-            if (_isLoading)
-              _loadingCard()
-            else if (_loadError != null)
-              _loadErrorCard()
-            else if (_hasCompleteSavedCredentials && !_isEditing)
-              _savedSummaryCard()
-            else
-              _credentialEditorCard(mutedColor),
-            const SizedBox(height: 24),
-            const TradeSessionControls(),
           ],
         ),
       ),
@@ -342,14 +350,7 @@ class _SettingsTradeAccessPageState
     return const Card(
       child: Padding(
         padding: EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text('Đang tải thông tin API đã lưu…'),
-            SizedBox(height: 12),
-            LinearProgressIndicator(),
-          ],
-        ),
+        child: FormPendingStatus(label: 'Đang tải thông tin API đã lưu…'),
       ),
     );
   }
@@ -470,11 +471,7 @@ class _SettingsTradeAccessPageState
                   key: const Key('settings-paste-okx-clipboard'),
                   onPressed: _inputsEnabled ? _pasteFromClipboard : null,
                   icon: _isPastingFromClipboard
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
+                      ? const FormProgressMark(size: 18)
                       : const Icon(Icons.content_paste),
                   label: Text(
                     _isPastingFromClipboard
@@ -508,16 +505,12 @@ class _SettingsTradeAccessPageState
                 const SizedBox(height: 8),
               ],
               const SizedBox(height: 12),
-              FilledButton(
+              AsyncFormButton(
                 key: const Key('settings-save-okx-credentials'),
                 onPressed: _inputsEnabled ? _saveKeys : null,
-                child: _isSaving
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Text('Lưu cấu hình'),
+                isBusy: _isSaving,
+                label: 'Lưu cấu hình',
+                busyLabel: 'Đang lưu…',
               ),
             ],
           ),

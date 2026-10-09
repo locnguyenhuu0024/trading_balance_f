@@ -1266,6 +1266,104 @@ class StrategyApiTests(unittest.TestCase):
                     self.assertEqual(result["status"], "APPLIED")
                     self.assertEqual(self.exchange.single_order_attempts, order_count + 10)
 
+    def _assert_automatic_single_side_budget_execution(self, side: str, mode: str) -> None:
+        status, settings = self.request(
+            "POST", "/v1/strategies/settings", {"limitOrderSubmissionMode": mode}
+        )
+        self.assertEqual(status, 200, settings)
+        self.exchange.pos_mode = "long_short_mode"
+        level_id = f"automatic-{side}-{mode}"
+        level = {"levelId": level_id, "side": side, "price": "59000" if side == "long" else "61000"}
+        request_id = f"auto-{side}-{mode}-001"
+        _, fingerprint = self.service.strategy._account()
+        generation = {
+            "version": "ai-jev-generation-v1",
+            "instrumentId": INSTRUMENT,
+            "interval": "1Dutc",
+            "requestId": request_id,
+            "direction": side,
+            "supports": [level] if side == "long" else [],
+            "resistances": [level] if side == "short" else [],
+        }
+        candidate_id = self.service.strategy.automatic._persist_candidate(
+            fingerprint=fingerprint,
+            instrument_id=INSTRUMENT,
+            interval="1Dutc",
+            request_id=request_id,
+            direction=side,
+            generation=generation,
+        )
+        contract = self.id_mode_contract([level], direction=side, entry_ids={side: level_id})
+        contract["interval"] = "1Dutc"
+        self.assertEqual(contract["sidePercent"], {side: "100"})
+        status, preview = self.request("POST", "/v1/strategies/preview", contract)
+        self.assertEqual(status, 200, preview)
+        self.assertEqual(preview["sides"], [side])
+        self.assertEqual(preview["totalMargin"], "60")
+        self.assertEqual(preview["sidePercent"], {side: "100"})
+        self.assertGreater(Decimal(preview["plannedMargin"]), Decimal("0"))
+        self.assertLessEqual(Decimal(preview["plannedMargin"]), Decimal("60"))
+        status, materialized = self.request("POST", "/v1/strategies", {
+            **contract,
+            "candidateDraftId": candidate_id,
+            "previewHash": preview["previewHash"],
+        })
+        self.assertEqual(status, 200, materialized)
+        self.assertEqual(materialized["draftStage"], "materialized")
+        self.assertEqual(len(materialized["orders"]), 1)
+        self.assertEqual(materialized["orders"][0]["side"], side)
+
+        status, prepared = self.request(
+            "POST", f"/v1/strategies/{candidate_id}/prepare-apply", {}
+        )
+        self.assertEqual(status, 200, prepared)
+        self.assertEqual(prepared["submissionMode"], mode)
+        self.assertEqual(len(prepared["orders"]), 1)
+        self.assertEqual(prepared["orders"][0]["side"], side)
+        status, applying = self.request(
+            "POST", f"/v1/strategies/{candidate_id}/execute-apply",
+            {"confirmationToken": prepared["confirmationToken"]},
+        )
+        self.assertEqual(status, 200, applying)
+        expected_order_side = "buy" if side == "long" else "sell"
+        if mode == "batch":
+            self.assertEqual(applying["status"], "APPLIED")
+            order = self.exchange.batch_writes[-1][2][0]
+            final_result = applying
+        else:
+            self.assertEqual(applying["status"], "APPLYING")
+            self.assertTrue(self._worker().run_once())
+            status, applied = self.request("GET", f"/v1/strategies/{candidate_id}/result")
+            self.assertEqual(status, 200, applied)
+            self.assertEqual(applied["status"], "APPLIED")
+            order = list(self.exchange.orders.values())[-1]
+            final_result = applied
+        self.assertEqual(final_result["sides"], [side])
+        self.assertEqual(final_result["totalMargin"], "60")
+        self.assertEqual(final_result["sidePercent"], {side: "100"})
+        self.assertEqual(final_result["leverageResults"], [{"side": side, "status": "applied"}])
+        leverage_writes = [
+            payload for method, path, payload in self.exchange.trade_writes
+            if urlsplit(path).path == "/api/v5/account/set-leverage"
+        ]
+        self.assertEqual(len(leverage_writes), 1)
+        self.assertEqual(leverage_writes[0]["posSide"], side)
+        self.assertEqual(leverage_writes[0]["lever"], "5")
+        self.assertEqual(order["side"], expected_order_side)
+        self.assertEqual(order["posSide"], side)
+
+    def test_green_automatic_long_budget_executes_in_batch_mode(self) -> None:
+        self._assert_automatic_single_side_budget_execution("long", "batch")
+
+    def test_green_automatic_short_budget_executes_in_batch_mode(self) -> None:
+        self._assert_automatic_single_side_budget_execution("short", "batch")
+
+    def test_green_automatic_long_budget_executes_in_sequential_mode(self) -> None:
+        self._assert_automatic_single_side_budget_execution("long", "sequential")
+
+    def test_green_automatic_short_budget_executes_in_sequential_mode(self) -> None:
+        self._assert_automatic_single_side_budget_execution("short", "sequential")
+
     def test_red_id_mode_persists_both_sides_through_prepare_batch_and_reconciliation(self) -> None:
         self.exchange.tier_data = [
             {"instType": "SWAP", "tdMode": "isolated", "instFamily": "BTC-USDT", "tier": "1",

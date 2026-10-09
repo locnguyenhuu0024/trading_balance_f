@@ -68,7 +68,7 @@ class _TradeActionConfirmationDialogState
     return AlertDialog(
       title: Text(widget.title),
       content: SizedBox(
-        width: 440,
+        width: 420,
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxHeight: 440),
           child: ListView(
