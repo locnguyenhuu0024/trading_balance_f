@@ -16,6 +16,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/timezone/app_time_zone.dart';
 import '../../../core/typography/app_text_scale.dart';
 import '../../../core/widgets/manual_refresh_button.dart';
+import '../../../core/widgets/responsive_form_content.dart';
 import '../../fractal_tracker/presentation/providers/fractal_provider.dart';
 import '../../portfolio/presentation/portfolio_screen.dart';
 import 'settings_trade_access_page.dart';
@@ -198,7 +199,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('Múi giờ'),
-        content: const Text(_timeZoneDescription),
+        content: const ResponsiveFormContent(
+          maxWidth: 560,
+          padding: EdgeInsets.zero,
+          child: Text(_timeZoneDescription),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(),
@@ -241,9 +246,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           color: sectionTitleColor,
           size: 20,
         ),
-        style: TextStyle(
+        style: Theme.of(context).textTheme.bodyMedium!.copyWith(
           color: textColor,
-          fontSize: 13,
+          fontSize: 14,
           fontWeight: FontWeight.bold,
         ),
         alignment: AlignmentDirectional.centerEnd,
@@ -322,6 +327,124 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final textColor = palette.ink;
     final cardColor = palette.raised;
     final sectionTitleColor = palette.muted;
+    final compactSettings =
+        MediaQuery.sizeOf(context).width < 360 ||
+        MediaQuery.textScalerOf(context).scale(1) > 1.2;
+
+    final themeModeSelector = DropdownButtonHideUnderline(
+      child: DropdownButton<ThemeMode>(
+        value: themeMode,
+        isExpanded: compactSettings,
+        dropdownColor: cardColor,
+        icon: Icon(
+          Icons.unfold_more_rounded,
+          color: sectionTitleColor,
+          size: 20,
+        ),
+        style: Theme.of(context).textTheme.bodyMedium!.copyWith(
+          color: textColor,
+          fontSize: 14,
+          fontWeight: FontWeight.bold,
+        ),
+        alignment: AlignmentDirectional.centerEnd,
+        items: const [
+          DropdownMenuItem(value: ThemeMode.light, child: Text('Sáng')),
+          DropdownMenuItem(value: ThemeMode.dark, child: Text('Tối')),
+          DropdownMenuItem(value: ThemeMode.system, child: Text('Hệ thống')),
+        ],
+        onChanged: (ThemeMode? value) {
+          if (value != null) {
+            ref.read(themeModeProvider.notifier).state = value;
+            _saveAllPreferences();
+          }
+        },
+      ),
+    );
+    final currencySelector = DropdownButtonHideUnderline(
+      child: DropdownButton<String>(
+        key: const Key('settings-currency-select'),
+        value: currency,
+        isExpanded: compactSettings,
+        dropdownColor: cardColor,
+        icon: Icon(
+          Icons.unfold_more_rounded,
+          color: sectionTitleColor,
+          size: 20,
+        ),
+        style: Theme.of(context).textTheme.bodyMedium!.copyWith(
+          color: textColor,
+          fontSize: 14,
+          fontWeight: FontWeight.bold,
+        ),
+        alignment: AlignmentDirectional.centerEnd,
+        items: CurrencyDisplayMode.options
+            .map(
+              (option) => DropdownMenuItem<String>(
+                value: option.value,
+                child: Text(option.label),
+              ),
+            )
+            .toList(),
+        onChanged: (String? value) {
+          if (value != null) {
+            ref.read(currencyProvider.notifier).state = value;
+            _saveAllPreferences();
+          }
+        },
+      ),
+    );
+    final currencyExchangeRate = CurrencyDisplayMode.includesVnd(currency)
+        ? exchangeRateAsync.when(
+            data: (rate) => Text(
+              '1 USDT ≈ ${NumberFormat("#,##0", "en_US").format(rate)} đ',
+              style: TextStyle(
+                color: palette.positive,
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            loading: () => Text(
+              'Đang cập nhật tỷ giá...',
+              style: TextStyle(color: sectionTitleColor, fontSize: 12),
+            ),
+            error: (_, __) => Text(
+              'Lỗi tải tỷ giá (Dùng giá chuẩn)',
+              style: TextStyle(color: palette.negative, fontSize: 12),
+            ),
+          )
+        : null;
+    final appTextScaleSelector = DropdownButtonHideUnderline(
+      child: DropdownButton<double>(
+        key: const Key('settings-app-text-scale-select'),
+        value: appTextScale,
+        isExpanded: compactSettings,
+        dropdownColor: cardColor,
+        icon: Icon(
+          Icons.unfold_more_rounded,
+          color: sectionTitleColor,
+          size: 20,
+        ),
+        style: Theme.of(context).textTheme.bodyMedium!.copyWith(
+          color: textColor,
+          fontSize: 14,
+          fontWeight: FontWeight.bold,
+        ),
+        alignment: AlignmentDirectional.centerEnd,
+        items: AppTextScale.options
+            .map(
+              (option) => DropdownMenuItem<double>(
+                value: option.value,
+                child: Text(option.label),
+              ),
+            )
+            .toList(),
+        onChanged: _isSavingAppTextScale
+            ? null
+            : (double? value) {
+                if (value != null) _saveAppTextScale(value);
+              },
+      ),
+    );
 
     return Scaffold(
       backgroundColor: bgColor,
@@ -344,434 +467,325 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ),
       body: NavigationContentFrame(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // ================= SECTION 1: GIAO DIỆN =================
-              Padding(
-                padding: const EdgeInsets.only(left: 8, bottom: 8),
-                child: Text(
-                  'HIỂN THỊ & GIAO DIỆN',
-                  style: TextStyle(
-                    color: sectionTitleColor,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-              Card(
-                elevation: 0,
-                color: cardColor,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                  side: BorderSide(color: palette.border),
-                ),
-                child: Column(
-                  children: [
-                    ListTile(
-                      leading: Icon(
-                        Icons.dark_mode_outlined,
-                        color: textColor,
-                        size: 22,
-                      ),
-                      title: Text(
-                        'Chế độ nền',
-                        style: TextStyle(
-                          color: textColor,
-                          fontWeight: FontWeight.w500,
-                          fontSize: 14,
-                        ),
-                      ),
-                      trailing: DropdownButtonHideUnderline(
-                        child: DropdownButton<ThemeMode>(
-                          value: themeMode,
-                          dropdownColor: cardColor,
-                          icon: Icon(
-                            Icons.unfold_more_rounded,
-                            color: sectionTitleColor,
-                            size: 20,
-                          ),
-                          style: TextStyle(
-                            color: textColor,
-                            fontSize: 13,
-                            fontWeight: FontWeight.bold,
-                          ),
-                          alignment: AlignmentDirectional.centerEnd,
-                          items: const [
-                            DropdownMenuItem(
-                              value: ThemeMode.light,
-                              child: Text('Sáng'),
-                            ),
-                            DropdownMenuItem(
-                              value: ThemeMode.dark,
-                              child: Text('Tối'),
-                            ),
-                            DropdownMenuItem(
-                              value: ThemeMode.system,
-                              child: Text('Hệ thống'),
-                            ),
-                          ],
-                          onChanged: (ThemeMode? val) {
-                            if (val != null) {
-                              ref.read(themeModeProvider.notifier).state = val;
-                              _saveAllPreferences();
-                            }
-                          },
-                        ),
-                      ),
-                    ),
-                    Divider(height: 1, color: palette.border, indent: 52),
-                    _buildTimeZoneTile(
-                      timeZoneId: timeZoneId,
-                      textColor: textColor,
-                      cardColor: cardColor,
-                      sectionTitleColor: sectionTitleColor,
-                      compact: MediaQuery.sizeOf(context).width < 360,
-                    ),
-                    Divider(
-                      height: 1,
-                      color: isDark ? palette.border : palette.surface,
-                      indent: 52,
-                    ),
-                    ListTile(
-                      leading: Icon(
-                        Icons.attach_money_rounded,
-                        color: textColor,
-                        size: 22,
-                      ),
-                      title: Text(
-                        'Tiền tệ hiển thị',
-                        style: TextStyle(
-                          color: textColor,
-                          fontWeight: FontWeight.w500,
-                          fontSize: 14,
-                        ),
-                      ),
-                      subtitle: CurrencyDisplayMode.includesVnd(currency)
-                          ? exchangeRateAsync.when(
-                              data: (rate) => Text(
-                                '1 USDT ≈ ${NumberFormat("#,##0", "en_US").format(rate)} đ',
-                                style: TextStyle(
-                                  color: palette.positive,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                              loading: () => Text(
-                                'Đang cập nhật tỷ giá...',
-                                style: TextStyle(
-                                  color: sectionTitleColor,
-                                  fontSize: 12,
-                                ),
-                              ),
-                              error: (_, __) => Text(
-                                'Lỗi tải tỷ giá (Dùng giá chuẩn)',
-                                style: TextStyle(
-                                  color: palette.negative,
-                                  fontSize: 12,
-                                ),
-                              ),
-                            )
-                          : null,
-                      trailing: DropdownButtonHideUnderline(
-                        child: DropdownButton<String>(
-                          key: const Key('settings-currency-select'),
-                          value: currency,
-                          dropdownColor: cardColor,
-                          icon: Icon(
-                            Icons.unfold_more_rounded,
-                            color: sectionTitleColor,
-                            size: 20,
-                          ),
-                          style: TextStyle(
-                            color: textColor,
-                            fontSize: 13,
-                            fontWeight: FontWeight.bold,
-                          ),
-                          alignment: AlignmentDirectional.centerEnd,
-                          items: CurrencyDisplayMode.options
-                              .map(
-                                (option) => DropdownMenuItem<String>(
-                                  value: option.value,
-                                  child: Text(option.label),
-                                ),
-                              )
-                              .toList(),
-                          onChanged: (String? val) {
-                            if (val != null) {
-                              ref.read(currencyProvider.notifier).state = val;
-                              _saveAllPreferences();
-                            }
-                          },
-                        ),
-                      ),
-                    ),
-                    Divider(
-                      height: 1,
-                      color: isDark ? palette.border : palette.surface,
-                      indent: 52,
-                    ),
-                    ListTile(
-                      key: const Key('settings-navigation-appearance'),
-                      leading: Icon(
-                        Icons.space_dashboard_outlined,
-                        color: textColor,
-                        size: 22,
-                      ),
-                      title: Text(
-                        'Giao diện điều hướng',
-                        style: TextStyle(
-                          color: textColor,
-                          fontWeight: FontWeight.w500,
-                          fontSize: 14,
-                        ),
-                      ),
-                      subtitle: Text(
-                        'Kiểu hiển thị, vị trí, kích thước và độ trong suốt.',
-                        style: TextStyle(
-                          color: sectionTitleColor,
-                          fontSize: 12,
-                        ),
-                      ),
-                      trailing: Icon(
-                        Icons.chevron_right_rounded,
-                        color: sectionTitleColor,
-                      ),
-                      onTap: navigationState.isSaving
-                          ? null
-                          : _showNavigationAppearanceDialog,
-                    ),
-                    Divider(
-                      height: 1,
-                      color: isDark ? palette.border : palette.surface,
-                      indent: 52,
-                    ),
-                    ListTile(
-                      key: const Key('settings-navigation-visibility'),
-                      leading: Icon(
-                        Icons.tune_rounded,
-                        color: textColor,
-                        size: 22,
-                      ),
-                      title: Text(
-                        'Trang điều hướng',
-                        style: TextStyle(
-                          color: textColor,
-                          fontWeight: FontWeight.w500,
-                          fontSize: 14,
-                        ),
-                      ),
-                      subtitle: Text(
-                        'Chọn những trang xuất hiện trong điều hướng chính.',
-                        style: TextStyle(
-                          color: sectionTitleColor,
-                          fontSize: 12,
-                        ),
-                      ),
-                      trailing: Icon(
-                        Icons.chevron_right_rounded,
-                        color: sectionTitleColor,
-                      ),
-                      onTap: navigationState.isSaving
-                          ? null
-                          : _showNavigationVisibilityDialog,
-                    ),
-                    Divider(
-                      height: 1,
-                      color: isDark ? palette.border : palette.border,
-                      indent: 52,
-                    ),
-                    ListTile(
-                      leading: Icon(
-                        Icons.text_fields_rounded,
-                        color: textColor,
-                        size: 22,
-                      ),
-                      title: Text(
-                        'Cỡ chữ ứng dụng',
-                        style: TextStyle(
-                          color: textColor,
-                          fontWeight: FontWeight.w500,
-                          fontSize: 14,
-                        ),
-                      ),
-                      trailing: DropdownButtonHideUnderline(
-                        child: DropdownButton<double>(
-                          key: const Key('settings-app-text-scale-select'),
-                          value: appTextScale,
-                          isDense: true,
-                          dropdownColor: cardColor,
-                          icon: Icon(
-                            Icons.unfold_more_rounded,
-                            color: sectionTitleColor,
-                            size: 20,
-                          ),
-                          style: TextStyle(
-                            color: textColor,
-                            fontSize: 13,
-                            fontWeight: FontWeight.bold,
-                          ),
-                          alignment: AlignmentDirectional.centerEnd,
-                          items: AppTextScale.options
-                              .map(
-                                (option) => DropdownMenuItem<double>(
-                                  value: option.value,
-                                  child: Text(option.label),
-                                ),
-                              )
-                              .toList(),
-                          onChanged: _isSavingAppTextScale
-                              ? null
-                              : (double? value) {
-                                  if (value != null) _saveAppTextScale(value);
-                                },
-                        ),
-                      ),
-                    ),
-                    if (navigationState.errorMessage != null)
-                      Padding(
-                        key: const Key('settings-navigation-save-error'),
-                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                        child: Text(
-                          navigationState.errorMessage!,
-                          style: TextStyle(
-                            color: palette.negative,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 24),
-
-              // ================= SECTION 2: BẢO MẬT & TRẢI NGHIỆM =================
-              Padding(
-                padding: const EdgeInsets.only(left: 8, bottom: 8),
-                child: Text(
-                  'BẢO MẬT & TRẢI NGHIỆM',
-                  style: TextStyle(
-                    color: sectionTitleColor,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-              Card(
-                elevation: 0,
-                color: cardColor,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                  side: BorderSide(color: palette.border),
-                ),
-                child: Column(
-                  children: [
-                    SwitchListTile(
-                      secondary: Icon(
-                        Icons.visibility_off,
-                        color: textColor,
-                        size: 22,
-                      ),
-                      title: Text(
-                        'Ẩn số dư mặc định',
-                        style: TextStyle(
-                          color: textColor,
-                          fontWeight: FontWeight.w500,
-                          fontSize: 14,
-                        ),
-                      ),
-                      subtitle: Text(
-                        'Che tài sản khi vừa mở ứng dụng',
-                        style: TextStyle(
-                          color: sectionTitleColor,
-                          fontSize: 12,
-                        ),
-                      ),
-                      value: hideBalanceDefault,
-                      onChanged: (val) {
-                        ref.read(defaultHideBalanceProvider.notifier).state =
-                            val;
-                        ref.read(hideBalanceProvider.notifier).state =
-                            val; // Cập nhật luôn màn chính
-                        _saveAllPreferences();
-                      },
-                    ),
-                    Divider(
-                      height: 1,
-                      color: isDark ? palette.border : palette.surface,
-                      indent: 52,
-                    ),
-                    SwitchListTile(
-                      secondary: Icon(
-                        Icons.fingerprint,
-                        color: textColor,
-                        size: 22,
-                      ),
-                      title: Text(
-                        'Khoá sinh trắc học',
-                        style: TextStyle(
-                          color: textColor,
-                          fontWeight: FontWeight.w500,
-                          fontSize: 14,
-                        ),
-                      ),
-                      subtitle: Text(
-                        'Yêu cầu vân tay / FaceID khi mở app',
-                        style: TextStyle(
-                          color: sectionTitleColor,
-                          fontSize: 12,
-                        ),
-                      ),
-                      value: bioAuth,
-                      onChanged: (val) {
-                        ref.read(biometricAuthProvider.notifier).state = val;
-                        _saveAllPreferences();
-                      },
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 24),
-
-              Card(
-                elevation: 0,
-                color: cardColor,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                  side: BorderSide(color: palette.border),
-                ),
-                child: ListTile(
-                  key: const Key('settings-trade-access-button'),
-                  leading: Icon(Icons.key_rounded, color: textColor),
-                  title: Text(
-                    'API và giao dịch',
+          child: ResponsiveFormContent(
+            maxWidth: 960,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // ================= SECTION 1: GIAO DIỆN =================
+                Padding(
+                  padding: const EdgeInsets.only(left: 8, bottom: 8),
+                  child: Text(
+                    'HIỂN THỊ & GIAO DIỆN',
                     style: TextStyle(
-                      color: textColor,
-                      fontWeight: FontWeight.w600,
+                      color: sectionTitleColor,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
-                  subtitle: Text(
-                    'Cấu hình khóa OKX và quản lý phiên giao dịch',
-                    style: TextStyle(color: sectionTitleColor, fontSize: 12),
-                  ),
-                  trailing: Icon(
-                    Icons.chevron_right_rounded,
-                    color: sectionTitleColor,
-                  ),
-                  onTap: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => const SettingsTradeAccessPage(),
-                      ),
-                    );
-                  },
                 ),
-              ),
-            ],
+                Card(
+                  elevation: 0,
+                  color: cardColor,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    side: BorderSide(color: palette.border),
+                  ),
+                  child: Column(
+                    children: [
+                      ListTile(
+                        leading: Icon(
+                          Icons.dark_mode_outlined,
+                          color: textColor,
+                          size: 22,
+                        ),
+                        title: Text(
+                          'Chế độ nền',
+                          style: TextStyle(
+                            color: textColor,
+                            fontWeight: FontWeight.w500,
+                            fontSize: 14,
+                          ),
+                        ),
+                        subtitle: compactSettings ? themeModeSelector : null,
+                        trailing: compactSettings ? null : themeModeSelector,
+                      ),
+                      Divider(height: 1, color: palette.border, indent: 52),
+                      _buildTimeZoneTile(
+                        timeZoneId: timeZoneId,
+                        textColor: textColor,
+                        cardColor: cardColor,
+                        sectionTitleColor: sectionTitleColor,
+                        compact: compactSettings,
+                      ),
+                      Divider(
+                        height: 1,
+                        color: isDark ? palette.border : palette.surface,
+                        indent: 52,
+                      ),
+                      ListTile(
+                        leading: Icon(
+                          Icons.attach_money_rounded,
+                          color: textColor,
+                          size: 22,
+                        ),
+                        title: Text(
+                          'Tiền tệ hiển thị',
+                          style: TextStyle(
+                            color: textColor,
+                            fontWeight: FontWeight.w500,
+                            fontSize: 14,
+                          ),
+                        ),
+                        subtitle: compactSettings
+                            ? Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  currencySelector,
+                                  if (currencyExchangeRate != null)
+                                    currencyExchangeRate,
+                                ],
+                              )
+                            : currencyExchangeRate,
+                        trailing: compactSettings ? null : currencySelector,
+                      ),
+                      Divider(
+                        height: 1,
+                        color: isDark ? palette.border : palette.surface,
+                        indent: 52,
+                      ),
+                      ListTile(
+                        key: const Key('settings-navigation-appearance'),
+                        leading: Icon(
+                          Icons.space_dashboard_outlined,
+                          color: textColor,
+                          size: 22,
+                        ),
+                        title: Text(
+                          'Giao diện điều hướng',
+                          style: TextStyle(
+                            color: textColor,
+                            fontWeight: FontWeight.w500,
+                            fontSize: 14,
+                          ),
+                        ),
+                        subtitle: Text(
+                          'Kiểu hiển thị, vị trí, kích thước và độ trong suốt.',
+                          style: TextStyle(
+                            color: sectionTitleColor,
+                            fontSize: 12,
+                          ),
+                        ),
+                        trailing: Icon(
+                          Icons.chevron_right_rounded,
+                          color: sectionTitleColor,
+                        ),
+                        onTap: navigationState.isSaving
+                            ? null
+                            : _showNavigationAppearanceDialog,
+                      ),
+                      Divider(
+                        height: 1,
+                        color: isDark ? palette.border : palette.surface,
+                        indent: 52,
+                      ),
+                      ListTile(
+                        key: const Key('settings-navigation-visibility'),
+                        leading: Icon(
+                          Icons.tune_rounded,
+                          color: textColor,
+                          size: 22,
+                        ),
+                        title: Text(
+                          'Trang điều hướng',
+                          style: TextStyle(
+                            color: textColor,
+                            fontWeight: FontWeight.w500,
+                            fontSize: 14,
+                          ),
+                        ),
+                        subtitle: Text(
+                          'Chọn những trang xuất hiện trong điều hướng chính.',
+                          style: TextStyle(
+                            color: sectionTitleColor,
+                            fontSize: 12,
+                          ),
+                        ),
+                        trailing: Icon(
+                          Icons.chevron_right_rounded,
+                          color: sectionTitleColor,
+                        ),
+                        onTap: navigationState.isSaving
+                            ? null
+                            : _showNavigationVisibilityDialog,
+                      ),
+                      Divider(
+                        height: 1,
+                        color: isDark ? palette.border : palette.border,
+                        indent: 52,
+                      ),
+                      ListTile(
+                        leading: Icon(
+                          Icons.text_fields_rounded,
+                          color: textColor,
+                          size: 22,
+                        ),
+                        title: Text(
+                          'Cỡ chữ ứng dụng',
+                          style: TextStyle(
+                            color: textColor,
+                            fontWeight: FontWeight.w500,
+                            fontSize: 14,
+                          ),
+                        ),
+                        subtitle: compactSettings ? appTextScaleSelector : null,
+                        trailing: compactSettings ? null : appTextScaleSelector,
+                      ),
+                      if (navigationState.errorMessage != null)
+                        Padding(
+                          key: const Key('settings-navigation-save-error'),
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                          child: Text(
+                            navigationState.errorMessage!,
+                            style: TextStyle(
+                              color: palette.negative,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 24),
+
+                // ================= SECTION 2: BẢO MẬT & TRẢI NGHIỆM =================
+                Padding(
+                  padding: const EdgeInsets.only(left: 8, bottom: 8),
+                  child: Text(
+                    'BẢO MẬT & TRẢI NGHIỆM',
+                    style: TextStyle(
+                      color: sectionTitleColor,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                Card(
+                  elevation: 0,
+                  color: cardColor,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    side: BorderSide(color: palette.border),
+                  ),
+                  child: Column(
+                    children: [
+                      SwitchListTile(
+                        secondary: Icon(
+                          Icons.visibility_off,
+                          color: textColor,
+                          size: 22,
+                        ),
+                        title: Text(
+                          'Ẩn số dư mặc định',
+                          style: TextStyle(
+                            color: textColor,
+                            fontWeight: FontWeight.w500,
+                            fontSize: 14,
+                          ),
+                        ),
+                        subtitle: Text(
+                          'Che tài sản khi vừa mở ứng dụng',
+                          style: TextStyle(
+                            color: sectionTitleColor,
+                            fontSize: 12,
+                          ),
+                        ),
+                        value: hideBalanceDefault,
+                        onChanged: (val) {
+                          ref.read(defaultHideBalanceProvider.notifier).state =
+                              val;
+                          ref.read(hideBalanceProvider.notifier).state =
+                              val; // Cập nhật luôn màn chính
+                          _saveAllPreferences();
+                        },
+                      ),
+                      Divider(
+                        height: 1,
+                        color: isDark ? palette.border : palette.surface,
+                        indent: 52,
+                      ),
+                      SwitchListTile(
+                        secondary: Icon(
+                          Icons.fingerprint,
+                          color: textColor,
+                          size: 22,
+                        ),
+                        title: Text(
+                          'Khoá sinh trắc học',
+                          style: TextStyle(
+                            color: textColor,
+                            fontWeight: FontWeight.w500,
+                            fontSize: 14,
+                          ),
+                        ),
+                        subtitle: Text(
+                          'Yêu cầu vân tay / FaceID khi mở app',
+                          style: TextStyle(
+                            color: sectionTitleColor,
+                            fontSize: 12,
+                          ),
+                        ),
+                        value: bioAuth,
+                        onChanged: (val) {
+                          ref.read(biometricAuthProvider.notifier).state = val;
+                          _saveAllPreferences();
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 24),
+
+                Card(
+                  elevation: 0,
+                  color: cardColor,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    side: BorderSide(color: palette.border),
+                  ),
+                  child: ListTile(
+                    key: const Key('settings-trade-access-button'),
+                    leading: Icon(Icons.key_rounded, color: textColor),
+                    title: Text(
+                      'API và giao dịch',
+                      style: TextStyle(
+                        color: textColor,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    subtitle: Text(
+                      'Cấu hình khóa OKX và quản lý phiên giao dịch',
+                      style: TextStyle(color: sectionTitleColor, fontSize: 12),
+                    ),
+                    trailing: Icon(
+                      Icons.chevron_right_rounded,
+                      color: sectionTitleColor,
+                    ),
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => const SettingsTradeAccessPage(),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -799,85 +813,91 @@ class _NavigationVisibilityDialog extends ConsumerWidget {
     return AlertDialog(
       title: const Text('Trang điều hướng'),
       scrollable: true,
-      content: SizedBox(
-        width: double.maxFinite,
-        height: MediaQuery.sizeOf(context).height * 0.55,
-        child: Column(
-          children: [
-            Expanded(
-              child: ReorderableListView(
-                buildDefaultDragHandles: false,
-                padding: EdgeInsets.zero,
-                onReorderItem: (oldIndex, newIndex) {
-                  if (state.isSaving) return;
+      content: ResponsiveFormContent(
+        maxWidth: 560,
+        padding: EdgeInsets.zero,
+        child: SizedBox(
+          width: double.maxFinite,
+          height: MediaQuery.sizeOf(context).height * 0.55,
+          child: Column(
+            children: [
+              Expanded(
+                child: ReorderableListView(
+                  buildDefaultDragHandles: false,
+                  padding: EdgeInsets.zero,
+                  onReorderItem: (oldIndex, newIndex) {
+                    if (state.isSaving) return;
 
-                  final nextOrder = [...orderedIds];
-                  final movedId = nextOrder.removeAt(oldIndex);
-                  nextOrder.insert(newIndex, movedId);
-                  ref
-                      .read(navigationPreferencesProvider.notifier)
-                      .setDestinationOrderIds(nextOrder);
-                },
-                children: [
-                  for (var index = 0; index < destinations.length; index++)
-                    CheckboxListTile(
-                      key: Key(
-                        'settings-navigation-visible-${destinations[index].id}',
-                      ),
-                      value: enabledIds.contains(destinations[index].id),
-                      title: Text(destinations[index].label),
-                      controlAffinity: ListTileControlAffinity.leading,
-                      contentPadding: EdgeInsets.zero,
-                      secondary: ReorderableDragStartListener(
+                    final nextOrder = [...orderedIds];
+                    final movedId = nextOrder.removeAt(oldIndex);
+                    nextOrder.insert(newIndex, movedId);
+                    ref
+                        .read(navigationPreferencesProvider.notifier)
+                        .setDestinationOrderIds(nextOrder);
+                  },
+                  children: [
+                    for (var index = 0; index < destinations.length; index++)
+                      CheckboxListTile(
                         key: Key(
-                          'settings-navigation-drag-${destinations[index].id}',
+                          'settings-navigation-visible-${destinations[index].id}',
                         ),
-                        index: index,
-                        enabled: !state.isSaving,
-                        child: Icon(
-                          Icons.drag_handle_rounded,
-                          color: state.isSaving
-                              ? AppPalette.of(context).border
-                              : AppPalette.of(context).muted,
+                        value: enabledIds.contains(destinations[index].id),
+                        title: Text(destinations[index].label),
+                        controlAffinity: ListTileControlAffinity.leading,
+                        contentPadding: EdgeInsets.zero,
+                        secondary: ReorderableDragStartListener(
+                          key: Key(
+                            'settings-navigation-drag-${destinations[index].id}',
+                          ),
+                          index: index,
+                          enabled: !state.isSaving,
+                          child: Icon(
+                            Icons.drag_handle_rounded,
+                            color: state.isSaving
+                                ? AppPalette.of(context).border
+                                : AppPalette.of(context).muted,
+                          ),
                         ),
+                        onChanged:
+                            state.isSaving ||
+                                destinations[index].id == navigationSettingsId
+                            ? null
+                            : (isEnabled) {
+                                if (isEnabled == null) return;
+                                final nextIds = enabledIds.toSet();
+                                if (isEnabled) {
+                                  nextIds.add(destinations[index].id);
+                                } else {
+                                  nextIds.remove(destinations[index].id);
+                                }
+                                ref
+                                    .read(
+                                      navigationPreferencesProvider.notifier,
+                                    )
+                                    .setEnabledDestinationIds(
+                                      navigationDestinationIds
+                                          .where(nextIds.contains)
+                                          .toList(growable: false),
+                                    );
+                              },
                       ),
-                      onChanged:
-                          state.isSaving ||
-                              destinations[index].id == navigationSettingsId
-                          ? null
-                          : (isEnabled) {
-                              if (isEnabled == null) return;
-                              final nextIds = enabledIds.toSet();
-                              if (isEnabled) {
-                                nextIds.add(destinations[index].id);
-                              } else {
-                                nextIds.remove(destinations[index].id);
-                              }
-                              ref
-                                  .read(navigationPreferencesProvider.notifier)
-                                  .setEnabledDestinationIds(
-                                    navigationDestinationIds
-                                        .where(nextIds.contains)
-                                        .toList(growable: false),
-                                  );
-                            },
-                    ),
-                ],
-              ),
-            ),
-            if (state.errorMessage != null)
-              Padding(
-                key: const Key('settings-navigation-dialog-save-error'),
-                padding: const EdgeInsets.only(top: 8),
-                child: Text(
-                  state.errorMessage!,
-                  style: TextStyle(
-                    color: AppPalette.of(context).negative,
-                    fontSize: 12,
-                  ),
+                  ],
                 ),
               ),
-          ],
+              if (state.errorMessage != null)
+                Padding(
+                  key: const Key('settings-navigation-dialog-save-error'),
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    state.errorMessage!,
+                    style: TextStyle(
+                      color: AppPalette.of(context).negative,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
       actions: [
@@ -926,102 +946,106 @@ class _NavigationAppearanceDialog extends ConsumerWidget {
 
     return AlertDialog(
       title: const Text('Giao diện điều hướng'),
-      content: SizedBox(
-        width: double.maxFinite,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              selector<NavigationDisplayMode>(
-                label: 'Kiểu hiển thị',
-                key: const Key('settings-navigation-mode-select'),
-                value: preferences.displayMode,
-                items: const [
-                  DropdownMenuItem(
-                    value: NavigationDisplayMode.bar,
-                    child: Text('Thanh cố định'),
-                  ),
-                  DropdownMenuItem(
-                    value: NavigationDisplayMode.floating,
-                    child: Text('Nút nổi'),
-                  ),
-                ],
-                onChanged: (value) {
-                  if (value != null) controller.setDisplayMode(value);
-                },
-              ),
-              if (preferences.displayMode == NavigationDisplayMode.floating)
-                selector<NavigationEdge>(
-                  label: 'Vị trí nút nổi',
-                  key: const Key('settings-floating-edge-select'),
-                  value: preferences.floatingEdge,
+      content: ResponsiveFormContent(
+        maxWidth: 560,
+        padding: EdgeInsets.zero,
+        child: SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                selector<NavigationDisplayMode>(
+                  label: 'Kiểu hiển thị',
+                  key: const Key('settings-navigation-mode-select'),
+                  value: preferences.displayMode,
                   items: const [
                     DropdownMenuItem(
-                      value: NavigationEdge.top,
-                      child: Text('Trên'),
+                      value: NavigationDisplayMode.bar,
+                      child: Text('Thanh cố định'),
                     ),
                     DropdownMenuItem(
-                      value: NavigationEdge.bottom,
-                      child: Text('Dưới'),
-                    ),
-                    DropdownMenuItem(
-                      value: NavigationEdge.left,
-                      child: Text('Trái'),
-                    ),
-                    DropdownMenuItem(
-                      value: NavigationEdge.right,
-                      child: Text('Phải'),
+                      value: NavigationDisplayMode.floating,
+                      child: Text('Nút nổi'),
                     ),
                   ],
                   onChanged: (value) {
-                    if (value != null) controller.setFloatingEdge(value);
+                    if (value != null) controller.setDisplayMode(value);
                   },
                 ),
-              selector<double>(
-                label: 'Kích thước nút',
-                key: const Key('settings-navigation-size-select'),
-                value: preferences.buttonScale,
-                items: NavigationPreferences.buttonScaleOptions
-                    .map(
-                      (option) => DropdownMenuItem<double>(
-                        value: option.value,
-                        child: Text(option.label),
+                if (preferences.displayMode == NavigationDisplayMode.floating)
+                  selector<NavigationEdge>(
+                    label: 'Vị trí nút nổi',
+                    key: const Key('settings-floating-edge-select'),
+                    value: preferences.floatingEdge,
+                    items: const [
+                      DropdownMenuItem(
+                        value: NavigationEdge.top,
+                        child: Text('Trên'),
                       ),
-                    )
-                    .toList(growable: false),
-                onChanged: (value) {
-                  if (value != null) controller.setButtonScale(value);
-                },
-              ),
-              selector<double>(
-                label: 'Độ trong suốt nút',
-                key: const Key('settings-navigation-opacity-select'),
-                value: preferences.buttonOpacity,
-                items: NavigationPreferences.buttonOpacityOptions
-                    .map(
-                      (option) => DropdownMenuItem<double>(
-                        value: option.value,
-                        child: Text(option.label),
+                      DropdownMenuItem(
+                        value: NavigationEdge.bottom,
+                        child: Text('Dưới'),
                       ),
-                    )
-                    .toList(growable: false),
-                onChanged: (value) {
-                  if (value != null) controller.setButtonOpacity(value);
-                },
-              ),
-              if (state.errorMessage != null)
-                Padding(
-                  key: const Key('settings-navigation-dialog-save-error'),
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Text(
-                    state.errorMessage!,
-                    style: TextStyle(
-                      color: AppPalette.of(context).negative,
-                      fontSize: 12,
+                      DropdownMenuItem(
+                        value: NavigationEdge.left,
+                        child: Text('Trái'),
+                      ),
+                      DropdownMenuItem(
+                        value: NavigationEdge.right,
+                        child: Text('Phải'),
+                      ),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) controller.setFloatingEdge(value);
+                    },
+                  ),
+                selector<double>(
+                  label: 'Kích thước nút',
+                  key: const Key('settings-navigation-size-select'),
+                  value: preferences.buttonScale,
+                  items: NavigationPreferences.buttonScaleOptions
+                      .map(
+                        (option) => DropdownMenuItem<double>(
+                          value: option.value,
+                          child: Text(option.label),
+                        ),
+                      )
+                      .toList(growable: false),
+                  onChanged: (value) {
+                    if (value != null) controller.setButtonScale(value);
+                  },
+                ),
+                selector<double>(
+                  label: 'Độ trong suốt nút',
+                  key: const Key('settings-navigation-opacity-select'),
+                  value: preferences.buttonOpacity,
+                  items: NavigationPreferences.buttonOpacityOptions
+                      .map(
+                        (option) => DropdownMenuItem<double>(
+                          value: option.value,
+                          child: Text(option.label),
+                        ),
+                      )
+                      .toList(growable: false),
+                  onChanged: (value) {
+                    if (value != null) controller.setButtonOpacity(value);
+                  },
+                ),
+                if (state.errorMessage != null)
+                  Padding(
+                    key: const Key('settings-navigation-dialog-save-error'),
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      state.errorMessage!,
+                      style: TextStyle(
+                        color: AppPalette.of(context).negative,
+                        fontSize: 12,
+                      ),
                     ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

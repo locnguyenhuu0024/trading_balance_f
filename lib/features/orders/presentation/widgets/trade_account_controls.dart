@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/security/secure_storage_helper.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../core/widgets/responsive_form_content.dart';
 import '../../../../core/theme/pnl_color.dart';
 import '../../data/trade_api_client.dart';
 import '../providers/order_cancellation_flow_provider.dart';
@@ -94,6 +95,7 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
         children: [
           if (widget.filterControls != null)
             Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Expanded(child: widget.filterControls!),
                 if (canShowCloseAll) ...[
@@ -120,7 +122,7 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
             ),
             if (sessionState.isLoading) ...[
               const SizedBox(height: 8),
-              const LinearProgressIndicator(minHeight: 2),
+              const FormPendingStatus(label: 'Đang kiểm tra phiên giao dịch…'),
             ],
           ],
           if (sessionState.errorMessage != null && api.isConfigured) ...[
@@ -131,7 +133,7 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
             ),
           ],
           if (_busy && identical(_busyOwnerSession, session))
-            const LinearProgressIndicator(minHeight: 2),
+            const FormPendingStatus(label: 'Đang xử lý thao tác giao dịch…'),
           if (hasUnresolvedOperation) ...[
             const SizedBox(height: AppTokens.space3),
             Card(
@@ -188,7 +190,7 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
                                   ),
                                   child: const Text(
                                     'Tra cứu trạng thái',
-                                    style: TextStyle(fontSize: 12),
+                                    style: TextStyle(fontSize: 14),
                                   ),
                                 ),
                               ),
@@ -764,7 +766,9 @@ class _TradeSessionControlsState extends ConsumerState<TradeSessionControls> {
               ),
               if (sessionState.isLoading) ...[
                 const SizedBox(height: 8),
-                const LinearProgressIndicator(minHeight: 2),
+                const FormPendingStatus(
+                  label: 'Đang tải trạng thái phiên giao dịch…',
+                ),
               ],
             ],
             if (displayedSessionError != null) ...[
@@ -784,7 +788,12 @@ class _TradeSessionControlsState extends ConsumerState<TradeSessionControls> {
                 child: const Text('Thử khôi phục phiên'),
               ),
             ],
-            if (_busy) const LinearProgressIndicator(minHeight: 2),
+            if (_busy)
+              FormPendingStatus(
+                label: _logoutPending
+                    ? 'Đang kết thúc phiên giao dịch…'
+                    : 'Đang khôi phục phiên giao dịch…',
+              ),
           ],
         ),
       ),
@@ -953,8 +962,9 @@ class _TradeLoginDialogState extends State<_TradeLoginDialog> {
       child: AlertDialog(
         title: const Text('Đăng nhập API giao dịch'),
         scrollable: true,
-        content: SizedBox(
-          width: 380,
+        content: ResponsiveFormContent(
+          maxWidth: 560,
+          padding: EdgeInsets.zero,
           child: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -1013,7 +1023,13 @@ class _TradeLoginDialogState extends State<_TradeLoginDialog> {
                       : _setRememberPassword,
                   title: const Text('Lưu mật khẩu trên thiết bị này'),
                 ),
-                if (_storageMessage != null)
+                if (!_storageReady && widget.passwordScope != null)
+                  FormPendingStatus(
+                    label:
+                        _storageMessage ??
+                        'Đang kiểm tra trạng thái lưu mật khẩu…',
+                  )
+                else if (_storageMessage != null)
                   Align(
                     alignment: Alignment.centerLeft,
                     child: Text(
@@ -1036,9 +1052,11 @@ class _TradeLoginDialogState extends State<_TradeLoginDialog> {
                     ),
                   ),
                 ],
-                if (_submitting) ...[
+                if (_storageMutationPending) ...[
                   const SizedBox(height: 8),
-                  const LinearProgressIndicator(minHeight: 2),
+                  const FormPendingStatus(
+                    label: 'Đang cập nhật tùy chọn lưu mật khẩu…',
+                  ),
                 ],
               ],
             ),
@@ -1049,7 +1067,10 @@ class _TradeLoginDialogState extends State<_TradeLoginDialog> {
             onPressed: _submitting ? null : () => Navigator.of(context).pop(),
             child: Text(_authenticated ? 'Đóng' : 'Hủy'),
           ),
-          FilledButton(
+          AsyncFormButton(
+            label: _authenticated ? 'Đã đăng nhập' : 'Đăng nhập',
+            busyLabel: 'Đang đăng nhập…',
+            isBusy: _submitting,
             onPressed:
                 _submitting ||
                     _storageMutationPending ||
@@ -1057,7 +1078,6 @@ class _TradeLoginDialogState extends State<_TradeLoginDialog> {
                     _authenticated
                 ? null
                 : _submit,
-            child: Text(_authenticated ? 'Đã đăng nhập' : 'Đăng nhập'),
           ),
         ],
       ),

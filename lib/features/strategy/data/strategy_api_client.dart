@@ -69,6 +69,7 @@ abstract interface class AutomaticStrategyApi {
     required String instrumentId,
     required String interval,
     required String requestId,
+    String direction = 'both',
   });
 }
 
@@ -157,11 +158,13 @@ class StrategyApiClient
     required String instrumentId,
     required String interval,
     required String requestId,
+    String direction = 'both',
   }) {
     final normalizedInstrument = instrumentId.trim().toUpperCase();
     if (!RegExp(r'^[A-Z0-9]+-USDT-SWAP$').hasMatch(normalizedInstrument) ||
         !const {'6Hutc', '1Dutc', '1Wutc'}.contains(interval) ||
-        !RegExp(r'^[A-Za-z0-9_-]{8,64}$').hasMatch(requestId)) {
+        !RegExp(r'^[A-Za-z0-9_-]{8,64}$').hasMatch(requestId) ||
+        !const {'long', 'short', 'both'}.contains(direction)) {
       throw const StrategyApiException(
         code: 'invalid_request',
         message: 'The automatic strategy request is invalid.',
@@ -175,6 +178,7 @@ class StrategyApiClient
         'instrumentId': normalizedInstrument,
         'interval': interval,
         'requestId': requestId,
+        'direction': direction,
       },
     );
   }
@@ -468,24 +472,24 @@ StrategyApiException _invalidSettingsResponse() => const StrategyApiException(
   message: 'The trade API returned invalid strategy settings.',
 );
 
-String _failureMessage(
-  DioException error, {
-  bool automaticDrafts = false,
-}) {
+String _failureMessage(DioException error, {bool automaticDrafts = false}) {
   final operation = automaticDrafts ? 'dựng chiến thuật tự động' : 'xem trước';
   final statusCode = error.response?.statusCode;
   if (statusCode != null) {
     final guidance = switch (statusCode) {
       401 => 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.',
-      404 => automaticDrafts
-          ? 'Không tìm thấy đường dẫn dựng chiến thuật tự động. Vui lòng kiểm tra API rồi thử lại.'
-          : 'Không tìm thấy đường dẫn xem trước chiến lược. Vui lòng kiểm tra API rồi thử lại.',
-      429 => automaticDrafts
-          ? 'Yêu cầu dựng chiến thuật tự động quá thường xuyên. Vui lòng chờ một chút rồi thử lại.'
-          : 'Yêu cầu xem trước quá thường xuyên. Vui lòng chờ một chút rồi thử lại.',
-      >= 500 => automaticDrafts
-          ? 'Máy chủ dựng chiến thuật tự động đang gặp sự cố. Vui lòng thử lại sau.'
-          : 'Máy chủ xem trước đang gặp sự cố. Vui lòng thử lại sau.',
+      404 =>
+        automaticDrafts
+            ? 'Không tìm thấy đường dẫn dựng chiến thuật tự động. Vui lòng kiểm tra API rồi thử lại.'
+            : 'Không tìm thấy đường dẫn xem trước chiến lược. Vui lòng kiểm tra API rồi thử lại.',
+      429 =>
+        automaticDrafts
+            ? 'Yêu cầu dựng chiến thuật tự động quá thường xuyên. Vui lòng chờ một chút rồi thử lại.'
+            : 'Yêu cầu xem trước quá thường xuyên. Vui lòng chờ một chút rồi thử lại.',
+      >= 500 =>
+        automaticDrafts
+            ? 'Máy chủ dựng chiến thuật tự động đang gặp sự cố. Vui lòng thử lại sau.'
+            : 'Máy chủ xem trước đang gặp sự cố. Vui lòng thử lại sau.',
       >= 400 =>
         'Máy chủ từ chối yêu cầu $operation. Vui lòng kiểm tra thông tin rồi thử lại.',
       _ => 'Máy chủ trả về phản hồi không thể xử lý. Vui lòng thử lại sau.',
@@ -499,14 +503,16 @@ String _failureMessage(
     DioExceptionType.receiveTimeout ||
     DioExceptionType.transformTimeout =>
       'Yêu cầu $operation đã quá thời gian chờ. Vui lòng thử lại. (TIMEOUT)',
-    DioExceptionType.cancel => automaticDrafts
-        ? 'Yêu cầu dựng chiến thuật tự động đã bị hủy. Vui lòng thử lại nếu cần. (CANCELLED)'
-        : 'Yêu cầu xem trước đã bị hủy. Bạn có thể nhấn “Xem lại lệnh” để thử lại. (CANCELLED)',
+    DioExceptionType.cancel =>
+      automaticDrafts
+          ? 'Yêu cầu dựng chiến thuật tự động đã bị hủy. Vui lòng thử lại nếu cần. (CANCELLED)'
+          : 'Yêu cầu xem trước đã bị hủy. Bạn có thể nhấn “Xem lại lệnh” để thử lại. (CANCELLED)',
     DioExceptionType.connectionError ||
     DioExceptionType.badCertificate ||
-    DioExceptionType.unknown => automaticDrafts
-        ? 'Không thể kết nối để dựng chiến thuật tự động. Kiểm tra mạng hoặc trình duyệt rồi thử lại. (CONNECTION)'
-        : 'Không thể kết nối để xem trước lệnh. Kiểm tra mạng hoặc trình duyệt rồi thử lại. (CONNECTION)',
+    DioExceptionType.unknown =>
+      automaticDrafts
+          ? 'Không thể kết nối để dựng chiến thuật tự động. Kiểm tra mạng hoặc trình duyệt rồi thử lại. (CONNECTION)'
+          : 'Không thể kết nối để xem trước lệnh. Kiểm tra mạng hoặc trình duyệt rồi thử lại. (CONNECTION)',
     DioExceptionType.badResponse =>
       'Máy chủ trả về phản hồi không hợp lệ. Vui lòng thử lại sau. (SERVER_RESPONSE)',
   };

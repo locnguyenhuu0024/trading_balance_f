@@ -42,7 +42,9 @@ class FloatingNavigationButtons extends StatelessWidget {
     final bottomOffset = bottomInset + _edgeGap;
     final surfaceColor = isDark ? Colors.white : Colors.black;
     final contentColor = isDark ? Colors.black : Colors.white;
-    final duration = mediaQuery.disableAnimations
+    final reduceMotion =
+        mediaQuery.disableAnimations || mediaQuery.accessibleNavigation;
+    final duration = reduceMotion
         ? Duration.zero
         : const Duration(milliseconds: 220);
     final buttonScale = _normalizeScale(this.buttonScale);

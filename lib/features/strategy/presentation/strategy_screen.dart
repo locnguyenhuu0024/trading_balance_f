@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/pnl_color.dart';
 import '../../../core/widgets/manual_refresh_button.dart';
+import '../../../core/widgets/responsive_form_content.dart';
 import '../../orders/data/trade_api_client.dart';
 import '../../orders/presentation/providers/trade_session_provider.dart';
 import '../domain/strategy_draft_entries.dart';
@@ -162,7 +163,10 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
                       dashboard!.strategies.isEmpty)
                     const Padding(
                       padding: EdgeInsets.all(36),
-                      child: Center(child: CircularProgressIndicator()),
+                      child: FormPendingStatus(
+                        label: 'Đang tải chiến thuật…',
+                        linear: false,
+                      ),
                     )
                   else if (dashboard?.strategies.isEmpty ?? true)
                     const _EmptyStrategiesCard()
@@ -1129,15 +1133,10 @@ class _StrategyActionFooter extends StatelessWidget {
     bool disabled = false,
   }) => IconButton(
     key: key,
-    tooltip: tooltip,
+    tooltip: busy ? '$tooltip · Đang xử lý' : tooltip,
     onPressed: actions.actionBusy || disabled ? null : onPressed,
     constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-    icon: busy
-        ? const SizedBox.square(
-            dimension: 18,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          )
-        : Icon(icon),
+    icon: busy ? const FormProgressMark(size: 18) : Icon(icon),
   );
 }
 
@@ -1218,16 +1217,20 @@ class _StrategyDetailsDialog extends StatelessWidget {
                       final started = _hasStartedStatus(strategy['status']);
                       return SingleChildScrollView(
                         padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
-                        child: _StrategyDetailContent(
-                          strategy: strategy,
-                          quote: started
-                              ? dashboard.quoteFor(instrument)
-                              : null,
-                          quoteIsFresh:
-                              started && dashboard.quoteIsFresh(instrument),
-                          metricsAreStale: dashboard.metricsAreStale,
-                          metricsStaleAt: dashboard.metricsStaleAt,
-                          actions: actions,
+                        child: ResponsiveFormContent(
+                          maxWidth: 720,
+                          padding: EdgeInsets.zero,
+                          child: _StrategyDetailContent(
+                            strategy: strategy,
+                            quote: started
+                                ? dashboard.quoteFor(instrument)
+                                : null,
+                            quoteIsFresh:
+                                started && dashboard.quoteIsFresh(instrument),
+                            metricsAreStale: dashboard.metricsAreStale,
+                            metricsStaleAt: dashboard.metricsStaleAt,
+                            actions: actions,
+                          ),
                         ),
                       );
                     },

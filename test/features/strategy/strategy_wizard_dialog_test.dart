@@ -1,8 +1,15 @@
+import 'dart:io';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/network/backend_data_client.dart';
+import 'package:trading_balance_f/core/theme/app_theme.dart';
 import 'package:trading_balance_f/features/orders/data/trade_api_client.dart';
 import 'package:trading_balance_f/features/orders/presentation/providers/trade_session_provider.dart';
 import 'package:trading_balance_f/core/network/request_coordinator.dart';
@@ -12,7 +19,152 @@ import 'package:trading_balance_f/features/strategy/domain/strategy_models.dart'
 import 'package:trading_balance_f/features/strategy/presentation/providers/strategy_dashboard_provider.dart';
 import 'package:trading_balance_f/features/strategy/presentation/strategy_wizard_dialog.dart';
 
+const _strategyWizardPreviewKey = ValueKey('strategy-wizard-preview');
+
 void main() {
+  testWidgets('captures strategy budget at mobile and desktop scale', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    await tester.runAsync(_loadFormPreviewFonts);
+    for (final mode in [ThemeMode.light, ThemeMode.dark]) {
+      for (final viewport in [
+        (
+          name: 'mobile-360-scale-1.6',
+          size: const Size(360, 900),
+          textScale: 1.6,
+        ),
+        (name: 'desktop', size: const Size(1440, 1000), textScale: 1.0),
+      ]) {
+        final market = _FakeStrategyMarketRepository();
+        final api = _FakeStrategyApi();
+        final dashboard = _dashboard(api, market);
+        await _pumpWizard(
+          tester,
+          market,
+          api,
+          dashboard,
+          size: viewport.size,
+          textScale: viewport.textScale,
+          themeMode: mode,
+        );
+
+        final firstCandidate = find.byType(CheckboxListTile).first;
+        await tester.ensureVisible(firstCandidate);
+        await tester.tap(firstCandidate);
+        await tester.pump();
+        final nextButton = find.byKey(const Key('strategy-next-step-one'));
+        await tester.ensureVisible(nextButton);
+        await tester.tap(nextButton);
+        await tester.pumpAndSettle();
+
+        final allocation = find.byType(
+          DropdownButtonFormField<StrategyAllocation>,
+        );
+        await tester.ensureVisible(allocation);
+        await tester.tap(allocation);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Giảm dần từ điểm vào').last);
+        await tester.pumpAndSettle();
+
+        expect(find.text('Giảm dần từ điểm vào'), findsOneWidget);
+        expect(
+          tester.getSemantics(allocation).getSemanticsData().label,
+          contains('Giảm dần từ điểm vào'),
+        );
+        expect(tester.takeException(), isNull);
+        if (viewport.name == 'desktop') {
+          final dialogSurface = find
+              .descendant(
+                of: find.byType(Dialog),
+                matching: find.byWidgetPredicate(
+                  (widget) =>
+                      widget is Material && widget.type == MaterialType.card,
+                ),
+              )
+              .first;
+          expect(tester.getRect(dialogSurface).height, lessThan(700));
+        }
+        await _writeStrategyWizardPreview(
+          tester,
+          'strategy-budget-${viewport.name}-${mode.name}.png',
+        );
+        dashboard.dispose();
+        await tester.pumpWidget(const SizedBox.shrink());
+      }
+    }
+    semantics.dispose();
+  });
+
+  testWidgets('mobile scaled budget step expands its allocation choice', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    final market = _FakeStrategyMarketRepository();
+    final api = _FakeStrategyApi();
+    final dashboard = _dashboard(api, market);
+    addTearDown(dashboard.dispose);
+    await _pumpWizard(
+      tester,
+      market,
+      api,
+      dashboard,
+      size: const Size(360, 900),
+      textScale: 1.6,
+    );
+
+    final firstCandidate = find.byType(CheckboxListTile).first;
+    await tester.ensureVisible(firstCandidate);
+    await tester.pumpAndSettle();
+    await tester.tap(firstCandidate);
+    await tester.pump();
+    final nextButton = find.byKey(const Key('strategy-next-step-one'));
+    await tester.ensureVisible(nextButton);
+    await tester.tap(nextButton);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Bước 2 / 3 · Ký quỹ và đòn bẩy'), findsOneWidget);
+    final allocation = find.byType(DropdownButtonFormField<StrategyAllocation>);
+    await tester.ensureVisible(allocation);
+    await tester.pumpAndSettle();
+    await tester.tap(allocation);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Giảm dần từ điểm vào').last);
+    await tester.pumpAndSettle();
+    expect(find.text('Giảm dần từ điểm vào'), findsOneWidget);
+    expect(
+      tester.getSemantics(allocation).getSemanticsData().label,
+      contains('Giảm dần từ điểm vào'),
+    );
+    expect(tester.takeException(), isNull);
+    semantics.dispose();
+  });
+
+  testWidgets('wizard instrument prompt stays below its label on mobile', (
+    tester,
+  ) async {
+    final market = _FakeStrategyMarketRepository()..instruments = const [];
+    final api = _FakeStrategyApi();
+    final dashboard = _dashboard(api, market);
+    addTearDown(dashboard.dispose);
+    await _pumpWizard(
+      tester,
+      market,
+      api,
+      dashboard,
+      size: const Size(360, 900),
+      textScale: 1.6,
+    );
+
+    expect(find.text('Hợp đồng USDT SWAP'), findsOneWidget);
+    expect(find.text('Chọn hợp đồng'), findsOneWidget);
+    expect(
+      tester.getRect(find.text('Hợp đồng USDT SWAP')).bottom,
+      lessThan(tester.getRect(find.text('Chọn hợp đồng')).top),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'saved Jev recommendations preselect exact five-per-side IDs and nearest entries',
     (tester) async {
@@ -40,7 +192,7 @@ void main() {
       expect(
         find.descendant(
           of: find.byKey(const Key('strategy-direction-select')),
-          matching: find.text('Long và Short'),
+          matching: find.text('Long&Short'),
         ),
         findsOneWidget,
       );
@@ -172,7 +324,7 @@ void main() {
     expect(
       find.descendant(
         of: find.byKey(const Key('strategy-direction-select')),
-        matching: find.text('Long và Short'),
+        matching: find.text('Long&Short'),
       ),
       findsOneWidget,
     );
@@ -611,7 +763,7 @@ void main() {
 
       await tester.tap(find.byKey(const Key('strategy-direction-select')));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Long và Short'));
+      await tester.tap(find.text('Long&Short'));
       await tester.pumpAndSettle();
       for (var index = 0; index < 10; index++) {
         final checkbox = find.byType(CheckboxListTile).at(index);
@@ -657,7 +809,7 @@ void main() {
 
     await tester.tap(find.byKey(const Key('strategy-direction-select')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Long và Short'));
+    await tester.tap(find.text('Long&Short'));
     await tester.pumpAndSettle();
     await tester.tap(find.byType(CheckboxListTile).first);
     await tester.pump();
@@ -853,7 +1005,7 @@ void main() {
 
     await tester.tap(find.byKey(const Key('strategy-direction-select')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Long và Short'));
+    await tester.tap(find.text('Long&Short'));
     await tester.pumpAndSettle();
     await tester.tap(find.byType(CheckboxListTile).first);
     await tester.pump();
@@ -1077,7 +1229,7 @@ void main() {
 
     await tester.tap(find.byKey(const Key('strategy-direction-select')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Long và Short'));
+    await tester.tap(find.text('Long&Short'));
     await tester.pumpAndSettle();
     await tester.tap(find.byType(CheckboxListTile).first);
     await tester.pump();
@@ -1270,8 +1422,11 @@ Future<void> _pumpWizard(
   String? replacementSourceId,
   Map<String, dynamic>? initialCandidateDraft,
   _AuthenticatedSessionController? sessionController,
+  Size size = const Size(1200, 1600),
+  double textScale = 1,
+  ThemeMode themeMode = ThemeMode.light,
 }) async {
-  tester.view.physicalSize = const Size(1200, 1600);
+  tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
@@ -1291,29 +1446,99 @@ Future<void> _pumpWizard(
         strategyMarketRepositoryProvider.overrideWithValue(market),
         strategyApiProvider.overrideWithValue(api),
       ],
-      child: MaterialApp(
-        home: Builder(
-          builder: (context) => Scaffold(
-            body: TextButton(
-              onPressed: () => showDialog<void>(
-                context: context,
-                builder: (_) => StrategyWizardDialog(
-                  session: session,
-                  dashboard: dashboard,
-                  onSaved: () async {},
-                  replacementSourceId: replacementSourceId,
-                  initialCandidateDraft: initialCandidateDraft,
+      child: RepaintBoundary(
+        key: _strategyWizardPreviewKey,
+        child: MaterialApp(
+          debugShowCheckedModeBanner: false,
+          theme: AppTheme.light,
+          darkTheme: AppTheme.dark,
+          themeMode: themeMode,
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: TextScaler.linear(textScale)),
+            child: child ?? const SizedBox.shrink(),
+          ),
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                key: const Key('open-wizard'),
+                onPressed: () => showDialog<void>(
+                  context: context,
+                  builder: (_) => StrategyWizardDialog(
+                    session: session,
+                    dashboard: dashboard,
+                    onSaved: () async {},
+                    replacementSourceId: replacementSourceId,
+                    initialCandidateDraft: initialCandidateDraft,
+                  ),
                 ),
+                child: const SizedBox.shrink(),
               ),
-              child: const Text('Open wizard'),
             ),
           ),
         ),
       ),
     ),
   );
-  await tester.tap(find.text('Open wizard'));
+  await tester.tap(find.byKey(const Key('open-wizard')));
   await tester.pumpAndSettle();
+}
+
+Future<void> _writeStrategyWizardPreview(
+  WidgetTester tester,
+  String filename,
+) async {
+  final boundary = tester.renderObject<RenderRepaintBoundary>(
+    find.byKey(_strategyWizardPreviewKey),
+  );
+  final image = await tester.runAsync(() => boundary.toImage(pixelRatio: 1));
+  expect(image, isNotNull);
+  final capturedImage = image!;
+  final png = await tester.runAsync(
+    () => capturedImage.toByteData(format: ui.ImageByteFormat.png),
+  );
+  capturedImage.dispose();
+  expect(png, isNotNull);
+  final bytes = png!.buffer.asUint8List(png.offsetInBytes, png.lengthInBytes);
+  await tester.runAsync(() async {
+    final directory = Directory('build/forms-preview');
+    await directory.create(recursive: true);
+    await File('${directory.path}/$filename').writeAsBytes(bytes, flush: true);
+  });
+}
+
+Future<Directory?> _findFormPreviewFontsDirectory() async {
+  var directory = File(Platform.resolvedExecutable).absolute.parent;
+  while (directory.path != directory.parent.path) {
+    final candidate = Directory(
+      '${directory.path}${Platform.pathSeparator}bin${Platform.pathSeparator}'
+      'cache${Platform.pathSeparator}artifacts${Platform.pathSeparator}'
+      'material_fonts',
+    );
+    if (await candidate.exists()) return candidate;
+    directory = directory.parent;
+  }
+  return null;
+}
+
+Future<void> _loadFormPreviewFonts() async {
+  final fontsDirectory = await _findFormPreviewFontsDirectory();
+  if (fontsDirectory == null) return;
+
+  for (final font in {
+    'Roboto': 'roboto-regular.ttf',
+    'MaterialIcons': 'materialicons-regular.otf',
+  }.entries) {
+    final fontFile = File(
+      '${fontsDirectory.path}${Platform.pathSeparator}${font.value}',
+    );
+    if (!await fontFile.exists()) continue;
+    final fontBytes = await fontFile.readAsBytes();
+    final loader = FontLoader(font.key)
+      ..addFont(Future.value(ByteData.sublistView(fontBytes)));
+    await loader.load();
+  }
 }
 
 class _AuthenticatedSessionController extends TradeSessionController {
@@ -1507,7 +1732,7 @@ class _FakeStrategyMarketRepository extends StrategyMarketRepository {
   final loadCalls = <String>[];
   List<StrategyLevel>? supportLevels;
   List<StrategyLevel>? resistanceLevels;
-  final instruments = const [
+  List<StrategyInstrument> instruments = const [
     StrategyInstrument(
       instrumentId: 'BTC-USDT-SWAP',
       base: 'BTC',

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/widgets/responsive_form_content.dart';
 import '../../orders/presentation/providers/trade_session_provider.dart';
 import '../domain/strategy_models.dart';
 import '../domain/strategy_settings.dart';
@@ -319,274 +320,288 @@ class _StrategySettingsDialogState
               Flexible(
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                  child: Column(
-                    children: [
-                      if (widget.bearerToken == null)
-                        const Padding(
-                          padding: EdgeInsets.all(12),
-                          child: Text(
-                            'Đăng nhập phiên giao dịch để xem và lưu cài đặt chiến thuật.',
-                          ),
-                        )
-                      else if (!sessionMatches)
-                        const Padding(
-                          padding: EdgeInsets.all(12),
-                          child: Text(
-                            'Phiên giao dịch đã thay đổi. Hãy đóng cửa sổ này và mở lại trong phiên hiện tại.',
-                          ),
-                        )
-                      else if (dashboard == null)
-                        const Padding(
-                          padding: EdgeInsets.all(12),
-                          child: Text('Cài đặt chưa sẵn sàng cho phiên này.'),
-                        )
-                      else ...[
-                        if (dashboard.settingsIsLoading &&
-                            !dashboard.settingsLoaded)
+                  child: ResponsiveFormContent(
+                    maxWidth: 588,
+                    padding: EdgeInsets.zero,
+                    child: Column(
+                      children: [
+                        if (widget.bearerToken == null)
                           const Padding(
-                            padding: EdgeInsets.all(16),
-                            child: CircularProgressIndicator(),
-                          ),
-                        if (dashboard.settingsError != null)
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    dashboard.settingsError!,
-                                    style: TextStyle(
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.error,
-                                    ),
-                                  ),
-                                ),
-                                TextButton(
-                                  onPressed:
-                                      dashboard.settingsIsLoading ||
-                                          dashboard.settingsIsSaving
-                                      ? null
-                                      : () => unawaited(
-                                          dashboard.loadStrategySettings(
-                                            force: true,
-                                          ),
-                                        ),
-                                  child: const Text('Thử lại'),
-                                ),
-                              ],
+                            padding: EdgeInsets.all(12),
+                            child: Text(
+                              'Đăng nhập phiên giao dịch để xem và lưu cài đặt chiến thuật.',
                             ),
-                          ),
-                        ExpansionTile(
-                          key: const Key('strategy-settings-submission-mode'),
-                          initiallyExpanded: true,
-                          title: const Text('Cơ chế gửi lệnh limit'),
-                          children: [
-                            RadioGroup<String>(
-                              key: const Key('strategy-settings-mode-group'),
-                              groupValue: selectedMode,
-                              onChanged: (value) {
-                                if (!controlsEnabled || value == null) return;
-                                setState(() {
-                                  _draftMode = value;
-                                  _draftWasEdited = true;
-                                  _savedAcknowledgement = false;
-                                });
-                              },
-                              child: Column(
+                          )
+                        else if (!sessionMatches)
+                          const Padding(
+                            padding: EdgeInsets.all(12),
+                            child: Text(
+                              'Phiên giao dịch đã thay đổi. Hãy đóng cửa sổ này và mở lại trong phiên hiện tại.',
+                            ),
+                          )
+                        else if (dashboard == null)
+                          const Padding(
+                            padding: EdgeInsets.all(12),
+                            child: Text('Cài đặt chưa sẵn sàng cho phiên này.'),
+                          )
+                        else ...[
+                          if (dashboard.settingsIsLoading &&
+                              !dashboard.settingsLoaded)
+                            const Padding(
+                              padding: EdgeInsets.all(16),
+                              child: FormPendingStatus(
+                                label: 'Đang tải cài đặt chiến thuật…',
+                                linear: false,
+                              ),
+                            ),
+                          if (dashboard.settingsError != null)
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  RadioListTile<String>(
-                                    key: const Key(
-                                      'strategy-settings-sequential',
-                                    ),
-                                    enabled: controlsEnabled,
-                                    value: 'sequential',
-                                    title: const Text('Hàng đợi tuần tự'),
-                                    subtitle: const Text(
-                                      'Lệnh tiếp theo được gửi sau khi máy chủ xác nhận lệnh trước đã được nhận, không phải sau khi lệnh khớp.',
+                                  Expanded(
+                                    child: Text(
+                                      dashboard.settingsError!,
+                                      style: TextStyle(
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.error,
+                                      ),
                                     ),
                                   ),
-                                  RadioListTile<String>(
-                                    key: const Key('strategy-settings-batch'),
-                                    enabled: controlsEnabled,
-                                    value: 'batch',
-                                    title: const Text('Gửi theo lô'),
-                                    subtitle: const Text(
-                                      'Các lệnh đã duyệt được gửi cùng nhau theo cơ chế gửi theo lô.',
-                                    ),
+                                  TextButton(
+                                    onPressed:
+                                        dashboard.settingsIsLoading ||
+                                            dashboard.settingsIsSaving
+                                        ? null
+                                        : () => unawaited(
+                                            dashboard.loadStrategySettings(
+                                              force: true,
+                                            ),
+                                          ),
+                                    child: const Text('Thử lại'),
                                   ),
                                 ],
                               ),
                             ),
-                          ],
-                        ),
-                        ExpansionTile(
-                          key: const Key('strategy-settings-jev-screening'),
-                          initiallyExpanded: true,
-                          title: const Text('Sàng lọc JEV'),
-                          children: [
-                            if (!fullCapability)
-                              const Padding(
-                                padding: EdgeInsets.all(16),
-                                child: Text(
-                                  'Cài đặt sàng lọc JEV chưa khả dụng trên API của phiên này.',
-                                ),
-                              )
-                            else ...[
-                              Padding(
-                                padding: const EdgeInsets.fromLTRB(
-                                  16,
-                                  4,
-                                  16,
-                                  8,
-                                ),
-                                child: InputDecorator(
-                                  decoration: const InputDecoration(
-                                    labelText: 'Chất lượng cấu trúc tối thiểu',
-                                  ),
-                                  child: DropdownButtonHideUnderline(
-                                    child: DropdownButton<int>(
-                                      key: const Key(
-                                        'strategy-settings-min-structural-quality',
-                                      ),
-                                      isExpanded: true,
-                                      value: _draftWasEdited
-                                          ? _draftQuality
-                                          : dashboard
-                                                .strategySettings
-                                                ?.jevScreeningThresholds
-                                                .minStructuralQuality,
-                                      hint: const Text('Chọn mức chất lượng'),
-                                      items: [
-                                        for (
-                                          var quality = 0;
-                                          quality <= 5;
-                                          quality++
-                                        )
-                                          DropdownMenuItem(
-                                            value: quality,
-                                            child: Text('$quality'),
-                                          ),
-                                      ],
-                                      onChanged: controlsEnabled
-                                          ? (value) {
-                                              setState(() {
-                                                _draftQuality = value;
-                                                _draftWasEdited = true;
-                                                _qualityWasEdited = true;
-                                                _savedAcknowledgement = false;
-                                              });
-                                            }
-                                          : null,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              Padding(
-                                padding: const EdgeInsets.fromLTRB(
-                                  16,
-                                  4,
-                                  16,
-                                  8,
-                                ),
-                                child: TextField(
-                                  key: const Key(
-                                    'strategy-settings-entry-suitability-percent',
-                                  ),
-                                  controller: _entrySuitabilityController,
-                                  enabled: controlsEnabled,
-                                  keyboardType:
-                                      const TextInputType.numberWithOptions(
-                                        decimal: true,
-                                      ),
-                                  decoration: const InputDecoration(
-                                    labelText: 'Khả năng phù hợp tối thiểu',
-                                    suffixText: '%',
-                                  ),
-                                  onChanged: (_) {
-                                    _entrySuitabilityWasEdited = true;
-                                    _markDraftEdited();
-                                  },
-                                ),
-                              ),
-                              Padding(
-                                padding: const EdgeInsets.fromLTRB(
-                                  16,
-                                  4,
-                                  16,
-                                  8,
-                                ),
-                                child: TextField(
-                                  key: const Key(
-                                    'strategy-settings-failure-risk-percent',
-                                  ),
-                                  controller: _failureRiskController,
-                                  enabled: controlsEnabled,
-                                  keyboardType:
-                                      const TextInputType.numberWithOptions(
-                                        decimal: true,
-                                      ),
-                                  decoration: const InputDecoration(
-                                    labelText: 'Rủi ro thất bại tối đa',
-                                    suffixText: '%',
-                                  ),
-                                  onChanged: (_) {
-                                    _failureRiskWasEdited = true;
-                                    _markDraftEdited();
-                                  },
-                                ),
-                              ),
-                              Padding(
-                                padding: const EdgeInsets.fromLTRB(16, 0, 8, 8),
-                                child: Row(
+                          ExpansionTile(
+                            key: const Key('strategy-settings-submission-mode'),
+                            initiallyExpanded: true,
+                            title: const Text('Cơ chế gửi lệnh limit'),
+                            children: [
+                              RadioGroup<String>(
+                                key: const Key('strategy-settings-mode-group'),
+                                groupValue: selectedMode,
+                                onChanged: (value) {
+                                  if (!controlsEnabled || value == null) return;
+                                  setState(() {
+                                    _draftMode = value;
+                                    _draftWasEdited = true;
+                                    _savedAcknowledgement = false;
+                                  });
+                                },
+                                child: Column(
                                   children: [
-                                    const Expanded(
-                                      child: Text(
-                                        'Chỉ áp dụng cho bản nháp tạo mới. Tối đa 5 mức mỗi phía; ứng viên cần được đánh giá thành công.',
+                                    RadioListTile<String>(
+                                      key: const Key(
+                                        'strategy-settings-sequential',
+                                      ),
+                                      enabled: controlsEnabled,
+                                      value: 'sequential',
+                                      title: const Text('Hàng đợi tuần tự'),
+                                      subtitle: const Text(
+                                        'Lệnh tiếp theo được gửi sau khi máy chủ xác nhận lệnh trước đã được nhận, không phải sau khi lệnh khớp.',
                                       ),
                                     ),
-                                    TextButton(
-                                      key: const Key(
-                                        'strategy-settings-jev-reset',
+                                    RadioListTile<String>(
+                                      key: const Key('strategy-settings-batch'),
+                                      enabled: controlsEnabled,
+                                      value: 'batch',
+                                      title: const Text('Gửi theo lô'),
+                                      subtitle: const Text(
+                                        'Các lệnh đã duyệt được gửi cùng nhau theo cơ chế gửi theo lô.',
                                       ),
-                                      onPressed: controlsEnabled
-                                          ? _resetJevDefaults
-                                          : null,
-                                      child: const Text('Mặc định'),
                                     ),
                                   ],
                                 ),
                               ),
                             ],
-                          ],
-                        ),
-                        if (_savedAcknowledgement)
-                          const Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 16),
-                            child: Align(
-                              alignment: Alignment.centerLeft,
-                              child: Text('Máy chủ đã xác nhận lưu cài đặt.'),
-                            ),
                           ),
+                          ExpansionTile(
+                            key: const Key('strategy-settings-jev-screening'),
+                            initiallyExpanded: true,
+                            title: const Text('Sàng lọc JEV'),
+                            children: [
+                              if (!fullCapability)
+                                const Padding(
+                                  padding: EdgeInsets.all(16),
+                                  child: Text(
+                                    'Cài đặt sàng lọc JEV chưa khả dụng trên API của phiên này.',
+                                  ),
+                                )
+                              else ...[
+                                Padding(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    16,
+                                    4,
+                                    16,
+                                    8,
+                                  ),
+                                  child: InputDecorator(
+                                    decoration: const InputDecoration(
+                                      labelText:
+                                          'Chất lượng cấu trúc tối thiểu',
+                                    ),
+                                    child: DropdownButtonHideUnderline(
+                                      child: DropdownButton<int>(
+                                        key: const Key(
+                                          'strategy-settings-min-structural-quality',
+                                        ),
+                                        isExpanded: true,
+                                        value: _draftWasEdited
+                                            ? _draftQuality
+                                            : dashboard
+                                                  .strategySettings
+                                                  ?.jevScreeningThresholds
+                                                  .minStructuralQuality,
+                                        hint: const Text('Chọn mức chất lượng'),
+                                        items: [
+                                          for (
+                                            var quality = 0;
+                                            quality <= 5;
+                                            quality++
+                                          )
+                                            DropdownMenuItem(
+                                              value: quality,
+                                              child: Text('$quality'),
+                                            ),
+                                        ],
+                                        onChanged: controlsEnabled
+                                            ? (value) {
+                                                setState(() {
+                                                  _draftQuality = value;
+                                                  _draftWasEdited = true;
+                                                  _qualityWasEdited = true;
+                                                  _savedAcknowledgement = false;
+                                                });
+                                              }
+                                            : null,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                Padding(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    16,
+                                    4,
+                                    16,
+                                    8,
+                                  ),
+                                  child: TextField(
+                                    key: const Key(
+                                      'strategy-settings-entry-suitability-percent',
+                                    ),
+                                    controller: _entrySuitabilityController,
+                                    enabled: controlsEnabled,
+                                    keyboardType:
+                                        const TextInputType.numberWithOptions(
+                                          decimal: true,
+                                        ),
+                                    decoration: const InputDecoration(
+                                      labelText: 'Khả năng phù hợp tối thiểu',
+                                      suffixText: '%',
+                                    ),
+                                    onChanged: (_) {
+                                      _entrySuitabilityWasEdited = true;
+                                      _markDraftEdited();
+                                    },
+                                  ),
+                                ),
+                                Padding(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    16,
+                                    4,
+                                    16,
+                                    8,
+                                  ),
+                                  child: TextField(
+                                    key: const Key(
+                                      'strategy-settings-failure-risk-percent',
+                                    ),
+                                    controller: _failureRiskController,
+                                    enabled: controlsEnabled,
+                                    keyboardType:
+                                        const TextInputType.numberWithOptions(
+                                          decimal: true,
+                                        ),
+                                    decoration: const InputDecoration(
+                                      labelText: 'Rủi ro thất bại tối đa',
+                                      suffixText: '%',
+                                    ),
+                                    onChanged: (_) {
+                                      _failureRiskWasEdited = true;
+                                      _markDraftEdited();
+                                    },
+                                  ),
+                                ),
+                                Padding(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    16,
+                                    0,
+                                    8,
+                                    8,
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      const Expanded(
+                                        child: Text(
+                                          'Chỉ áp dụng cho bản nháp tạo mới. Tối đa 5 mức mỗi phía; ứng viên cần được đánh giá thành công.',
+                                        ),
+                                      ),
+                                      TextButton(
+                                        key: const Key(
+                                          'strategy-settings-jev-reset',
+                                        ),
+                                        onPressed: controlsEnabled
+                                            ? _resetJevDefaults
+                                            : null,
+                                        child: const Text('Mặc định'),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                          if (_savedAcknowledgement)
+                            const Padding(
+                              padding: EdgeInsets.symmetric(horizontal: 16),
+                              child: Align(
+                                alignment: Alignment.centerLeft,
+                                child: Text('Máy chủ đã xác nhận lưu cài đặt.'),
+                              ),
+                            ),
+                        ],
                       ],
-                    ],
+                    ),
                   ),
                 ),
               ),
               const Divider(height: 1),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
+                child: Wrap(
+                  alignment: WrapAlignment.end,
+                  spacing: 8,
+                  runSpacing: 8,
                   children: [
                     TextButton(
                       key: const Key('strategy-settings-cancel'),
                       onPressed: () => Navigator.of(context).pop(),
                       child: const Text('Hủy'),
                     ),
-                    const SizedBox(width: 8),
-                    FilledButton(
+                    AsyncFormButton(
                       key: const Key('strategy-settings-save'),
                       onPressed: canSave
                           ? () => unawaited(
@@ -596,12 +611,9 @@ class _StrategySettingsDialogState
                               ),
                             )
                           : null,
-                      child: dashboard?.settingsIsSaving == true
-                          ? const SizedBox.square(
-                              dimension: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Text('Lưu'),
+                      label: 'Lưu',
+                      busyLabel: 'Đang lưu cài đặt…',
+                      isBusy: dashboard?.settingsIsSaving == true,
                     ),
                   ],
                 ),

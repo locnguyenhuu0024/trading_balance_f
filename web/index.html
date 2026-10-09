@@ -31,8 +31,67 @@
 
   <title>trading_balance_f</title>
   <link rel="manifest" href="manifest.json">
+  <style>
+    html,
+    body {
+      min-height: 100%;
+      margin: 0;
+      background: #fff;
+    }
+
+    #app-startup {
+      min-height: 100vh;
+      display: grid;
+      place-content: center;
+      justify-items: center;
+      gap: 16px;
+      color: #151515;
+      font: 500 14px system-ui, sans-serif;
+    }
+
+    .app-startup-mark {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: currentColor;
+      animation: app-startup-pulse 900ms ease-in-out infinite alternate;
+    }
+
+    @keyframes app-startup-pulse {
+      to {
+        opacity: 0.35;
+        transform: scale(0.8);
+      }
+    }
+
+    @media (prefers-color-scheme: dark) {
+      html,
+      body {
+        background: #101010;
+      }
+
+      #app-startup {
+        color: #f4f4f4;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .app-startup-mark {
+        animation: none;
+      }
+    }
+  </style>
 </head>
 <body>
+  <div id="app-startup" role="status" aria-live="polite">
+    <span class="app-startup-mark" aria-hidden="true"></span>
+    <span>Đang khởi tạo ứng dụng…</span>
+  </div>
+  <script>
+    window.addEventListener('flutter-first-frame', function () {
+      document.getElementById('app-startup')?.remove();
+    }, { once: true });
+  </script>
   <!--
     You can customize the "flutter_bootstrap.js" script.
     This is useful to provide a custom configuration to the Flutter loader

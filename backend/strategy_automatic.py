@@ -36,6 +36,7 @@ _AUTOMATIC_PATH = "/v1/strategies/automatic-drafts"
 _REQUEST_ID = re.compile(r"[A-Za-z0-9_-]{8,64}\Z")
 _INSTRUMENT_ID = re.compile(r"[A-Z0-9]+-USDT-SWAP\Z")
 _INTERVALS = ("6Hutc", "1Dutc", "1Wutc")
+_DIRECTIONS = frozenset({"long", "short", "both"})
 _BARS = {"6Hutc": "6Hutc", "1Dutc": "1Dutc", "1Wutc": "1Wutc"}
 _CONTEXT_CANDLE_COUNT = 20
 _MAX_AGE_MS = 15_000
@@ -95,6 +96,13 @@ class AutomaticStrategyService:
     def __init__(self, strategy_service: Any):
         self.strategy = strategy_service
         self.provider_factory: Callable[[], Any] = TypesafeJevProvider
+
+    @staticmethod
+    def _generation_direction(generation: Any) -> str | None:
+        if not isinstance(generation, dict):
+            return None
+        direction = generation.get("direction", "both")
+        return direction if isinstance(direction, str) and direction in _DIRECTIONS else None
 
     def dispatch(
         self,
@@ -172,6 +180,7 @@ class AutomaticStrategyService:
     ) -> None:
         snapshot = saved.get("snapshot")
         generation = snapshot.get("aiGeneration") if isinstance(snapshot, dict) else None
+        saved_contract = saved.get("contract")
         if (
             not self.is_candidate_stage(saved)
             or saved.get("status") != "DRAFT"
@@ -182,11 +191,21 @@ class AutomaticStrategyService:
             or saved.get("orders") != []
             or saved.get("results") != []
             or not isinstance(generation, dict)
+            or not isinstance(saved_contract, dict)
         ):
             raise APIError(409, "candidate_not_materializable", "This saved candidate draft cannot be materialized.")
+        direction = self._generation_direction(generation)
+        if direction is None:
+            raise APIError(409, "candidate_not_materializable", "The saved candidate direction is invalid.")
+        saved_direction = saved_contract.get("direction")
+        if "direction" in generation:
+            if saved_direction != direction:
+                raise APIError(409, "candidate_not_materializable", "The saved candidate direction is invalid.")
+        elif saved_direction not in (None, "both"):
+            raise APIError(409, "candidate_not_materializable", "The saved candidate direction is invalid.")
         if (
-            contract.get("instrumentId") != saved["contract"].get("instrumentId")
-            or contract.get("interval") != saved["contract"].get("interval")
+            contract.get("instrumentId") != saved_contract.get("instrumentId")
+            or contract.get("interval") != saved_contract.get("interval")
             or generation.get("instrumentId") != contract.get("instrumentId")
             or generation.get("interval") != contract.get("interval")
         ):
@@ -194,6 +213,7 @@ class AutomaticStrategyService:
         selected = contract.get("selectedLevels")
         if not isinstance(selected, list) or not selected:
             raise APIError(422, "candidate_selection_invalid", "Select at least one saved candidate level.")
+        allowed_sides = {"long", "short"} if direction == "both" else {direction}
         saved_levels: dict[str, tuple[str, str]] = {}
         for group in (generation.get("supports"), generation.get("resistances")):
             if not isinstance(group, list):
@@ -209,6 +229,8 @@ class AutomaticStrategyService:
                     or not isinstance(price, str) or level_id in saved_levels
                 ):
                     raise APIError(409, "candidate_not_materializable", "The saved candidate data is invalid.")
+                if side not in allowed_sides:
+                    raise APIError(409, "candidate_selection_mismatch", "A candidate is outside the saved direction.")
                 saved_levels[level_id] = (side, price)
         seen: set[str] = set()
         for level in selected:
@@ -217,6 +239,8 @@ class AutomaticStrategyService:
             level_id = level.get("levelId")
             if not isinstance(level_id, str) or level_id in seen:
                 raise APIError(422, "candidate_selection_invalid", "Selected candidate IDs must be unique.")
+            if level.get("side") not in allowed_sides:
+                raise APIError(409, "candidate_selection_mismatch", "A selected candidate is outside the saved direction.")
             seen.add(level_id)
             expected = saved_levels.get(level_id)
             if expected is None or (level.get("side"), level.get("price")) != expected:
@@ -230,11 +254,19 @@ class AutomaticStrategyService:
     ) -> dict[str, Any]:
         if request_guard is not None:
             request_guard()
-        if not isinstance(body, dict) or set(body) != {"instrumentId", "interval", "requestId"}:
+        required_fields = {"instrumentId", "interval", "requestId"}
+        if (
+            not isinstance(body, dict)
+            or not required_fields.issubset(body)
+            or set(body).difference(required_fields | {"direction"})
+        ):
             raise APIError(422, "invalid_automatic_request", "The automatic strategy request is invalid.")
         instrument_id = body.get("instrumentId")
         interval = body.get("interval")
         request_id = body.get("requestId")
+        direction = body.get("direction", "both")
+        if not isinstance(direction, str) or direction not in _DIRECTIONS:
+            raise APIError(422, "invalid_automatic_request", "Choose long, short, or both for strategy direction.")
         if not isinstance(instrument_id, str) or _INSTRUMENT_ID.fullmatch(instrument_id) is None:
             raise APIError(422, "invalid_automatic_request", "Choose a valid USDT SWAP instrument.")
         if interval not in _INTERVALS:
@@ -245,7 +277,7 @@ class AutomaticStrategyService:
         _, fingerprint = self.strategy._account()
         existing = self._find_request(fingerprint, request_id)
         if existing is not None:
-            replay = self._replay_or_conflict(existing, instrument_id, interval)
+            replay = self._replay_or_conflict(existing, instrument_id, interval, direction)
             if request_guard is not None:
                 request_guard()
             return replay
@@ -291,6 +323,11 @@ class AutomaticStrategyService:
             )
         except CandleDataError:
             raise APIError(502, "automatic_candles_invalid", "Closed candle data is invalid.") from None
+
+        if direction == "long":
+            resistances = []
+        elif direction == "short":
+            supports = []
 
         candidates = supports + resistances
         contexts: list[dict[str, Any]] = []
@@ -339,6 +376,7 @@ class AutomaticStrategyService:
             instrument_id=instrument_id,
             interval=interval,
             request_id=request_id,
+            direction=direction,
             tick_size=tick_size,
             reference_price=decimal_text(reference_price),
             observed_at=observed_at,
@@ -353,6 +391,7 @@ class AutomaticStrategyService:
             instrument_id=instrument_id,
             interval=interval,
             request_id=request_id,
+            direction=direction,
             generation=generation,
         )
         strategy, _, current_fingerprint = self.strategy._current_strategy(candidate_id)
@@ -380,14 +419,19 @@ class AutomaticStrategyService:
                 return self.strategy._decode_row(row)
         return None
 
-    def _replay_or_conflict(self, strategy: dict[str, Any], instrument_id: str, interval: str) -> dict[str, Any]:
+    def _replay_or_conflict(
+        self, strategy: dict[str, Any], instrument_id: str, interval: str, direction: str
+    ) -> dict[str, Any]:
         generation = strategy["snapshot"].get("aiGeneration")
+        saved_direction = self._generation_direction(generation)
         if (
             strategy["contract"].get("instrumentId") != instrument_id
             or strategy["contract"].get("interval") != interval
             or not isinstance(generation, dict)
             or generation.get("instrumentId") != instrument_id
             or generation.get("interval") != interval
+            or saved_direction is None
+            or saved_direction != direction
         ):
             raise APIError(409, "automatic_request_conflict", "This request ID is already bound to different input.")
         if self.is_candidate_stage(strategy):
@@ -756,6 +800,7 @@ class AutomaticStrategyService:
         instrument_id: str,
         interval: str,
         request_id: str,
+        direction: str,
         tick_size: str,
         reference_price: str,
         observed_at: str,
@@ -785,6 +830,7 @@ class AutomaticStrategyService:
             "referencePrice": reference_price,
             "observedAt": observed_at,
             "requestId": request_id,
+            "direction": direction,
             "candles": candle_metadata(generation_candles),
             "contextCandles": {
                 key: candle_metadata(rows) for key, rows in context_candles.items()
@@ -803,19 +849,27 @@ class AutomaticStrategyService:
         instrument_id: str,
         interval: str,
         request_id: str,
+        direction: str,
         generation: dict[str, Any],
     ) -> str:
+        if direction not in _DIRECTIONS or self._generation_direction(generation) != direction:
+            raise APIError(422, "invalid_automatic_request", "The automatic strategy direction is invalid.")
         now = self.strategy.clock()
         strategy_id = new_operation_id()
         contract = {
             "instrumentId": instrument_id,
             "interval": interval,
-            "direction": None,
+            "direction": direction,
             "selectedLevels": [],
         }
         snapshot = {"draftStage": "candidates", "aiGeneration": generation}
         digest = token_digest(
-            encode_json({"instrumentId": instrument_id, "interval": interval, "requestId": request_id}),
+            encode_json({
+                "instrumentId": instrument_id,
+                "interval": interval,
+                "requestId": request_id,
+                "direction": direction,
+            }),
             self.strategy.owner.settings.session_signing_key,
         )
         with self.strategy.store.transaction() as connection:
@@ -828,9 +882,12 @@ class AutomaticStrategyService:
                 saved_generation = saved.get("aiGeneration") if isinstance(saved, dict) else None
                 if isinstance(saved_generation, dict) and saved_generation.get("requestId") == request_id:
                     existing = self.strategy._decode_row(row)
+                    existing_direction = self._generation_direction(saved_generation)
                     if (
                         existing["contract"].get("instrumentId") != instrument_id
                         or existing["contract"].get("interval") != interval
+                        or existing_direction is None
+                        or existing_direction != direction
                     ):
                         raise APIError(409, "automatic_request_conflict", "This request ID is already bound to different input.")
                     return existing["id"]

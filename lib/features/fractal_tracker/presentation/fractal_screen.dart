@@ -10,6 +10,7 @@ import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/timezone/app_time_zone.dart';
 import '../../../core/widgets/manual_refresh_button.dart';
+import '../../../core/widgets/responsive_form_content.dart';
 import 'providers/fractal_provider.dart';
 import '../data/fractal_model.dart';
 
@@ -117,8 +118,12 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
         child: fractalAsync.when(
           // Rất quan trọng: Bỏ qua trạng thái Loading khi reload để app không bị chớp mỗi giây
           skipLoadingOnReload: true,
-          loading: () =>
-              Center(child: CircularProgressIndicator(color: textColor)),
+          loading: () => const Center(
+            child: FormPendingStatus(
+              label: 'Đang tải dữ liệu fractal…',
+              linear: false,
+            ),
+          ),
           error: (err, stack) => Center(
             child: Text('Lỗi tải dữ liệu', style: TextStyle(color: textColor)),
           ),
@@ -945,70 +950,75 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
             ),
           ),
           content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                TextField(
-                  controller: textController,
-                  autofocus: true,
-                  textCapitalization: TextCapitalization.characters,
-                  style: TextStyle(
-                    color: palette.ink,
-                    fontWeight: FontWeight.bold,
-                  ),
-                  decoration: InputDecoration(
-                    hintText: 'Nhập mã (VD: APT, ARB...)',
-                    hintStyle: TextStyle(color: palette.muted),
-                    suffixText: '-USDT',
-                    suffixStyle: TextStyle(color: palette.muted),
-                    focusedBorder: UnderlineInputBorder(
-                      borderSide: BorderSide(color: palette.ink),
+            child: ResponsiveFormContent(
+              maxWidth: 560,
+              padding: EdgeInsets.zero,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  TextField(
+                    controller: textController,
+                    autofocus: true,
+                    textCapitalization: TextCapitalization.characters,
+                    style: TextStyle(
+                      color: palette.ink,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    decoration: InputDecoration(
+                      labelText: 'Coin',
+                      hintText: 'Nhập mã (VD: APT, ARB...)',
+                      hintStyle: TextStyle(color: palette.muted),
+                      suffixText: '-USDT',
+                      suffixStyle: TextStyle(color: palette.muted),
+                      focusedBorder: UnderlineInputBorder(
+                        borderSide: BorderSide(color: palette.ink),
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(height: AppTokens.space5),
-                Text(
-                  'Gợi ý nhanh:',
-                  style: TextStyle(fontSize: 12, color: palette.muted),
-                ),
-                const SizedBox(height: AppTokens.space2),
-                Wrap(
-                  spacing: AppTokens.space2,
-                  runSpacing: AppTokens.space2,
-                  children: commonCoins.map((coin) {
-                    return InkWell(
-                      onTap: () {
-                        ref.read(selectedCoinProvider.notifier).state = coin;
-                        Navigator.pop(context);
-                      },
-                      child: Container(
-                        constraints: const BoxConstraints(minHeight: 48),
-                        alignment: Alignment.center,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: AppTokens.space3,
-                          vertical: AppTokens.space2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: palette.surface,
-                          borderRadius: BorderRadius.circular(
-                            AppTokens.radiusSmall,
+                  const SizedBox(height: AppTokens.space5),
+                  Text(
+                    'Gợi ý nhanh:',
+                    style: TextStyle(fontSize: 12, color: palette.muted),
+                  ),
+                  const SizedBox(height: AppTokens.space2),
+                  Wrap(
+                    spacing: AppTokens.space2,
+                    runSpacing: AppTokens.space2,
+                    children: commonCoins.map((coin) {
+                      return InkWell(
+                        onTap: () {
+                          ref.read(selectedCoinProvider.notifier).state = coin;
+                          Navigator.pop(context);
+                        },
+                        child: Container(
+                          constraints: const BoxConstraints(minHeight: 48),
+                          alignment: Alignment.center,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: AppTokens.space3,
+                            vertical: AppTokens.space2,
                           ),
-                          border: Border.all(color: palette.border),
-                        ),
-                        child: Text(
-                          coin,
-                          style: TextStyle(
-                            color: palette.ink,
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
+                          decoration: BoxDecoration(
+                            color: palette.surface,
+                            borderRadius: BorderRadius.circular(
+                              AppTokens.radiusSmall,
+                            ),
+                            border: Border.all(color: palette.border),
+                          ),
+                          child: Text(
+                            coin,
+                            style: TextStyle(
+                              color: palette.ink,
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
-                      ),
-                    );
-                  }).toList(),
-                ),
-              ],
+                      );
+                    }).toList(),
+                  ),
+                ],
+              ),
             ),
           ),
           actions: [

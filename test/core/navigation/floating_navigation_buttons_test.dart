@@ -8,6 +8,7 @@ void main() {
     required NavigationEdge edge,
     required ValueChanged<int> onDestinationSelected,
     bool disableAnimations = false,
+    bool accessibleNavigation = false,
     EdgeInsets viewInsets = EdgeInsets.zero,
     TextScaler? textScaler,
     double buttonScale = 1,
@@ -17,6 +18,7 @@ void main() {
       builder: (context, child) => MediaQuery(
         data: MediaQuery.of(context).copyWith(
           disableAnimations: disableAnimations,
+          accessibleNavigation: accessibleNavigation,
           viewInsets: viewInsets,
           textScaler: textScaler,
         ),
@@ -145,21 +147,27 @@ void main() {
     );
   });
 
-  testWidgets('honors reduced-motion settings for floating controls', (
+  testWidgets('honors both reduced-motion settings for floating controls', (
     tester,
   ) async {
-    await tester.pumpWidget(
-      appFor(
-        edge: NavigationEdge.bottom,
-        disableAnimations: true,
-        onDestinationSelected: (_) {},
-      ),
-    );
+    for (final flags in [
+      (disableAnimations: true, accessibleNavigation: false),
+      (disableAnimations: false, accessibleNavigation: true),
+    ]) {
+      await tester.pumpWidget(
+        appFor(
+          edge: NavigationEdge.bottom,
+          disableAnimations: flags.disableAnimations,
+          accessibleNavigation: flags.accessibleNavigation,
+          onDestinationSelected: (_) {},
+        ),
+      );
 
-    final indicator = tester.widget<AnimatedContainer>(
-      find.byKey(const Key('floating-navigation-indicator-0')),
-    );
-    expect(indicator.duration, Duration.zero);
+      final indicator = tester.widget<AnimatedContainer>(
+        find.byKey(const Key('floating-navigation-indicator-0')),
+      );
+      expect(indicator.duration, Duration.zero);
+    }
   });
 
   testWidgets('applies configured button size and opacity', (tester) async {

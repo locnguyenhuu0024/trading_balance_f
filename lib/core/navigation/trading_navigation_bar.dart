@@ -63,7 +63,11 @@ class _TradingNavigationBarState extends State<TradingNavigationBar>
     if (oldWidget.selectedIndex == widget.selectedIndex) return;
 
     _previousIndex = oldWidget.selectedIndex;
-    if (MediaQuery.maybeOf(context)?.disableAnimations ?? false) {
+    final mediaQuery = MediaQuery.maybeOf(context);
+    final reduceMotion =
+        mediaQuery?.disableAnimations == true ||
+        mediaQuery?.accessibleNavigation == true;
+    if (reduceMotion) {
       _selectionController.value = 1;
     } else {
       _selectionController.forward(from: 0);
@@ -80,12 +84,14 @@ class _TradingNavigationBarState extends State<TradingNavigationBar>
   Widget build(BuildContext context) {
     final surfaceColor = widget.isDark ? Colors.white : Colors.black;
     final contentColor = widget.isDark ? Colors.black : Colors.white;
-    final disableAnimations = MediaQuery.of(context).disableAnimations;
-    final duration = disableAnimations
+    final mediaQuery = MediaQuery.of(context);
+    final reduceMotion =
+        mediaQuery.disableAnimations || mediaQuery.accessibleNavigation;
+    final duration = reduceMotion
         ? Duration.zero
         : TradingNavigationBar._animationDuration;
 
-    if (disableAnimations && _selectionController.value != 1) {
+    if (reduceMotion && _selectionController.value != 1) {
       _selectionController.value = 1;
     }
 
@@ -136,9 +142,7 @@ class _TradingNavigationBarState extends State<TradingNavigationBar>
                                 destinationCount: widget.destinations.length,
                                 buttonScale: effectiveScale,
                                 progress: Curves.easeOutCubic.transform(
-                                  disableAnimations
-                                      ? 1
-                                      : _selectionController.value,
+                                  reduceMotion ? 1 : _selectionController.value,
                                 ),
                               ),
                             );
@@ -182,6 +186,7 @@ class _TradingNavigationBarState extends State<TradingNavigationBar>
                         contentColor: contentColor,
                         buttonScale: buttonScale,
                         buttonOpacity: buttonOpacity,
+                        reduceMotion: reduceMotion,
                         duration: duration,
                         onTap: () => widget.onDestinationSelected(index),
                       ),
@@ -236,6 +241,7 @@ class _DestinationControl extends StatelessWidget {
     required this.contentColor,
     required this.buttonScale,
     required this.buttonOpacity,
+    required this.reduceMotion,
     required this.duration,
     required this.onTap,
   });
@@ -252,6 +258,7 @@ class _DestinationControl extends StatelessWidget {
   final Color contentColor;
   final double buttonScale;
   final double buttonOpacity;
+  final bool reduceMotion;
   final Duration duration;
   final VoidCallback onTap;
 
@@ -335,30 +342,34 @@ class _DestinationControl extends StatelessWidget {
           height: 22,
           child: IgnorePointer(
             child: Center(
-              child: AnimatedSize(
-                duration: duration,
-                curve: Curves.easeOutCubic,
-                child: isSelected
-                    ? ExcludeSemantics(
-                        child: Text(
-                          item.label,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: contentColor,
-                            fontSize: 10 * buttonScale,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      )
-                    : const SizedBox.shrink(),
-              ),
+              child: reduceMotion
+                  ? _buildLabel(buttonScale, contentColor)
+                  : AnimatedSize(
+                      duration: duration,
+                      curve: Curves.easeOutCubic,
+                      child: _buildLabel(buttonScale, contentColor),
+                    ),
             ),
           ),
         ),
       ],
     );
   }
+
+  Widget _buildLabel(double buttonScale, Color contentColor) => isSelected
+      ? ExcludeSemantics(
+          child: Text(
+            item.label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: contentColor,
+              fontSize: 10 * buttonScale,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        )
+      : const SizedBox.shrink();
 }
 
 class _NavigationBarSurfaceClipper extends CustomClipper<Path> {

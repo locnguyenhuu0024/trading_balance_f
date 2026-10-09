@@ -1,8 +1,13 @@
 import 'dart:async';
+import 'dart:io';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/navigation/navigation_preferences.dart';
 import 'package:trading_balance_f/core/navigation/navigation_preferences_provider.dart';
@@ -95,7 +100,7 @@ class _SettingsStorage extends SecureStorageHelper {
 }
 
 void main() {
-  Widget settingsApp(_SettingsStorage storage) {
+  Widget settingsApp(_SettingsStorage storage, {double textScale = 1}) {
     return ProviderScope(
       overrides: [
         secureStorageProvider.overrideWithValue(storage),
@@ -104,9 +109,85 @@ void main() {
         ),
         vndExchangeRateProvider.overrideWith((ref) async => 25400),
       ],
-      child: const MaterialApp(home: SettingsScreen()),
+      child: MaterialApp(
+        theme: ThemeData(
+          fontFamily: 'Roboto',
+          textTheme: ThemeData.light().textTheme.apply(fontFamily: 'Roboto'),
+        ),
+        builder: (context, child) => DefaultTextStyle.merge(
+          style: const TextStyle(fontFamily: 'Roboto'),
+          child: RepaintBoundary(
+            key: _settingsPreviewKey,
+            child: MediaQuery(
+              data: MediaQuery.of(
+                context,
+              ).copyWith(textScaler: TextScaler.linear(textScale)),
+              child: child!,
+            ),
+          ),
+        ),
+        home: const SettingsScreen(),
+      ),
     );
   }
+
+  testWidgets('settings selectors stay legible in narrow and desktop layouts', (
+    tester,
+  ) async {
+    await tester.runAsync(_loadSettingsPreviewFonts);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    tester.view.devicePixelRatio = 1;
+
+    for (final scenario in [
+      (
+        width: 320.0,
+        textScale: 1.6,
+        screenshot: 'settings-mobile-320-scale-1.6.png',
+      ),
+      (width: 1280.0, textScale: 1.0, screenshot: 'settings-desktop-1280.png'),
+    ]) {
+      tester.view.physicalSize = Size(scenario.width, 1000);
+      await tester.pumpWidget(
+        settingsApp(_SettingsStorage(), textScale: scenario.textScale),
+      );
+      await tester.pumpAndSettle();
+
+      await _writeSettingsPreview(tester, scenario.screenshot);
+
+      final timeZone = find.byKey(const Key('settings-timezone-select'));
+      final theme = find.byType(DropdownButton<ThemeMode>);
+      final currency = find.byKey(const Key('settings-currency-select'));
+      final textScale = find.byKey(const Key('settings-app-text-scale-select'));
+      for (final selector in [timeZone, theme, currency, textScale]) {
+        await tester.ensureVisible(selector);
+        await tester.pump();
+        final rect = tester.getRect(selector);
+        expect(rect.left, greaterThanOrEqualTo(0));
+        expect(rect.right, lessThanOrEqualTo(scenario.width));
+        expect(rect.height, greaterThanOrEqualTo(48));
+      }
+
+      expect(
+        tester.widget<DropdownButton<String>>(timeZone).style?.fontSize,
+        14,
+      );
+      expect(
+        tester.widget<DropdownButton<ThemeMode>>(theme).style?.fontSize,
+        14,
+      );
+      expect(
+        tester.widget<DropdownButton<String>>(currency).style?.fontSize,
+        14,
+      );
+      expect(
+        tester.widget<DropdownButton<double>>(textScale).style?.fontSize,
+        14,
+      );
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    }
+  });
 
   testWidgets('offers a control to choose visible navigation pages', (
     tester,
@@ -140,7 +221,10 @@ void main() {
     expect(find.text('API và giao dịch'), findsOneWidget);
     expect(find.text('Đang tải thông tin API đã lưu…'), findsOneWidget);
     expect(find.byType(LinearProgressIndicator), findsOneWidget);
-    expect(find.byKey(const Key('settings-okx-credential-bundle')), findsNothing);
+    expect(
+      find.byKey(const Key('settings-okx-credential-bundle')),
+      findsNothing,
+    );
     expect(find.text('API Key'), findsNothing);
     expect(find.text('Secret Key'), findsNothing);
     expect(find.text('Passphrase'), findsNothing);
@@ -148,9 +232,7 @@ void main() {
     expect(find.byKey(const Key('settings-trade-access-button')), findsNothing);
   });
 
-  testWidgets('opens the ready API and trade access subpage', (
-    tester,
-  ) async {
+  testWidgets('opens the ready API and trade access subpage', (tester) async {
     await tester.pumpWidget(
       settingsApp(_SettingsStorage(pendingApiKeyRead: false)),
     );
@@ -361,7 +443,9 @@ void main() {
     await tester.pumpAndSettle();
 
     final bmagHandle = find.byKey(const Key('settings-navigation-drag-bmag'));
-    final supportRow = find.byKey(const Key('settings-navigation-visible-support'));
+    final supportRow = find.byKey(
+      const Key('settings-navigation-visible-support'),
+    );
     final dragDistance =
         tester.getTopLeft(supportRow).dy - tester.getCenter(bmagHandle).dy + 4;
     await tester.drag(bmagHandle, Offset(0, dragDistance));
@@ -405,7 +489,9 @@ void main() {
     await tester.pumpAndSettle();
 
     final bmagHandle = find.byKey(const Key('settings-navigation-drag-bmag'));
-    final supportRow = find.byKey(const Key('settings-navigation-visible-support'));
+    final supportRow = find.byKey(
+      const Key('settings-navigation-visible-support'),
+    );
     final dragDistance =
         tester.getTopLeft(supportRow).dy - tester.getCenter(bmagHandle).dy + 4;
     await tester.drag(bmagHandle, Offset(0, dragDistance));
@@ -522,5 +608,55 @@ void main() {
       find.text('Không lưu được cỡ chữ ứng dụng. Vui lòng thử lại.'),
       findsOneWidget,
     );
+  });
+}
+
+const _settingsPreviewKey = ValueKey('settings-preview');
+
+Future<void> _loadSettingsPreviewFonts() async {
+  var directory = File(Platform.resolvedExecutable).absolute.parent;
+  while (directory.path != directory.parent.path) {
+    final fonts = Directory(
+      '${directory.path}${Platform.pathSeparator}bin${Platform.pathSeparator}'
+      'cache${Platform.pathSeparator}artifacts${Platform.pathSeparator}'
+      'material_fonts',
+    );
+    if (await fonts.exists()) {
+      for (final font in {
+        'Roboto': 'roboto-regular.ttf',
+        'MaterialIcons': 'materialicons-regular.otf',
+      }.entries) {
+        final file = File(
+          '${fonts.path}${Platform.pathSeparator}${font.value}',
+        );
+        if (!await file.exists()) continue;
+        final bytes = await file.readAsBytes();
+        final loader = FontLoader(font.key)
+          ..addFont(Future.value(ByteData.sublistView(bytes)));
+        await loader.load();
+      }
+      return;
+    }
+    directory = directory.parent;
+  }
+}
+
+Future<void> _writeSettingsPreview(WidgetTester tester, String filename) async {
+  final boundary = tester.renderObject<RenderRepaintBoundary>(
+    find.byKey(_settingsPreviewKey),
+  );
+  final image = await tester.runAsync(() => boundary.toImage(pixelRatio: 1));
+  expect(image, isNotNull);
+  final capturedImage = image!;
+  final png = await tester.runAsync(
+    () => capturedImage.toByteData(format: ui.ImageByteFormat.png),
+  );
+  capturedImage.dispose();
+  expect(png, isNotNull);
+  final bytes = png!.buffer.asUint8List(png.offsetInBytes, png.lengthInBytes);
+  await tester.runAsync(() async {
+    final directory = Directory('build/forms-preview');
+    await directory.create(recursive: true);
+    await File('${directory.path}/$filename').writeAsBytes(bytes, flush: true);
   });
 }

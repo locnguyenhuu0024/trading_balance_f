@@ -1,12 +1,18 @@
 import 'dart:async';
+import 'dart:io';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:dio/dio.dart';
 import 'package:trading_balance_f/core/network/backend_data_client.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/theme/app_theme.dart';
 import 'package:trading_balance_f/core/theme/pnl_color.dart';
+import 'package:trading_balance_f/core/widgets/responsive_form_content.dart';
 import 'package:trading_balance_f/features/orders/data/trade_api_client.dart';
 import 'package:trading_balance_f/features/orders/presentation/providers/trade_session_provider.dart';
 import 'package:trading_balance_f/core/network/request_coordinator.dart';
@@ -18,7 +24,115 @@ import 'package:trading_balance_f/features/strategy/presentation/strategy_automa
 import 'package:trading_balance_f/features/strategy/presentation/strategy_screen.dart';
 import 'package:trading_balance_f/features/strategy/presentation/strategy_wizard_dialog.dart';
 
+const _strategyFormPreviewKey = ValueKey('strategy-form-preview');
+
 void main() {
+  testWidgets('captures the automatic direction form and pending state', (
+    tester,
+  ) async {
+    await tester.runAsync(_loadFormPreviewFonts);
+    tester.view.devicePixelRatio = 1;
+    final pendingMarket = _FakeMarketRepository()
+      ..instrumentsCompleter = Completer<List<StrategyInstrument>>();
+    final pendingApi = _FakeStrategyApi();
+    final pendingDashboard = StrategyDashboardController(
+      api: pendingApi,
+      marketRepository: pendingMarket,
+      bearerToken: 'test-token',
+    );
+    await _pumpStrategyPreview(
+      tester,
+      pendingApi,
+      pendingMarket,
+      dashboard: pendingDashboard,
+      size: const Size(360, 900),
+      textScale: 1.6,
+      themeMode: ThemeMode.light,
+    );
+    await tester.tap(find.byKey(const Key('open-automatic-form')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('Đang tải danh sách hợp đồng…'), findsOneWidget);
+    expect(
+      tester.getRect(find.text('Hợp đồng USDT SWAP')).bottom,
+      lessThan(tester.getRect(find.text('Chọn coin')).top),
+    );
+    expect(tester.takeException(), isNull);
+    await _writeStrategyFormPreview(
+      tester,
+      'automatic-direction-mobile-360-scale-1.6-loading-light.png',
+    );
+
+    pendingMarket.instrumentsCompleter!.complete(const [
+      StrategyInstrument(
+        instrumentId: 'BTC-USDT-SWAP',
+        base: 'BTC',
+        tickSizeText: '0.01',
+      ),
+    ]);
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('strategy-automatic-direction-select')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+    await _writeStrategyFormPreview(
+      tester,
+      'automatic-direction-mobile-360-scale-1.6-ready-light.png',
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+    pendingDashboard.dispose();
+
+    for (final mode in [ThemeMode.light, ThemeMode.dark]) {
+      final api = _FakeStrategyApi();
+      final market = _FakeMarketRepository();
+      final dashboard = StrategyDashboardController(
+        api: api,
+        marketRepository: market,
+        bearerToken: 'test-token',
+      );
+      await _pumpStrategyPreview(
+        tester,
+        api,
+        market,
+        dashboard: dashboard,
+        size: const Size(1440, 960),
+        themeMode: mode,
+      );
+      await tester.tap(find.byKey(const Key('open-automatic-form')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('strategy-automatic-direction-select')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+      await _writeStrategyFormPreview(
+        tester,
+        mode == ThemeMode.light
+            ? 'automatic-direction-desktop-light.png'
+            : 'automatic-direction-desktop-dark.png',
+      );
+      await tester.tap(
+        find.byKey(const Key('strategy-automatic-direction-select')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Long&Short'), findsWidgets);
+      expect(find.text('Long'), findsWidgets);
+      expect(find.text('Short'), findsWidgets);
+      expect(tester.takeException(), isNull);
+      if (mode == ThemeMode.light) {
+        await _writeStrategyFormPreview(
+          tester,
+          'automatic-direction-options-desktop-light.png',
+        );
+      }
+      await tester.pumpWidget(const SizedBox.shrink());
+      dashboard.dispose();
+    }
+  });
+
   testWidgets('strategy direction labels stay unknown without valid evidence', (
     tester,
   ) async {
@@ -440,6 +554,283 @@ void main() {
   );
 
   testWidgets(
+    'automatic direction resets request identity and rejects a mismatched response',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final api = _FakeStrategyApi()
+        ..automaticFailureCount = 1
+        ..automaticResponseDirection = 'long';
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            tradeSessionProvider.overrideWith(
+              (ref) => _AuthenticatedSessionController(),
+            ),
+            strategyApiProvider.overrideWithValue(api),
+            strategyMarketRepositoryProvider.overrideWithValue(
+              _FakeMarketRepository(),
+            ),
+          ],
+          child: const MaterialApp(home: StrategyScreen()),
+        ),
+      );
+      await _pumpFrames(tester);
+
+      await tester.tap(
+        find.byKey(const Key('strategy-automatic-create-button')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const Key('strategy-automatic-instrument-picker')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const Key('strategy-automatic-instrument-BTC-USDT-SWAP')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const Key('strategy-automatic-interval-select')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('1D').last);
+      await tester.pumpAndSettle();
+
+      final direction = find.byKey(
+        const Key('strategy-automatic-direction-select'),
+      );
+      await tester.tap(direction);
+      await tester.pumpAndSettle();
+      expect(find.text('Long'), findsWidgets);
+      expect(find.text('Short'), findsWidgets);
+      expect(find.text('Long&Short'), findsWidgets);
+      await tester.tap(find.text('Long').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('strategy-automatic-generate')));
+      await tester.pumpAndSettle();
+
+      expect(api.automaticRequests, hasLength(1));
+      expect(api.automaticRequests.single['direction'], 'long');
+      expect(
+        find.text('Máy chủ tự động đang bận. Vui lòng thử lại.'),
+        findsOneWidget,
+      );
+      final firstRequestId = api.automaticRequests.single['requestId'];
+
+      await tester.tap(direction);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Short').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('strategy-automatic-generate')));
+      await tester.pumpAndSettle();
+
+      expect(api.automaticRequests, hasLength(2));
+      expect(api.automaticRequests.last['direction'], 'short');
+      expect(api.automaticRequests.last['requestId'], isNot(firstRequestId));
+      expect(
+        find.text('Máy chủ trả về bản xem xét chiến thuật không hợp lệ.'),
+        findsOneWidget,
+      );
+      expect(find.byType(StrategyWizardDialog), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'legacy automatic responses without direction are accepted only for both',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 1200);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final api = _FakeStrategyApi()..omitAutomaticResponseDirection = true;
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            tradeSessionProvider.overrideWith(
+              (ref) => _AuthenticatedSessionController(),
+            ),
+            strategyApiProvider.overrideWithValue(api),
+            strategyMarketRepositoryProvider.overrideWithValue(
+              _FakeMarketRepository(),
+            ),
+          ],
+          child: const MaterialApp(home: StrategyScreen()),
+        ),
+      );
+      await _pumpFrames(tester);
+      await tester.tap(
+        find.byKey(const Key('strategy-automatic-create-button')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const Key('strategy-automatic-instrument-picker')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const Key('strategy-automatic-instrument-BTC-USDT-SWAP')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const Key('strategy-automatic-interval-select')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('1D').last);
+      await tester.pumpAndSettle();
+
+      final direction = find.byKey(
+        const Key('strategy-automatic-direction-select'),
+      );
+      for (final selectedDirection in ['Long', 'Short']) {
+        await tester.tap(direction);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text(selectedDirection).last);
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const Key('strategy-automatic-generate')));
+        await tester.pumpAndSettle();
+        expect(
+          find.text('Máy chủ trả về bản xem xét chiến thuật không hợp lệ.'),
+          findsOneWidget,
+        );
+        expect(find.byType(StrategyWizardDialog), findsNothing);
+      }
+
+      await tester.tap(direction);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Long&Short').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('strategy-automatic-generate')));
+      await tester.pumpAndSettle();
+
+      expect(api.automaticRequests.map((r) => r['direction']), [
+        'long',
+        'short',
+        'both',
+      ]);
+      expect(
+        (api.lastAutomaticResponse!['aiGeneration'] as Map).containsKey(
+          'direction',
+        ),
+        isFalse,
+      );
+      expect(find.byType(StrategyWizardDialog), findsNothing);
+      expect(find.textContaining('Đã lưu bản nháp tự động'), findsOneWidget);
+      final reviewButton = find.byKey(
+        const Key('strategy-review-auto-draft-1'),
+      );
+      await tester.ensureVisible(reviewButton);
+      await tester.tap(reviewButton);
+      await tester.pumpAndSettle();
+      expect(find.byType(StrategyWizardDialog), findsOneWidget);
+      expect(find.text('Hỗ trợ cho Long'), findsOneWidget);
+      expect(find.text('Kháng cự cho Short'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'single-side automatic review cannot broaden its saved direction',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 1200);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final api = _FakeStrategyApi();
+      api.strategies.add(
+        _candidateDraftRecord(
+          id: 'single-side-draft',
+          instrumentId: 'BTC-USDT-SWAP',
+          interval: '6Hutc',
+          direction: 'long',
+        ),
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            tradeSessionProvider.overrideWith(
+              (ref) => _AuthenticatedSessionController(),
+            ),
+            strategyApiProvider.overrideWithValue(api),
+            strategyMarketRepositoryProvider.overrideWithValue(
+              _FakeMarketRepository(),
+            ),
+          ],
+          child: const MaterialApp(home: StrategyScreen()),
+        ),
+      );
+      await _pumpFrames(tester);
+      final reviewButton = find.byKey(
+        const Key('strategy-review-single-side-draft'),
+      );
+      await tester.ensureVisible(reviewButton);
+      await tester.tap(reviewButton);
+      await tester.pumpAndSettle();
+
+      final selector = tester.widget<DropdownButtonFormField<dynamic>>(
+        find.byKey(const Key('strategy-direction-select')),
+      );
+      expect(selector.onChanged, isNull);
+      expect(find.text('Hỗ trợ cho Long'), findsOneWidget);
+      expect(find.text('Kháng cự cho Short'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('an explicit null saved direction fails closed', (tester) async {
+    tester.view.physicalSize = const Size(390, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final malformedDraft = _candidateDraftRecord(
+      id: 'null-direction-draft',
+      instrumentId: 'BTC-USDT-SWAP',
+      interval: '6Hutc',
+    );
+    (malformedDraft['aiGeneration'] as Map<String, dynamic>)['direction'] =
+        null;
+    final api = _FakeStrategyApi()..strategies.add(malformedDraft);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          tradeSessionProvider.overrideWith(
+            (ref) => _AuthenticatedSessionController(),
+          ),
+          strategyApiProvider.overrideWithValue(api),
+          strategyMarketRepositoryProvider.overrideWithValue(
+            _FakeMarketRepository(),
+          ),
+        ],
+        child: const MaterialApp(home: StrategyScreen()),
+      ),
+    );
+    await _pumpFrames(tester);
+    final reviewButton = find.byKey(
+      const Key('strategy-review-null-direction-draft'),
+    );
+    await tester.ensureVisible(reviewButton);
+    await tester.tap(reviewButton);
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Bản chụp ứng viên đã lưu không thể mở để xem xét.'),
+      findsOneWidget,
+    );
+    final selector = tester.widget<DropdownButtonFormField<dynamic>>(
+      find.byKey(const Key('strategy-direction-select')),
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('strategy-direction-select')),
+        matching: find.text('Không rõ chiều'),
+      ),
+      findsOneWidget,
+    );
+    expect(selector.onChanged, isNull);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
     'automatic candidates are saved for deferred review without regeneration',
     (tester) async {
       tester.view.physicalSize = const Size(390, 844);
@@ -495,6 +886,7 @@ void main() {
       expect(api.automaticRequests, hasLength(2));
       expect(api.automaticRequests.last['instrumentId'], 'BTC-USDT-SWAP');
       expect(api.automaticRequests.last['interval'], '1Dutc');
+      expect(api.automaticRequests.last['direction'], 'both');
       expect(originalRequestId, matches(RegExp(r'^[A-Za-z0-9_-]{8,64}$')));
       expect(api.automaticRequests.last['requestId'], originalRequestId);
       expect(find.byType(StrategyWizardDialog), findsNothing);
@@ -597,6 +989,17 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('6H').last);
     await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('strategy-automatic-generate')));
+    await tester.pump();
+    expect(api.automaticRequests, hasLength(1));
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.byKey(const Key('strategy-automatic-generate')),
+          )
+          .onPressed,
+      isNull,
+    );
     await tester.tap(find.byKey(const Key('strategy-automatic-generate')));
     await tester.pump();
     expect(api.automaticRequests, hasLength(1));
@@ -1805,6 +2208,124 @@ Future<void> _pumpFrames(WidgetTester tester, [int count = 5]) async {
   }
 }
 
+Future<void> _pumpStrategyPreview(
+  WidgetTester tester,
+  StrategyApi api,
+  _FakeMarketRepository market, {
+  required StrategyDashboardController dashboard,
+  required Size size,
+  required ThemeMode themeMode,
+  double textScale = 1,
+}) async {
+  tester.view.physicalSize = size;
+  tester.view.devicePixelRatio = 1;
+  final session = TradeSession(
+    bearerToken: 'test-token',
+    accountIdentifier: 'test-account',
+    expiresAt: DateTime.now().add(const Duration(hours: 1)),
+  );
+  await tester.pumpWidget(
+    ProviderScope(
+      overrides: [
+        tradeSessionProvider.overrideWith(
+          (ref) => _AuthenticatedSessionController(),
+        ),
+        strategyApiProvider.overrideWithValue(api),
+        strategyMarketRepositoryProvider.overrideWithValue(market),
+      ],
+      child: RepaintBoundary(
+        key: _strategyFormPreviewKey,
+        child: MaterialApp(
+          debugShowCheckedModeBanner: false,
+          theme: AppTheme.light,
+          darkTheme: AppTheme.dark,
+          themeMode: themeMode,
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: TextScaler.linear(textScale)),
+            child: child ?? const SizedBox.shrink(),
+          ),
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => Center(
+                child: TextButton(
+                  key: const Key('open-automatic-form'),
+                  onPressed: () => showDialog<void>(
+                    context: context,
+                    builder: (_) => StrategyAutomaticDraftDialog(
+                      session: session,
+                      dashboard: dashboard,
+                    ),
+                  ),
+                  child: const SizedBox.shrink(),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+  await _pumpFrames(tester);
+}
+
+Future<Directory?> _findFormPreviewFontsDirectory() async {
+  var directory = File(Platform.resolvedExecutable).absolute.parent;
+  while (directory.path != directory.parent.path) {
+    final candidate = Directory(
+      '${directory.path}${Platform.pathSeparator}bin${Platform.pathSeparator}'
+      'cache${Platform.pathSeparator}artifacts${Platform.pathSeparator}'
+      'material_fonts',
+    );
+    if (await candidate.exists()) return candidate;
+    directory = directory.parent;
+  }
+  return null;
+}
+
+Future<void> _loadFormPreviewFonts() async {
+  final fontsDirectory = await _findFormPreviewFontsDirectory();
+  if (fontsDirectory == null) return;
+
+  for (final font in {
+    'Roboto': 'roboto-regular.ttf',
+    'MaterialIcons': 'materialicons-regular.otf',
+  }.entries) {
+    final fontFile = File(
+      '${fontsDirectory.path}${Platform.pathSeparator}${font.value}',
+    );
+    if (!await fontFile.exists()) continue;
+    final fontBytes = await fontFile.readAsBytes();
+    final loader = FontLoader(font.key)
+      ..addFont(Future.value(ByteData.sublistView(fontBytes)));
+    await loader.load();
+  }
+}
+
+Future<void> _writeStrategyFormPreview(
+  WidgetTester tester,
+  String filename,
+) async {
+  final boundary = tester.renderObject<RenderRepaintBoundary>(
+    find.byKey(_strategyFormPreviewKey),
+  );
+  final image = await tester.runAsync(() => boundary.toImage(pixelRatio: 1));
+  expect(image, isNotNull);
+  final capturedImage = image!;
+  final png = await tester.runAsync(
+    () => capturedImage.toByteData(format: ui.ImageByteFormat.png),
+  );
+  capturedImage.dispose();
+  expect(png, isNotNull);
+  final bytes = png!.buffer.asUint8List(png.offsetInBytes, png.lengthInBytes);
+  await tester.runAsync(() async {
+    final directory = Directory('build/forms-preview');
+    await directory.create(recursive: true);
+    await File('${directory.path}/$filename').writeAsBytes(bytes, flush: true);
+  });
+}
+
 Future<void> _openStrategyDetails(
   WidgetTester tester,
   String strategyId,
@@ -1946,6 +2467,7 @@ Map<String, dynamic> _candidateDraftRecord({
   required String instrumentId,
   required String interval,
   String? requestId,
+  String direction = 'both',
 }) => {
   'id': id,
   'instrumentId': instrumentId,
@@ -1961,6 +2483,7 @@ Map<String, dynamic> _candidateDraftRecord({
     ..._candidateGenerationSnapshot(),
     'instrumentId': instrumentId,
     'interval': interval,
+    'direction': direction,
     if (requestId != null) 'requestId': requestId,
   },
 };
@@ -2001,6 +2524,9 @@ class _FakeStrategyApi implements StrategyApi, AutomaticStrategyApi {
   final automaticRequests = <Map<String, dynamic>>[];
   int automaticFailureCount = 0;
   Completer<Map<String, dynamic>>? automaticDraftCompleter;
+  String? automaticResponseDirection;
+  bool omitAutomaticResponseDirection = false;
+  Map<String, dynamic>? lastAutomaticResponse;
 
   @override
   Future<Map<String, dynamic>> createAutomaticDrafts(
@@ -2008,11 +2534,13 @@ class _FakeStrategyApi implements StrategyApi, AutomaticStrategyApi {
     required String instrumentId,
     required String interval,
     required String requestId,
+    String direction = 'both',
   }) async {
     final request = {
       'instrumentId': instrumentId,
       'interval': interval,
       'requestId': requestId,
+      'direction': direction,
     };
     automaticRequests.add(request);
     if (automaticFailureCount > 0) {
@@ -2028,9 +2556,14 @@ class _FakeStrategyApi implements StrategyApi, AutomaticStrategyApi {
             instrumentId: instrumentId,
             interval: interval,
             requestId: requestId,
+            direction: automaticResponseDirection ?? direction,
           )
         : await automaticDraftCompleter!.future;
+    lastAutomaticResponse = response;
     if (automaticDraftCompleter == null) {
+      if (omitAutomaticResponseDirection) {
+        (response['aiGeneration'] as Map<String, dynamic>).remove('direction');
+      }
       strategies.removeWhere((item) => item['id'] == response['id']);
       strategies.insert(0, response);
     }
@@ -2410,15 +2943,18 @@ class _FakeMarketRepository extends StrategyMarketRepository {
 
   int tickerCalls = 0;
   int loadLevelsCalls = 0;
+  Completer<List<StrategyInstrument>>? instrumentsCompleter;
 
   @override
-  Future<List<StrategyInstrument>> getInstruments() async => const [
-    StrategyInstrument(
-      instrumentId: 'BTC-USDT-SWAP',
-      base: 'BTC',
-      tickSizeText: '0.01',
-    ),
-  ];
+  Future<List<StrategyInstrument>> getInstruments() async =>
+      instrumentsCompleter?.future ??
+      const [
+        StrategyInstrument(
+          instrumentId: 'BTC-USDT-SWAP',
+          base: 'BTC',
+          tickSizeText: '0.01',
+        ),
+      ];
 
   @override
   Future<StrategyMarketSnapshot> loadLevels({

@@ -546,6 +546,33 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('scaled settings footer keeps its bounds while saving', (
+    tester,
+  ) async {
+    final api = _FakeStrategyApi()..settingsSaveCompleter = Completer<String>();
+    final harness = await _pumpSettings(
+      tester,
+      api,
+      useLauncher: false,
+      size: const Size(360, 900),
+      textScale: 1.6,
+    );
+    final saveButton = find.byKey(const Key('strategy-settings-save'));
+    final idleBounds = tester.getRect(saveButton);
+
+    await tester.tap(saveButton);
+    await tester.pump();
+
+    expect(find.text('Đang lưu cài đặt…'), findsOneWidget);
+    expect(tester.getRect(saveButton), idleBounds);
+    expect(tester.widget<FilledButton>(saveButton).onPressed, isNull);
+    expect(tester.takeException(), isNull);
+
+    api.settingsSaveCompleter!.complete('sequential');
+    await tester.pumpAndSettle();
+    harness.dashboard.dispose();
+  });
+
   for (final size in const [Size(320, 800), Size(360, 800), Size(1280, 900)]) {
     testWidgets('settings modal lays out at ${size.width.toInt()} px', (
       tester,

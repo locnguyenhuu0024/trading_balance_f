@@ -40,9 +40,9 @@ class OrderFilterControls extends StatelessWidget {
         textColor,
       ),
       icon: Icon(Icons.unfold_more_rounded, color: textColor),
-      style: TextStyle(
+      style: Theme.of(context).textTheme.bodyMedium!.copyWith(
         color: textColor,
-        fontSize: 13,
+        fontSize: 14,
         fontWeight: FontWeight.w700,
       ),
       items: const [
@@ -67,9 +67,9 @@ class OrderFilterControls extends StatelessWidget {
         textColor,
       ),
       icon: Icon(Icons.unfold_more_rounded, color: textColor),
-      style: TextStyle(
+      style: Theme.of(context).textTheme.bodyMedium!.copyWith(
         color: textColor,
-        fontSize: 13,
+        fontSize: 14,
         fontWeight: FontWeight.w700,
       ),
       items: _filters
@@ -82,6 +82,18 @@ class OrderFilterControls extends StatelessWidget {
 
     return LayoutBuilder(
       builder: (context, constraints) {
+        if (constraints.maxWidth < 340 ||
+            MediaQuery.textScalerOf(context).scale(1) > 1.2) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              tabSelect,
+              const SizedBox(height: AppTokens.space3),
+              filterSelect,
+            ],
+          );
+        }
+
         if (constraints.maxWidth < 600) {
           return Row(
             children: [
@@ -115,6 +127,9 @@ class OrderFilterControls extends StatelessWidget {
       filled: true,
       fillColor: surfaceColor,
       isDense: true,
+      constraints: const BoxConstraints(
+        minHeight: AppTokens.minimumTouchTarget,
+      ),
       contentPadding: const EdgeInsets.symmetric(
         horizontal: AppTokens.space3,
         vertical: AppTokens.space3,

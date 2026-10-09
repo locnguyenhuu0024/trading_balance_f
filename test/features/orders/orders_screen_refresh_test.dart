@@ -1,8 +1,13 @@
 import 'dart:async';
+import 'dart:io';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/network/backend_data_client.dart';
 import 'package:trading_balance_f/core/currency/currency_display_mode.dart';
@@ -100,16 +105,43 @@ void main() {
     },
   );
 
-  testWidgets('positions filters and close-all stay aligned without overflow', (
+  testWidgets('positions filters reflow beside close-all without overflow', (
     tester,
   ) async {
+    await tester.runAsync(_loadOrdersPreviewFonts);
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     tester.view.devicePixelRatio = 1;
 
-    for (final width in [320.0, 390.0, 800.0]) {
+    final scenarios = [
+      (
+        width: 320.0,
+        textScale: 1.0,
+        screenshot: 'orders-filters-mobile-320.png',
+      ),
+      (
+        width: 390.0,
+        textScale: 1.0,
+        screenshot: 'orders-filters-mobile-390.png',
+      ),
+      (
+        width: 390.0,
+        textScale: 1.6,
+        screenshot: 'orders-filters-mobile-390-scale-1.6.png',
+      ),
+      (
+        width: 1280.0,
+        textScale: 1.0,
+        screenshot: 'orders-filters-desktop-1280.png',
+      ),
+    ];
+
+    for (final scenario in scenarios) {
+      final width = scenario.width;
       tester.view.physicalSize = Size(width, 900);
-      await tester.pumpWidget(_positionsOrdersScreen());
+      await tester.pumpWidget(
+        _positionsOrdersScreen(textScale: scenario.textScale),
+      );
       await tester.pumpAndSettle();
 
       expect(find.byType(TradeAccountControls), findsOneWidget);
@@ -127,17 +159,36 @@ void main() {
       final refreshRect = tester.getRect(
         find.byKey(const Key('orders-manual-refresh')),
       );
-      expect(statusRect.top, typeRect.top);
-      expect(statusRect.right, lessThan(typeRect.left));
-      expect(typeRect.right, lessThan(closeAllRect.left));
+      final isStacked = width < 600 || scenario.textScale > 1.2;
+      if (isStacked) {
+        expect(typeRect.top, greaterThanOrEqualTo(statusRect.bottom));
+        expect(closeAllRect.bottom, closeTo(typeRect.bottom, 2));
+      } else {
+        expect(statusRect.top, typeRect.top);
+        expect(statusRect.right, lessThan(typeRect.left));
+        expect(typeRect.right, lessThan(closeAllRect.left));
+        expect(closeAllRect.bottom, closeTo(typeRect.bottom, 2));
+      }
+      expect(statusRect.left, greaterThanOrEqualTo(0));
+      expect(typeRect.left, greaterThanOrEqualTo(0));
+      expect(statusRect.right, lessThanOrEqualTo(width));
+      expect(typeRect.right, lessThanOrEqualTo(width));
+      expect(statusRect.height, greaterThanOrEqualTo(48));
+      expect(typeRect.height, greaterThanOrEqualTo(48));
+      expect(statusRect.overlaps(typeRect), isFalse);
+      expect(statusRect.overlaps(closeAllRect), isFalse);
+      expect(typeRect.overlaps(closeAllRect), isFalse);
       expect(closeAllRect.width, 48);
       expect(closeAllRect.height, 48);
-      expect(closeAllRect.center.dy, closeTo(typeRect.center.dy, 2));
       expect(closeAllRect.right, lessThanOrEqualTo(width));
+      expect(closeAllRect.left, greaterThanOrEqualTo(0));
+      expect(closeAllRect.bottom, lessThanOrEqualTo(900));
       expect(refreshRect.width, 48);
       expect(refreshRect.height, 48);
       expect(refreshRect.right, lessThanOrEqualTo(width));
+      expect(refreshRect.left, greaterThanOrEqualTo(0));
       expect(tester.takeException(), isNull);
+      await _writeOrdersPreview(tester, scenario.screenshot);
 
       await tester.pumpWidget(const SizedBox.shrink());
     }
@@ -348,7 +399,7 @@ Widget _ordersScreen({
   );
 }
 
-Widget _positionsOrdersScreen() {
+Widget _positionsOrdersScreen({double textScale = 1.0}) {
   final api = TradeApiClient(baseUrl: 'https://trade.example');
   return ProviderScope(
     overrides: [
@@ -368,8 +419,76 @@ Widget _positionsOrdersScreen() {
       currencyProvider.overrideWith((ref) => CurrencyDisplayMode.usd),
       vndExchangeRateProvider.overrideWith((ref) async => 25400),
     ],
-    child: const MaterialApp(home: OrdersScreen()),
+    child: MaterialApp(
+      theme: ThemeData(
+        fontFamily: 'Roboto',
+        textTheme: ThemeData.light().textTheme.apply(fontFamily: 'Roboto'),
+      ),
+      builder: (context, child) => DefaultTextStyle.merge(
+        style: const TextStyle(fontFamily: 'Roboto'),
+        child: RepaintBoundary(
+          key: _ordersPreviewKey,
+          child: MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: TextScaler.linear(textScale)),
+            child: child!,
+          ),
+        ),
+      ),
+      home: const OrdersScreen(),
+    ),
   );
+}
+
+const _ordersPreviewKey = ValueKey('orders-screen-preview');
+
+Future<void> _loadOrdersPreviewFonts() async {
+  var directory = File(Platform.resolvedExecutable).absolute.parent;
+  while (directory.path != directory.parent.path) {
+    final fonts = Directory(
+      '${directory.path}${Platform.pathSeparator}bin${Platform.pathSeparator}'
+      'cache${Platform.pathSeparator}artifacts${Platform.pathSeparator}'
+      'material_fonts',
+    );
+    if (await fonts.exists()) {
+      for (final font in {
+        'Roboto': 'roboto-regular.ttf',
+        'MaterialIcons': 'materialicons-regular.otf',
+      }.entries) {
+        final file = File(
+          '${fonts.path}${Platform.pathSeparator}${font.value}',
+        );
+        if (!await file.exists()) continue;
+        final bytes = await file.readAsBytes();
+        final loader = FontLoader(font.key)
+          ..addFont(Future.value(ByteData.sublistView(bytes)));
+        await loader.load();
+      }
+      return;
+    }
+    directory = directory.parent;
+  }
+}
+
+Future<void> _writeOrdersPreview(WidgetTester tester, String filename) async {
+  final boundary = tester.renderObject<RenderRepaintBoundary>(
+    find.byKey(_ordersPreviewKey),
+  );
+  final image = await tester.runAsync(() => boundary.toImage(pixelRatio: 1));
+  expect(image, isNotNull);
+  final capturedImage = image!;
+  final png = await tester.runAsync(
+    () => capturedImage.toByteData(format: ui.ImageByteFormat.png),
+  );
+  capturedImage.dispose();
+  expect(png, isNotNull);
+  final bytes = png!.buffer.asUint8List(png.offsetInBytes, png.lengthInBytes);
+  await tester.runAsync(() async {
+    final directory = Directory('build/forms-preview');
+    await directory.create(recursive: true);
+    await File('${directory.path}/$filename').writeAsBytes(bytes, flush: true);
+  });
 }
 
 class _AuthenticatedTradeSessionController extends TradeSessionController {

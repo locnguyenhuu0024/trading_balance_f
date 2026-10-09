@@ -22,6 +22,7 @@ from backend.service import RuntimeSettings, TradeService
 from backend.strategy_automatic import AutomaticStrategyService
 from backend.strategy_jev import ProviderOutcome, STRUCTURAL_QUALITY_RUBRIC, TypesafeJevProvider
 from backend.strategy_levels import calculate_levels, normalize_candles
+from backend.store import encode_json
 
 
 NOW = 1_798_848_000.0
@@ -265,9 +266,14 @@ class AutomaticStrategyApiTests(unittest.TestCase):
     def generation_request(request_id: str = "request-0001") -> dict[str, str]:
         return {"instrumentId": INSTRUMENT, "interval": "6Hutc", "requestId": request_id}
 
-    def create_candidates(self, request_id: str = "request-0001") -> dict[str, Any]:
+    def create_candidates(
+        self, request_id: str = "request-0001", *, direction: str | None = None
+    ) -> dict[str, Any]:
+        body = self.generation_request(request_id)
+        if direction is not None:
+            body["direction"] = direction
         status, result = self.request(
-            "POST", "/v1/strategies/automatic-drafts", self.generation_request(request_id)
+            "POST", "/v1/strategies/automatic-drafts", body
         )
         self.assertEqual(status, 200, result)
         return result
@@ -618,6 +624,187 @@ class AutomaticStrategyApiTests(unittest.TestCase):
         self.assertEqual(status, 409, result)
         self.assertEqual(result["error"], "automatic_request_conflict")
 
+    def test_invalid_explicit_direction_fails_before_provider_or_market_reads(self) -> None:
+        provider_calls: list[bool] = []
+
+        def provider_factory() -> DisabledProvider:
+            provider_calls.append(True)
+            return DisabledProvider()
+
+        self.service.strategy.automatic.provider_factory = provider_factory
+        for index, invalid in enumerate((None, "sideways", 1)):
+            with self.subTest(direction=invalid):
+                body = self.generation_request(f"bad-direction-{index:02d}")
+                body["direction"] = invalid
+                status, result = self.request("POST", "/v1/strategies/automatic-drafts", body)
+                self.assertEqual(status, 422, result)
+                self.assertEqual(result["error"], "invalid_automatic_request")
+        self.assertEqual(provider_calls, [])
+        self.assertEqual(self.exchange.calls, [])
+        with self.service.store.connection() as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM strategies").fetchone()[0], 0)
+
+    def test_direction_filters_provider_scope_and_persists_replayable_digest(self) -> None:
+        provider = FixedProvider()
+        self.service.strategy.automatic.provider_factory = lambda: provider
+        created = self.create_candidates("long-direction-01", direction="long")
+        generation = created["aiGeneration"]
+        self.assertEqual(generation["direction"], "long")
+        self.assertTrue(generation["supports"])
+        self.assertEqual(generation["resistances"], [])
+        self.assertTrue(provider.contexts)
+        self.assertEqual({row["candidate"]["side"] for row in provider.contexts}, {"long"})
+        saved = self.service.strategy._load_row(created["id"])
+        self.assertEqual(saved["contract"]["direction"], "long")
+        self.assertEqual(saved["snapshot"]["aiGeneration"], generation)
+        with self.service.store.connection() as connection:
+            row = connection.execute(
+                "SELECT preview_hash FROM strategies WHERE strategy_id=?", (created["id"],)
+            ).fetchone()
+        self.assertEqual(row["preview_hash"], token_digest(encode_json({
+            "instrumentId": INSTRUMENT,
+            "interval": "6Hutc",
+            "requestId": "long-direction-01",
+            "direction": "long",
+        }), SIGNING_KEY))
+
+        market_reads = len([
+            call for call in self.exchange.calls
+            if "/market/" in call[1] or "/public/instruments" in call[1]
+        ])
+        replay = self.create_candidates("long-direction-01", direction="long")
+        self.assertEqual(replay["id"], created["id"])
+        self.assertEqual(replay["aiGeneration"], generation)
+        self.assertEqual(len([
+            call for call in self.exchange.calls
+            if "/market/" in call[1] or "/public/instruments" in call[1]
+        ]), market_reads)
+
+        short_provider = FixedProvider()
+        self.service.strategy.automatic.provider_factory = lambda: short_provider
+        short = self.create_candidates("short-direction-01", direction="short")
+        self.assertEqual(short["aiGeneration"]["direction"], "short")
+        self.assertEqual(short["aiGeneration"]["supports"], [])
+        self.assertTrue(short["aiGeneration"]["resistances"])
+        self.assertEqual({row["candidate"]["side"] for row in short_provider.contexts}, {"short"})
+
+        both = self.create_candidates("both-direction-01", direction="both")
+        self.assertEqual(both["aiGeneration"]["direction"], "both")
+        self.assertTrue(both["aiGeneration"]["supports"])
+        self.assertTrue(both["aiGeneration"]["resistances"])
+
+    def test_direction_change_after_materialization_conflicts_on_request_replay(self) -> None:
+        candidate = self.create_candidates("materialized-direction-01")
+        contract = self._materialization_contract(candidate)
+        with patch.object(
+            self.service.strategy, "_preview_contract", return_value=self._fake_preview(contract)
+        ):
+            status, saved = self.request("POST", "/v1/strategies", {
+                **contract,
+                "candidateDraftId": candidate["id"],
+                "previewHash": "a" * 64,
+            })
+        self.assertEqual(status, 200, saved)
+        market_reads = len([
+            call for call in self.exchange.calls
+            if "/market/" in call[1] or "/public/instruments" in call[1]
+        ])
+
+        changed = self.generation_request("materialized-direction-01")
+        changed["direction"] = "short"
+        status, result = self.request("POST", "/v1/strategies/automatic-drafts", changed)
+        self.assertEqual(status, 409, result)
+        self.assertEqual(result["error"], "automatic_request_conflict")
+        self.assertEqual(len([
+            call for call in self.exchange.calls
+            if "/market/" in call[1] or "/public/instruments" in call[1]
+        ]), market_reads)
+
+    def test_transactional_duplicate_rejects_direction_change(self) -> None:
+        candidate = self.create_candidates("transaction-direction-01")
+        manager = self.service.strategy.automatic
+        changed = self.generation_request("transaction-direction-01")
+        changed["direction"] = "long"
+        with patch.object(manager, "_find_request", return_value=None):
+            status, result = self.request("POST", "/v1/strategies/automatic-drafts", changed)
+        self.assertEqual(status, 409, result)
+        self.assertEqual(result["error"], "automatic_request_conflict")
+        with self.service.store.connection() as connection:
+            rows = connection.execute(
+                "SELECT strategy_id FROM strategies WHERE strategy_id=?",
+                (candidate["id"],),
+            ).fetchall()
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM strategies").fetchone()[0], 1)
+        self.assertEqual([row["strategy_id"] for row in rows], [candidate["id"]])
+        self.assertEqual([call for call in self.exchange.calls if call[0] == "POST"], [])
+
+    def test_invalid_stored_direction_fails_closed_on_replay(self) -> None:
+        candidate = self.create_candidates("stored-direction-invalid")
+        with self.service.store.transaction() as connection:
+            row = connection.execute(
+                "SELECT snapshot_json FROM strategies WHERE strategy_id=?", (candidate["id"],)
+            ).fetchone()
+            snapshot = json.loads(row["snapshot_json"])
+            snapshot["aiGeneration"]["direction"] = None
+            connection.execute(
+                "UPDATE strategies SET snapshot_json=? WHERE strategy_id=?",
+                (encode_json(snapshot), candidate["id"]),
+            )
+
+        status, result = self.request(
+            "POST", "/v1/strategies/automatic-drafts", self.generation_request("stored-direction-invalid")
+        )
+        self.assertEqual(status, 409, result)
+        self.assertEqual(result["error"], "automatic_request_conflict")
+
+    def test_legacy_missing_direction_defaults_to_both_after_materialization(self) -> None:
+        candidate = self.create_candidates("legacy-direction-01")
+        self.assertTrue(candidate["aiGeneration"]["supports"])
+        self.assertTrue(candidate["aiGeneration"]["resistances"])
+        with self.service.store.transaction() as connection:
+            row = connection.execute(
+                "SELECT contract_json, snapshot_json FROM strategies WHERE strategy_id=?",
+                (candidate["id"],),
+            ).fetchone()
+            saved_contract = json.loads(row["contract_json"])
+            saved_contract["direction"] = None
+            snapshot = json.loads(row["snapshot_json"])
+            del snapshot["aiGeneration"]["direction"]
+            connection.execute(
+                "UPDATE strategies SET contract_json=?, snapshot_json=? WHERE strategy_id=?",
+                (encode_json(saved_contract), encode_json(snapshot), candidate["id"]),
+            )
+
+        explicit_both = self.generation_request("legacy-direction-01")
+        explicit_both["direction"] = "both"
+        status, replay = self.request("POST", "/v1/strategies/automatic-drafts", explicit_both)
+        self.assertEqual(status, 200, replay)
+        self.assertEqual(replay["id"], candidate["id"])
+        self.assertNotIn("direction", replay["aiGeneration"])
+
+        short = candidate["aiGeneration"]["resistances"][0]
+        contract = {
+            "instrumentId": candidate["instrumentId"],
+            "interval": candidate["interval"],
+            "selectedLevels": [{"levelId": short["levelId"], "side": "short", "price": short["price"]}],
+            "direction": "short",
+            "entryLevelIdBySide": {"short": short["levelId"]},
+            "totalMargin": "60",
+            "leverage": {"short": 5},
+            "sidePercent": {"short": "100"},
+            "allocation": "equal",
+        }
+        with patch.object(
+            self.service.strategy, "_preview_contract", return_value=self._fake_preview(contract)
+        ):
+            status, saved = self.request("POST", "/v1/strategies", {
+                **contract,
+                "candidateDraftId": candidate["id"],
+                "previewHash": "a" * 64,
+            })
+        self.assertEqual(status, 200, saved)
+        self.assertEqual(saved["id"], candidate["id"])
+
     def test_generation_requires_authentication_and_valid_snapshot_request(self) -> None:
         status, _ = self.request(
             "POST", "/v1/strategies/automatic-drafts", self.generation_request(), authenticated=False
@@ -839,6 +1026,48 @@ class AutomaticStrategyApiTests(unittest.TestCase):
                 self.assertEqual(status, 409, result)
                 self.assertEqual(result["error"], "candidate_selection_mismatch")
                 preview.assert_not_called()
+
+    def test_candidate_materialization_rejects_opposite_side_outside_saved_scope(self) -> None:
+        candidate = self.create_candidates("tampered-side-01")
+        short = candidate["aiGeneration"]["resistances"][0]
+        with self.service.store.transaction() as connection:
+            row = connection.execute(
+                "SELECT contract_json, snapshot_json FROM strategies WHERE strategy_id=?",
+                (candidate["id"],),
+            ).fetchone()
+            saved_contract = json.loads(row["contract_json"])
+            saved_contract["direction"] = "long"
+            snapshot = json.loads(row["snapshot_json"])
+            snapshot["aiGeneration"]["direction"] = "long"
+            connection.execute(
+                "UPDATE strategies SET contract_json=?, snapshot_json=? WHERE strategy_id=?",
+                (encode_json(saved_contract), encode_json(snapshot), candidate["id"]),
+            )
+
+        contract = {
+            "instrumentId": candidate["instrumentId"],
+            "interval": candidate["interval"],
+            "selectedLevels": [{
+                "levelId": short["levelId"], "side": "short", "price": short["price"],
+            }],
+            "direction": "short",
+            "entryLevelIdBySide": {"short": short["levelId"]},
+            "totalMargin": "60",
+            "leverage": {"short": 5},
+            "sidePercent": {"short": "100"},
+            "allocation": "equal",
+        }
+        with patch.object(
+            self.service.strategy, "_preview_contract", return_value=self._fake_preview(contract)
+        ) as preview:
+            status, result = self.request("POST", "/v1/strategies", {
+                **contract,
+                "candidateDraftId": candidate["id"],
+                "previewHash": "0" * 64,
+            })
+        self.assertEqual(status, 409, result)
+        self.assertEqual(result["error"], "candidate_selection_mismatch")
+        preview.assert_not_called()
 
     def test_account_change_after_provider_evaluation_prevents_candidate_persistence(self) -> None:
         marker = "PROVIDER_EXCEPTION_SECRET_MARKER"
