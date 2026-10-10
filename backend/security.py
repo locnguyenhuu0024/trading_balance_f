@@ -8,6 +8,7 @@ import hmac
 import secrets
 import struct
 import time
+from typing import Protocol
 
 
 SCRYPT_N = 2**15
@@ -111,3 +112,73 @@ def new_confirmation_token() -> str:
 
 def current_time() -> float:
     return time.time()
+
+
+class SeedCipher(Protocol):
+    """Purpose-separated encryption interface for per-user MFA seeds."""
+
+    key_id: str
+
+    def encrypt(self, user_id: str, secret: str) -> tuple[bytes, bytes]: ...
+
+    def decrypt(self, user_id: str, key_id: str, nonce: bytes, ciphertext: bytes) -> str: ...
+
+
+class CryptoUnavailable(Exception):
+    """The vetted AES-GCM runtime dependency is not installed."""
+
+
+class CryptoInvalidCiphertext(Exception):
+    """An encrypted MFA seed failed authenticated decryption."""
+
+
+class AesGCMSeedCipher:
+    """AES-GCM seed encryption with HKDF purpose separation and owner-bound AAD."""
+
+    PURPOSE = b"trading-balance-f/mfa-seed/v1"
+
+    def __init__(self, master_key: bytes, key_id: str):
+        if len(master_key) != 32 or not key_id or len(key_id) > 64:
+            raise ValueError("invalid MFA vault key configuration")
+        self._master_key = bytes(master_key)
+        self.key_id = key_id
+
+    def _aead(self) -> object:
+        try:
+            from cryptography.hazmat.primitives import hashes
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+            from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+        except ImportError:
+            raise CryptoUnavailable("the AES-GCM runtime dependency is unavailable") from None
+        derived_key = HKDF(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=hashlib.sha256(b"OptCodex-identity-v1").digest(),
+            info=self.PURPOSE,
+        ).derive(self._master_key)
+        return AESGCM(derived_key)
+
+    def _aad(self, user_id: str) -> bytes:
+        if not user_id:
+            raise ValueError("MFA seed owner is required")
+        return b"optcodex\x00mfa-seed\x00v1\x00" + user_id.encode("utf-8") + b"\x00" + self.key_id.encode("ascii")
+
+    def encrypt(self, user_id: str, secret: str) -> tuple[bytes, bytes]:
+        aead = self._aead()
+        nonce = secrets.token_bytes(12)
+        ciphertext = aead.encrypt(nonce, secret.encode("ascii"), self._aad(user_id))
+        return nonce, ciphertext
+
+    def decrypt(self, user_id: str, key_id: str, nonce: bytes, ciphertext: bytes) -> str:
+        if key_id != self.key_id or len(nonce) != 12:
+            raise CryptoInvalidCiphertext("MFA seed key version is unavailable")
+        try:
+            from cryptography.exceptions import InvalidTag
+            aead = self._aead()
+        except ImportError:
+            raise CryptoUnavailable("the AES-GCM runtime dependency is unavailable") from None
+        try:
+            secret = aead.decrypt(nonce, ciphertext, self._aad(user_id))
+            return secret.decode("ascii")
+        except (InvalidTag, ValueError, UnicodeError):
+            raise CryptoInvalidCiphertext("MFA seed authentication failed") from None

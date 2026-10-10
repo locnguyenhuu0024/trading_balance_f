@@ -1,6 +1,6 @@
 # Implementation plan: Multi-user OKX and Binance
 
-Status: READY_FOR_APPROVAL — planning complete; execution NOT AUTHORIZED
+Status: APPROVED — source-first execution authorized; T110 source implemented/audited, real-runtime verification pending
 Date: 2026-10-10
 Revision: 1
 Tier: L
@@ -26,7 +26,7 @@ Estimated effort: 30–50 engineering days for this staged beta, roughly 6–10 
 
 ## 2. Preconditions and scope
 
-Implements REQ-001–007 / AC-001–007 under D-001–003 and A-001–010. All tasks remain PENDING. Before starting a task: approval of this revision and brief, predecessor PASS, exact protected setup required by that task provisioned by the operator, explicit executor role/model/effort binding and independent audit owner.
+Implements REQ-001–007 / AC-001–007 under D-001–003 and A-001–010. Execution is authorized by the user request on 2026-10-10 to read the pending plan and start tasks. T110 is BLOCKED_EXTERNAL_VERIFICATION after source audit PASS; T111–T116 remain PENDING on predecessors. Before starting a task: approval of this revision and brief, predecessor PASS, exact protected setup required by that task provisioned by the operator, explicit executor role/model/effort binding and independent audit owner.
 
 Before runtime tasks, verify the chosen PostgreSQL/cryptography package versions and Python compatibility without reading dependency manifests. Have the operator pin/install compatible releases and supply an isolated test DB/vault keys. No production configuration discovery is needed for source-only development; actual setup and launch remain gated.
 
@@ -182,7 +182,7 @@ E2 is used for transaction/lease/state-machine/migration complexity, not task si
 - [x] Material advisory workstreams collected and reconciled.
 - [x] Canonical spec/decision/brief/plan and seven pending tasks created.
 - [x] Protected files excluded; no product behavior changed.
-- [ ] User approves revision 1 and authorizes execution.
+- [x] User approves revision 1 and authorizes execution (2026-10-10).
 - [ ] Operator provisions required task-specific setup.
 - [ ] T110–T116 each has formal RED/GREEN, build and independent PASS.
 - [ ] Final regression, isolation, demo, performance, recovery and visual evidence pass.
@@ -203,3 +203,15 @@ These are planned gates beyond the seven-task beta, not currently dispatch-ready
 | Broader public access | Beta isolation/security/load/recovery and operating runbooks proven | Revisit public enrollment, account recovery and mature identity-provider options; define support and abuse limits before opening registration | Threat/abuse/recovery review and sustainable exchange/API capacity; any IdP/email service separately approved | Estimate after operating evidence |
 
 Prioritize a milestone by actual user demand and measured bottleneck. Public-market streams may precede advanced trading if shared IP pressure is the dominant limit. Redis or service separation is considered only when current process/cache/scheduler measurements identify a concrete need.
+
+## Execution checkpoint — 2026-10-10
+
+User authorized implementation of this pending plan. Scope, dependency DAG and executor routes remain revision 1. T110 preflight found Python 3.12.13 on PATH but neither psycopg nor cryptography importable there; no psql/postgres executable was found on PATH. Dedicated PostgreSQL test DB and vault readiness are unconfirmed, not inferred from protected files. T110 stops at its setup gate. No executor dispatched, product/test edits, RED/GREEN or build performed. See `docs/agents/validation/2026-10-10-multiuser-execution-preflight.md`. T111–T116 await predecessor PASS.
+
+## Source-first execution amendment — 2026-10-10
+
+User requested source implementation now followed by operator-run Ubuntu VPS installation commands. Missing operator setup no longer blocks T110 source dispatch; it still blocks required runtime/integration PASS and dependent tasks. No Mac installation, protected configuration edits or live infrastructure access is authorized. User owns setup on VPS. Product semantics remain revision 1.
+
+## Current source checkpoint — 2026-10-10
+
+T110 source and T117 final-audit remediation accepted by independent source review. Final auth/store19 tests:15 pass/4 skips; final backend build exit0. Actual AES-GCM and dedicated PostgreSQL runtime tests remain pending, so full T110 PASS and successor dispatch are withheld. Ubuntu 24.04 operator commands: `docs/agents/runbooks/2026-10-10-ubuntu-24-04-multiuser-setup.md`.

@@ -1,6 +1,6 @@
 # Task 113 — Gated Binance USD-M One-way commands
 
-Status: PENDING — plan not approved for execution
+Status: PENDING — execution authorized; waiting for predecessor PASS
 Agent Role: implementation_executor
 Executor Class: E2
 Target Model: gpt-6-luna

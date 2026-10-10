@@ -1,6 +1,6 @@
 # Decisions: Multi-user OKX and Binance expansion
 
-Status: ACTIVE — proposed defaults for plan approval, not execution approval
+Status: ACTIVE — revision 1 choices approved for execution on 2026-10-10
 Date: 2026-10-10
 Specification: `docs/agents/specs/2026-10-10-multi-user-okx-binance-design.md`
 Plan: `docs/agents/plans/2026-10-10-multi-user-okx-binance.md`
@@ -31,3 +31,9 @@ Plan: `docs/agents/plans/2026-10-10-multi-user-okx-binance.md`
 No unanswered product question blocks this research plan: D-002 authorizes the proposals above. Actual deployment topology, installed dependencies, region/eligibility, production hardware, exchange permissions and credential-vault provisioning are unverified. They are explicit execution/launch preflight gates, not inferred facts. No production connection, secret retrieval, order, commit, push or deployment is authorized by this plan.
 
 For approval, accept or amend A-001–A-010. A materially different market scope, account ownership rule, authentication service or capacity target requires a revised contract before affected implementation.
+
+## Execution authorization — 2026-10-10
+
+D-004: User requested reading the pending plan and starting tasks. This authorizes revision 1 implementation under A-001–A-010, including the F2 brief, bounded explicit executors and required independent audits. It does not authorize protected configuration edits, dependency installation, production migration, deployment, real exchange actions or Git writes. T110 setup remains an operator prerequisite; authorization is retained while the environment is blocked.
+
+D-005 (2026-10-10): User explicitly requests implementing source tasks first and preparing operator-run VPS installation commands afterward. Ubuntu 24.04 LTS confirmed. Source dispatch may proceed without local packages/test DB; real PostgreSQL/crypto verification remains pending until operator setup. No protected reads/writes, Mac installs or VPS execution authorized.

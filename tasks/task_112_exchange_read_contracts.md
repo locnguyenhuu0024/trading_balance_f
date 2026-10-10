@@ -1,6 +1,6 @@
 # Task 112 — Normalized OKX and Binance read adapters
 
-Status: PENDING — plan not approved for execution
+Status: PENDING — execution authorized; waiting for predecessor PASS
 Agent Role: implementation_executor
 Executor Class: E1
 Target Model: gpt-6-luna

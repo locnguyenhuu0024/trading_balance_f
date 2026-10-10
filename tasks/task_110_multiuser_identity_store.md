@@ -1,6 +1,6 @@
 # Task 110 — Multi-user identity and store
 
-Status: PENDING — plan not approved for execution
+Status: BLOCKED_EXTERNAL_VERIFICATION — source implemented/audited; real AES/PostgreSQL verification pending
 Agent Role: implementation_executor
 Executor Class: E2
 Target Model: gpt-6-luna
@@ -8,8 +8,8 @@ Target Effort: max
 Target Route: gpt-6-luna / max
 Route Binding: EXPLICIT
 Parent Route Inheritance: FORBIDDEN
-Dispatch Route Status: PENDING
-Requested Model / Effort: PENDING (do not fill until actually dispatched)
+Dispatch Route Status: UNVERIFIABLE
+Requested Model / Effort: gpt-6-luna / max
 Observed Effective Model / Effort: unavailable
 Specification: `docs/agents/specs/2026-10-10-multi-user-okx-binance-design.md`
 Plan: `docs/agents/plans/2026-10-10-multi-user-okx-binance.md`
@@ -77,7 +77,7 @@ Escalation trigger: shared consumers changed, related regression failure, or tas
 Required: YES
 Canonical build unit: backend Python package
 Exact secret-free build command: `python3.12 -m compileall -q backend`
-Run after the final executable/test change. Result/exit: PENDING. Buildable compatibility staging required; no PASS while awaiting a successor repair.
+Run after the final executable/test change. Result/exit: PASS, exit 0 after final T117 executable changes (coordinator observed). Buildable compatibility staging required; no PASS while awaiting a successor repair.
 Backend compileall is paired with import/runtime tests; mocks cannot substitute PostgreSQL multi-process checks.
 
 Frontend gate: N/A.
@@ -88,16 +88,28 @@ External configuration/actions are spec §12 and the setup prerequisite above, a
 
 STOP for missing approval/predecessor/setup, observable route mismatch, missing owner/capability contract, scope expansion, secret-bearing output, unavailable required verification or broken task build. Unknown exchange outcome is retained and reconciled; never resolve it by repeating a write.
 
-Coordinator owns canonical status/audit/telemetry. Writer returns exact safe commands, scenario results, changed path names, build exit, limits and external-action list. Audit checks scope, AC, test quality, RED order, architecture, route binding, buildability, protected-file compliance and independently observed source. Verdict: PENDING.
+Coordinator owns canonical status/audit/telemetry. Writer returns exact safe commands, scenario results, changed path names, build exit, limits and external-action list. Audit checks scope, AC, test quality, RED order, architecture, route binding, buildability, protected-file compliance and independently observed source. Verdict: source audit PASS; full task BLOCKED_EXTERNAL_VERIFICATION for four real-runtime checks.
 
 ## 8. Pending checklist
 
-- [ ] User execution approval and predecessors ready.
-- [ ] Explicit implementation_executor model/effort dispatch; no inheritance.
+- [x] User execution approval and predecessors ready.
+- [x] Explicit implementation_executor model/effort dispatch; no inheritance.
 - [ ] Required operator setup verified without reading protected values.
-- [ ] Listed contract implemented with buildable staged consumers.
-- [ ] Formal RED observed before GREEN; regression ceiling respected.
-- [ ] Final canonical task build recorded.
-- [ ] Applicable visual/device/runtime evidence recorded honestly.
-- [ ] No protected-content access, external secret transmission or unapproved live action.
+- [x] Listed contract implemented with buildable staged consumers.
+- [x] Formal RED observed before GREEN; regression ceiling respected.
+- [x] Final canonical task build recorded.
+- [x] Applicable visual/device/runtime evidence recorded honestly.
+- [x] No protected-content access, external secret transmission or unapproved live action.
 - [ ] Independent coordinator audit PASS.
+
+## Execution preflight — 2026-10-10
+
+Revision 1 execution authorized by the user. Python 3.12.13 exists; psycopg and cryptography are not importable in that runtime. PostgreSQL test DB/vault readiness is unconfirmed. Required setup prevents Definition of Ready; no executor dispatched. RED/GREEN, build and audit: NOT_RUN. Preflight evidence and user-owned setup are in `docs/agents/validation/2026-10-10-multiuser-execution-preflight.md`.
+
+## Source-first authorization — 2026-10-10
+
+User explicitly requested implementing tasks first and providing VPS Ubuntu installation commands afterward. This overrides the setup-before-source-dispatch restriction for source-only implementation and synthetic/local tests; production semantics, required PostgreSQL/AES-GCM integration evidence, predecessor PASS gates and protected-file boundaries remain. Missing dependencies may be represented only by injected fabricated test doubles in local tests; never use substitute cryptography at runtime or claim PostgreSQL evidence from SQLite. T110 remains BLOCKED_EXTERNAL_VERIFICATION for unavailable runtime checks after source completion. No dependency installation is authorized on the Mac.
+
+## Final source checkpoint — 2026-10-10
+
+T110 source plus bounded T117 remediation completed. Independent R3 source audit PASS; full T110 PASS withheld. Final auth/store suite: 19 tests, 15 executed passes, four skips; coordinator reproduced this result. Earlier related legacy V3: 68 total, 64 passes, four skips; evidence reused for unchanged legacy paths. Final compileall exit 0 observed independently. Real AES-GCM and three dedicated PostgreSQL multi-process tests are pending. Operator commands: `docs/agents/runbooks/2026-10-10-ubuntu-24-04-multiuser-setup.md`. T111–T116 remain pending predecessor PASS. No local installation, VPS execution, commit, push or deployment.

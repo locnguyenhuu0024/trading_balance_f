@@ -1,6 +1,6 @@
 # Frontend design brief: Multi-user and exchange connections
 
-Status: READY_FOR_APPROVAL
+Status: APPROVED — as part of revision 1 execution authorization on 2026-10-10
 Date: 2026-10-10
 Frontend Level: F2
 Specification: `docs/agents/specs/2026-10-10-multi-user-okx-binance-design.md`

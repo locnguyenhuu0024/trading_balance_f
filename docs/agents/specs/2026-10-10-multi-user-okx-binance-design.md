@@ -1,6 +1,6 @@
 # Design specification: Multi-user OKX and Binance expansion
 
-Status: READY_FOR_PLAN — proposal under user-delegated choices; execution not approved
+Status: APPROVED — revision 1 execution authorized 2026-10-10; setup gates remain
 Date: 2026-10-10
 Tier: L
 Revision: 1
@@ -11,7 +11,7 @@ Frontend Brief: `docs/agents/specs/2026-10-10-multi-user-okx-binance-frontend-br
 
 Evolve the personal Flutter/Python trading application into a tenant-isolated application for independent users connecting OKX and Binance accounts. Preserve the single backend data boundary, server-proven trade outcomes and current native UI. Make account selection obvious, response times measurable and resource usage bounded.
 
-This revision authorizes no implementation. It describes the complete target and a staged beta. The beta includes tenant-safe OKX, Binance Spot read-only data and standard Binance USD-M reads plus gated One-way regular-order actions. Binance Hedge/algo/strategy parity is a later capability gate, not an implied beta promise. Combined overview is read-only. No custody, withdrawal, transfer, pooled trading, organizations, social login, billing, public registration or profitability claim.
+The user authorized implementation of this revision on 2026-10-10; task setup and separate launch gates remain binding. It describes the complete target and a staged beta. The beta includes tenant-safe OKX, Binance Spot read-only data and standard Binance USD-M reads plus gated One-way regular-order actions. Binance Hedge/algo/strategy parity is a later capability gate, not an implied beta promise. Combined overview is read-only. No custody, withdrawal, transfer, pooled trading, organizations, social login, billing, public registration or profitability claim.
 
 ## 2. Current state: source evidence, not runtime proof
 

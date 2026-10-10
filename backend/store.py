@@ -10,6 +10,8 @@ from contextlib import contextmanager
 from typing import Any, Callable, Iterator
 
 from .strategy_scope import UNKNOWN_SCOPE, extract_persisted_scope
+from .schema_multiuser import ensure_schema
+from .store_contract import IdentityStoreConflict, IdentityStoreUnavailable
 
 
 _SCHEMA = """
@@ -357,3 +359,100 @@ class SQLiteStore:
                 (effective_now + lease_seconds, owner_id, fence, effective_now),
             ).rowcount
         return changed == 1
+
+
+class _SQLiteIdentityConnection:
+    def __init__(self, connection: sqlite3.Connection):
+        self._connection = connection
+
+    def execute(self, sql: str, parameters: tuple[Any, ...] = ()) -> Any:
+        try:
+            return self._connection.execute(sql, tuple(parameters))
+        except sqlite3.IntegrityError:
+            raise IdentityStoreConflict("identity constraint rejected the write") from None
+        except sqlite3.OperationalError as error:
+            message = str(error).lower()
+            if any(part in message for part in ("locked", "unable to open", "disk i/o")):
+                raise IdentityStoreUnavailable("the identity database is unavailable") from None
+            raise
+
+
+class SQLiteIdentityStore:
+    """SQLite staging store for isolated development and compatibility tests."""
+
+    dialect = "sqlite"
+
+    def __init__(self, path: str):
+        self.path = path
+        self._init_lock = threading.Lock()
+        self._initialized = False
+
+    def _connect(self) -> sqlite3.Connection:
+        try:
+            connection = sqlite3.connect(self.path, timeout=5, isolation_level=None)
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA busy_timeout=5000")
+            connection.execute("PRAGMA foreign_keys=ON")
+            connection.execute("PRAGMA synchronous=FULL")
+            return connection
+        except sqlite3.OperationalError:
+            raise IdentityStoreUnavailable("the identity database is unavailable") from None
+
+    def initialize(self) -> None:
+        if self._initialized:
+            return
+        with self._init_lock:
+            if self._initialized:
+                return
+            parent = os.path.dirname(self.path)
+            if parent:
+                try:
+                    os.makedirs(parent, exist_ok=True)
+                except OSError:
+                    raise IdentityStoreUnavailable("the identity database is unavailable") from None
+            connection = self._connect()
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                try:
+                    ensure_schema(_SQLiteIdentityConnection(connection), self.dialect)
+                    connection.execute("COMMIT")
+                except Exception:
+                    connection.execute("ROLLBACK")
+                    raise
+            except sqlite3.OperationalError as error:
+                message = str(error).lower()
+                if any(part in message for part in ("locked", "unable to open", "disk i/o")):
+                    raise IdentityStoreUnavailable("the identity database is unavailable") from None
+                raise
+            finally:
+                connection.close()
+            self._initialized = True
+
+    @contextmanager
+    def connection(self) -> Iterator[_SQLiteIdentityConnection]:
+        self.initialize()
+        connection = self._connect()
+        try:
+            yield _SQLiteIdentityConnection(connection)
+        finally:
+            connection.close()
+
+    @contextmanager
+    def transaction(self) -> Iterator[_SQLiteIdentityConnection]:
+        self.initialize()
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                yield _SQLiteIdentityConnection(connection)
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+        except sqlite3.OperationalError as error:
+            message = str(error).lower()
+            if any(part in message for part in ("locked", "unable to open", "disk i/o")):
+                raise IdentityStoreUnavailable("the identity database is unavailable") from None
+            raise
+        finally:
+            connection.close()

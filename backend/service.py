@@ -14,14 +14,19 @@ import re
 import threading
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_DOWN
 from typing import Any, Callable
 from urllib.parse import urlsplit
 
+from .auth import AuthenticationBusy, IdentityAuthError, IdentityAuthService
 from .currency import CurrencyTransport
 from .data_gateway import DataGateway, GatewayError
 from .okx import OKXClient, OKXError, OKXTransportError, Transport, bounded_error_code
+from .principal import Principal
 from .security import (
+    AesGCMSeedCipher,
+    CryptoUnavailable,
     matching_totp_counter,
     new_bearer_token,
     new_confirmation_token,
@@ -29,13 +34,16 @@ from .security import (
     token_digest,
     verify_password,
 )
-from .store import SQLiteStore, decode_json, encode_json
+from .store import SQLiteIdentityStore, SQLiteStore, decode_json, encode_json
+from .store_contract import IdentityStore, IdentityStoreUnavailable
 
 
 SUPPORTED_TYPES = ("MARGIN", "SWAP", "FUTURES")
 ACTION_TTL_SECONDS = 120
 SESSION_TTL_SECONDS = 28_800
 SESSION_COOKIE_NAME = "__Host-trade_session"
+V2_SESSION_COOKIE_NAME = "__Host-trade_v2_session"
+V2_CSRF_COOKIE_NAME = "__Host-trade_v2_csrf"
 LOGIN_WINDOW_SECONDS = 900
 LOGIN_FAILURE_LIMIT = 5
 BODY_LIMIT_BYTES = 64 * 1024
@@ -74,10 +82,19 @@ class RuntimeSettings:
     session_signing_key: bytes
     allowed_web_origin: str
     operation_db_path: str
+    multiuser_enabled: bool = False
+    multiuser_trade_enabled: bool = False
+    multiuser_database_url: str | None = None
+    credential_vault_key: bytes | None = None
+    credential_vault_key_id: str | None = None
+    remote_identity_key: bytes | None = None
 
     @classmethod
     def from_environ(cls, environ: dict[str, str] | None = None) -> "RuntimeSettings":
         source = os.environ if environ is None else environ
+        multiuser_enabled = cls._parse_boolean(source.get("MULTIUSER_ENABLED", "false"))
+        if multiuser_enabled:
+            return cls._multiuser_settings_from_environ(source)
         names = (
             "OKX_API_KEY", "OKX_API_SECRET", "OKX_API_PASSPHRASE",
             "ADMIN_PASSWORD_HASH", "TOTP_SECRET", "SESSION_SIGNING_KEY",
@@ -106,16 +123,83 @@ class RuntimeSettings:
                 raise ValueError
         except (ValueError, binascii.Error):
             raise ValueError("runtime is not configured") from None
+        multiuser_trade_enabled = cls._parse_boolean(source.get("MULTIUSER_TRADE_ENABLED", "false"))
+        if multiuser_trade_enabled:
+            raise ValueError("runtime is not configured")
+        session_key = bytes.fromhex(values["SESSION_SIGNING_KEY"])
         return cls(
             okx_api_key=values["OKX_API_KEY"],
             okx_api_secret=values["OKX_API_SECRET"],
             okx_api_passphrase=values["OKX_API_PASSPHRASE"],
             admin_password_hash=values["ADMIN_PASSWORD_HASH"],
             totp_secret=values["TOTP_SECRET"],
-            session_signing_key=bytes.fromhex(values["SESSION_SIGNING_KEY"]),
+            session_signing_key=session_key,
             allowed_web_origin=origin,
             operation_db_path=values["OPERATION_DB_PATH"],
+            multiuser_enabled=False,
+            multiuser_trade_enabled=False,
         )
+
+    @classmethod
+    def _multiuser_settings_from_environ(cls, source: dict[str, str]) -> "RuntimeSettings":
+        """Build the identity runtime without requiring legacy OKX/admin secrets."""
+        session_key_text = source.get("SESSION_SIGNING_KEY", "")
+        origin = source.get("ALLOWED_WEB_ORIGIN", "")
+        parsed = urlsplit(origin)
+        if (
+            not re.fullmatch(r"[0-9a-fA-F]{64}", session_key_text)
+            or parsed.scheme != "https"
+            or not parsed.netloc
+            or parsed.path
+            or parsed.query
+            or parsed.fragment
+            or parsed.username
+            or parsed.password
+        ):
+            raise ValueError("runtime is not configured")
+        database_url = source.get("MULTIUSER_DATABASE_URL", "")
+        key_id = source.get("CREDENTIAL_VAULT_KEY_ID", "")
+        try:
+            vault_key = base64.b64decode(source.get("CREDENTIAL_VAULT_KEY", ""), validate=True)
+            remote_key = base64.b64decode(source.get("REMOTE_IDENTITY_KEY", ""), validate=True)
+        except (ValueError, binascii.Error):
+            raise ValueError("runtime is not configured") from None
+        session_key = bytes.fromhex(session_key_text)
+        if (
+            not database_url
+            or not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", key_id)
+            or len(vault_key) != 32
+            or len(remote_key) != 32
+            or vault_key == session_key
+            or remote_key == session_key
+            or remote_key == vault_key
+        ):
+            raise ValueError("runtime is not configured")
+        return cls(
+            okx_api_key="",
+            okx_api_secret="",
+            okx_api_passphrase="",
+            admin_password_hash="",
+            totp_secret="",
+            session_signing_key=session_key,
+            allowed_web_origin=origin,
+            operation_db_path="",
+            multiuser_enabled=True,
+            multiuser_trade_enabled=cls._parse_boolean(source.get("MULTIUSER_TRADE_ENABLED", "false")),
+            multiuser_database_url=database_url,
+            credential_vault_key=vault_key,
+            credential_vault_key_id=key_id,
+            remote_identity_key=remote_key,
+        )
+
+    @staticmethod
+    def _parse_boolean(value: str) -> bool:
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes"}:
+            return True
+        if normalized in {"0", "false", "no", ""}:
+            return False
+        raise ValueError("runtime is not configured")
 
 
 def decimal_value(value: Any) -> Decimal | None:
@@ -170,10 +254,35 @@ class TradeService:
         transport: Transport | None = None,
         currency_transport: CurrencyTransport | None = None,
         clock: Callable[[], float] = time.time,
+        identity_store: IdentityStore | None = None,
+        seed_cipher: Any | None = None,
     ):
         self.settings = settings
         self.clock = clock
         self.store = SQLiteStore(settings.operation_db_path)
+        if identity_store is None:
+            if settings.multiuser_enabled:
+                if not settings.multiuser_database_url:
+                    raise ValueError("multi-user PostgreSQL store is not configured")
+                from .postgres_store import PostgresIdentityStore
+
+                identity_store = PostgresIdentityStore(settings.multiuser_database_url)
+            else:
+                identity_store = SQLiteIdentityStore(settings.operation_db_path)
+        if seed_cipher is None and settings.credential_vault_key is not None:
+            seed_cipher = AesGCMSeedCipher(
+                settings.credential_vault_key,
+                settings.credential_vault_key_id or "",
+            )
+        if settings.multiuser_enabled and settings.multiuser_database_url and seed_cipher is None:
+            raise ValueError("multi-user vault is not configured")
+        self.identity_store = identity_store
+        self.identity_auth = IdentityAuthService(
+            identity_store,
+            settings.session_signing_key,
+            seed_cipher,
+            clock=clock,
+        )
         self.okx = OKXClient(
             settings.okx_api_key,
             settings.okx_api_secret,
@@ -205,6 +314,17 @@ class TradeService:
         environ: dict[str, Any],
     ) -> tuple[int, dict[str, Any], list[tuple[str, str]]]:
         source = self._source_key(self._source_address(environ))
+        if path.startswith("/v2/"):
+            if not self.settings.multiuser_enabled:
+                raise APIError(404, "not_found", "The requested endpoint was not found.")
+            try:
+                return self._dispatch_v2(method, path, body, environ, source)
+            except IdentityAuthError as error:
+                raise APIError(error.status, error.code, error.message) from None
+            except (AuthenticationBusy, IdentityStoreUnavailable, CryptoUnavailable):
+                raise APIError(503, "identity_unavailable", "Authentication is temporarily unavailable.") from None
+        if self.settings.multiuser_enabled and path in {"/v1/login", "/v1/session"}:
+            raise APIError(404, "not_found", "The requested endpoint was not found.")
         if method == "POST" and path == "/v1/login":
             payload = self._login(body, source)
             return 200, payload, [("Set-Cookie", self._session_cookie(payload["token"]))]
@@ -256,6 +376,156 @@ class TradeService:
             self._require_session(environ)
             return 200, self._get_result(match.group(1)), []
         raise APIError(404, "not_found", "The requested endpoint was not found.")
+
+    def _dispatch_v2(
+        self,
+        method: str,
+        path: str,
+        body: dict[str, Any],
+        environ: dict[str, Any],
+        source: str,
+    ) -> tuple[int, dict[str, Any], list[tuple[str, str]]]:
+        if path in {"/v2/login", "/v2/invites/activate"} and method == "POST":
+            transport, _, _ = self._v2_transport(
+                environ, state_changing=True, authenticated=False
+            )
+            if path == "/v2/login":
+                issued = self.identity_auth.login(
+                    body.get("username"),
+                    body.get("password"),
+                    totp=body.get("totp"),
+                    recovery_code=body.get("recoveryCode"),
+                    source=source,
+                )
+            else:
+                issued = self.identity_auth.activate_invite(
+                    body.get("inviteToken"),
+                    body.get("username"),
+                    body.get("password"),
+                    source,
+                )
+            return self._v2_issued_response(issued, transport)
+
+        if path == "/v2/session" and method == "GET":
+            transport, token, _ = self._v2_transport(environ, state_changing=False)
+            principal = self.identity_auth.validate_session(token)
+            payload = self.identity_auth.session_fields(principal)
+            if transport == "cookie":
+                csrf_token = self.identity_auth.csrf_token(principal)
+                payload["csrfToken"] = csrf_token
+                max_age = max(0, int(principal.expires_at - self.clock()))
+                return 200, payload, [
+                    (
+                        "Set-Cookie",
+                        f"{V2_CSRF_COOKIE_NAME}={csrf_token}; Path=/; Max-Age={max_age}; Secure; SameSite=Strict",
+                    )
+                ]
+            return 200, payload, []
+
+        if path in {
+            "/v2/logout",
+            "/v2/mfa/enrollment",
+            "/v2/mfa/enrollment/complete",
+            "/v2/step-up",
+        } and method == "POST":
+            transport, token, cookies = self._v2_transport(environ, state_changing=True)
+            principal = self.identity_auth.validate_session(token)
+            if transport == "cookie":
+                csrf_cookie = "" if cookies.get(V2_CSRF_COOKIE_NAME) is None else cookies[V2_CSRF_COOKIE_NAME].value
+                csrf_header = str(environ.get("HTTP_X_CSRF_TOKEN", ""))
+                if (
+                    not csrf_cookie
+                    or not hmac.compare_digest(csrf_cookie, csrf_header)
+                    or not self.identity_auth.validate_csrf(principal, csrf_header)
+                ):
+                    raise APIError(403, "csrf_denied", "A valid CSRF token is required.")
+            if path == "/v2/logout":
+                self.identity_auth.logout(principal)
+                headers = self._v2_cleared_cookies() if transport == "cookie" else []
+                return 200, {"status": "logged_out"}, headers
+            if path == "/v2/mfa/enrollment":
+                return 200, self.identity_auth.start_enrollment(principal), []
+            if path == "/v2/mfa/enrollment/complete":
+                result = self.identity_auth.complete_enrollment(
+                    principal, body.get("totp"), body.get("recoveryCodesSaved")
+                )
+                headers = self._v2_cleared_cookies() if transport == "cookie" else []
+                return 200, result, headers
+            until = self.identity_auth.step_up(principal, body.get("password"), body.get("totp"))
+            return 200, {"stepUpUntil": self._utc_timestamp(until)}, []
+
+        raise APIError(404, "not_found", "The requested endpoint was not found.")
+
+    def _v2_transport(
+        self, environ: dict[str, Any], *, state_changing: bool, authenticated: bool = True
+    ) -> tuple[str, str, SimpleCookie[str]]:
+        raw_cookie = environ.get("HTTP_COOKIE", "")
+        if not isinstance(raw_cookie, str) or len(raw_cookie) > 4096:
+            raise APIError(401, "authentication_required", "A valid session is required.")
+        cookies: SimpleCookie[str] = SimpleCookie()
+        try:
+            cookies.load(raw_cookie)
+        except CookieError:
+            raise APIError(401, "authentication_required", "A valid session is required.") from None
+        origin = str(environ.get("HTTP_ORIGIN", ""))
+        transport_header = str(environ.get("HTTP_X_SESSION_TRANSPORT", "")).strip().lower()
+        authorization = str(environ.get("HTTP_AUTHORIZATION", ""))
+        if transport_header == "bearer":
+            if origin or cookies or (authenticated and not authorization):
+                raise APIError(400, "transport_invalid", "The native session transport is invalid.")
+            if not authenticated:
+                return "bearer", "", cookies
+            scheme, separator, token = authorization.partition(" ")
+            if not separator or scheme.lower() != "bearer" or not token or len(token) > 256:
+                raise APIError(401, "authentication_required", "A valid session is required.")
+            return "bearer", token, cookies
+        if transport_header or authorization:
+            raise APIError(400, "transport_invalid", "The web session transport is invalid.")
+        if state_changing and origin != self.settings.allowed_web_origin:
+            raise APIError(403, "origin_denied", "This origin is not allowed.")
+        if origin and origin != self.settings.allowed_web_origin:
+            raise APIError(403, "origin_denied", "This origin is not allowed.")
+        morsel = cookies.get(V2_SESSION_COOKIE_NAME)
+        token = "" if morsel is None else morsel.value
+        if token and len(token) > 256:
+            raise APIError(401, "authentication_required", "A valid session is required.")
+        return "cookie", token, cookies
+
+    def _v2_issued_response(self, issued: Any, transport: str) -> tuple[int, dict[str, Any], list[tuple[str, str]]]:
+        payload = issued.safe_fields()
+        if transport == "bearer":
+            payload["token"] = issued.token
+            return 200, payload, []
+        payload["csrfToken"] = issued.csrf_token
+        max_age = max(0, int(issued.expires_at - self.clock()))
+        headers = [
+            (
+                "Set-Cookie",
+                f"{V2_SESSION_COOKIE_NAME}={issued.token}; Path=/; Max-Age={max_age}; Secure; HttpOnly; SameSite=Strict",
+            ),
+            (
+                "Set-Cookie",
+                f"{V2_CSRF_COOKIE_NAME}={issued.csrf_token}; Path=/; Max-Age={max_age}; Secure; SameSite=Strict",
+            ),
+        ]
+        return 200, payload, headers
+
+    @staticmethod
+    def _v2_cleared_cookies() -> list[tuple[str, str]]:
+        return [
+            (
+                "Set-Cookie",
+                f"{V2_SESSION_COOKIE_NAME}=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Strict",
+            ),
+            (
+                "Set-Cookie",
+                f"{V2_CSRF_COOKIE_NAME}=; Path=/; Max-Age=0; Secure; SameSite=Strict",
+            ),
+        ]
+
+    @staticmethod
+    def _utc_timestamp(value: float) -> str:
+        return datetime.fromtimestamp(value, tz=timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
     def _source_key(self, source: str) -> str:
         return token_digest("source:" + source, self.settings.session_signing_key)
@@ -385,6 +655,8 @@ class TradeService:
         }
 
     def _require_session(self, environ: dict[str, Any]) -> str:
+        if self.settings.multiuser_enabled:
+            raise APIError(401, "authentication_required", "A valid session is required.")
         authorization = str(environ.get("HTTP_AUTHORIZATION", ""))
         scheme, separator, bearer = authorization.partition(" ")
         if not separator or scheme.lower() != "bearer" or not bearer or len(bearer) > 256:
