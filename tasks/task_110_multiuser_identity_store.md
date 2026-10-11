@@ -1,6 +1,6 @@
 # Task 110 — Multi-user identity and store
 
-Status: BLOCKED_EXTERNAL_VERIFICATION — source implemented/audited; real AES/PostgreSQL verification pending
+Status: PASS — source audit and operator-run Ubuntu runtime verification accepted
 Agent Role: implementation_executor
 Executor Class: E2
 Target Model: gpt-6-luna
@@ -88,19 +88,19 @@ External configuration/actions are spec §12 and the setup prerequisite above, a
 
 STOP for missing approval/predecessor/setup, observable route mismatch, missing owner/capability contract, scope expansion, secret-bearing output, unavailable required verification or broken task build. Unknown exchange outcome is retained and reconciled; never resolve it by repeating a write.
 
-Coordinator owns canonical status/audit/telemetry. Writer returns exact safe commands, scenario results, changed path names, build exit, limits and external-action list. Audit checks scope, AC, test quality, RED order, architecture, route binding, buildability, protected-file compliance and independently observed source. Verdict: source audit PASS; full task BLOCKED_EXTERNAL_VERIFICATION for four real-runtime checks.
+Coordinator owns canonical status/audit/telemetry. Writer returns exact safe commands, scenario results, changed path names, build exit, limits and external-action list. Audit checks scope, AC, test quality, RED order, architecture, route binding, buildability, protected-file compliance and independently observed source. Verdict: PASS — source audit plus operator-run real AES/PostgreSQL and focused V3 evidence accepted.
 
 ## 8. Pending checklist
 
 - [x] User execution approval and predecessors ready.
 - [x] Explicit implementation_executor model/effort dispatch; no inheritance.
-- [ ] Required operator setup verified without reading protected values.
+- [x] Required operator setup verified without reading protected values.
 - [x] Listed contract implemented with buildable staged consumers.
 - [x] Formal RED observed before GREEN; regression ceiling respected.
 - [x] Final canonical task build recorded.
 - [x] Applicable visual/device/runtime evidence recorded honestly.
 - [x] No protected-content access, external secret transmission or unapproved live action.
-- [ ] Independent coordinator audit PASS.
+- [x] Independent coordinator audit PASS.
 
 ## Execution preflight — 2026-10-10
 
@@ -113,3 +113,7 @@ User explicitly requested implementing tasks first and providing VPS Ubuntu inst
 ## Final source checkpoint — 2026-10-10
 
 T110 source plus bounded T117 remediation completed. Independent R3 source audit PASS; full T110 PASS withheld. Final auth/store suite: 19 tests, 15 executed passes, four skips; coordinator reproduced this result. Earlier related legacy V3: 68 total, 64 passes, four skips; evidence reused for unchanged legacy paths. Final compileall exit 0 observed independently. Real AES-GCM and three dedicated PostgreSQL multi-process tests are pending. Operator commands: `docs/agents/runbooks/2026-10-10-ubuntu-24-04-multiuser-setup.md`. T111–T116 remain pending predecessor PASS. No local installation, VPS execution, commit, push or deployment.
+
+## Operator runtime checkpoint — 2026-10-10
+
+Accepted user-provided Ubuntu VPS output against the committed T110/T117 source state. Negative replay/recovery pair: 2 tests OK (2.696s), followed by independent-user success: 1 test OK (0.982s). Real AES-GCM owner-AAD/tamper plus all three PostgreSQL multi-process tests: 4 tests OK (12.737s), none skipped. Focused auth/store/trade V3: 69 tests OK (84.458s), none skipped. Operator then ran `backend/.venv-multiuser/bin/python -m compileall -q backend` and returned to the prompt with no diagnostics; explicit numeric exit code was not included. Fresh coordinator build was already observed exit 0 on this unchanged source state. Evidence is operator-provided, not an agent-run VPS result. Required external verification blocker is cleared; coordinator task verdict PASS. This does not establish production launch, migration or live-exchange readiness.

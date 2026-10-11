@@ -1,6 +1,6 @@
 # T110 identity/store audit — 2026-10-10
 
-Status: source audit PASS; full T110 BLOCKED_EXTERNAL_VERIFICATION. Source-first runtime waiver applies.
+Status: PASS — independent source audit and operator-provided real-runtime evidence accepted.
 Independent advisory route: auditor R3 / gpt-6.1-sol / high, explicitly dispatched; effective model/effort unavailable. Coordinator owns final verdict. Writer E2 / gpt-6-luna / max; explicit binding, no inheritance. Runtime has no child close/release primitive; final audit follow-up is planned for the same reviewer.
 
 ## Preliminary findings sent to executor
@@ -28,3 +28,9 @@ AUD-110-07/08 corrected and independently reviewed: stable purpose-separated per
 Executor observed baseline failure before correction, then formal negative CSRF contract before positive activation/restore/enrollment (one passing test each). Final auth/store suite: 19 total, 15 passes/four skips; coordinator independently reproduced exit 0 and final `python3.12 -m compileall -q backend` exit 0. Prior unaffected legacy V3 evidence is reused. Four skips require actual AES-GCM and PostgreSQL runtime verification; the operator-run Ubuntu 24.04 commands are in `docs/agents/runbooks/2026-10-10-ubuntu-24-04-multiuser-setup.md`.
 
 Coordinator verdict: source remediation accepted; full T110 BLOCKED_EXTERNAL_VERIFICATION, T111–T116 awaiting predecessor PASS. Requested child routes remained explicitly bound; effective routes UNVERIFIABLE. No protected content or configuration touched; no Mac install, VPS action or Git write. No child close/release primitive is available.
+
+## Accepted external verification — 2026-10-10
+
+User supplied Ubuntu VPS test output after commit e167220. Formal negative pair passed first (2 tests), then independent-user GREEN passed (1). Genuine AES-GCM owner-AAD/tamper and all three dedicated PostgreSQL process/connection tests passed (4 tests, no skips). Focused related auth/store/trade regression passed (69 tests, no skips). Exact commands match the Ubuntu runbook. Operator compileall returned without diagnostics; no explicit numeric exit code was supplied. The coordinator independently observed build exit 0 on the same unchanged executable source state.
+
+Evidence provenance: user-provided terminal output; no agent VPS access, protected-input inspection or re-execution. The required runtime blocker is cleared. Coordinator verdict T110 PASS, T117 remediation accepted. T111 predecessor gate is now satisfied; its own verification remains required. These synthetic tests do not authorize or establish production deployment or exchange trading. Earlier blocked checkpoints above are historical.

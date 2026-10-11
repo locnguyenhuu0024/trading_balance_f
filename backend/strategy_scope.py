@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -9,6 +10,41 @@ from typing import Any
 
 _POSITION_MODES = frozenset({"net_mode", "long_short_mode"})
 _SIDES = frozenset({"long", "short"})
+
+
+def owned_strategy_fingerprint(user_id: str, connection_id: str) -> str:
+    """Return a stable, non-secret compatibility key for one owned connection."""
+    if (
+        not isinstance(user_id, str) or not user_id
+        or not isinstance(connection_id, str) or not connection_id
+    ):
+        raise ValueError("owned strategy identity is invalid")
+    material = b"owned-strategy-scope:v2\x00" + user_id.encode("utf-8") + b"\x00" + connection_id.encode("utf-8")
+    return hashlib.sha256(material).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class OwnedStrategyScope:
+    """Immutable database and exchange authority for one owned strategy request/job."""
+
+    user_id: str
+    connection_id: str
+    account_fingerprint: str
+    remote_identity_digest: str
+    credential_version: int
+    permission_version: int
+    environment: str
+
+    def __post_init__(self) -> None:
+        if any(not isinstance(value, str) or not value for value in (
+            self.user_id, self.connection_id, self.account_fingerprint,
+            self.remote_identity_digest, self.environment,
+        )):
+            raise ValueError("owned strategy scope is invalid")
+        if any(type(value) is not int or value < 1 for value in (
+            self.credential_version, self.permission_version,
+        )):
+            raise ValueError("owned strategy versions are invalid")
 
 
 @dataclass(frozen=True)

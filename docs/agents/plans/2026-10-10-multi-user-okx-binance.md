@@ -1,6 +1,6 @@
 # Implementation plan: Multi-user OKX and Binance
 
-Status: APPROVED — source-first execution authorized; T110 source implemented/audited, real-runtime verification pending
+Status: APPROVED — source-first execution authorized; T110 PASS; T111 BLOCKED_EXTERNAL_VERIFICATION (source audit PASS)
 Date: 2026-10-10
 Revision: 1
 Tier: L
@@ -26,7 +26,7 @@ Estimated effort: 30–50 engineering days for this staged beta, roughly 6–10 
 
 ## 2. Preconditions and scope
 
-Implements REQ-001–007 / AC-001–007 under D-001–003 and A-001–010. Execution is authorized by the user request on 2026-10-10 to read the pending plan and start tasks. T110 is BLOCKED_EXTERNAL_VERIFICATION after source audit PASS; T111–T116 remain PENDING on predecessors. Before starting a task: approval of this revision and brief, predecessor PASS, exact protected setup required by that task provisioned by the operator, explicit executor role/model/effort binding and independent audit owner.
+Implements REQ-001–007 / AC-001–007 under D-001–003 and A-001–010. Execution is authorized by the user request on 2026-10-10 to read the pending plan and start tasks. T110 is PASS after accepted operator-run real-runtime verification; T111 source-first execution has resumed at the user request and T112–T116 remain PENDING on predecessors. Before starting a task: approval of this revision and brief, predecessor PASS, exact protected setup required by that task provisioned by the operator, explicit executor role/model/effort binding and independent audit owner.
 
 Before runtime tasks, verify the chosen PostgreSQL/cryptography package versions and Python compatibility without reading dependency manifests. Have the operator pin/install compatible releases and supply an isolated test DB/vault keys. No production configuration discovery is needed for source-only development; actual setup and launch remain gated.
 
@@ -215,3 +215,7 @@ User requested source implementation now followed by operator-run Ubuntu VPS ins
 ## Current source checkpoint — 2026-10-10
 
 T110 source and T117 final-audit remediation accepted by independent source review. Final auth/store19 tests:15 pass/4 skips; final backend build exit0. Actual AES-GCM and dedicated PostgreSQL runtime tests remain pending, so full T110 PASS and successor dispatch are withheld. Ubuntu 24.04 operator commands: `docs/agents/runbooks/2026-10-10-ubuntu-24-04-multiuser-setup.md`.
+
+## Operator verification accepted — 2026-10-10
+
+T110 PASS: real AES plus three PostgreSQL concurrency tests passed on the Ubuntu VPS; focused related regression69 tests passed with no skips. Negative2 then positive1 passed in the prescribed order. Operator compileall returned without diagnostics; existing fresh coordinator build exit0 remains valid on unchanged source. T111 predecessor is satisfied, while remaining task-local runtime checks still require their own evidence. No deployment/trade activation follows from this result.

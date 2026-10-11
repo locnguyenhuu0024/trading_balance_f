@@ -124,7 +124,7 @@ class SQLiteIdentityStoreTests(unittest.TestCase):
                 "SELECT version FROM multiuser_schema_version WHERE singleton=1"
             ).fetchone()[0]
         self.assertEqual(foreign_keys, 1)
-        self.assertEqual(version, 1)
+        self.assertEqual(version, 2)
         with self.assertRaises(IdentityStoreConflict):
             with self.store.transaction() as connection:
                 connection.execute(

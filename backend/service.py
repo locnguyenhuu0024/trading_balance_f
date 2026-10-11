@@ -20,12 +20,16 @@ from typing import Any, Callable
 from urllib.parse import urlsplit
 
 from .auth import AuthenticationBusy, IdentityAuthError, IdentityAuthService
+from .command_ledger import CommandLedger, CommandLedgerError
+from .connections import ConnectionServiceError, OwnedConnections
 from .currency import CurrencyTransport
+from .credential_vault import CredentialVault
 from .data_gateway import DataGateway, GatewayError
 from .okx import OKXClient, OKXError, OKXTransportError, Transport, bounded_error_code
 from .principal import Principal
 from .security import (
     AesGCMSeedCipher,
+    CryptoInvalidCiphertext,
     CryptoUnavailable,
     matching_totp_counter,
     new_bearer_token,
@@ -36,6 +40,7 @@ from .security import (
 )
 from .store import SQLiteIdentityStore, SQLiteStore, decode_json, encode_json
 from .store_contract import IdentityStore, IdentityStoreUnavailable
+from .strategy_scope import OwnedStrategyScope, owned_strategy_fingerprint
 
 
 SUPPORTED_TYPES = ("MARGIN", "SWAP", "FUTURES")
@@ -70,6 +75,60 @@ class APIError(Exception):
 
     def response(self) -> dict[str, Any]:
         return {"error": self.code, "message": self.message, **self.details}
+
+
+class _OwnedStrategyOwner:
+    """Adapts a verified connection to the existing strategy calculation service."""
+
+    def __init__(self, service: Any, principal: Principal, context: Any, *, step_up: bool = False):
+        self._service = service
+        self.store = service.identity_store
+        self.okx = context.client
+        self.clock = service.clock
+        self.settings = service.settings
+        self._connections = service.connections
+        self._context = context
+        self._principal = principal
+        self._step_up = step_up
+        fingerprint = owned_strategy_fingerprint(principal.user_id, context.connection_id)
+        self.strategy_scope = OwnedStrategyScope(
+            user_id=principal.user_id,
+            connection_id=context.connection_id,
+            account_fingerprint=fingerprint,
+            remote_identity_digest=context.remote_identity_digest,
+            credential_version=context.credential_version,
+            permission_version=context.permission_version,
+            environment=context.environment,
+        )
+
+    def _account_fingerprint(self, uid: Any) -> str:
+        if isinstance(uid, bool) or not isinstance(uid, (str, int)):
+            raise APIError(409, "account_identity_unavailable", "The selected connection identity could not be verified.")
+        try:
+            digest = self._connections._identity_digest(
+                self._context.exchange,
+                self._context.environment,
+                self._context.region,
+                str(uid).strip(),
+            )
+        except (UnicodeEncodeError, AttributeError):
+            raise APIError(409, "account_identity_unavailable", "The selected connection identity could not be verified.") from None
+        if not hmac.compare_digest(digest, self._context.remote_identity_digest):
+            raise APIError(409, "account_changed", "The selected connection changed remote identity.")
+        return self.strategy_scope.account_fingerprint
+
+    def _valid_account_fingerprint(self, value: Any) -> bool:
+        return isinstance(value, str) and hmac.compare_digest(
+            value, self.strategy_scope.account_fingerprint
+        )
+
+    def assert_strategy_authority(self, connection: Any) -> None:
+        self._service._owned_strategy_guard(
+            self._principal,
+            self.strategy_scope,
+            connection=connection,
+            step_up=self._step_up,
+        )
 
 
 @dataclass(frozen=True)
@@ -283,6 +342,23 @@ class TradeService:
             seed_cipher,
             clock=clock,
         )
+        self.connections: OwnedConnections | None = None
+        self.commands: CommandLedger | None = None
+        if settings.multiuser_enabled:
+            if settings.credential_vault_key is None or settings.remote_identity_key is None:
+                raise ValueError("multi-user connection vault is not configured")
+            self.connections = OwnedConnections(
+                identity_store,
+                CredentialVault(settings.credential_vault_key, settings.credential_vault_key_id or ""),
+                settings.remote_identity_key,
+                transport=transport,
+                clock=clock,
+                trade_enabled=settings.multiuser_trade_enabled,
+            )
+            self.commands = CommandLedger(
+                identity_store, self.connections, clock=clock,
+                trade_enabled=settings.multiuser_trade_enabled,
+            )
         self.okx = OKXClient(
             settings.okx_api_key,
             settings.okx_api_secret,
@@ -321,7 +397,11 @@ class TradeService:
                 return self._dispatch_v2(method, path, body, environ, source)
             except IdentityAuthError as error:
                 raise APIError(error.status, error.code, error.message) from None
-            except (AuthenticationBusy, IdentityStoreUnavailable, CryptoUnavailable):
+            except ConnectionServiceError as error:
+                raise APIError(error.status, error.code, error.message) from None
+            except CommandLedgerError as error:
+                raise APIError(error.status, error.code, error.message) from None
+            except (AuthenticationBusy, IdentityStoreUnavailable, CryptoUnavailable, CryptoInvalidCiphertext):
                 raise APIError(503, "identity_unavailable", "Authentication is temporarily unavailable.") from None
         if self.settings.multiuser_enabled and path in {"/v1/login", "/v1/session"}:
             raise APIError(404, "not_found", "The requested endpoint was not found.")
@@ -454,7 +534,188 @@ class TradeService:
             until = self.identity_auth.step_up(principal, body.get("password"), body.get("totp"))
             return 200, {"stepUpUntil": self._utc_timestamp(until)}, []
 
+        connection_service = self.connections
+        command_ledger = self.commands
+        if connection_service is None or command_ledger is None:
+            raise APIError(503, "identity_unavailable", "The connection service is unavailable.")
+        prepare_match = re.fullmatch(r"/v2/connections/([A-Za-z0-9_-]{8,64})/actions/prepare", path)
+        if prepare_match is not None and method == "POST":
+            _, principal = self._v2_authenticated(environ, state_changing=True)
+            self._check_v2_action_rate("action-prepare", source)
+            return 201, {"operation": command_ledger.prepare(principal, prepare_match.group(1), body)}, []
+        action_match = re.fullmatch(
+            r"/v2/connections/([A-Za-z0-9_-]{8,64})/actions/([A-Za-z0-9_-]{8,64})(?:/(execute|reconcile))?",
+            path,
+        )
+        if action_match is not None:
+            connection_id, operation_id, action = action_match.groups()
+            if method == "GET" and action is None:
+                _, principal = self._v2_authenticated(environ, state_changing=False)
+                return 200, {"operation": command_ledger.get_result(principal, connection_id, operation_id)}, []
+            if method == "POST" and action == "execute":
+                _, principal = self._v2_authenticated(environ, state_changing=True)
+                self._check_v2_action_rate("action-execute", source)
+                return 200, {"operation": command_ledger.execute(principal, connection_id, operation_id, body)}, []
+            if method == "POST" and action == "reconcile":
+                _, principal = self._v2_authenticated(environ, state_changing=True)
+                self._check_v2_action_rate("action-reconcile", source)
+                return 200, {"operation": command_ledger.reconcile(principal, connection_id, operation_id)}, []
+        strategy_match = re.fullmatch(
+            r"/v2/connections/([A-Za-z0-9_-]{8,64})/strategies(?:/(.*))?", path
+        )
+        if strategy_match is not None:
+            connection_id, suffix = strategy_match.groups()
+            state_changing = method == "POST"
+            _, principal = self._v2_authenticated(environ, state_changing=state_changing)
+            if state_changing:
+                self._check_v2_action_rate("strategy", source)
+            trade_action = (
+                state_changing
+                and suffix is not None
+                and re.fullmatch(
+                    r"[A-Za-z0-9_-]{8,64}/(prepare-apply|execute-apply)", suffix
+                ) is not None
+            )
+            local_projection_read = method == "GET" and (
+                suffix is None
+                or suffix == "settings"
+                or (
+                    suffix is not None
+                    and re.fullmatch(r"[A-Za-z0-9_-]{8,64}/result", suffix) is not None
+                )
+            )
+            step_up_required = trade_action
+            if local_projection_read:
+                context = connection_service.strategy_metadata_context(principal, connection_id)
+            elif trade_action:
+                context = connection_service.account_context(principal, connection_id, step_up=True)
+                if "trade" not in context.capabilities:
+                    raise APIError(422, "capability_unsupported", "This connection is not enabled for strategy trading.")
+            else:
+                context = connection_service.account_context(principal, connection_id)
+            owner = _OwnedStrategyOwner(self, principal, context, step_up=step_up_required)
+            from .strategy import StrategyService
+
+            strategy = StrategyService(owner, strategy_scope=owner.strategy_scope)
+            internal_path = "/v1/strategies" if suffix is None else f"/v1/strategies/{suffix}"
+            guard = lambda: self._owned_strategy_guard(
+                principal, owner.strategy_scope, step_up=step_up_required
+            )
+            result = strategy.dispatch(method, internal_path, body, request_guard=guard)
+            return 200, result, []
+        if path == "/v2/connections" and method == "GET":
+            _, principal = self._v2_authenticated(environ, state_changing=False)
+            return 200, {"connections": connection_service.list_owned(principal)}, []
+        if path == "/v2/connections" and method == "POST":
+            _, principal = self._v2_authenticated(environ, state_changing=True)
+            self._check_v2_action_rate("connection-create", source)
+            return 201, {"connection": connection_service.create(principal, body)}, []
+        connection_match = re.fullmatch(
+            r"/v2/connections/([A-Za-z0-9_-]{8,64})(?:/(verify|credentials|revoke|account))?", path
+        )
+        if connection_match is not None:
+            connection_id, action = connection_match.groups()
+            if method == "GET" and action is None:
+                _, principal = self._v2_authenticated(environ, state_changing=False)
+                owned = connection_service.list_owned(principal)
+                found = next((item for item in owned if item["connectionId"] == connection_id), None)
+                if found is None:
+                    raise APIError(404, "not_found", "The requested resource was not found.")
+                return 200, {"connection": found}, []
+            if method == "POST" and action == "verify":
+                _, principal = self._v2_authenticated(environ, state_changing=True)
+                self._check_v2_action_rate("connection-verify", source)
+                return 200, {"connection": connection_service.verify_connection(principal, connection_id)}, []
+            if method == "POST" and action == "credentials":
+                _, principal = self._v2_authenticated(environ, state_changing=True)
+                self._check_v2_action_rate("connection-credentials", source)
+                return 200, {"connection": connection_service.rotate_credentials(principal, connection_id, body)}, []
+            if method == "POST" and action == "revoke":
+                _, principal = self._v2_authenticated(environ, state_changing=True)
+                self._check_v2_action_rate("connection-revoke", source)
+                return 200, {"connection": connection_service.revoke(principal, connection_id)}, []
+            if method == "GET" and action == "account":
+                _, principal = self._v2_authenticated(environ, state_changing=False)
+                owned = connection_service.list_owned(principal)
+                found = next((item for item in owned if item["connectionId"] == connection_id), None)
+                if found is None:
+                    raise APIError(404, "not_found", "The requested resource was not found.")
+                return 200, {"account": found}, []
+
         raise APIError(404, "not_found", "The requested endpoint was not found.")
+
+    def _owned_strategy_guard(
+        self,
+        principal: Principal,
+        scope: OwnedStrategyScope,
+        *,
+        connection: Any | None = None,
+        step_up: bool = False,
+    ) -> None:
+        if self.connections is None:
+            raise APIError(503, "identity_unavailable", "The connection service is unavailable.")
+        suffix = self.connections._lock_suffix()
+
+        def check(current: Any) -> None:
+            self.connections._require_principal(current, principal, step_up=step_up)
+            row = current.execute(
+                "SELECT status, credential_version, permission_version, remote_identity_digest "
+                "FROM exchange_connections WHERE user_id=? AND connection_id=?" + suffix,
+                (scope.user_id, scope.connection_id),
+            ).fetchone()
+            if row is None:
+                raise APIError(404, "strategy_not_found", "The strategy was not found.")
+            # The final authority and expiry check follows the connection row
+            # lock, so a waited session/step-up cannot authorize a stale write.
+            self.connections._require_principal(current, principal, step_up=step_up)
+            if (
+                row["status"] != "ACTIVE"
+                or int(row["credential_version"]) != scope.credential_version
+                or int(row["permission_version"]) != scope.permission_version
+                or not hmac.compare_digest(row["remote_identity_digest"], scope.remote_identity_digest)
+            ):
+                raise APIError(409, "connection_version_changed", "The owned connection changed; reload before continuing.")
+
+        if connection is not None:
+            check(connection)
+            return
+        with self.identity_store.transaction() as current:
+            check(current)
+
+    def _v2_authenticated(
+        self, environ: dict[str, Any], *, state_changing: bool
+    ) -> tuple[str, Principal]:
+        transport, token, cookies = self._v2_transport(environ, state_changing=state_changing)
+        principal = self.identity_auth.validate_session(token)
+        if state_changing and transport == "cookie":
+            csrf_cookie = "" if cookies.get(V2_CSRF_COOKIE_NAME) is None else cookies[V2_CSRF_COOKIE_NAME].value
+            csrf_header = str(environ.get("HTTP_X_CSRF_TOKEN", ""))
+            if (
+                not csrf_cookie
+                or not hmac.compare_digest(csrf_cookie, csrf_header)
+                or not self.identity_auth.validate_csrf(principal, csrf_header)
+            ):
+                raise APIError(403, "csrf_denied", "A valid CSRF token is required.")
+        return transport, principal
+
+    def _check_v2_action_rate(self, action: str, source: str) -> None:
+        now = int(self.clock())
+        window = now // 60
+        bucket = token_digest(
+            f"v2-action:{action}:{source}:{window}", self.settings.session_signing_key
+        )
+        with self.identity_store.transaction() as connection:
+            row = connection.execute(
+                "INSERT INTO multiuser_action_limits(bucket_key, window_started, count) VALUES (?, ?, 1) "
+                "ON CONFLICT(bucket_key) DO UPDATE SET count=multiuser_action_limits.count+1 "
+                "RETURNING count",
+                (bucket, window),
+            ).fetchone()
+            connection.execute(
+                "DELETE FROM multiuser_action_limits WHERE window_started<?", (window - 60,)
+            )
+        if row is not None and int(row["count"]) > ACTION_LIMIT_PER_MINUTE:
+            raise APIError(429, "rate_limited", "Too many connection requests. Try again later.")
 
     def _v2_transport(
         self, environ: dict[str, Any], *, state_changing: bool, authenticated: bool = True

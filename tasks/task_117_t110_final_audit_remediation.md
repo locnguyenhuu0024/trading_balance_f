@@ -1,6 +1,6 @@
 # Task 117 — T110 final-audit remediation
 
-Status: SOURCE_REMEDIATION_PASS — independent source audit accepted; parent real-runtime verification pending
+Status: PASS — independent source audit and parent real-runtime verification accepted
 Agent Role: implementation_executor
 Executor Class: E1
 Target Model: gpt-6-luna
@@ -35,3 +35,5 @@ Meaningful baseline regression for unstable CSRF, observed before correction. Fo
 ## Evidence
 
 Baseline CSRF regression failed before correction: GET restore opened a transaction. Final formal negative CSRF contract passed before activation/restore/enrollment GREEN, each one test. Auth/store 19 total, 15 passes/four runtime skips; compileall exit 0. Independent R3 source audit PASS for AUD-110-07/08; no remaining actionable source finding. Coordinator reproduced suite and final build. Real AES and three PostgreSQL checks remain pending under T110; PostgreSQL oracle correction has not been verified against a real database.
+
+Operator accepted-runtime checkpoint: corrected PostgreSQL race test passed on the dedicated Ubuntu test database; all four real-runtime cases passed, no skips. Parent T110 runtime blocker cleared.

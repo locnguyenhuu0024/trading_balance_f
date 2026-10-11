@@ -50,6 +50,9 @@ class MultiuserAuthTests(unittest.TestCase):
             allowed_web_origin="https://tradingbalancef.example",
             operation_db_path=f"{self.temp.name}/operations.sqlite3",
             multiuser_enabled=True,
+            credential_vault_key=b"V" * 32,
+            credential_vault_key_id="auth-fixture-v1",
+            remote_identity_key=b"R" * 32,
         )
         self.identity_store = SQLiteIdentityStore(self.settings.operation_db_path)
         self.service = TradeService(

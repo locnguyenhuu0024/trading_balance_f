@@ -13,7 +13,7 @@ from typing import Any, Callable
 
 from .okx import OKXClient, OKXError, OKXTransportError, Transport, bounded_error_code
 from .security import token_digest
-from .store import SQLiteStore, encode_json
+from .store import SQLiteStore, decode_json, encode_json
 from .strategy import (
     _ORDER_TERMINAL_STATES,
     _decimal,
@@ -25,15 +25,23 @@ from .strategy_queue import (
     MAX_PLACEMENTS_PER_PASS,
     MIN_PLACEMENT_SPACING_SECONDS,
     StrategyQueueLedger,
+    OwnedStrategyQueueLedger,
     new_queue,
     normalize_queue,
     parse_leverage_ack,
     parse_order_ack,
     stop_queue,
     _ack_decimal,
+    unresolved_leverage_attempt,
 )
-from .strategy_scope import extract_persisted_scope, scoped_position_rows
+from .strategy_scope import (
+    OwnedStrategyScope,
+    extract_persisted_scope,
+    owned_strategy_fingerprint,
+    scoped_position_rows,
+)
 from .service import APIError
+from .connections import ConnectionServiceError, OwnedConnections
 from . import diagnostics
 
 
@@ -615,7 +623,16 @@ class StrategyOrderWorker:
         for index in suspected:
             if index != effective_unknown:
                 results[index] = {**results[index], "status": "unknown", "placementState": "unknown"}
-        unknown = effective_unknown is not None or any(row.get("status") == "unknown" for row in results)
+        leverage_results = None
+        leverage_unknown = reason == "leverage_unknown"
+        if leverage_unknown:
+            leverage_results = [dict(row) for row in strategy.get("leverageResults", [])]
+            if not any(row.get("status") == "unknown" for row in leverage_results):
+                leverage_results.extend(self._unknown_leverage_results(strategy))
+        unknown = (
+            leverage_unknown or effective_unknown is not None
+            or any(row.get("status") == "unknown" for row in results)
+        )
         self._persist_queue_transition(
             strategy,
             fence,
@@ -623,6 +640,7 @@ class StrategyOrderWorker:
             results=results,
             status="UNKNOWN" if unknown else "PARTIAL",
             failure_reason=reason,
+            leverage_results=leverage_results,
         )
 
     def _stop_interrupted_queue(self, strategy: dict[str, Any], fence: int) -> None:
@@ -1349,9 +1367,834 @@ class StrategyOrderWorker:
             diagnostics.shutdown()
 
 
+class OwnedStrategyOrderWorker(StrategyOrderWorker):
+    """Fenced multi-user worker for accepted, owner-scoped strategy jobs.
+
+    Unlike the v1 monitor, selection and every job transition use the composite
+    identity-store keys and the per-connection lease shared with API writers.
+    The worker never constructs a user Principal or loads account credentials
+    from process-wide OKX settings.
+    """
+
+    def __init__(
+        self,
+        settings: Any,
+        *,
+        store: Any,
+        connections: OwnedConnections,
+        clock: Callable[[], float] = time.time,
+        owner_id: str | None = None,
+        lease_seconds: float = 30,
+        order_interval_seconds: float = 5,
+        call_spacing_seconds: float = 0.1,
+        sleep: Callable[[float], None] = time.sleep,
+        monotonic: Callable[[], float] = time.monotonic,
+    ):
+        if lease_seconds <= 0 or order_interval_seconds <= 0 or call_spacing_seconds < 0:
+            raise ValueError("worker timing is invalid")
+        if not getattr(settings, "multiuser_enabled", False):
+            raise ValueError("owned worker requires the multi-user runtime")
+        if connections is None or store is not connections.store:
+            raise ValueError("owned worker identity store is unavailable")
+        self.settings = settings
+        self.store = store
+        self.store.initialize()
+        self.connections = connections
+        self.clock = clock
+        self.owner_id = owner_id or secrets.token_urlsafe(24)
+        self.lease_seconds = lease_seconds
+        self.order_interval_seconds = order_interval_seconds
+        self.call_spacing_seconds = call_spacing_seconds
+        self.sleep = sleep
+        self.monotonic = monotonic
+        self.okx: Any = None
+        self.strategy: StrategyService | None = None
+        self.scope: OwnedStrategyScope | None = None
+        self._job_strategy_id: str | None = None
+        self._job_fence: int | None = None
+        self._job_mode = "idle"
+        self._queue_placements_this_pass = 0
+        self._last_call_monotonic: float | None = None
+        self._last_placement_monotonic: float | None = None
+
+    def _for_update(self) -> str:
+        return " FOR UPDATE" if getattr(self.store, "dialect", "sqlite") == "postgresql" else ""
+
+    def _account_fingerprint(self, uid: Any) -> str:
+        scope = self.scope
+        context = getattr(self, "_job_context", None)
+        if (
+            scope is None or context is None
+            or isinstance(uid, bool) or not isinstance(uid, (str, int))
+            or not str(uid).strip()
+        ):
+            raise APIError(409, "account_identity_unavailable", "The owned account identity is unavailable.")
+        try:
+            digest = self.connections._identity_digest(
+                context.exchange, context.environment, context.region, str(uid).strip()
+            )
+        except (AttributeError, UnicodeEncodeError):
+            raise APIError(409, "account_identity_unavailable", "The owned account identity is unavailable.") from None
+        if not secrets.compare_digest(digest, context.remote_identity_digest):
+            raise APIError(409, "account_changed", "The owned connection changed remote identity.")
+        return scope.account_fingerprint
+
+    def _valid_account_fingerprint(self, value: Any) -> bool:
+        return self.scope is not None and isinstance(value, str) and secrets.compare_digest(
+            value, self.scope.account_fingerprint
+        )
+
+    def assert_strategy_authority(self, connection: Any) -> None:
+        scope = self.scope
+        strategy_id = self._job_strategy_id
+        owner_id = self.owner_id
+        fence = self._job_fence
+        if scope is None or strategy_id is None or fence is None:
+            raise APIError(503, "identity_unavailable", "The owned strategy job is unavailable.")
+        suffix = self._for_update()
+        owned = connection.execute(
+            "SELECT status, credential_version, permission_version, remote_identity_digest, "
+            "product_capabilities_json FROM exchange_connections WHERE user_id=? AND connection_id=?" + suffix,
+            (scope.user_id, scope.connection_id),
+        ).fetchone()
+        lease = connection.execute(
+            "SELECT lease_owner, fence, lease_until, operation_id FROM multiuser_connection_leases "
+            "WHERE user_id=? AND connection_id=?" + suffix,
+            (scope.user_id, scope.connection_id),
+        ).fetchone()
+        strategy = connection.execute(
+            "SELECT status, credential_version, permission_version, lease_owner, lease_fence "
+            "FROM multiuser_strategies WHERE user_id=? AND connection_id=? AND strategy_id=?" + suffix,
+            (scope.user_id, scope.connection_id, strategy_id),
+        ).fetchone()
+        claim = connection.execute(
+            "SELECT lease_owner, fence, lease_until FROM multiuser_strategy_claims "
+            "WHERE user_id=? AND connection_id=? AND strategy_id=?" + suffix,
+            (scope.user_id, scope.connection_id, strategy_id),
+        ).fetchone()
+        now = self.clock()
+        capabilities = [] if owned is None else decode_json(owned["product_capabilities_json"] or "[]")
+        if (
+            owned is None or lease is None or strategy is None or claim is None
+            or owned["status"] != "ACTIVE"
+            or int(owned["credential_version"]) != scope.credential_version
+            or int(owned["permission_version"]) != scope.permission_version
+            or not secrets.compare_digest(owned["remote_identity_digest"], scope.remote_identity_digest)
+            or not isinstance(capabilities, list) or "trade" not in capabilities
+            or lease["lease_owner"] != owner_id or int(lease["fence"]) != fence
+            or lease["operation_id"] != strategy_id or lease["lease_until"] is None
+            or float(lease["lease_until"]) <= now
+            or claim["lease_owner"] != owner_id or int(claim["fence"]) != fence
+            or claim["lease_until"] is None or float(claim["lease_until"]) <= now
+            or strategy["status"] != "APPLYING"
+            or strategy["lease_owner"] != owner_id or int(strategy["lease_fence"] or 0) != fence
+            or int(strategy["credential_version"]) != scope.credential_version
+            or int(strategy["permission_version"]) != scope.permission_version
+        ):
+            raise APIError(409, "connection_version_changed", "The accepted strategy job lost its write authority.")
+
+    def _candidate_ids(self, now: float) -> list[tuple[str, str, str]]:
+        with self.store.connection() as connection:
+            rows = connection.execute(
+                "SELECT s.user_id, s.connection_id, s.strategy_id FROM multiuser_strategies AS s "
+                "LEFT JOIN multiuser_strategy_sync_state AS sync ON sync.user_id=s.user_id "
+                "AND sync.connection_id=s.connection_id AND sync.strategy_id=s.strategy_id "
+                "LEFT JOIN multiuser_connection_leases AS lease ON lease.user_id=s.user_id "
+                "AND lease.connection_id=s.connection_id "
+                "WHERE ((s.status='APPLYING' AND s.submission_mode='sequential' AND s.queue_json IS NOT NULL) "
+                "OR (s.status='APPLYING' AND (s.submission_mode IS NULL OR s.submission_mode!='sequential' "
+                "OR s.queue_json IS NULL)) "
+                "OR (s.status IN ('UNKNOWN', 'APPLIED', 'PARTIAL') AND "
+                "(s.batch_attempted=1 OR s.order_placement_attempted=1))) "
+                "AND COALESCE(sync.next_scan_at, 0)<=? "
+                "AND (lease.lease_until IS NULL OR lease.lease_until<=?) "
+                "AND (s.execution_lease_until IS NULL OR s.execution_lease_until<=?) "
+                "ORDER BY COALESCE(sync.next_scan_at, 0), COALESCE(sync.last_attempt_at, 0), "
+                "s.created_at, s.user_id, s.connection_id, s.strategy_id LIMIT ?",
+                (now, now, now, _MAX_STRATEGIES_PER_PASS),
+            ).fetchall()
+        return [(row["user_id"], row["connection_id"], row["strategy_id"]) for row in rows]
+
+    def _claim_job(self, user_id: str, connection_id: str, strategy_id: str) -> dict[str, Any] | None:
+        suffix = self._for_update()
+        with self.store.transaction() as connection:
+            owned = connection.execute(
+                "SELECT status, environment, remote_identity_digest, credential_version, permission_version, "
+                "product_capabilities_json FROM exchange_connections WHERE user_id=? AND connection_id=?" + suffix,
+                (user_id, connection_id),
+            ).fetchone()
+            lease = connection.execute(
+                "SELECT lease_owner, fence, lease_until FROM multiuser_connection_leases "
+                "WHERE user_id=? AND connection_id=?" + suffix,
+                (user_id, connection_id),
+            ).fetchone()
+            row = connection.execute(
+                "SELECT * FROM multiuser_strategies WHERE user_id=? AND connection_id=? AND strategy_id=?" + suffix,
+                (user_id, connection_id, strategy_id),
+            ).fetchone()
+            claim = connection.execute(
+                "SELECT lease_owner, fence, lease_until FROM multiuser_strategy_claims "
+                "WHERE user_id=? AND connection_id=? AND strategy_id=?" + suffix,
+                (user_id, connection_id, strategy_id),
+            ).fetchone()
+            now = self.clock()
+            if owned is None or lease is None or row is None or claim is None:
+                return None
+            if lease["lease_until"] is not None and float(lease["lease_until"]) > now:
+                return None
+            if claim["lease_until"] is not None and float(claim["lease_until"]) > now:
+                return None
+            connection_fence = int(lease["fence"])
+            claim_fence = int(claim["fence"])
+            if connection_fence < 0 or claim_fence < 0 or claim_fence > connection_fence:
+                return None
+
+            strategy = StrategyService._decode_row(row)
+            if strategy["status"] not in {"APPLYING", "UNKNOWN", "APPLIED", "PARTIAL"}:
+                return None
+            queue = strategy.get("queue")
+            marker = queue.get("inFlight") if isinstance(queue, dict) else None
+            queued = strategy["status"] == "APPLYING" and strategy["submissionMode"] == "sequential"
+            has_external_mutation_marker = (
+                strategy["batchAttempted"] or strategy["orderPlacementAttempted"]
+            )
+            unmarked_batch = (
+                strategy["status"] == "APPLYING" and not queued and not has_external_mutation_marker
+            )
+            batch_recovery = strategy["status"] == "APPLYING" and (
+                has_external_mutation_marker
+            )
+            external_recovery = strategy["status"] in {"UNKNOWN", "APPLIED", "PARTIAL"} and (
+                strategy["batchAttempted"] or strategy["orderPlacementAttempted"]
+            )
+            if not (queued or unmarked_batch or batch_recovery or external_recovery):
+                return None
+            if external_recovery and not strategy["orderPlacementAttempted"] and not strategy["batchAttempted"]:
+                return None
+
+            capabilities = decode_json(owned["product_capabilities_json"] or "[]")
+            if not isinstance(capabilities, list):
+                capabilities = []
+            expected_credential = strategy.get("credentialVersion")
+            expected_permission = strategy.get("permissionVersion")
+            exact_generation = (
+                expected_credential is not None and expected_permission is not None
+                and int(owned["credential_version"]) == expected_credential
+                and int(owned["permission_version"]) == expected_permission
+            )
+            unsent_queue = queued and marker is None
+            unresolved_leverage = (
+                (queued or unmarked_batch) and strategy.get("preSendAt") is not None
+                and unresolved_leverage_attempt(
+                    strategy.get("preSendAt"), strategy.get("leverageResults"),
+                    strategy.get("prepared", {}).get("orders")
+                    if isinstance(strategy.get("prepared"), dict) else None,
+                )
+                and not strategy["orderPlacementAttempted"]
+            )
+            stop_reason = None
+            if queued and marker is not None:
+                mode = "cleanup"
+            elif unresolved_leverage:
+                mode = "cleanup"
+                stop_reason = "leverage_unknown"
+            elif unsent_queue and (
+                not bool(getattr(self.settings, "multiuser_trade_enabled", False))
+                or owned["status"] != "ACTIVE" or not exact_generation or "trade" not in capabilities
+            ):
+                mode = "cleanup"
+                stop_reason = "worker_fence_lost"
+            elif unsent_queue:
+                mode = "submit"
+            elif unmarked_batch:
+                mode = "cleanup"
+                stop_reason = "interrupted_before_batch"
+            elif batch_recovery or external_recovery:
+                if (
+                    owned["status"] not in {"ACTIVE", "RECONCILING"}
+                    or "read" not in capabilities
+                ):
+                    return None
+                mode = "recovery"
+            else:
+                return None
+
+            now = self.clock()
+            if lease["lease_until"] is not None and float(lease["lease_until"]) > now:
+                return None
+            fence = int(lease["fence"]) + 1
+            until = now + self.lease_seconds
+            owner_id = self.owner_id
+            if connection.execute(
+                "UPDATE multiuser_connection_leases SET lease_owner=?, fence=?, lease_until=?, "
+                "operation_id=?, updated_at=? WHERE user_id=? AND connection_id=? AND fence=? "
+                "AND (lease_until IS NULL OR lease_until<=?)",
+                (owner_id, fence, until, strategy_id, now, user_id, connection_id,
+                 int(lease["fence"]), now),
+            ).rowcount != 1:
+                return None
+            claimed = connection.execute(
+                "UPDATE multiuser_strategy_claims SET lease_owner=?, fence=?, lease_until=?, updated_at=? "
+                "WHERE user_id=? AND connection_id=? AND strategy_id=? AND fence=? "
+                "AND (lease_until IS NULL OR lease_until<=?)",
+                (owner_id, fence, until, now, user_id, connection_id, strategy_id,
+                 int(claim["fence"]), now),
+            ).rowcount
+            if claimed != 1:
+                return None
+            updated = connection.execute(
+                "UPDATE multiuser_strategies SET lease_owner=?, lease_fence=?, lease_until=?, "
+                "execution_id=?, execution_lease_until=?, worker_scope='owned_worker', updated_at=? "
+                "WHERE user_id=? AND connection_id=? AND strategy_id=? AND status=? "
+                "AND (execution_lease_until IS NULL OR execution_lease_until<=?)",
+                (owner_id, fence, until, owner_id, until, now, user_id, connection_id,
+                 strategy_id, strategy["status"], now),
+            ).rowcount
+            if updated != 1:
+                return None
+            connection.execute(
+                "INSERT INTO multiuser_strategy_events(user_id, connection_id, strategy_id, event_id, "
+                "event_type, payload_json, created_at) VALUES (?, ?, ?, ?, 'strategy_worker_claimed', ?, ?)",
+                (user_id, connection_id, strategy_id, secrets.token_hex(16),
+                 encode_json({"fence": fence, "mode": mode}), now),
+            )
+            fresh = connection.execute(
+                "SELECT * FROM multiuser_strategies WHERE user_id=? AND connection_id=? AND strategy_id=?",
+                (user_id, connection_id, strategy_id),
+            ).fetchone()
+            current_connection = connection.execute(
+                "SELECT environment, remote_identity_digest, credential_version, permission_version "
+                "FROM exchange_connections WHERE user_id=? AND connection_id=?",
+                (user_id, connection_id),
+            ).fetchone()
+            return {
+                "strategy": StrategyService._decode_row(fresh),
+                "connection": current_connection,
+                "mode": mode,
+                "stop_reason": stop_reason,
+                "fence": fence,
+                "until": until,
+                "user_id": user_id,
+                "connection_id": connection_id,
+                "strategy_id": strategy_id,
+                "context_required": mode in {"submit", "recovery"},
+            }
+
+    def _release_job_lease(self, job: dict[str, Any]) -> None:
+        scope = self.scope
+        fence = job["fence"]
+        if scope is None:
+            return
+        now = self.clock()
+        with self.store.transaction() as connection:
+            suffix = self._for_update()
+            connection.execute(
+                "SELECT user_id FROM exchange_connections WHERE user_id=? AND connection_id=?" + suffix,
+                (scope.user_id, scope.connection_id),
+            ).fetchone()
+            lease = connection.execute(
+                "SELECT fence FROM multiuser_connection_leases WHERE user_id=? AND connection_id=?" + suffix,
+                (scope.user_id, scope.connection_id),
+            ).fetchone()
+            connection.execute(
+                "SELECT strategy_id FROM multiuser_strategies WHERE user_id=? AND connection_id=? AND strategy_id=?" + suffix,
+                (scope.user_id, scope.connection_id, job["strategy_id"]),
+            ).fetchone()
+            connection.execute(
+                "SELECT strategy_id FROM multiuser_strategy_claims WHERE user_id=? AND connection_id=? "
+                "AND strategy_id=?" + suffix,
+                (scope.user_id, scope.connection_id, job["strategy_id"]),
+            ).fetchone()
+            if lease is None or int(lease["fence"]) != fence:
+                return
+            connection.execute(
+                "UPDATE multiuser_connection_leases SET lease_owner=NULL, lease_until=NULL, operation_id=NULL, "
+                "updated_at=? WHERE user_id=? AND connection_id=? AND lease_owner=? AND fence=?",
+                (now, scope.user_id, scope.connection_id, self.owner_id, fence),
+            )
+            connection.execute(
+                "UPDATE multiuser_strategy_claims SET lease_owner=NULL, lease_until=NULL, updated_at=? "
+                "WHERE user_id=? AND connection_id=? AND strategy_id=? AND lease_owner=? AND fence=?",
+                (now, scope.user_id, scope.connection_id, job["strategy_id"], self.owner_id, fence),
+            )
+            connection.execute(
+                "UPDATE multiuser_strategies SET lease_owner=NULL, lease_until=NULL, execution_id=NULL, "
+                "execution_lease_until=NULL WHERE user_id=? AND connection_id=? AND strategy_id=? "
+                "AND lease_owner=? AND lease_fence=?",
+                (scope.user_id, scope.connection_id, job["strategy_id"], self.owner_id, fence),
+            )
+
+    def _unknown_leverage_results(self, strategy: dict[str, Any]) -> list[dict[str, Any]]:
+        scope = self.scope
+        if scope is None:
+            return [{"status": "unknown"}]
+        with self.store.connection() as connection:
+            rows = connection.execute(
+                "SELECT payload_json FROM multiuser_strategy_events WHERE user_id=? AND connection_id=? "
+                "AND strategy_id=? AND event_type='strategy_target_pre_send' ORDER BY created_at DESC, event_id DESC",
+                (scope.user_id, scope.connection_id, strategy["id"]),
+            ).fetchall()
+        for row in rows:
+            payload = decode_json(row["payload_json"])
+            if isinstance(payload, dict) and payload.get("kind") == "leverage":
+                side = payload.get("side")
+                if side in {"long", "short"}:
+                    return [{"side": side, "status": "unknown"}]
+        prepared = strategy.get("prepared")
+        orders = prepared.get("orders") if isinstance(prepared, dict) else strategy.get("orders")
+        if isinstance(orders, list):
+            for order in orders:
+                if isinstance(order, dict) and order.get("side") in {"long", "short"}:
+                    return [{"side": order["side"], "status": "unknown"}]
+        return [{"status": "unknown"}]
+
+    def _ensure_lease(self, fence: int) -> None:
+        scope = self.scope
+        strategy_id = self._job_strategy_id
+        if scope is None or strategy_id is None or self._job_fence != fence:
+            raise _MonitorLeaseLost
+        suffix = self._for_update()
+        with self.store.transaction() as connection:
+            owned = connection.execute(
+                "SELECT status, credential_version, permission_version, remote_identity_digest, "
+                "product_capabilities_json FROM exchange_connections WHERE user_id=? AND connection_id=?" + suffix,
+                (scope.user_id, scope.connection_id),
+            ).fetchone()
+            lease = connection.execute(
+                "SELECT lease_owner, fence, lease_until, operation_id FROM multiuser_connection_leases "
+                "WHERE user_id=? AND connection_id=?" + suffix,
+                (scope.user_id, scope.connection_id),
+            ).fetchone()
+            strategy = connection.execute(
+                "SELECT status, pre_send_at, credential_version, permission_version, lease_owner, lease_fence "
+                "FROM multiuser_strategies WHERE user_id=? AND connection_id=? AND strategy_id=?" + suffix,
+                (scope.user_id, scope.connection_id, strategy_id),
+            ).fetchone()
+            claim = connection.execute(
+                "SELECT lease_owner, fence, lease_until FROM multiuser_strategy_claims "
+                "WHERE user_id=? AND connection_id=? AND strategy_id=?" + suffix,
+                (scope.user_id, scope.connection_id, strategy_id),
+            ).fetchone()
+            now = self.clock()
+            caps = [] if owned is None else decode_json(owned["product_capabilities_json"] or "[]")
+            if not isinstance(caps, list):
+                caps = []
+            if (
+                owned is None or lease is None or strategy is None or claim is None
+                or lease["lease_owner"] != self.owner_id or int(lease["fence"]) != fence
+                or lease["operation_id"] != strategy_id or lease["lease_until"] is None
+                or float(lease["lease_until"]) <= now
+                or claim["lease_owner"] != self.owner_id or int(claim["fence"]) != fence
+                or claim["lease_until"] is None or float(claim["lease_until"]) <= now
+                or strategy["lease_owner"] != self.owner_id or int(strategy["lease_fence"] or 0) != fence
+            ):
+                raise _MonitorLeaseLost
+            if self._job_mode == "submit":
+                if (
+                    owned["status"] != "ACTIVE" or strategy["status"] != "APPLYING"
+                    or int(owned["credential_version"]) != scope.credential_version
+                    or int(owned["permission_version"]) != scope.permission_version
+                    or int(strategy["credential_version"]) != scope.credential_version
+                    or int(strategy["permission_version"]) != scope.permission_version
+                    or not secrets.compare_digest(owned["remote_identity_digest"], scope.remote_identity_digest)
+                    or "trade" not in caps
+                    or not bool(getattr(self.settings, "multiuser_trade_enabled", False))
+                ):
+                    raise _MonitorLeaseLost
+            elif self._job_mode == "recovery":
+                if (
+                    owned["status"] not in {"ACTIVE", "RECONCILING"}
+                    or not secrets.compare_digest(owned["remote_identity_digest"], scope.remote_identity_digest)
+                    or "read" not in caps or strategy["pre_send_at"] is None
+                ):
+                    raise _MonitorLeaseLost
+            else:
+                raise _MonitorLeaseLost
+            renewed = now + self.lease_seconds
+            if connection.execute(
+                "UPDATE multiuser_connection_leases SET lease_until=?, updated_at=? "
+                "WHERE user_id=? AND connection_id=? AND lease_owner=? AND fence=? AND lease_until>?",
+                (renewed, now, scope.user_id, scope.connection_id, self.owner_id, fence, now),
+            ).rowcount != 1:
+                raise _MonitorLeaseLost
+            if connection.execute(
+                "UPDATE multiuser_strategy_claims SET lease_until=?, updated_at=? "
+                "WHERE user_id=? AND connection_id=? AND strategy_id=? AND lease_owner=? AND fence=? "
+                "AND lease_until>?",
+                (renewed, now, scope.user_id, scope.connection_id, strategy_id, self.owner_id, fence, now),
+            ).rowcount != 1:
+                raise _MonitorLeaseLost
+            if connection.execute(
+                "UPDATE multiuser_strategies SET lease_until=?, execution_lease_until=? "
+                "WHERE user_id=? AND connection_id=? AND strategy_id=? AND lease_owner=? AND lease_fence=?",
+                (renewed, renewed, scope.user_id, scope.connection_id, strategy_id, self.owner_id, fence),
+            ).rowcount != 1:
+                raise _MonitorLeaseLost
+
+    def _write_attempt(self, strategy_id: str, fence: int) -> tuple[int, float] | None:
+        scope = self.scope
+        if scope is None or strategy_id != self._job_strategy_id:
+            return None
+        suffix = self._for_update()
+        with self.store.transaction() as connection:
+            connection.execute(
+                "SELECT user_id FROM exchange_connections WHERE user_id=? AND connection_id=?" + suffix,
+                (scope.user_id, scope.connection_id),
+            ).fetchone()
+            lease = connection.execute(
+                "SELECT lease_owner, fence, lease_until FROM multiuser_connection_leases "
+                "WHERE user_id=? AND connection_id=?" + suffix,
+                (scope.user_id, scope.connection_id),
+            ).fetchone()
+            row = connection.execute(
+                "SELECT status, results_json, updated_at, lease_owner, lease_fence "
+                "FROM multiuser_strategies WHERE user_id=? AND connection_id=? AND strategy_id=?" + suffix,
+                (scope.user_id, scope.connection_id, strategy_id),
+            ).fetchone()
+            claim = connection.execute(
+                "SELECT lease_owner, fence, lease_until FROM multiuser_strategy_claims "
+                "WHERE user_id=? AND connection_id=? AND strategy_id=?" + suffix,
+                (scope.user_id, scope.connection_id, strategy_id),
+            ).fetchone()
+            now = self.clock()
+            if (
+                lease is None or row is None or claim is None
+                or lease["lease_owner"] != self.owner_id or int(lease["fence"]) != fence
+                or lease["lease_until"] is None or float(lease["lease_until"]) <= now
+                or claim["lease_owner"] != self.owner_id or int(claim["fence"]) != fence
+                or claim["lease_until"] is None or float(claim["lease_until"]) <= now
+                or row["lease_owner"] != self.owner_id or int(row["lease_fence"] or 0) != fence
+            ):
+                return None
+            sync = connection.execute(
+                "SELECT consecutive_errors FROM multiuser_strategy_sync_state "
+                "WHERE user_id=? AND connection_id=? AND strategy_id=?" + suffix,
+                (scope.user_id, scope.connection_id, strategy_id),
+            ).fetchone()
+            errors = 0 if sync is None else int(sync["consecutive_errors"])
+            connection.execute(
+                "INSERT INTO multiuser_strategy_sync_state(user_id, connection_id, strategy_id, "
+                "last_attempt_at, last_success_at, last_error, next_scan_at, consecutive_errors) "
+                "VALUES (?, ?, ?, ?, NULL, NULL, ?, 0) ON CONFLICT(user_id, connection_id, strategy_id) "
+                "DO UPDATE SET last_attempt_at=excluded.last_attempt_at, next_scan_at=excluded.next_scan_at",
+                (scope.user_id, scope.connection_id, strategy_id, now, now + self.order_interval_seconds),
+            )
+            return errors, now
+
+    def _queue_ledger(self, fence: int) -> OwnedStrategyQueueLedger:
+        if self.scope is None:
+            raise RuntimeError("owned strategy scope is unavailable")
+        return OwnedStrategyQueueLedger(
+            self.store, scope=self.scope, owner_id=self.owner_id, fence=fence,
+            lease_seconds=self.lease_seconds, clock=self.clock,
+        )
+
+    def _queue_service(self, fence: int, deadline: float) -> StrategyService:
+        if self.scope is None:
+            raise RuntimeError("owned strategy scope is unavailable")
+        service = StrategyService(self, strategy_scope=self.scope)
+        service.okx = _LeaseAwareExchange(
+            self.okx,
+            lambda name: self._before_queue_exchange(name, fence, deadline),
+        )
+        return service
+
+    def _verify_recovery_identity(self, fence: int) -> bool:
+        scope = self.scope
+        if scope is None or self.okx is None:
+            return False
+        try:
+            self._ensure_lease(fence)
+            account = self.okx.account_config()
+            self._ensure_lease(fence)
+            if not isinstance(account, dict):
+                return False
+            fingerprint = self._account_fingerprint(account.get("uid"))
+        except (APIError, OKXError, _MonitorLeaseLost):
+            return False
+        return secrets.compare_digest(fingerprint, scope.account_fingerprint)
+
+    def _persist_success(
+        self,
+        strategy: dict[str, Any],
+        results: list[dict[str, Any]],
+        status: str,
+        failure_reason: str | None,
+        fence: int,
+        *,
+        recovering: bool,
+        scan_started_at: float,
+    ) -> bool:
+        return self._persist_owned_scan(
+            strategy, results, status, failure_reason, fence,
+            prior_errors=0, scan_error=None, recovering=recovering,
+            scan_started_at=scan_started_at,
+        )
+
+    def _persist_failure(
+        self,
+        strategy: dict[str, Any],
+        results: list[dict[str, Any]],
+        status: str,
+        failure_reason: str | None,
+        fence: int,
+        prior_errors: int,
+        scan_error: str,
+        *,
+        recovering: bool,
+    ) -> bool:
+        return self._persist_owned_scan(
+            strategy, results, status, failure_reason, fence,
+            prior_errors=prior_errors, scan_error=scan_error, recovering=recovering,
+            scan_started_at=self.clock(),
+        )
+
+    def _persist_owned_scan(
+        self,
+        strategy: dict[str, Any],
+        results: list[dict[str, Any]],
+        status: str,
+        failure_reason: str | None,
+        fence: int,
+        *,
+        prior_errors: int,
+        scan_error: str | None,
+        recovering: bool,
+        scan_started_at: float,
+    ) -> bool:
+        scope = self.scope
+        strategy_id = strategy["id"]
+        if scope is None:
+            return False
+        suffix = self._for_update()
+        now = self.clock()
+        delay = min(self.order_interval_seconds * (2 ** min(prior_errors, 6)), _MAX_BACKOFF_SECONDS)
+        with self.store.transaction() as connection:
+            connection.execute(
+                "SELECT user_id FROM exchange_connections WHERE user_id=? AND connection_id=?" + suffix,
+                (scope.user_id, scope.connection_id),
+            ).fetchone()
+            lease = connection.execute(
+                "SELECT lease_owner, fence, lease_until FROM multiuser_connection_leases "
+                "WHERE user_id=? AND connection_id=?" + suffix,
+                (scope.user_id, scope.connection_id),
+            ).fetchone()
+            current = connection.execute(
+                "SELECT status, results_json, updated_at, batch_attempted, order_placement_attempted, "
+                "pre_send_at, leverage_results_json, lease_owner, lease_fence "
+                "FROM multiuser_strategies WHERE user_id=? AND connection_id=? AND strategy_id=?" + suffix,
+                (scope.user_id, scope.connection_id, strategy_id),
+            ).fetchone()
+            claim = connection.execute(
+                "SELECT lease_owner, fence FROM multiuser_strategy_claims "
+                "WHERE user_id=? AND connection_id=? AND strategy_id=?" + suffix,
+                (scope.user_id, scope.connection_id, strategy_id),
+            ).fetchone()
+            now = self.clock()
+            same_fence = (
+                lease is not None and current is not None and claim is not None
+                and lease["lease_owner"] == self.owner_id and claim["lease_owner"] == self.owner_id
+                and current["lease_owner"] == self.owner_id
+                and int(lease["fence"]) == fence and int(claim["fence"]) == fence
+                and int(current["lease_fence"] or 0) == fence
+                and strategy["status"] == current["status"]
+                and encode_json(strategy["results"]) == current["results_json"]
+                and strategy["updatedAt"] == current["updated_at"]
+            )
+            if not same_fence:
+                return False
+            changed = results != strategy["results"] or status != strategy["status"] or failure_reason != strategy["failureReason"]
+            if changed:
+                updated = connection.execute(
+                    "UPDATE multiuser_strategies SET status=?, results_json=?, failure_reason=?, "
+                    "prepared_json=COALESCE(prepared_json, snapshot_json), execution_id=NULL, "
+                    "execution_lease_until=NULL, lease_owner=NULL, lease_until=NULL, updated_at=? "
+                    "WHERE user_id=? AND connection_id=? AND strategy_id=? AND status=? "
+                    "AND results_json=? AND updated_at=? AND lease_fence=? AND lease_owner=?",
+                    (status, encode_json(results), failure_reason, now, scope.user_id, scope.connection_id,
+                     strategy_id, strategy["status"], encode_json(strategy["results"]), strategy["updatedAt"],
+                     fence, self.owner_id),
+                ).rowcount
+                if updated != 1:
+                    return False
+            connection.execute(
+                "INSERT INTO multiuser_strategy_events(user_id, connection_id, strategy_id, event_id, "
+                "event_type, payload_json, created_at) VALUES (?, ?, ?, ?, 'strategy_reconciliation_finished', ?, ?)",
+                (scope.user_id, scope.connection_id, strategy_id, secrets.token_hex(16),
+                 encode_json({"status": status, "error": scan_error, "fence": fence}), now),
+            )
+            if StrategyService._can_release_reservation(
+                status, results,
+                bool(current["batch_attempted"]) or bool(current["order_placement_attempted"]),
+                unresolved_external_attempt=unresolved_leverage_attempt(
+                    current["pre_send_at"], decode_json(current["leverage_results_json"] or "[]"),
+                    (strategy.get("prepared") or {}).get("orders")
+                    if isinstance(strategy.get("prepared"), dict) else strategy.get("orders"),
+                ),
+            ):
+                connection.execute(
+                    "DELETE FROM multiuser_strategy_reservations WHERE user_id=? AND connection_id=? AND strategy_id=?",
+                    (scope.user_id, scope.connection_id, strategy_id),
+                )
+            StrategyService._cleanup_replacement_in_connection(
+                connection, strategy_id, now, scope
+            )
+            if scan_error is None:
+                connection.execute(
+                    "INSERT INTO multiuser_strategy_sync_state(user_id, connection_id, strategy_id, "
+                    "last_attempt_at, last_success_at, last_error, next_scan_at, consecutive_errors) "
+                    "VALUES (?, ?, ?, ?, ?, NULL, ?, 0) ON CONFLICT(user_id, connection_id, strategy_id) "
+                    "DO UPDATE SET last_attempt_at=excluded.last_attempt_at, last_success_at=excluded.last_success_at, "
+                    "last_error=NULL, next_scan_at=excluded.next_scan_at, consecutive_errors=0",
+                    (scope.user_id, scope.connection_id, strategy_id, now, now,
+                     max(scan_started_at + self.order_interval_seconds, now)),
+                )
+            else:
+                connection.execute(
+                    "INSERT INTO multiuser_strategy_sync_state(user_id, connection_id, strategy_id, "
+                    "last_attempt_at, last_success_at, last_error, next_scan_at, consecutive_errors) "
+                    "VALUES (?, ?, ?, ?, NULL, ?, ?, 1) ON CONFLICT(user_id, connection_id, strategy_id) "
+                    "DO UPDATE SET last_attempt_at=excluded.last_attempt_at, last_error=excluded.last_error, "
+                    "next_scan_at=excluded.next_scan_at, consecutive_errors="
+                    "multiuser_strategy_sync_state.consecutive_errors+1",
+                    (scope.user_id, scope.connection_id, strategy_id, now, scan_error, now + delay),
+                )
+            connection.execute(
+                "UPDATE multiuser_connection_leases SET lease_owner=NULL, lease_until=NULL, operation_id=NULL, "
+                "updated_at=? WHERE user_id=? AND connection_id=? AND lease_owner=? AND fence=?",
+                (now, scope.user_id, scope.connection_id, self.owner_id, fence),
+            )
+            connection.execute(
+                "UPDATE multiuser_strategy_claims SET lease_owner=NULL, lease_until=NULL, updated_at=? "
+                "WHERE user_id=? AND connection_id=? AND strategy_id=? AND lease_owner=? AND fence=?",
+                (now, scope.user_id, scope.connection_id, strategy_id, self.owner_id, fence),
+            )
+        return True
+
+    def _run_claimed_job(self, job: dict[str, Any]) -> None:
+        strategy = job["strategy"]
+        row = job["connection"]
+        self.scope = OwnedStrategyScope(
+            user_id=job["user_id"], connection_id=job["connection_id"],
+            account_fingerprint=owned_strategy_fingerprint(job["user_id"], job["connection_id"]),
+            remote_identity_digest=str(row["remote_identity_digest"]),
+            credential_version=int(row["credential_version"]),
+            permission_version=int(row["permission_version"]), environment=str(row["environment"]),
+        )
+        self._job_strategy_id = job["strategy_id"]
+        self._job_fence = job["fence"]
+        self._job_mode = job["mode"]
+        self._queue_placements_this_pass = 0
+        self._last_call_monotonic = None
+        self._last_placement_monotonic = None
+        self.okx = None
+        self._job_context = None
+        self.strategy = StrategyService(self, strategy_scope=self.scope)
+        fence = job["fence"]
+        queue = strategy.get("queue")
+        try:
+            if job["stop_reason"] is not None:
+                latest = self.strategy._load_row(job["strategy_id"])
+                if isinstance(latest.get("queue"), dict):
+                    self._stop_queue_without_marker(latest, fence, job["stop_reason"])
+                elif job["stop_reason"] == "leverage_unknown":
+                    self.strategy._finish(
+                        job["strategy_id"], self.owner_id, "UNKNOWN",
+                        [{**item, "status": "not_submitted"} for item in latest["orders"]],
+                        "leverage_unknown", self._unknown_leverage_results(latest),
+                    )
+                else:
+                    self.strategy._finish(
+                        job["strategy_id"], self.owner_id, "PARTIAL",
+                        [{**item, "status": "not_submitted"} for item in latest["orders"]],
+                        job["stop_reason"], latest["leverageResults"],
+                    )
+                return
+            if isinstance(queue, dict) and queue.get("inFlight") is not None:
+                self._stop_interrupted_queue(strategy, fence)
+                return
+            if job["context_required"]:
+                try:
+                    context = self.connections.account_context_for_strategy_job(
+                        self.scope.user_id, self.scope.connection_id, job["strategy_id"],
+                        self.owner_id, fence, recovery=job["mode"] == "recovery",
+                    )
+                except ConnectionServiceError:
+                    if job["mode"] == "recovery":
+                        self._release_job_lease(job)
+                        return
+                    latest = self.strategy._load_row(job["strategy_id"])
+                    if latest.get("queue") is not None:
+                        self._stop_queue_without_marker(latest, fence, "worker_fence_lost")
+                    else:
+                        self.strategy._finish(
+                            job["strategy_id"], self.owner_id, "PARTIAL",
+                            [{**item, "status": "not_submitted"} for item in latest["orders"]],
+                            "worker_fence_lost", latest["leverageResults"],
+                        )
+                    return
+                self._job_context = context
+                self.okx = context.client
+                if job["mode"] == "recovery" and not self._verify_recovery_identity(fence):
+                    self._release_job_lease(job)
+                    return
+            elif strategy["status"] == "APPLYING" and strategy["submissionMode"] != "sequential":
+                latest = self.strategy._load_row(job["strategy_id"])
+                self.strategy._finish(
+                    job["strategy_id"], self.owner_id, "PARTIAL",
+                    [{**item, "status": "not_submitted"} for item in latest["orders"]],
+                    "interrupted_before_batch", latest["leverageResults"],
+                )
+                return
+            self.strategy = StrategyService(self, strategy_scope=self.scope)
+            self._process_strategy(strategy, fence)
+        except _MonitorLeaseLost:
+            latest = self.strategy._load_row(job["strategy_id"])
+            queue = latest.get("queue")
+            if isinstance(queue, dict) and queue.get("inFlight") is not None:
+                self._stop_interrupted_queue(latest, fence)
+            elif isinstance(queue, dict) and latest["status"] == "APPLYING":
+                self._stop_queue_without_marker(latest, fence, "worker_fence_lost")
+        finally:
+            self.okx = None
+            self._job_context = None
+            self._job_mode = "idle"
+
+    def _run_once(self) -> bool:
+        now = self.clock()
+        self._queue_placements_this_pass = 0
+        for user_id, connection_id, strategy_id in self._candidate_ids(now):
+            job = self._claim_job(user_id, connection_id, strategy_id)
+            if job is None:
+                continue
+            self._run_claimed_job(job)
+        return True
+
+
 def main() -> None:
-    settings = WorkerSettings.from_environ()
-    worker = StrategyOrderWorker(settings)
+    from .service import RuntimeSettings
+
+    settings = RuntimeSettings.from_environ()
+    if settings.multiuser_enabled:
+        from .credential_vault import CredentialVault
+        from .postgres_store import PostgresIdentityStore
+
+        if (
+            not settings.multiuser_database_url or settings.credential_vault_key is None
+            or settings.remote_identity_key is None
+        ):
+            raise SystemExit("multi-user worker is not configured")
+        identity_store = PostgresIdentityStore(settings.multiuser_database_url)
+        connections = OwnedConnections(
+            identity_store,
+            CredentialVault(settings.credential_vault_key, settings.credential_vault_key_id or ""),
+            settings.remote_identity_key,
+            clock=time.time,
+            trade_enabled=settings.multiuser_trade_enabled,
+        )
+        worker = OwnedStrategyOrderWorker(settings, store=identity_store, connections=connections)
+    else:
+        worker = StrategyOrderWorker(WorkerSettings.from_environ())
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     signal.signal(signal.SIGINT, lambda *_: stop.set())

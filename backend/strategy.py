@@ -12,11 +12,13 @@ import time
 from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_DOWN, ROUND_FLOOR
 from typing import Any, Callable
 
+from .connections import ConnectionServiceError
 from .okx import OKXError, OKXTransportError, bounded_error_code
 from . import diagnostics
 from .security import new_confirmation_token, new_operation_id, token_digest
 from .service import APIError
 from .store import decode_json, encode_json
+from .store_contract import IdentityStoreConflict
 from .strategy_automatic import AutomaticStrategyService
 from .strategy_queue import (
     initial_results,
@@ -24,6 +26,7 @@ from .strategy_queue import (
     normalize_queue,
     parse_leverage_ack,
     progress as queue_progress,
+    unresolved_leverage_attempt,
 )
 from .strategy_retry import (
     RetryDataError,
@@ -38,6 +41,7 @@ from .strategy_retry import (
     source_rows as _retry_source_rows,
 )
 from .strategy_scope import (
+    OwnedStrategyScope,
     UNKNOWN_SCOPE,
     StrategyScope,
     extract_persisted_scope,
@@ -67,6 +71,20 @@ _DEFAULT_JEV_SCREENING_THRESHOLDS = {
     "maxFailureRiskProbability": 0.4,
 }
 _JEV_SCREENING_THRESHOLD_KEYS = frozenset(_DEFAULT_JEV_SCREENING_THRESHOLDS)
+
+
+def _strategy_scope_where(scope: OwnedStrategyScope | None, predicate: str) -> str:
+    if scope is None:
+        return predicate
+    return f"({predicate}) AND user_id=? AND connection_id=?"
+
+
+def _strategy_scope_values(
+    scope: OwnedStrategyScope | None, values: tuple[Any, ...]
+) -> tuple[Any, ...]:
+    if scope is None:
+        return values
+    return (*values, scope.user_id, scope.connection_id)
 
 
 def _decimal(value: Any) -> Decimal | None:
@@ -230,15 +248,258 @@ def _round_down(value: Decimal, increment: Decimal) -> Decimal:
 
 
 class StrategyService:
-    def __init__(self, owner: Any):
+    def __init__(self, owner: Any, *, strategy_scope: OwnedStrategyScope | None = None):
         self.owner = owner
+        self.strategy_scope = strategy_scope
         self.store = owner.store
         self.okx = owner.okx
         self.clock = owner.clock
+        self.strategy_table = "multiuser_strategies" if strategy_scope is not None else "strategies"
+        self.reservations_table = (
+            "multiuser_strategy_reservations" if strategy_scope is not None else "strategy_reservations"
+        )
+        self.settings_table = (
+            "multiuser_strategy_settings" if strategy_scope is not None else "strategy_account_preferences"
+        )
+        self.sync_table = "multiuser_strategy_sync_state" if strategy_scope is not None else "strategy_sync_state"
         self.automatic = AutomaticStrategyService(self)
         self._quote_cache: dict[str, tuple[float, dict[str, str]]] = {}
         self._quote_cache_lock = threading.Lock()
         self._quote_instrument_locks: dict[str, threading.Lock] = {}
+
+    def _strategy_where(self, predicate: str) -> str:
+        """Append the explicit composite owner predicate for an owned strategy table."""
+        return _strategy_scope_where(self.strategy_scope, predicate)
+
+    def _strategy_values(self, values: tuple[Any, ...]) -> tuple[Any, ...]:
+        return _strategy_scope_values(self.strategy_scope, values)
+
+    def _settings_where(self, predicate: str | None = None) -> str:
+        if self.strategy_scope is None:
+            return predicate or "account_fingerprint=?"
+        suffix = " AND user_id=? AND connection_id=?" if predicate else "user_id=? AND connection_id=?"
+        return (predicate or "1=1") + suffix
+
+    def _settings_values(self, values: tuple[Any, ...] = ()) -> tuple[Any, ...]:
+        if self.strategy_scope is None:
+            return values
+        return (*values, self.strategy_scope.user_id, self.strategy_scope.connection_id)
+
+    def _assert_owned_authority(self, connection: Any) -> None:
+        if self.strategy_scope is not None:
+            guard = getattr(self.owner, "assert_strategy_authority", None)
+            if not callable(guard):
+                raise APIError(503, "identity_unavailable", "The owned strategy authority is unavailable.")
+            guard(connection)
+
+    def _owned_authority_current(self, connection: Any) -> bool:
+        try:
+            self._assert_owned_authority(connection)
+        except APIError as exc:
+            if exc.code in {
+                "authentication_required", "step_up_required", "strategy_not_found",
+                "connection_version_changed",
+            }:
+                return False
+            raise
+        except ConnectionServiceError as exc:
+            if exc.code in {"authentication_required", "step_up_required"}:
+                return False
+            raise
+        return True
+
+    def _for_update(self) -> str:
+        return " FOR UPDATE" if getattr(self.store, "dialect", "sqlite") == "postgresql" else ""
+
+    def _owned_connection_busy(
+        self, connection: Any, *, strategy_id: str, now: float
+    ) -> bool:
+        if self.strategy_scope is None:
+            return False
+        scope = self.strategy_scope
+        lease = connection.execute(
+            "SELECT lease_until FROM multiuser_connection_leases "
+            "WHERE user_id=? AND connection_id=?" + self._for_update(),
+            (scope.user_id, scope.connection_id),
+        ).fetchone()
+        if lease is not None and lease["lease_until"] is not None and float(lease["lease_until"]) > now:
+            return True
+        if connection.execute(
+            "SELECT 1 FROM multiuser_operations WHERE user_id=? AND connection_id=? "
+            "AND status IN ('PREPARED', 'SENDING', 'UNKNOWN', 'RECONCILING') LIMIT 1",
+            (scope.user_id, scope.connection_id),
+        ).fetchone() is not None:
+            return True
+        if connection.execute(
+            "SELECT 1 FROM multiuser_strategy_claims WHERE user_id=? AND connection_id=? "
+            "AND lease_until>? LIMIT 1",
+            (scope.user_id, scope.connection_id, now),
+        ).fetchone() is not None:
+            return True
+        return connection.execute(
+            "SELECT 1 FROM multiuser_strategies WHERE user_id=? AND connection_id=? AND strategy_id<>? "
+            "AND status IN ('PREPARED', 'APPLYING', 'UNKNOWN', 'RECONCILING', 'QUEUED') LIMIT 1",
+            (scope.user_id, scope.connection_id, strategy_id),
+        ).fetchone() is not None
+
+    def _claim_owned_connection_lease(
+        self,
+        connection: Any,
+        *,
+        strategy_id: str,
+        lease_owner: str,
+        now: float,
+    ) -> int | None:
+        if self.strategy_scope is None:
+            return None
+        scope = self.strategy_scope
+        connection.execute(
+            "INSERT INTO multiuser_connection_leases(user_id, connection_id, updated_at) "
+            "VALUES (?, ?, ?) ON CONFLICT(user_id, connection_id) DO NOTHING",
+            (scope.user_id, scope.connection_id, now),
+        )
+        lease = connection.execute(
+            "SELECT lease_owner, fence, lease_until FROM multiuser_connection_leases "
+            "WHERE user_id=? AND connection_id=?" + self._for_update(),
+            (scope.user_id, scope.connection_id),
+        ).fetchone()
+        if lease is None or (
+            lease["lease_until"] is not None and float(lease["lease_until"]) > now
+        ):
+            return None
+        if self._owned_connection_busy(connection, strategy_id=strategy_id, now=now):
+            return None
+        fence = int(lease["fence"]) + 1
+        changed = connection.execute(
+            "UPDATE multiuser_connection_leases SET lease_owner=?, fence=?, lease_until=?, "
+            "operation_id=?, updated_at=? WHERE user_id=? AND connection_id=? AND fence=? "
+            "AND (lease_until IS NULL OR lease_until<=?)",
+            (
+                lease_owner, fence, now + _EXECUTION_LEASE_SECONDS, strategy_id, now,
+                scope.user_id, scope.connection_id, int(lease["fence"]), now,
+            ),
+        ).rowcount
+        if changed != 1:
+            return None
+        return fence
+
+    def _claim_owned_strategy_claim(
+        self,
+        connection: Any,
+        *,
+        strategy_id: str,
+        lease_owner: str,
+        fence: int,
+        now: float,
+    ) -> bool:
+        if self.strategy_scope is None:
+            return True
+        scope = self.strategy_scope
+        current = connection.execute(
+            "SELECT lease_owner, fence, lease_until FROM multiuser_strategy_claims "
+            "WHERE user_id=? AND connection_id=? AND strategy_id=?" + self._for_update(),
+            (scope.user_id, scope.connection_id, strategy_id),
+        ).fetchone()
+        if current is not None and current["lease_until"] is not None and float(current["lease_until"]) > now:
+            return False
+        claimed = connection.execute(
+            "INSERT INTO multiuser_strategy_claims(user_id, connection_id, strategy_id, lease_owner, fence, "
+            "lease_until, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(user_id, connection_id, strategy_id) DO UPDATE SET "
+            "lease_owner=excluded.lease_owner, fence=excluded.fence, lease_until=excluded.lease_until, "
+            "updated_at=excluded.updated_at WHERE multiuser_strategy_claims.lease_until IS NULL "
+            "OR multiuser_strategy_claims.lease_until<=excluded.updated_at",
+            (
+                scope.user_id, scope.connection_id, strategy_id, lease_owner, fence,
+                now + _EXECUTION_LEASE_SECONDS, now,
+            ),
+        ).rowcount
+        return claimed == 1
+
+    def _allocate_owned_queue_fence(
+        self, connection: Any, *, strategy_id: str, now: float
+    ) -> int | None:
+        """Advance a durable job fence while leaving the queued job unleased."""
+        if self.strategy_scope is None:
+            return None
+        scope = self.strategy_scope
+        connection.execute(
+            "INSERT INTO multiuser_connection_leases(user_id, connection_id, updated_at) "
+            "VALUES (?, ?, ?) ON CONFLICT(user_id, connection_id) DO NOTHING",
+            (scope.user_id, scope.connection_id, now),
+        )
+        lease = connection.execute(
+            "SELECT lease_owner, fence, lease_until FROM multiuser_connection_leases "
+            "WHERE user_id=? AND connection_id=?" + self._for_update(),
+            (scope.user_id, scope.connection_id),
+        ).fetchone()
+        if lease is None or (lease["lease_until"] is not None and float(lease["lease_until"]) > now):
+            return None
+        if self._owned_connection_busy(connection, strategy_id=strategy_id, now=now):
+            return None
+        fence = int(lease["fence"]) + 1
+        changed = connection.execute(
+            "UPDATE multiuser_connection_leases SET lease_owner=NULL, fence=?, lease_until=NULL, "
+            "operation_id=NULL, updated_at=? WHERE user_id=? AND connection_id=? AND fence=? "
+            "AND (lease_until IS NULL OR lease_until<=?)",
+            (fence, now, scope.user_id, scope.connection_id, int(lease["fence"]), now),
+        ).rowcount
+        return fence if changed == 1 else None
+
+    def _record_owned_queue_claim(
+        self, connection: Any, *, strategy_id: str, fence: int, now: float
+    ) -> bool:
+        if self.strategy_scope is None:
+            return True
+        scope = self.strategy_scope
+        current = connection.execute(
+            "SELECT lease_until FROM multiuser_strategy_claims "
+            "WHERE user_id=? AND connection_id=? AND strategy_id=?" + self._for_update(),
+            (scope.user_id, scope.connection_id, strategy_id),
+        ).fetchone()
+        if current is not None and current["lease_until"] is not None and float(current["lease_until"]) > now:
+            return False
+        return connection.execute(
+            "INSERT INTO multiuser_strategy_claims(user_id, connection_id, strategy_id, lease_owner, fence, "
+            "lease_until, updated_at) VALUES (?, ?, ?, NULL, ?, NULL, ?) "
+            "ON CONFLICT(user_id, connection_id, strategy_id) DO UPDATE SET lease_owner=NULL, "
+            "fence=excluded.fence, lease_until=NULL, updated_at=excluded.updated_at "
+            "WHERE multiuser_strategy_claims.lease_until IS NULL "
+            "OR multiuser_strategy_claims.lease_until<=excluded.updated_at",
+            (scope.user_id, scope.connection_id, strategy_id, fence, now),
+        ).rowcount == 1
+
+    def _release_owned_connection_lease(
+        self, connection: Any, *, strategy_id: str, lease_owner: str, fence: int, now: float
+    ) -> None:
+        if self.strategy_scope is None:
+            return
+        scope = self.strategy_scope
+        connection.execute(
+            "UPDATE multiuser_connection_leases SET lease_owner=NULL, lease_until=NULL, operation_id=NULL, "
+            "updated_at=? WHERE user_id=? AND connection_id=? AND lease_owner=? AND fence=?",
+            (now, scope.user_id, scope.connection_id, lease_owner, fence),
+        )
+        connection.execute(
+            "UPDATE multiuser_strategy_claims SET lease_owner=NULL, lease_until=NULL, updated_at=? "
+            "WHERE user_id=? AND connection_id=? AND strategy_id=? AND lease_owner=? AND fence=?",
+            (now, scope.user_id, scope.connection_id, strategy_id, lease_owner, fence),
+        )
+
+    def _owned_strategy_event(
+        self, connection: Any, *, strategy_id: str, event_type: str,
+        payload: dict[str, Any], now: float,
+    ) -> None:
+        if self.strategy_scope is None:
+            return
+        connection.execute(
+            "INSERT INTO multiuser_strategy_events(user_id, connection_id, strategy_id, event_id, "
+            "event_type, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                self.strategy_scope.user_id, self.strategy_scope.connection_id, strategy_id,
+                secrets.token_hex(16), event_type, encode_json(payload), now,
+            ),
+        )
 
     def dispatch(
         self,
@@ -248,6 +509,8 @@ class StrategyService:
         *,
         request_guard: Callable[[], Any] | None = None,
     ) -> dict[str, Any]:
+        if self.strategy_scope is not None and method == "POST" and request_guard is not None:
+            request_guard()
         automatic_response = self.automatic.dispatch(
             method, path, body, request_guard=request_guard
         )
@@ -264,7 +527,7 @@ class StrategyService:
         if method == "POST" and path == "/v1/strategies":
             return self._save(body)
         if method == "GET" and path == "/v1/strategies":
-            return self._list()
+            return self._list_owned() if self.strategy_scope is not None else self._list()
         match = re.fullmatch(
             r"/v1/strategies/([A-Za-z0-9_-]{8,64})/"
             r"(prepare-apply|execute-apply|result|delete|quote|retry-candidates|retry-preview|retry-drafts)",
@@ -286,7 +549,11 @@ class StrategyService:
             with diagnostics.strategy_context(strategy_id, component="api"):
                 return self._execute(strategy_id, body)
         if action == "result" and method == "GET":
-            return self._result(strategy_id)
+            return (
+                self._result_owned(strategy_id)
+                if self.strategy_scope is not None
+                else self._result(strategy_id)
+            )
         if action == "delete" and method == "POST":
             return self._delete(strategy_id)
         if action == "quote" and method == "GET":
@@ -302,8 +569,8 @@ class StrategyService:
             require_prepared_mode=require_prepared_mode,
         )
 
-    @staticmethod
     def _has_overlapping_reservation(
+        self,
         connection: Any,
         fingerprint: str,
         instrument_id: str,
@@ -313,9 +580,9 @@ class StrategyService:
     ) -> bool:
         excluded = exclude_ids or set()
         reservations = connection.execute(
-            "SELECT strategy_id, position_mode, side_scope FROM strategy_reservations "
-            "WHERE account_fingerprint=? AND instrument_id=?",
-            (fingerprint, instrument_id),
+            f"SELECT strategy_id, position_mode, side_scope FROM {self.reservations_table} "
+            f"WHERE {self._strategy_where('account_fingerprint=? AND instrument_id=?')}",
+            self._strategy_values((fingerprint, instrument_id)),
         ).fetchall()
         return any(
             row["strategy_id"] not in excluded
@@ -342,14 +609,26 @@ class StrategyService:
                 409, "instrument_apply_in_progress",
                 "Another strategy is applying or reconciling an overlapping position scope.",
             )
-        connection.execute(
-            "INSERT INTO strategy_reservations(account_fingerprint, instrument_id, strategy_id, "
-            "position_mode, side_scope, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                strategy["accountFingerprint"], strategy["contract"]["instrumentId"],
-                strategy["id"], scope.position_mode, scope.side_scope, now,
-            ),
-        )
+        if self.strategy_scope is None:
+            connection.execute(
+                "INSERT INTO strategy_reservations(account_fingerprint, instrument_id, strategy_id, "
+                "position_mode, side_scope, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    strategy["accountFingerprint"], strategy["contract"]["instrumentId"],
+                    strategy["id"], scope.position_mode, scope.side_scope, now,
+                ),
+            )
+        else:
+            connection.execute(
+                "INSERT INTO multiuser_strategy_reservations(user_id, connection_id, account_fingerprint, "
+                "instrument_id, strategy_id, position_mode, side_scope, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    self.strategy_scope.user_id, self.strategy_scope.connection_id,
+                    strategy["accountFingerprint"], strategy["contract"]["instrumentId"],
+                    strategy["id"], scope.position_mode, scope.side_scope, now,
+                ),
+            )
 
     def _quote(self, strategy_id: str) -> dict[str, str]:
         strategy, _, _ = self._current_strategy(strategy_id)
@@ -478,11 +757,17 @@ class StrategyService:
                 502, "account_identity_unavailable",
                 "The exchange account identity is unavailable; try again later.",
             )
+        if self.strategy_scope is not None and not hmac.compare_digest(
+            fingerprint, self.strategy_scope.account_fingerprint
+        ):
+            raise APIError(409, "account_changed", "The selected owned connection changed identity.")
         if account_snapshot is not None and not hmac.compare_digest(fingerprint, snapshot_fingerprint):
             raise APIError(502, "account_identity_unavailable", "The exchange account identity is unavailable.")
         return account, fingerprint
 
     def _get_settings(self) -> dict[str, Any]:
+        if self.strategy_scope is not None:
+            return self._settings_for_fingerprint(self.strategy_scope.account_fingerprint)
         _, fingerprint = self._account()
         return self._settings_for_fingerprint(fingerprint)
 
@@ -516,8 +801,8 @@ class StrategyService:
         _, fingerprint = self._account()
         with self.store.transaction() as connection:
             row = connection.execute(
-                "SELECT * FROM strategy_account_preferences WHERE account_fingerprint=?",
-                (fingerprint,),
+                f"SELECT * FROM {self.settings_table} WHERE {self._settings_where('account_fingerprint=?')}",
+                self._settings_values((fingerprint,)),
             ).fetchone()
             current = self._settings_from_preference_row(row)
             mode = requested_mode if mode_supplied else current["limitOrderSubmissionMode"]
@@ -526,22 +811,54 @@ class StrategyService:
                 if thresholds_supplied
                 else current["jevScreeningThresholds"]
             )
-            connection.execute(
-                "INSERT INTO strategy_account_preferences(account_fingerprint, limit_order_submission_mode, "
-                "jev_min_structural_quality, jev_min_entry_suitability_probability, "
-                "jev_max_failure_risk_probability, updated_at) VALUES (?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT(account_fingerprint) DO UPDATE SET "
-                "limit_order_submission_mode=excluded.limit_order_submission_mode, "
-                "jev_min_structural_quality=excluded.jev_min_structural_quality, "
-                "jev_min_entry_suitability_probability=excluded.jev_min_entry_suitability_probability, "
-                "jev_max_failure_risk_probability=excluded.jev_max_failure_risk_probability, "
-                "updated_at=excluded.updated_at",
-                (
-                    fingerprint, mode, thresholds["minStructuralQuality"],
-                    thresholds["minEntrySuitabilityProbability"],
-                    thresholds["maxFailureRiskProbability"], self.clock(),
-                ),
-            )
+            if self.strategy_scope is None:
+                connection.execute(
+                    "INSERT INTO strategy_account_preferences(account_fingerprint, limit_order_submission_mode, "
+                    "jev_min_structural_quality, jev_min_entry_suitability_probability, "
+                    "jev_max_failure_risk_probability, updated_at) VALUES (?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(account_fingerprint) DO UPDATE SET "
+                    "limit_order_submission_mode=excluded.limit_order_submission_mode, "
+                    "jev_min_structural_quality=excluded.jev_min_structural_quality, "
+                    "jev_min_entry_suitability_probability=excluded.jev_min_entry_suitability_probability, "
+                    "jev_max_failure_risk_probability=excluded.jev_max_failure_risk_probability, "
+                    "updated_at=excluded.updated_at",
+                    (
+                        fingerprint, mode, thresholds["minStructuralQuality"],
+                        thresholds["minEntrySuitabilityProbability"],
+                        thresholds["maxFailureRiskProbability"], self.clock(),
+                    ),
+                )
+            else:
+                if not self._owned_authority_current(connection):
+                    raise APIError(
+                        409, "connection_version_changed",
+                        "The owned connection changed before preferences could be saved.",
+                    )
+                settings = {
+                    "limitOrderSubmissionMode": mode,
+                    "jevScreeningThresholds": thresholds,
+                }
+                connection.execute(
+                    "INSERT INTO multiuser_strategy_settings(user_id, connection_id, account_fingerprint, "
+                    "settings_json, preferences_json, limit_order_submission_mode, jev_min_structural_quality, "
+                    "jev_min_entry_suitability_probability, jev_max_failure_risk_probability, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(user_id, connection_id) DO UPDATE SET "
+                    "account_fingerprint=excluded.account_fingerprint, settings_json=excluded.settings_json, "
+                    "preferences_json=excluded.preferences_json, "
+                    "limit_order_submission_mode=excluded.limit_order_submission_mode, "
+                    "jev_min_structural_quality=excluded.jev_min_structural_quality, "
+                    "jev_min_entry_suitability_probability=excluded.jev_min_entry_suitability_probability, "
+                    "jev_max_failure_risk_probability=excluded.jev_max_failure_risk_probability, "
+                    "updated_at=excluded.updated_at",
+                    (
+                        self.strategy_scope.user_id, self.strategy_scope.connection_id, fingerprint,
+                        encode_json(settings), encode_json(thresholds), mode,
+                        thresholds["minStructuralQuality"],
+                        thresholds["minEntrySuitabilityProbability"],
+                        thresholds["maxFailureRiskProbability"], self.clock(),
+                    ),
+                )
         return {
             "limitOrderSubmissionMode": mode,
             "jevScreeningThresholds": thresholds,
@@ -598,8 +915,8 @@ class StrategyService:
     def _settings_for_fingerprint(self, fingerprint: str) -> dict[str, Any]:
         with self.store.connection() as connection:
             row = connection.execute(
-                "SELECT * FROM strategy_account_preferences WHERE account_fingerprint=?",
-                (fingerprint,),
+                f"SELECT * FROM {self.settings_table} WHERE {self._settings_where('account_fingerprint=?')}",
+                self._settings_values((fingerprint,)),
             ).fetchone()
         return self._settings_from_preference_row(row)
 
@@ -609,9 +926,9 @@ class StrategyService:
     def _limit_order_submission_mode(self, fingerprint: str) -> str:
         with self.store.connection() as connection:
             row = connection.execute(
-                "SELECT limit_order_submission_mode FROM strategy_account_preferences "
-                "WHERE account_fingerprint=?",
-                (fingerprint,),
+                f"SELECT limit_order_submission_mode FROM {self.settings_table} "
+                f"WHERE {self._settings_where('account_fingerprint=?')}",
+                self._settings_values((fingerprint,)),
             ).fetchone()
         if row is None:
             return "sequential"
@@ -626,16 +943,37 @@ class StrategyService:
     def _current_strategy(self, strategy_id: str) -> tuple[dict[str, Any], dict[str, Any], str]:
         if not _STRATEGY_ID.fullmatch(strategy_id):
             raise APIError(404, "strategy_not_found", "The strategy was not found.")
-        account, fingerprint = self._account()
-        with self.store.connection() as connection:
-            row = connection.execute(
-                "SELECT * FROM strategies WHERE strategy_id=?", (strategy_id,)
-            ).fetchone()
-        if row is None:
-            raise APIError(404, "strategy_not_found", "The strategy was not found.")
-        strategy = self._decode_row(row)
+        if self.strategy_scope is not None:
+            # Resolve the composite owner row before any private exchange call.
+            # A guessed or foreign strategy ID therefore has the same 404 and
+            # does not trigger upstream traffic.
+            with self.store.connection() as connection:
+                row = connection.execute(
+                    f"SELECT * FROM {self.strategy_table} WHERE "
+                    f"{self._strategy_where('strategy_id=? AND account_fingerprint=?')}",
+                    self._strategy_values((strategy_id, self.strategy_scope.account_fingerprint)),
+                ).fetchone()
+            if row is None:
+                raise APIError(404, "strategy_not_found", "The strategy was not found.")
+            strategy = self._decode_row(row)
+            account, fingerprint = self._account()
+        else:
+            account, fingerprint = self._account()
+            with self.store.connection() as connection:
+                row = connection.execute(
+                    f"SELECT * FROM {self.strategy_table} WHERE {self._strategy_where('strategy_id=?')}",
+                    self._strategy_values((strategy_id,)),
+                ).fetchone()
+            if row is None:
+                raise APIError(404, "strategy_not_found", "The strategy was not found.")
+            strategy = self._decode_row(row)
         if not hmac.compare_digest(strategy["accountFingerprint"], fingerprint):
             raise APIError(409, "account_changed", "This strategy belongs to a different OKX account.")
+        if self.strategy_scope is not None and (
+            strategy.get("credentialVersion") != self.strategy_scope.credential_version
+            or strategy.get("permissionVersion") != self.strategy_scope.permission_version
+        ):
+            raise APIError(409, "connection_version_changed", "The owned connection changed; recreate or review this strategy again.")
         self._expire_prepare(strategy)
         return strategy, account, fingerprint
 
@@ -687,11 +1025,18 @@ class StrategyService:
             "queueJsonRaw": raw_queue,
             "executionId": row["execution_id"],
             "executionLeaseUntil": row["execution_lease_until"],
+            "preSendAt": row["pre_send_at"] if "pre_send_at" in row.keys() else None,
             "replacementSourceId": row["replacement_source_id"],
             "leverageResults": decode_json(row["leverage_results_json"]),
             "failureReason": row["failure_reason"],
             "createdAt": row["created_at"],
             "updatedAt": row["updated_at"],
+            "credentialVersion": (
+                int(row["credential_version"]) if "credential_version" in row.keys() else None
+            ),
+            "permissionVersion": (
+                int(row["permission_version"]) if "permission_version" in row.keys() else None
+            ),
         }
 
     @staticmethod
@@ -744,6 +1089,9 @@ class StrategyService:
             and strategy["status"] != "APPLYING"
             and strategy["executionId"] is None
             and (lease_until is None or lease_until <= now)
+            and not unresolved_leverage_attempt(
+                strategy.get("preSendAt"), strategy.get("leverageResults"), strategy.get("orders")
+            )
         )
 
     @classmethod
@@ -753,6 +1101,7 @@ class StrategyService:
         strategy: dict[str, Any],
         fingerprint: str,
         now: float,
+        scope: OwnedStrategyScope | None = None,
     ) -> bool:
         if not cls._is_never_sent_record(strategy, fingerprint, now):
             return False
@@ -763,14 +1112,16 @@ class StrategyService:
         if metadata is not None and strategy.get("attemptStarted"):
             return False
         children, unsafe = cls._retry_children_in_connection(
-            connection, fingerprint, strategy["id"], strategy["contract"].get("instrumentId")
+            connection, fingerprint, strategy["id"], strategy["contract"].get("instrumentId"), scope
         )
         if unsafe or children:
             return False
+        table = "multiuser_strategies" if scope is not None else "strategies"
         active_replacement = connection.execute(
-            "SELECT 1 FROM strategies WHERE replacement_source_id=? AND account_fingerprint=? "
+            f"SELECT 1 FROM {table} WHERE "
+            f"{_strategy_scope_where(scope, 'replacement_source_id=? AND account_fingerprint=?')} "
             "AND status='APPLYING' LIMIT 1",
-            (strategy["id"], fingerprint),
+            _strategy_scope_values(scope, (strategy["id"], fingerprint)),
         ).fetchone()
         return active_replacement is None
 
@@ -898,6 +1249,7 @@ class StrategyService:
         strategy: dict[str, Any],
         fingerprint: str,
         now: float,
+        scope: OwnedStrategyScope | None = None,
     ) -> bool:
         lease_until = strategy.get("executionLeaseUntil")
         if lease_until is not None and (
@@ -954,20 +1306,23 @@ class StrategyService:
         if metadata is not None and strategy.get("attemptStarted"):
             return False
         children, unsafe = cls._retry_children_in_connection(
-            connection, fingerprint, strategy["id"], contract.get("instrumentId")
+            connection, fingerprint, strategy["id"], contract.get("instrumentId"), scope
         )
         if unsafe or children:
             return False
+        table = "multiuser_strategies" if scope is not None else "strategies"
         active_replacement = connection.execute(
-            "SELECT 1 FROM strategies WHERE replacement_source_id=? AND account_fingerprint=? "
+            f"SELECT 1 FROM {table} WHERE "
+            f"{_strategy_scope_where(scope, 'replacement_source_id=? AND account_fingerprint=?')} "
             "AND status='APPLYING' LIMIT 1",
-            (strategy["id"], fingerprint),
+            _strategy_scope_values(scope, (strategy["id"], fingerprint)),
         ).fetchone()
         if active_replacement is not None:
             return False
+        reservations = "multiuser_strategy_reservations" if scope is not None else "strategy_reservations"
         reservation = connection.execute(
-            "SELECT 1 FROM strategy_reservations WHERE strategy_id=? LIMIT 1",
-            (strategy["id"],),
+            f"SELECT 1 FROM {reservations} WHERE {_strategy_scope_where(scope, 'strategy_id=?')} LIMIT 1",
+            _strategy_scope_values(scope, (strategy["id"],)),
         ).fetchone()
         return reservation is None
 
@@ -1026,13 +1381,15 @@ class StrategyService:
 
     @classmethod
     def _retry_children_in_connection(
-        cls, connection: Any, fingerprint: str, source_id: str, instrument_id: Any
+        cls, connection: Any, fingerprint: str, source_id: str, instrument_id: Any,
+        scope: OwnedStrategyScope | None = None,
     ) -> tuple[list[dict[str, Any]], bool]:
         """Read retry lineage locally after narrowing the scan to one account."""
+        table = "multiuser_strategies" if scope is not None else "strategies"
         rows = connection.execute(
-            "SELECT strategy_id, status, attempt_started, contract_json, preview_hash FROM strategies "
-            "WHERE account_fingerprint=?",
-            (fingerprint,),
+            f"SELECT strategy_id, status, attempt_started, contract_json, preview_hash FROM {table} "
+            f"WHERE {_strategy_scope_where(scope, 'account_fingerprint=?')}",
+            _strategy_scope_values(scope, (fingerprint,)),
         ).fetchall()
         children: list[dict[str, Any]] = []
         unsafe = False
@@ -1077,17 +1434,27 @@ class StrategyService:
         return children, unsafe
 
     @staticmethod
-    def _delete_strategy_with_dependents(connection: Any, strategy_id: str) -> None:
-        connection.execute("DELETE FROM strategy_reservations WHERE strategy_id=?", (strategy_id,))
-        connection.execute("DELETE FROM strategy_sync_state WHERE strategy_id=?", (strategy_id,))
-        connection.execute("DELETE FROM strategies WHERE strategy_id=?", (strategy_id,))
+    def _delete_strategy_with_dependents(
+        connection: Any, strategy_id: str, scope: OwnedStrategyScope | None = None
+    ) -> None:
+        reservations = "multiuser_strategy_reservations" if scope is not None else "strategy_reservations"
+        sync = "multiuser_strategy_sync_state" if scope is not None else "strategy_sync_state"
+        strategies = "multiuser_strategies" if scope is not None else "strategies"
+        predicate = _strategy_scope_where(scope, "strategy_id=?")
+        values = _strategy_scope_values(scope, (strategy_id,))
+        connection.execute(f"DELETE FROM {reservations} WHERE {predicate}", values)
+        connection.execute(f"DELETE FROM {sync} WHERE {predicate}", values)
+        connection.execute(f"DELETE FROM {strategies} WHERE {predicate}", values)
 
     @classmethod
     def _cleanup_replacement_in_connection(
-        cls, connection: Any, replacement_id: str, now: float
+        cls, connection: Any, replacement_id: str, now: float,
+        scope: OwnedStrategyScope | None = None,
     ) -> bool:
+        table = "multiuser_strategies" if scope is not None else "strategies"
         replacement_row = connection.execute(
-            "SELECT * FROM strategies WHERE strategy_id=?", (replacement_id,)
+            f"SELECT * FROM {table} WHERE {_strategy_scope_where(scope, 'strategy_id=?')}",
+            _strategy_scope_values(scope, (replacement_id,)),
         ).fetchone()
         if replacement_row is None:
             return False
@@ -1101,17 +1468,18 @@ class StrategyService:
         ):
             return False
         source_row = connection.execute(
-            "SELECT * FROM strategies WHERE strategy_id=? AND account_fingerprint=?",
-            (source_id, replacement["accountFingerprint"]),
+            f"SELECT * FROM {table} WHERE "
+            f"{_strategy_scope_where(scope, 'strategy_id=? AND account_fingerprint=?')}",
+            _strategy_scope_values(scope, (source_id, replacement["accountFingerprint"])),
         ).fetchone()
         if source_row is None:
             return False
         source = cls._decode_row(source_row)
         if not cls._eligible_never_sent_record(
-            connection, source, replacement["accountFingerprint"], now
+            connection, source, replacement["accountFingerprint"], now, scope
         ):
             return False
-        cls._delete_strategy_with_dependents(connection, source_id)
+        cls._delete_strategy_with_dependents(connection, source_id, scope)
         return True
 
     def _require_eligible_replacement_source(
@@ -1122,11 +1490,12 @@ class StrategyService:
         now = self.clock()
         with self.store.connection() as connection:
             row = connection.execute(
-                "SELECT * FROM strategies WHERE strategy_id=? AND account_fingerprint=?",
-                (replacement_source_id, fingerprint),
+                f"SELECT * FROM {self.strategy_table} WHERE "
+                f"{self._strategy_where('strategy_id=? AND account_fingerprint=?')}",
+                self._strategy_values((replacement_source_id, fingerprint)),
             ).fetchone()
             if row is None or not self._eligible_never_sent_record(
-                connection, self._decode_row(row), fingerprint, now
+                connection, self._decode_row(row), fingerprint, now, self.strategy_scope
             ):
                 raise APIError(
                     409,
@@ -1149,7 +1518,8 @@ class StrategyService:
         account, fingerprint = self._account(account_snapshot)
         with self.store.connection() as connection:
             row = connection.execute(
-                "SELECT * FROM strategies WHERE strategy_id=?", (source_id,)
+                f"SELECT * FROM {self.strategy_table} WHERE {self._strategy_where('strategy_id=?')}",
+                self._strategy_values((source_id,)),
             ).fetchone()
         if row is None:
             raise APIError(404, "strategy_not_found", "The strategy was not found.")
@@ -1165,23 +1535,25 @@ class StrategyService:
         now = self.clock()
         with self.store.connection() as connection:
             current_row = connection.execute(
-                "SELECT * FROM strategies WHERE strategy_id=? AND account_fingerprint=?",
-                (source_id, fingerprint),
+                f"SELECT * FROM {self.strategy_table} WHERE "
+                f"{self._strategy_where('strategy_id=? AND account_fingerprint=?')}",
+                self._strategy_values((source_id, fingerprint)),
             ).fetchone()
             if current_row is None:
                 raise APIError(404, "strategy_not_found", "The strategy was not found.")
             source = self._decode_row(current_row)
             children, unsafe_lineage = self._retry_children_in_connection(
-                connection, fingerprint, source_id, instrument_id
+                connection, fingerprint, source_id, instrument_id, self.strategy_scope
             )
             ordinary_replacement = connection.execute(
-                "SELECT 1 FROM strategies WHERE replacement_source_id=? AND account_fingerprint=? LIMIT 1",
-                (source_id, fingerprint),
+                f"SELECT 1 FROM {self.strategy_table} WHERE "
+                f"{self._strategy_where('replacement_source_id=? AND account_fingerprint=?')} LIMIT 1",
+                self._strategy_values((source_id, fingerprint)),
             ).fetchone()
             reservations = connection.execute(
-                "SELECT strategy_id, position_mode, side_scope FROM strategy_reservations "
-                "WHERE account_fingerprint=? AND instrument_id=?",
-                (fingerprint, instrument_id),
+                f"SELECT strategy_id, position_mode, side_scope FROM {self.reservations_table} "
+                f"WHERE {self._strategy_where('account_fingerprint=? AND instrument_id=?')}",
+                self._strategy_values((fingerprint, instrument_id)),
             ).fetchall()
 
         revision = _retry_source_revision(source, self.owner.settings.session_signing_key)
@@ -1378,8 +1750,9 @@ class StrategyService:
         prepared_orders: list[dict[str, Any]] | None = None,
     ) -> tuple[dict[str, Any], list[tuple[int, dict[str, Any], dict[str, Any]]]]:
         row = connection.execute(
-            "SELECT * FROM strategies WHERE strategy_id=? AND account_fingerprint=?",
-            (source_id, fingerprint),
+            f"SELECT * FROM {self.strategy_table} WHERE "
+            f"{self._strategy_where('strategy_id=? AND account_fingerprint=?')}",
+            self._strategy_values((source_id, fingerprint)),
         ).fetchone()
         if row is None:
             raise self._retry_request_error(
@@ -1432,16 +1805,17 @@ class StrategyService:
             )
 
         children, unsafe_lineage = self._retry_children_in_connection(
-            connection, fingerprint, source_id, instrument_id
+            connection, fingerprint, source_id, instrument_id, self.strategy_scope
         )
         ordinary_replacement = connection.execute(
-            "SELECT 1 FROM strategies WHERE replacement_source_id=? AND account_fingerprint=? LIMIT 1",
-            (source_id, fingerprint),
+            f"SELECT 1 FROM {self.strategy_table} WHERE "
+            f"{self._strategy_where('replacement_source_id=? AND account_fingerprint=?')} LIMIT 1",
+            self._strategy_values((source_id, fingerprint)),
         ).fetchone()
         reservations = connection.execute(
-            "SELECT strategy_id, position_mode, side_scope FROM strategy_reservations "
-            "WHERE account_fingerprint=? AND instrument_id=?",
-            (fingerprint, instrument_id),
+            f"SELECT strategy_id, position_mode, side_scope FROM {self.reservations_table} "
+            f"WHERE {self._strategy_where('account_fingerprint=? AND instrument_id=?')}",
+            self._strategy_values((fingerprint, instrument_id)),
         ).fetchall()
         source_scope = self._persisted_scope(source, require_prepared_mode=False)
         if unsafe_lineage or ordinary_replacement is not None or not source_scope.valid:
@@ -1846,7 +2220,7 @@ class StrategyService:
         replay_id: str | None = None
         with self.store.transaction() as connection:
             children, _ = self._retry_children_in_connection(
-                connection, context["fingerprint"], source_id, context["instrumentId"]
+                connection, context["fingerprint"], source_id, context["instrumentId"], self.strategy_scope
             )
             existing = self._find_retry_request(children, request_id)
             if existing is not None:
@@ -1868,22 +2242,35 @@ class StrategyService:
                     exclude_child_id=None,
                     now=now,
                 )
-                connection.execute(
-                    "INSERT INTO strategies(strategy_id, account_fingerprint, status, contract_json, snapshot_json, "
-                    "orders_json, results_json, preview_hash, replacement_source_id, submission_mode, created_at, updated_at) "
-                    "VALUES (?, ?, 'DRAFT', ?, ?, ?, ?, ?, NULL, NULL, ?, ?)",
-                    (
-                        strategy_id,
-                        context["fingerprint"],
-                        encode_json(contract),
-                        encode_json(snapshot),
-                        encode_json(child_orders),
-                        encode_json([{**row, "status": "not_submitted", "filledContracts": "0"} for row in child_orders]),
-                        preview["previewHash"],
-                        now,
-                        now,
-                    ),
-                )
+                child_results = encode_json([
+                    {**row, "status": "not_submitted", "filledContracts": "0"}
+                    for row in child_orders
+                ])
+                if self.strategy_scope is None:
+                    connection.execute(
+                        "INSERT INTO strategies(strategy_id, account_fingerprint, status, contract_json, snapshot_json, "
+                        "orders_json, results_json, preview_hash, replacement_source_id, submission_mode, created_at, updated_at) "
+                        "VALUES (?, ?, 'DRAFT', ?, ?, ?, ?, ?, NULL, NULL, ?, ?)",
+                        (
+                            strategy_id, context["fingerprint"], encode_json(contract), encode_json(snapshot),
+                            encode_json(child_orders), child_results, preview["previewHash"], now, now,
+                        ),
+                    )
+                else:
+                    scope = self.strategy_scope
+                    self._assert_owned_authority(connection)
+                    connection.execute(
+                        "INSERT INTO multiuser_strategies(user_id, connection_id, strategy_id, account_fingerprint, "
+                        "status, contract_json, snapshot_json, orders_json, results_json, preview_hash, "
+                        "connection_version, credential_version, permission_version, created_at, updated_at) "
+                        "VALUES (?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            scope.user_id, scope.connection_id, strategy_id, context["fingerprint"],
+                            encode_json(contract), encode_json(snapshot), encode_json(child_orders), child_results,
+                            preview["previewHash"], scope.credential_version, scope.credential_version,
+                            scope.permission_version, now, now,
+                        ),
+                    )
         if replay_id is not None:
             return self._retry_draft_response(replay_id)
         response = self._retry_draft_response(strategy_id)
@@ -1902,10 +2289,10 @@ class StrategyService:
             return
         with self.store.transaction() as connection:
             connection.execute(
-                "UPDATE strategies SET status='DRAFT', confirmation_hash=NULL, prepared_expires_at=NULL, "
+                f"UPDATE {self.strategy_table} SET status='DRAFT', confirmation_hash=NULL, prepared_expires_at=NULL, "
                 "prepared_json=NULL, updated_at=? WHERE strategy_id=? AND status='PREPARED' "
-                "AND prepared_expires_at<=? AND attempt_started=0",
-                (self.clock(), strategy["id"], self.clock()),
+                f"AND prepared_expires_at<=? AND attempt_started=0 AND {self._strategy_where('1=1')}",
+                (*((self.clock(), strategy["id"], self.clock())), *self._strategy_values(())),
             )
         strategy["status"] = "DRAFT"
         strategy["confirmationHash"] = None
@@ -2080,8 +2467,9 @@ class StrategyService:
 
     def _ensure_persisted_new_order_cap(self, connection: Any, strategy: dict[str, Any]) -> None:
         row = connection.execute(
-            "SELECT * FROM strategies WHERE strategy_id=? AND account_fingerprint=?",
-            (strategy["id"], strategy["accountFingerprint"]),
+            f"SELECT * FROM {self.strategy_table} WHERE "
+            f"{self._strategy_where('strategy_id=? AND account_fingerprint=?')}",
+            self._strategy_values((strategy["id"], strategy["accountFingerprint"])),
         ).fetchone()
         if row is None:
             return
@@ -2505,8 +2893,9 @@ class StrategyService:
         if metadata is None:
             return None
         current_row = connection.execute(
-            "SELECT * FROM strategies WHERE strategy_id=? AND account_fingerprint=?",
-            (strategy["id"], strategy["accountFingerprint"]),
+            f"SELECT * FROM {self.strategy_table} WHERE "
+            f"{self._strategy_where('strategy_id=? AND account_fingerprint=?')}",
+            self._strategy_values((strategy["id"], strategy["accountFingerprint"])),
         ).fetchone()
         if current_row is None:
             raise APIError(409, "retry_source_unavailable", "The retry child is no longer available.")
@@ -2536,6 +2925,7 @@ class StrategyService:
             strategy["accountFingerprint"],
             metadata["sourceStrategyId"],
             strategy["contract"].get("instrumentId"),
+            self.strategy_scope,
         )
         if unsafe or any(
             child["id"] != strategy["id"] and child["retryRequestId"] == metadata["retryRequestId"]
@@ -2612,8 +3002,9 @@ class StrategyService:
         with self.store.transaction() as connection:
             if candidate_draft is not None:
                 current_row = connection.execute(
-                    "SELECT * FROM strategies WHERE strategy_id=? AND account_fingerprint=?",
-                    (candidate_draft_id, account_fingerprint),
+                    f"SELECT * FROM {self.strategy_table} WHERE "
+                    f"{self._strategy_where('strategy_id=? AND account_fingerprint=?')}" + self._for_update(),
+                    self._strategy_values((candidate_draft_id, account_fingerprint)),
                 ).fetchone()
                 if current_row is None:
                     raise APIError(409, "candidate_not_materializable", "The saved candidate draft changed before saving.")
@@ -2622,14 +3013,19 @@ class StrategyService:
                 current_generation = current_candidate["snapshot"].get("aiGeneration")
                 if encode_json(current_generation) != encode_json(materialized_generation):
                     raise APIError(409, "candidate_selection_mismatch", "The saved candidates changed before saving.")
+                if not self._owned_authority_current(connection):
+                    raise APIError(
+                        409, "connection_version_changed",
+                        "The owned connection changed before the candidate could be saved.",
+                    )
                 changed = connection.execute(
-                    "UPDATE strategies SET status='DRAFT', contract_json=?, snapshot_json=?, orders_json=?, "
+                    f"UPDATE {self.strategy_table} SET status='DRAFT', contract_json=?, snapshot_json=?, orders_json=?, "
                     "results_json=?, preview_hash=?, confirmation_hash=NULL, prepared_expires_at=NULL, "
                     "prepared_json=NULL, attempt_started=0, batch_attempted=0, order_placement_attempted=0, "
                     "queue_json=NULL, execution_id=NULL, execution_lease_until=NULL, replacement_source_id=NULL, "
                     "failure_reason=NULL, leverage_results_json='[]', updated_at=? "
-                    "WHERE strategy_id=? AND account_fingerprint=? AND status='DRAFT' AND attempt_started=0",
-                    (
+                    f"WHERE {self._strategy_where('strategy_id=? AND account_fingerprint=? AND status=\'DRAFT\' AND attempt_started=0')}",
+                    self._strategy_values((
                         encode_json(contract),
                         encode_json(snapshot),
                         encode_json(orders),
@@ -2638,14 +3034,15 @@ class StrategyService:
                         now,
                         strategy_id,
                         account_fingerprint,
-                    ),
+                    )),
                 ).rowcount
                 if changed != 1:
                     raise APIError(409, "candidate_not_materializable", "The saved candidate draft changed before saving.")
             elif replacement_source_id is not None:
                 source_row = connection.execute(
-                    "SELECT * FROM strategies WHERE strategy_id=? AND account_fingerprint=?",
-                    (replacement_source_id, account_fingerprint),
+                    f"SELECT * FROM {self.strategy_table} WHERE "
+                    f"{self._strategy_where('strategy_id=? AND account_fingerprint=?')}",
+                    self._strategy_values((replacement_source_id, account_fingerprint)),
                 ).fetchone()
                 source = None if source_row is None else self._decode_row(source_row)
                 if source is not None and self.automatic.is_candidate_stage(source):
@@ -2654,7 +3051,7 @@ class StrategyService:
                         "Candidate drafts cannot be used as replacement sources.",
                     )
                 if source_row is None or not self._eligible_never_sent_record(
-                    connection, source, account_fingerprint, now
+                    connection, source, account_fingerprint, now, self.strategy_scope
                 ):
                     raise APIError(
                         409,
@@ -2662,17 +3059,34 @@ class StrategyService:
                         "The never-sent source is no longer eligible for replacement.",
                     )
             if candidate_draft is None:
-                connection.execute(
-                    "INSERT INTO strategies(strategy_id, account_fingerprint, status, contract_json, snapshot_json, "
-                    "orders_json, results_json, preview_hash, replacement_source_id, submission_mode, "
-                    "created_at, updated_at) "
-                    "VALUES (?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
-                    (
-                        strategy_id, account_fingerprint, encode_json(contract), encode_json(snapshot),
-                        encode_json(orders), encode_json([{**row, "status": "not_submitted", "filledContracts": "0"} for row in orders]),
-                        preview["previewHash"], replacement_source_id, now, now,
-                    ),
-                )
+                results_json = encode_json([{**row, "status": "not_submitted", "filledContracts": "0"} for row in orders])
+                if self.strategy_scope is None:
+                    connection.execute(
+                        "INSERT INTO strategies(strategy_id, account_fingerprint, status, contract_json, snapshot_json, "
+                        "orders_json, results_json, preview_hash, replacement_source_id, submission_mode, "
+                        "created_at, updated_at) "
+                        "VALUES (?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
+                        (
+                            strategy_id, account_fingerprint, encode_json(contract), encode_json(snapshot),
+                            encode_json(orders), results_json, preview["previewHash"], replacement_source_id, now, now,
+                        ),
+                    )
+                else:
+                    self._assert_owned_authority(connection)
+                    connection.execute(
+                        "INSERT INTO multiuser_strategies(user_id, connection_id, strategy_id, account_fingerprint, "
+                        "status, contract_json, snapshot_json, orders_json, results_json, preview_hash, "
+                        "replacement_source_id, submission_mode, connection_version, credential_version, "
+                        "permission_version, created_at, updated_at) "
+                        "VALUES (?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)",
+                        (
+                            self.strategy_scope.user_id, self.strategy_scope.connection_id, strategy_id,
+                            account_fingerprint, encode_json(contract), encode_json(snapshot), encode_json(orders),
+                            results_json, preview["previewHash"], replacement_source_id,
+                            self.strategy_scope.credential_version, self.strategy_scope.credential_version,
+                            self.strategy_scope.permission_version, now, now,
+                        ),
+                    )
         result = {
             "id": strategy_id,
             "status": "DRAFT",
@@ -2905,6 +3319,13 @@ class StrategyService:
         prepared["orders"] = prepared_orders
         prepared["_positionMode"] = preview["_internal"]["positionMode"]
         with self.store.transaction() as connection:
+            locked = connection.execute(
+                f"SELECT strategy_id FROM {self.strategy_table} WHERE "
+                f"{self._strategy_where('strategy_id=?')}" + self._for_update(),
+                self._strategy_values((strategy_id,)),
+            ).fetchone()
+            if locked is None:
+                raise APIError(404, "strategy_not_found", "The strategy was not found.")
             self._validate_retry_child_in_connection(
                 connection,
                 strategy,
@@ -2912,9 +3333,9 @@ class StrategyService:
                 expected_status="DRAFT",
             )
             preference = connection.execute(
-                "SELECT limit_order_submission_mode FROM strategy_account_preferences "
-                "WHERE account_fingerprint=?",
-                (fingerprint,),
+                f"SELECT limit_order_submission_mode FROM {self.settings_table} "
+                f"WHERE {self._settings_where('account_fingerprint=?')}",
+                self._settings_values((fingerprint,)),
             ).fetchone()
             submission_mode = "sequential" if preference is None else preference["limit_order_submission_mode"]
             if submission_mode not in ("sequential", "batch"):
@@ -2923,14 +3344,15 @@ class StrategyService:
                     "The saved strategy submission preference is invalid.",
                 )
             prepared["submissionMode"] = submission_mode
+            self._assert_owned_authority(connection)
             changed = connection.execute(
-                "UPDATE strategies SET status='PREPARED', confirmation_hash=?, prepared_expires_at=?, "
+                f"UPDATE {self.strategy_table} SET status='PREPARED', confirmation_hash=?, prepared_expires_at=?, "
                 "prepared_json=?, submission_mode=?, queue_json=NULL, updated_at=? "
-                "WHERE strategy_id=? AND status='DRAFT' AND attempt_started=0",
-                (
+                f"WHERE {self._strategy_where('strategy_id=? AND status=\'DRAFT\' AND attempt_started=0')}",
+                self._strategy_values((
                     token_digest(confirmation, self.owner.settings.session_signing_key),
                     expires_at, encode_json(prepared), submission_mode, self.clock(), strategy_id,
-                ),
+                )),
             ).rowcount
         if changed != 1:
             raise APIError(409, "strategy_state_changed", "The strategy changed; reload it and prepare again.")
@@ -2972,8 +3394,27 @@ class StrategyService:
             raise APIError(403, "invalid_confirmation", "The confirmation token is invalid.")
         execution_id = secrets.token_urlsafe(24)
         now = self.clock()
+        lease_fence: int | None = None
         try:
             with self.store.transaction() as connection:
+                if self.strategy_scope is not None:
+                    self._assert_owned_authority(connection)
+                    now = self.clock()
+                    lease_fence = self._claim_owned_connection_lease(
+                        connection, strategy_id=strategy_id, lease_owner=execution_id, now=now
+                    )
+                    if lease_fence is None:
+                        raise APIError(
+                            409, "connection_busy",
+                            "An earlier owned exchange operation must finish reconciliation first.",
+                        )
+                locked = connection.execute(
+                    f"SELECT strategy_id FROM {self.strategy_table} WHERE "
+                    f"{self._strategy_where('strategy_id=?')}" + self._for_update(),
+                    self._strategy_values((strategy_id,)),
+                ).fetchone()
+                if locked is None:
+                    raise APIError(404, "strategy_not_found", "The strategy was not found.")
                 self._ensure_persisted_new_order_cap(connection, strategy)
                 persisted_prepared = strategy.get("prepared")
                 self._validate_retry_child_in_connection(
@@ -2990,34 +3431,103 @@ class StrategyService:
                 replacement_source_id = strategy["replacementSourceId"]
                 if replacement_source_id is not None:
                     source_row = connection.execute(
-                        "SELECT * FROM strategies WHERE strategy_id=? AND account_fingerprint=?",
-                        (replacement_source_id, strategy["accountFingerprint"]),
+                        f"SELECT * FROM {self.strategy_table} WHERE "
+                        f"{self._strategy_where('strategy_id=? AND account_fingerprint=?')}",
+                        self._strategy_values((replacement_source_id, strategy["accountFingerprint"])),
                     ).fetchone()
                     if source_row is None or not self._eligible_never_sent_record(
                         connection,
                         self._decode_row(source_row),
                         strategy["accountFingerprint"],
                         now,
+                        self.strategy_scope,
                     ):
                         raise APIError(
                             409,
                             "replacement_source_unavailable",
                             "The never-sent source is no longer eligible for replacement.",
                         )
-                changed = connection.execute(
-                    "UPDATE strategies SET status='APPLYING', attempt_started=1, confirmation_hash=NULL, "
-                    "execution_id=?, execution_lease_until=?, updated_at=? "
-                    "WHERE strategy_id=? AND status='PREPARED' AND attempt_started=0 "
-                    "AND confirmation_hash=? AND prepared_expires_at>?",
-                    (
-                        execution_id, now + _EXECUTION_LEASE_SECONDS, now,
-                        strategy_id, presented, now,
-                    ),
-                ).rowcount
+                if not self._owned_authority_current(connection):
+                    if lease_fence is not None:
+                        self._release_owned_connection_lease(
+                            connection, strategy_id=strategy_id, lease_owner=execution_id,
+                            fence=lease_fence, now=self.clock(),
+                        )
+                    return None
+                if lease_fence is not None and not self._claim_owned_strategy_claim(
+                    connection, strategy_id=strategy_id, lease_owner=execution_id,
+                    fence=lease_fence, now=self.clock(),
+                ):
+                    self._release_owned_connection_lease(
+                        connection, strategy_id=strategy_id, lease_owner=execution_id,
+                        fence=lease_fence, now=self.clock(),
+                    )
+                    return None
+                if not self._owned_authority_current(connection):
+                    if lease_fence is not None:
+                        self._release_owned_connection_lease(
+                            connection, strategy_id=strategy_id, lease_owner=execution_id,
+                            fence=lease_fence, now=self.clock(),
+                        )
+                    return None
+                now = self.clock()
+                if lease_fence is not None:
+                    renewed_until = now + _EXECUTION_LEASE_SECONDS
+                    renewed = connection.execute(
+                        "UPDATE multiuser_connection_leases SET lease_until=?, updated_at=? "
+                        "WHERE user_id=? AND connection_id=? AND lease_owner=? AND fence=? AND lease_until>?",
+                        (renewed_until, now, self.strategy_scope.user_id, self.strategy_scope.connection_id,
+                         execution_id, lease_fence, now),
+                    ).rowcount
+                    if renewed != 1:
+                        self._release_owned_connection_lease(
+                            connection, strategy_id=strategy_id, lease_owner=execution_id,
+                            fence=lease_fence, now=now,
+                        )
+                        return None
+                    connection.execute(
+                        "UPDATE multiuser_strategy_claims SET lease_until=?, updated_at=? "
+                        "WHERE user_id=? AND connection_id=? AND strategy_id=? AND lease_owner=? AND fence=?",
+                        (renewed_until, now, self.strategy_scope.user_id, self.strategy_scope.connection_id,
+                         strategy_id, execution_id, lease_fence),
+                    )
+                if self.strategy_scope is None:
+                    changed = connection.execute(
+                        f"UPDATE {self.strategy_table} SET status='APPLYING', attempt_started=1, confirmation_hash=NULL, "
+                        "execution_id=?, execution_lease_until=?, updated_at=? "
+                        f"WHERE {self._strategy_where('strategy_id=? AND status=\'PREPARED\' AND attempt_started=0 AND confirmation_hash=? AND prepared_expires_at>?')}",
+                        self._strategy_values((
+                            execution_id, now + _EXECUTION_LEASE_SECONDS, now,
+                            strategy_id, presented, now,
+                        )),
+                    ).rowcount
+                else:
+                    changed = connection.execute(
+                        f"UPDATE {self.strategy_table} SET status='APPLYING', attempt_started=1, confirmation_hash=NULL, "
+                        "execution_id=?, execution_lease_until=?, lease_owner=?, lease_fence=?, lease_until=?, "
+                        "updated_at=? "
+                        f"WHERE {self._strategy_where('strategy_id=? AND status=\'PREPARED\' AND attempt_started=0 AND confirmation_hash=? AND prepared_expires_at>?')}",
+                        self._strategy_values((
+                            execution_id, now + _EXECUTION_LEASE_SECONDS, execution_id, lease_fence,
+                            now + _EXECUTION_LEASE_SECONDS, now, strategy_id, presented, now,
+                        )),
+                    ).rowcount
                 if changed != 1:
+                    if lease_fence is not None:
+                        self._release_owned_connection_lease(
+                            connection, strategy_id=strategy_id, lease_owner=execution_id,
+                            fence=lease_fence, now=now,
+                        )
                     return None
                 self._claim_reservation_in_connection(connection, strategy, scope, now)
-        except sqlite3.IntegrityError:
+                if self.strategy_scope is not None:
+                    self._owned_strategy_event(
+                        connection, strategy_id=strategy_id,
+                        event_type="strategy_execution_claimed",
+                        payload={"fence": lease_fence}, now=now,
+                    )
+                    self._assert_owned_authority(connection)
+        except (sqlite3.IntegrityError, IdentityStoreConflict):
             raise APIError(
                 409, "instrument_apply_in_progress",
                 "Another strategy is applying or reconciling this account and instrument.",
@@ -3047,8 +3557,27 @@ class StrategyService:
         now = self.clock()
         queue = new_queue(enqueued_at=now, total_count=len(orders), preview_hash=preview_hash)
         queued_results = initial_results(orders)
+        queue_fence: int | None = None
         try:
             with self.store.transaction() as connection:
+                if self.strategy_scope is not None:
+                    self._assert_owned_authority(connection)
+                    queue_fence = self._allocate_owned_queue_fence(
+                        connection, strategy_id=strategy_id, now=self.clock()
+                    )
+                    if queue_fence is None:
+                        raise APIError(
+                            409, "connection_busy",
+                            "An earlier owned exchange operation must finish reconciliation first.",
+                        )
+                locked = connection.execute(
+                    f"SELECT strategy_id FROM {self.strategy_table} WHERE "
+                    f"{self._strategy_where('strategy_id=?')}" + self._for_update(),
+                    self._strategy_values((strategy_id,)),
+                ).fetchone()
+                if locked is None:
+                    raise APIError(404, "strategy_not_found", "The strategy was not found.")
+                now = self.clock()
                 self._ensure_persisted_new_order_cap(connection, strategy)
                 self._validate_retry_child_in_connection(
                     connection,
@@ -3060,46 +3589,152 @@ class StrategyService:
                 replacement_source_id = strategy["replacementSourceId"]
                 if replacement_source_id is not None:
                     source_row = connection.execute(
-                        "SELECT * FROM strategies WHERE strategy_id=? AND account_fingerprint=?",
-                        (replacement_source_id, strategy["accountFingerprint"]),
+                        f"SELECT * FROM {self.strategy_table} WHERE "
+                        f"{self._strategy_where('strategy_id=? AND account_fingerprint=?')}",
+                        self._strategy_values((replacement_source_id, strategy["accountFingerprint"])),
                     ).fetchone()
                     if source_row is None or not self._eligible_never_sent_record(
-                        connection, self._decode_row(source_row), strategy["accountFingerprint"], now
+                        connection, self._decode_row(source_row), strategy["accountFingerprint"], now,
+                        self.strategy_scope,
                     ):
                         raise APIError(
                             409,
                             "replacement_source_unavailable",
                             "The never-sent source is no longer eligible for replacement.",
                         )
+                if self.strategy_scope is not None:
+                    if queue_fence is None or not self._record_owned_queue_claim(
+                        connection, strategy_id=strategy_id, fence=queue_fence,
+                        now=self.clock(),
+                    ):
+                        return False
+                    self._assert_owned_authority(connection)
+                else:
+                    self._assert_owned_authority(connection)
+                # The strategy row and owner connection are now locked. Give a
+                # confirmed queue its deadline from this final authority sample,
+                # and never use a timestamp captured before a database wait.
+                now = self.clock()
+                queue = new_queue(enqueued_at=now, total_count=len(orders), preview_hash=preview_hash)
+                queued_results = initial_results(orders)
                 changed = connection.execute(
-                    "UPDATE strategies SET status='APPLYING', attempt_started=1, confirmation_hash=NULL, "
+                    f"UPDATE {self.strategy_table} SET status='APPLYING', attempt_started=1, confirmation_hash=NULL, "
                     "submission_mode='sequential', order_placement_attempted=0, queue_json=?, results_json=?, "
                     "execution_id=NULL, execution_lease_until=NULL, updated_at=? "
-                    "WHERE strategy_id=? AND status='PREPARED' AND attempt_started=0 "
-                    "AND submission_mode='sequential' AND confirmation_hash=? AND prepared_expires_at>?",
-                    (
+                    f"WHERE {self._strategy_where('strategy_id=? AND status=\'PREPARED\' AND attempt_started=0 AND submission_mode=\'sequential\' AND confirmation_hash=? AND prepared_expires_at>?')}",
+                    self._strategy_values((
                         encode_json(queue), encode_json(queued_results), now,
                         strategy_id, presented, now,
-                    ),
+                    )),
                 ).rowcount
                 if changed != 1:
                     return False
                 self._claim_reservation_in_connection(connection, strategy, scope, now)
-        except sqlite3.IntegrityError:
+                if self.strategy_scope is not None:
+                    scoped = self.strategy_scope
+                    self._owned_strategy_event(
+                        connection, strategy_id=strategy_id,
+                        event_type="strategy_queue_accepted",
+                        payload={"fence": queue_fence, "previewHash": preview_hash}, now=now,
+                    )
+                    self._assert_owned_authority(connection)
+                    now = self.clock()
+                    saved = connection.execute(
+                        "UPDATE multiuser_strategies SET lease_owner=NULL, lease_fence=?, lease_until=NULL, "
+                        "worker_scope='accepted_queue', updated_at=? "
+                        "WHERE user_id=? AND connection_id=? AND strategy_id=? AND status='APPLYING' "
+                        "AND attempt_started=1",
+                        (queue_fence, now, scoped.user_id, scoped.connection_id, strategy_id),
+                    ).rowcount
+                    if saved != 1:
+                        raise APIError(409, "strategy_state_changed", "The queued strategy changed; reload it and try again.")
+        except (sqlite3.IntegrityError, IdentityStoreConflict):
             raise APIError(
                 409, "instrument_apply_in_progress",
                 "Another strategy is applying or reconciling this account and instrument.",
             ) from None
         return True
 
-    def _renew_execution(self, strategy_id: str, execution_id: str) -> bool:
+    def _renew_execution(
+        self, strategy_id: str, execution_id: str, *, target: dict[str, Any] | None = None
+    ) -> bool:
+        if self.strategy_scope is not None:
+            scope = self.strategy_scope
+            suffix = self._for_update()
+            with self.store.transaction() as connection:
+                owned = connection.execute(
+                    "SELECT status, credential_version, permission_version, remote_identity_digest, "
+                    "product_capabilities_json FROM exchange_connections WHERE user_id=? AND connection_id=?" + suffix,
+                    (scope.user_id, scope.connection_id),
+                ).fetchone()
+                lease = connection.execute(
+                    "SELECT lease_owner, fence, lease_until FROM multiuser_connection_leases "
+                    "WHERE user_id=? AND connection_id=?" + suffix,
+                    (scope.user_id, scope.connection_id),
+                ).fetchone()
+                strategy = connection.execute(
+                    "SELECT lease_fence, execution_id, execution_lease_until, status "
+                    "FROM multiuser_strategies "
+                    "WHERE user_id=? AND connection_id=? AND strategy_id=?" + suffix,
+                    (scope.user_id, scope.connection_id, strategy_id),
+                ).fetchone()
+                if not self._owned_authority_current(connection):
+                    return False
+                now = self.clock()
+                capabilities = [] if owned is None else decode_json(owned["product_capabilities_json"] or "[]")
+                if (
+                    owned is None or lease is None or strategy is None
+                    or owned["status"] != "ACTIVE"
+                    or int(owned["credential_version"]) != scope.credential_version
+                    or int(owned["permission_version"]) != scope.permission_version
+                    or not hmac.compare_digest(owned["remote_identity_digest"], scope.remote_identity_digest)
+                    or not isinstance(capabilities, list) or "trade" not in capabilities
+                    or lease["lease_owner"] != execution_id
+                    or strategy["execution_id"] != execution_id
+                    or strategy["status"] != "APPLYING"
+                    or int(lease["fence"]) != int(strategy["lease_fence"] or 0)
+                    or lease["lease_until"] is None or float(lease["lease_until"]) <= now
+                    or strategy["execution_lease_until"] is None
+                    or float(strategy["execution_lease_until"]) <= now
+                ):
+                    return False
+                renewed_until = now + _EXECUTION_LEASE_SECONDS
+                changed = connection.execute(
+                    "UPDATE multiuser_connection_leases SET lease_until=?, updated_at=? "
+                    "WHERE user_id=? AND connection_id=? AND lease_owner=? AND fence=? AND lease_until>?",
+                    (renewed_until, now, scope.user_id, scope.connection_id, execution_id,
+                     int(lease["fence"]), now),
+                ).rowcount
+                if changed != 1:
+                    return False
+                connection.execute(
+                    "UPDATE multiuser_strategy_claims SET lease_until=?, updated_at=? "
+                    "WHERE user_id=? AND connection_id=? AND strategy_id=? AND lease_owner=? AND fence=?",
+                    (renewed_until, now, scope.user_id, scope.connection_id, strategy_id,
+                     execution_id, int(lease["fence"])),
+                )
+                updated = connection.execute(
+                    "UPDATE multiuser_strategies SET execution_lease_until=?, lease_until=?, "
+                    "pre_send_at=CASE WHEN ?=0 THEN pre_send_at ELSE COALESCE(pre_send_at, ?) END, "
+                    "updated_at=? WHERE user_id=? AND connection_id=? AND strategy_id=? "
+                    "AND status='APPLYING' AND execution_id=? AND lease_fence=?",
+                    (renewed_until, renewed_until, 0 if target is None else 1, now, now, scope.user_id,
+                     scope.connection_id, strategy_id, execution_id, int(lease["fence"])),
+                ).rowcount
+                if updated != 1:
+                    return False
+                if target is not None:
+                    self._owned_strategy_event(
+                        connection, strategy_id=strategy_id,
+                        event_type="strategy_target_pre_send", payload=target, now=now,
+                    )
+                return True
         now = self.clock()
         with self.store.transaction() as connection:
             changed = connection.execute(
-                "UPDATE strategies SET execution_lease_until=?, updated_at=? "
-                "WHERE strategy_id=? AND status='APPLYING' AND execution_id=? "
-                "AND execution_lease_until>?",
-                (now + _EXECUTION_LEASE_SECONDS, now, strategy_id, execution_id, now),
+                f"UPDATE {self.strategy_table} SET execution_lease_until=?, updated_at=? "
+                f"WHERE {self._strategy_where('strategy_id=? AND status=\'APPLYING\' AND execution_id=? AND execution_lease_until>?')}",
+                self._strategy_values((now + _EXECUTION_LEASE_SECONDS, now, strategy_id, execution_id, now)),
             ).rowcount
         return changed == 1
 
@@ -3200,19 +3835,41 @@ class StrategyService:
 
         orders = prepared.get("orders", [])
         leverage_results: list[dict[str, Any]] = []
+
+        def finish_unsent(reason: str) -> None:
+            not_submitted = [{**row, "status": "not_submitted"} for row in orders]
+            unresolved = any(
+                isinstance(result, dict) and result.get("status") == "unknown"
+                for result in leverage_results
+            )
+            self._finish(
+                strategy_id, execution_id, "UNKNOWN" if unresolved else "PARTIAL",
+                not_submitted, reason, leverage_results,
+            )
+
         mode = prepared.get("_positionMode")
         if mode not in ("net_mode", "long_short_mode"):
             not_submitted = [{**row, "status": "not_submitted"} for row in orders]
             self._finish(strategy_id, execution_id, "UNKNOWN", not_submitted, "position_mode_unavailable", leverage_results)
             return self._result(strategy_id)
         for side in sorted({row["side"] for row in orders}, key=lambda value: (value != "long", value)):
-            if not self._renew_execution(strategy_id, execution_id):
+            side_order = next(row for row in orders if row["side"] == side)
+            if not self._renew_execution(
+                strategy_id,
+                execution_id,
+                target={
+                    "kind": "leverage",
+                    "side": side,
+                    "instrumentId": strategy["contract"]["instrumentId"],
+                    "clientOrderId": side_order.get("clientOrderId"),
+                },
+            ):
                 diagnostics.emit_event(
                     "commit", component="api", stage="commit", outcome="refused",
                     reason="lease_lost", persisted=False,
                 )
+                finish_unsent("lease_lost_before_leverage")
                 return self._result(strategy_id)
-            side_order = next(row for row in orders if row["side"] == side)
             pos_side = side if mode == "long_short_mode" else "net"
             request = {
                 "instId": strategy["contract"]["instrumentId"],
@@ -3238,20 +3895,27 @@ class StrategyService:
                 self._finish(strategy_id, execution_id, "UNKNOWN", not_submitted, "leverage_unknown", leverage_results)
                 return self._result(strategy_id)
             except OKXError as exc:
+                outcome = "rejected" if exc.error_code is not None else "unknown"
                 diagnostics.emit_event(
                     "ack_observed", component="api", stage="leverage",
-                    outcome="rejected" if exc.error_code is not None else "unknown",
-                    reason="leverage_rejected" if exc.error_code is not None else "leverage_unknown",
+                    outcome=outcome,
+                    reason="leverage_rejected" if outcome == "rejected" else "leverage_unknown",
                     side=side, client_order_id=side_order.get("clientOrderId"),
                     item_code=exc.error_code,
                     persisted=False,
                 )
-                leverage_result = {"side": side, "status": "rejected"}
+                leverage_result = {"side": side, "status": outcome}
                 if exc.error_code is not None:
                     leverage_result["errorCode"] = exc.error_code
                 leverage_results.append(leverage_result)
                 not_submitted = [{**row, "status": "not_submitted"} for row in orders]
-                self._finish(strategy_id, execution_id, "PARTIAL", not_submitted, "leverage_rejected", leverage_results)
+                self._finish(
+                    strategy_id, execution_id,
+                    "PARTIAL" if outcome == "rejected" else "UNKNOWN",
+                    not_submitted,
+                    "leverage_rejected" if outcome == "rejected" else "leverage_unknown",
+                    leverage_results,
+                )
                 return self._result(strategy_id)
             leverage_outcome, error_code = parse_leverage_ack(
                 response,
@@ -3286,6 +3950,7 @@ class StrategyService:
                 "commit", component="api", stage="commit", outcome="refused",
                 reason="lease_lost", persisted=False,
             )
+            finish_unsent("lease_lost_after_leverage")
             return self._result(strategy_id)
         try:
             try:
@@ -3317,11 +3982,17 @@ class StrategyService:
             return self._result(strategy_id)
 
         payload = [self._okx_order(strategy["contract"], row, mode) for row in orders]
-        if not self._mark_batch_attempted(strategy_id, execution_id):
+        if self.strategy_scope is None:
+            marker_persisted = self._mark_batch_attempted(strategy_id, execution_id)
+        else:
+            marker_persisted = self._mark_batch_attempted(strategy_id, execution_id, orders)
+        if not marker_persisted:
             diagnostics.emit_event(
                 "commit", component="api", stage="commit", outcome="refused",
                 reason="marker_refused", persisted=False,
             )
+            if self.strategy_scope is not None:
+                finish_unsent("marker_refused")
             return self._result(strategy_id)
         diagnostics.emit_event(
             "write_attempt", component="api", stage="batch", outcome="attempted",
@@ -3489,15 +4160,108 @@ class StrategyService:
             return outcomes, "UNKNOWN", "batch_top_level_conflict"
         return outcomes, "APPLIED", None
 
-    def _mark_batch_attempted(self, strategy_id: str, execution_id: str) -> bool:
+    def _mark_batch_attempted(
+        self, strategy_id: str, execution_id: str, orders: list[dict[str, Any]] | None = None
+    ) -> bool:
+        if self.strategy_scope is not None:
+            scope = self.strategy_scope
+            suffix = self._for_update()
+            with self.store.transaction() as connection:
+                owned = connection.execute(
+                    "SELECT status, credential_version, permission_version, remote_identity_digest, "
+                    "product_capabilities_json FROM exchange_connections WHERE user_id=? AND connection_id=?" + suffix,
+                    (scope.user_id, scope.connection_id),
+                ).fetchone()
+                lease = connection.execute(
+                    "SELECT lease_owner, fence, lease_until FROM multiuser_connection_leases "
+                    "WHERE user_id=? AND connection_id=?" + suffix,
+                    (scope.user_id, scope.connection_id),
+                ).fetchone()
+                current = connection.execute(
+                    "SELECT status, execution_id, execution_lease_until, lease_fence, batch_attempted, "
+                    "contract_json "
+                    "FROM multiuser_strategies WHERE user_id=? AND connection_id=? AND strategy_id=?" + suffix,
+                    (scope.user_id, scope.connection_id, strategy_id),
+                ).fetchone()
+                if not self._owned_authority_current(connection):
+                    return False
+                now = self.clock()
+                capabilities = [] if owned is None else decode_json(owned["product_capabilities_json"] or "[]")
+                contract = {} if current is None else decode_json(current["contract_json"] or "{}")
+                instrument_id = contract.get("instrumentId") if isinstance(contract, dict) else None
+                if (
+                    owned is None or lease is None or current is None or owned["status"] != "ACTIVE"
+                    or int(owned["credential_version"]) != scope.credential_version
+                    or int(owned["permission_version"]) != scope.permission_version
+                    or not hmac.compare_digest(owned["remote_identity_digest"], scope.remote_identity_digest)
+                    or not isinstance(capabilities, list) or "trade" not in capabilities
+                    or lease["lease_owner"] != execution_id
+                    or lease["lease_until"] is None or float(lease["lease_until"]) <= now
+                    or current["status"] != "APPLYING" or current["execution_id"] != execution_id
+                    or current["execution_lease_until"] is None
+                    or float(current["execution_lease_until"]) <= now
+                    or int(current["lease_fence"] or 0) != int(lease["fence"])
+                    or bool(current["batch_attempted"])
+                    or not isinstance(orders, list) or not orders or len(orders) > _MAX_ORDERS
+                    or any(
+                        not isinstance(order, dict)
+                        or not isinstance(order.get("clientOrderId"), str)
+                        or not order["clientOrderId"]
+                        or order.get("side") not in {"long", "short"}
+                        or not isinstance(order.get("contracts"), str)
+                        or not order["contracts"]
+                        for order in orders
+                    )
+                    or not isinstance(instrument_id, str) or not instrument_id
+                ):
+                    return False
+                renewed_until = now + _EXECUTION_LEASE_SECONDS
+                if connection.execute(
+                    "UPDATE multiuser_connection_leases SET lease_until=?, updated_at=? "
+                    "WHERE user_id=? AND connection_id=? AND lease_owner=? AND fence=? AND lease_until>?",
+                    (renewed_until, now, scope.user_id, scope.connection_id, execution_id,
+                     int(lease["fence"]), now),
+                ).rowcount != 1:
+                    return False
+                connection.execute(
+                    "UPDATE multiuser_strategy_claims SET lease_until=?, updated_at=? "
+                    "WHERE user_id=? AND connection_id=? AND strategy_id=? AND lease_owner=? AND fence=?",
+                    (renewed_until, now, scope.user_id, scope.connection_id, strategy_id,
+                     execution_id, int(lease["fence"])),
+                )
+                changed = connection.execute(
+                    "UPDATE multiuser_strategies SET batch_attempted=1, order_placement_attempted=1, "
+                    "execution_lease_until=?, lease_until=?, pre_send_at=COALESCE(pre_send_at, ?), "
+                    "updated_at=? WHERE user_id=? AND connection_id=? AND strategy_id=? "
+                    "AND status='APPLYING' AND execution_id=? AND lease_fence=? AND batch_attempted=0",
+                    (renewed_until, renewed_until, now, now, scope.user_id, scope.connection_id,
+                     strategy_id, execution_id, int(lease["fence"])),
+                ).rowcount
+                if changed != 1:
+                    return False
+                for index, order in enumerate(orders):
+                    self._owned_strategy_event(
+                        connection,
+                        strategy_id=strategy_id,
+                        event_type="strategy_target_pre_send",
+                        payload={
+                            "kind": "order",
+                            "index": index,
+                            "clientOrderId": order.get("clientOrderId"),
+                            "instrumentId": instrument_id,
+                            "side": order.get("side"),
+                            "contracts": order.get("contracts"),
+                        },
+                        now=now,
+                    )
+                return True
         now = self.clock()
         with self.store.transaction() as connection:
             changed = connection.execute(
-                "UPDATE strategies SET batch_attempted=1, order_placement_attempted=1, "
+                f"UPDATE {self.strategy_table} SET batch_attempted=1, order_placement_attempted=1, "
                 "execution_lease_until=?, updated_at=? "
-                "WHERE strategy_id=? AND status='APPLYING' AND execution_id=? "
-                "AND execution_lease_until>? AND batch_attempted=0",
-                (now + _EXECUTION_LEASE_SECONDS, now, strategy_id, execution_id, now),
+                f"WHERE {self._strategy_where('strategy_id=? AND status=\'APPLYING\' AND execution_id=? AND execution_lease_until>? AND batch_attempted=0')}",
+                self._strategy_values((now + _EXECUTION_LEASE_SECONDS, now, strategy_id, execution_id, now)),
             )
             return changed.rowcount == 1
 
@@ -3510,21 +4274,95 @@ class StrategyService:
         error: str | None,
         leverage_results: list[dict[str, Any]],
     ) -> None:
+        if self.strategy_scope is not None:
+            scope = self.strategy_scope
+            suffix = self._for_update()
+            with self.store.transaction() as connection:
+                owned = connection.execute(
+                    "SELECT status, credential_version, permission_version, remote_identity_digest "
+                    "FROM exchange_connections WHERE user_id=? AND connection_id=?" + suffix,
+                    (scope.user_id, scope.connection_id),
+                ).fetchone()
+                lease = connection.execute(
+                    "SELECT lease_owner, fence, lease_until FROM multiuser_connection_leases "
+                    "WHERE user_id=? AND connection_id=?" + suffix,
+                    (scope.user_id, scope.connection_id),
+                ).fetchone()
+                current = connection.execute(
+                    "SELECT status, execution_id, execution_lease_until, lease_fence, batch_attempted, "
+                    "order_placement_attempted, pre_send_at FROM multiuser_strategies "
+                    "WHERE user_id=? AND connection_id=? AND strategy_id=?" + suffix,
+                    (scope.user_id, scope.connection_id, strategy_id),
+                ).fetchone()
+                now = self.clock()
+                if (
+                    owned is None or lease is None or current is None or current["status"] != "APPLYING"
+                    or current["execution_id"] != execution_id
+                    or lease["lease_owner"] not in (None, execution_id)
+                    or int(current["lease_fence"] or 0) != int(lease["fence"])
+                ):
+                    changed = 0
+                else:
+                    changed = connection.execute(
+                        "UPDATE multiuser_strategies SET status=?, results_json=?, "
+                        "prepared_json=COALESCE(prepared_json, snapshot_json), leverage_results_json=?, "
+                        "failure_reason=?, execution_id=NULL, execution_lease_until=NULL, lease_owner=NULL, "
+                        "lease_until=NULL, updated_at=? WHERE user_id=? AND connection_id=? AND strategy_id=? "
+                        "AND status='APPLYING' AND execution_id=? AND lease_fence=?",
+                        (status, encode_json(orders), encode_json(leverage_results), error, now,
+                         scope.user_id, scope.connection_id, strategy_id, execution_id, int(lease["fence"])),
+                    ).rowcount
+                    if changed == 1:
+                        self._owned_strategy_event(
+                            connection, strategy_id=strategy_id,
+                            event_type="strategy_execution_finished",
+                            payload={"status": status, "fence": int(lease["fence"]), "error": error},
+                            now=now,
+                        )
+                        self._release_owned_connection_lease(
+                            connection, strategy_id=strategy_id, lease_owner=execution_id,
+                            fence=int(lease["fence"]), now=now,
+                        )
+                        if self._can_release_reservation(
+                            status, orders,
+                            bool(current["batch_attempted"]) or bool(current["order_placement_attempted"]),
+                            unresolved_external_attempt=unresolved_leverage_attempt(
+                                current["pre_send_at"], leverage_results,
+                                [row for row in orders if isinstance(row, dict)],
+                            ),
+                        ):
+                            connection.execute(
+                                "DELETE FROM multiuser_strategy_reservations WHERE user_id=? AND connection_id=? "
+                                "AND strategy_id=?",
+                                (scope.user_id, scope.connection_id, strategy_id),
+                            )
+                        self._cleanup_replacement_in_connection(
+                            connection, strategy_id, now, self.strategy_scope
+                        )
+            diagnostics.emit_event(
+                "commit", component="api", stage="commit",
+                outcome="committed" if changed == 1 else "refused",
+                reason=None if changed == 1 else "fence_or_cas_loss",
+                status=status, persisted=changed == 1, order_count=len(orders),
+                accepted_count=sum(row.get("status") == "accepted" for row in orders),
+                pending_count=sum(row.get("status") == "unknown" for row in orders),
+                not_submitted_count=sum(row.get("status") == "not_submitted" for row in orders),
+            )
+            return
         with self.store.transaction() as connection:
             current = connection.execute(
-                "SELECT batch_attempted, order_placement_attempted FROM strategies "
-                "WHERE strategy_id=? AND status='APPLYING' "
-                "AND execution_id=?",
-                (strategy_id, execution_id),
+                f"SELECT batch_attempted, order_placement_attempted FROM {self.strategy_table} "
+                f"WHERE {self._strategy_where('strategy_id=? AND status=\'APPLYING\' AND execution_id=?')}",
+                self._strategy_values((strategy_id, execution_id)),
             ).fetchone()
             changed = connection.execute(
-                "UPDATE strategies SET status=?, results_json=?, prepared_json=COALESCE(prepared_json, snapshot_json), "
+                f"UPDATE {self.strategy_table} SET status=?, results_json=?, prepared_json=COALESCE(prepared_json, snapshot_json), "
                 "leverage_results_json=?, failure_reason=?, execution_id=NULL, execution_lease_until=NULL, "
-                "updated_at=? WHERE strategy_id=? AND status='APPLYING' AND execution_id=?",
-                (
+                f"updated_at=? WHERE {self._strategy_where('strategy_id=? AND status=\'APPLYING\' AND execution_id=?')}",
+                self._strategy_values((
                     status, encode_json(orders), encode_json(leverage_results), error,
                     self.clock(), strategy_id, execution_id,
-                ),
+                )),
             ).rowcount
             if (
                 changed == 1 and current is not None
@@ -3534,10 +4372,13 @@ class StrategyService:
                 )
             ):
                 connection.execute(
-                    "DELETE FROM strategy_reservations WHERE strategy_id=?", (strategy_id,)
+                    f"DELETE FROM {self.reservations_table} WHERE {self._strategy_where('strategy_id=?')}",
+                    self._strategy_values((strategy_id,)),
                 )
             if changed == 1:
-                self._cleanup_replacement_in_connection(connection, strategy_id, self.clock())
+                self._cleanup_replacement_in_connection(
+                    connection, strategy_id, self.clock(), self.strategy_scope
+                )
         diagnostics.emit_event(
             "commit", component="api", stage="commit",
             outcome="committed" if changed == 1 else "refused",
@@ -3551,8 +4392,14 @@ class StrategyService:
 
     @staticmethod
     def _can_release_reservation(
-        status: str, orders: list[dict[str, Any]], order_placement_attempted: bool
+        status: str,
+        orders: list[dict[str, Any]],
+        order_placement_attempted: bool,
+        *,
+        unresolved_external_attempt: bool = False,
     ) -> bool:
+        if unresolved_external_attempt:
+            return False
         if status == "UNKNOWN":
             return not order_placement_attempted
         terminal = _ORDER_TERMINAL_STATES
@@ -3563,14 +4410,18 @@ class StrategyService:
     def _reset_to_draft(self, strategy_id: str) -> None:
         with self.store.transaction() as connection:
             connection.execute(
-                "UPDATE strategies SET status='DRAFT', confirmation_hash=NULL, prepared_expires_at=NULL, "
-                "prepared_json=NULL, updated_at=? WHERE strategy_id=? AND status='PREPARED' AND attempt_started=0",
-                (self.clock(), strategy_id),
+                f"UPDATE {self.strategy_table} SET status='DRAFT', confirmation_hash=NULL, prepared_expires_at=NULL, "
+                "prepared_json=NULL, updated_at=? "
+                f"WHERE {self._strategy_where('strategy_id=? AND status=\'PREPARED\' AND attempt_started=0')}",
+                self._strategy_values((self.clock(), strategy_id)),
             )
 
     def _load_row(self, strategy_id: str) -> dict[str, Any]:
         with self.store.connection() as connection:
-            row = connection.execute("SELECT * FROM strategies WHERE strategy_id=?", (strategy_id,)).fetchone()
+            row = connection.execute(
+                f"SELECT * FROM {self.strategy_table} WHERE {self._strategy_where('strategy_id=?')}",
+                self._strategy_values((strategy_id,)),
+            ).fetchone()
         if row is None:
             raise APIError(404, "strategy_not_found", "The strategy was not found.")
         return self._decode_row(row)
@@ -3579,11 +4430,12 @@ class StrategyService:
         fingerprint = strategy["accountFingerprint"]
         with self.store.connection() as connection:
             row = connection.execute(
-                "SELECT * FROM strategies WHERE strategy_id=? AND account_fingerprint=?",
-                (strategy["id"], fingerprint),
+                f"SELECT * FROM {self.strategy_table} WHERE "
+                f"{self._strategy_where('strategy_id=? AND account_fingerprint=?')}",
+                self._strategy_values((strategy["id"], fingerprint)),
             ).fetchone()
             return row is not None and self._eligible_never_sent_record(
-                connection, self._decode_row(row), fingerprint, self.clock()
+                connection, self._decode_row(row), fingerprint, self.clock(), self.strategy_scope
             )
 
     def _can_delete_hint(
@@ -3597,20 +4449,23 @@ class StrategyService:
         fingerprint = strategy["accountFingerprint"]
         with self.store.connection() as connection:
             row = connection.execute(
-                "SELECT * FROM strategies WHERE strategy_id=? AND account_fingerprint=?",
-                (strategy["id"], fingerprint),
+                f"SELECT * FROM {self.strategy_table} WHERE "
+                f"{self._strategy_where('strategy_id=? AND account_fingerprint=?')}",
+                self._strategy_values((strategy["id"], fingerprint)),
             ).fetchone()
             if row is None:
                 return False
             current = self._decode_row(row)
             now = self.clock()
-            if self._eligible_never_sent_record(connection, current, fingerprint, now):
+            if self._eligible_never_sent_record(
+                connection, current, fingerprint, now, self.strategy_scope
+            ):
                 return True
             if (
                 not terminal_positions_available
                 or order_sync_state != "fresh"
                 or not self._eligible_terminal_delete_record(
-                    connection, current, fingerprint, now
+                    connection, current, fingerprint, now, self.strategy_scope
                 )
             ):
                 return False
@@ -3631,15 +4486,16 @@ class StrategyService:
             return False
         with self.store.connection() as connection:
             row = connection.execute(
-                "SELECT 1 FROM strategies WHERE strategy_id=? AND account_fingerprint=?",
-                (source_id, strategy["accountFingerprint"]),
+                f"SELECT 1 FROM {self.strategy_table} WHERE "
+                f"{self._strategy_where('strategy_id=? AND account_fingerprint=?')}",
+                self._strategy_values((source_id, strategy["accountFingerprint"])),
             ).fetchone()
         return row is not None
 
     def _try_cleanup_replacement_source(self, replacement_id: str) -> bool:
         with self.store.transaction() as connection:
             return self._cleanup_replacement_in_connection(
-                connection, replacement_id, self.clock()
+                connection, replacement_id, self.clock(), self.strategy_scope
             )
 
     def _basic_result(
@@ -3871,8 +4727,8 @@ class StrategyService:
         with self.store.connection() as connection:
             row = connection.execute(
                 "SELECT last_attempt_at, last_success_at, last_error, next_scan_at "
-                "FROM strategy_sync_state WHERE strategy_id=?",
-                (strategy_id,),
+                f"FROM {self.sync_table} WHERE {self._strategy_where('strategy_id=?')}",
+                self._strategy_values((strategy_id,)),
             ).fetchone()
         if row is None:
             return True
@@ -3886,30 +4742,41 @@ class StrategyService:
     def _record_api_order_scan(self, strategy_id: str, scan_error: str | None) -> None:
         now = self.clock()
         with self.store.transaction() as connection:
+            if self.strategy_scope is not None:
+                columns = "user_id, connection_id, strategy_id, last_attempt_at, last_success_at, last_error, next_scan_at, consecutive_errors"
+                owner_values = (self.strategy_scope.user_id, self.strategy_scope.connection_id)
+                conflict = "user_id, connection_id, strategy_id"
+                owner_where = (self.strategy_scope.user_id, self.strategy_scope.connection_id, strategy_id)
+            else:
+                columns = "strategy_id, last_attempt_at, last_success_at, last_error, next_scan_at, consecutive_errors"
+                owner_values = ()
+                conflict = "strategy_id"
+                owner_where = (strategy_id,)
             if scan_error is None:
                 connection.execute(
-                    "INSERT INTO strategy_sync_state(strategy_id, last_attempt_at, last_success_at, "
-                    "last_error, next_scan_at, consecutive_errors) VALUES (?, ?, ?, NULL, ?, 0) "
-                    "ON CONFLICT(strategy_id) DO UPDATE SET last_attempt_at=excluded.last_attempt_at, "
+                    f"INSERT INTO {self.sync_table}({columns}) VALUES "
+                    f"({', '.join('?' for _ in range(6 + (2 if self.strategy_scope is not None else 0)) )}) "
+                    f"ON CONFLICT({conflict}) DO UPDATE SET last_attempt_at=excluded.last_attempt_at, "
                     "last_success_at=excluded.last_success_at, last_error=NULL, "
                     "next_scan_at=excluded.next_scan_at, consecutive_errors=0",
-                    (strategy_id, now, now, now + _ORDER_SCAN_INTERVAL_SECONDS),
+                    (*owner_values, strategy_id, now, now, None, now + _ORDER_SCAN_INTERVAL_SECONDS, 0),
                 )
             else:
                 connection.execute(
-                    "INSERT INTO strategy_sync_state(strategy_id, last_attempt_at, last_success_at, "
-                    "last_error, next_scan_at, consecutive_errors) VALUES (?, ?, NULL, ?, ?, 1) "
-                    "ON CONFLICT(strategy_id) DO UPDATE SET last_attempt_at=excluded.last_attempt_at, "
+                    f"INSERT INTO {self.sync_table}({columns}) VALUES "
+                    f"({', '.join('?' for _ in range(6 + (2 if self.strategy_scope is not None else 0)) )}) "
+                    f"ON CONFLICT({conflict}) DO UPDATE SET last_attempt_at=excluded.last_attempt_at, "
                     "last_error=excluded.last_error, next_scan_at=excluded.next_scan_at, "
-                    "consecutive_errors=strategy_sync_state.consecutive_errors+1",
-                    (strategy_id, now, scan_error, now),
+                    f"consecutive_errors={self.sync_table}.consecutive_errors+1",
+                    (*owner_values, strategy_id, now, None, scan_error, now, 1),
                 )
 
     def _order_sync_fields(self, strategy_id: str) -> dict[str, Any]:
         with self.store.connection() as connection:
             row = connection.execute(
-                "SELECT last_success_at, last_error FROM strategy_sync_state WHERE strategy_id=?",
-                (strategy_id,),
+                f"SELECT last_success_at, last_error FROM {self.sync_table} "
+                f"WHERE {self._strategy_where('strategy_id=?')}",
+                self._strategy_values((strategy_id,)),
             ).fetchone()
         last_success = None if row is None else row["last_success_at"]
         last_error = None if row is None else row["last_error"]
@@ -3940,16 +4807,21 @@ class StrategyService:
         now = self.clock()
         with self.store.transaction() as connection:
             changed = connection.execute(
-                "UPDATE strategies SET status=?, results_json=?, failure_reason=?, execution_id=NULL, "
+                f"UPDATE {self.strategy_table} SET status=?, results_json=?, failure_reason=?, execution_id=NULL, "
                 "execution_lease_until=NULL, updated_at=? WHERE strategy_id=? AND status='APPLYING' "
-                "AND execution_id IS ? AND (execution_lease_until IS NULL OR execution_lease_until<=?)",
-                (status, encode_json(results), error, now, strategy["id"], strategy["executionId"], now),
+                f"AND (execution_id=? OR (execution_id IS NULL AND ? IS NULL)) "
+                f"AND (execution_lease_until IS NULL OR execution_lease_until<=?) "
+                f"AND {self._strategy_where('1=1')}",
+                (status, encode_json(results), error, now, strategy["id"], strategy["executionId"],
+                 strategy["executionId"], now,
+                 *self._strategy_values(())),
             ).rowcount
             if changed == 1 and self._can_release_reservation(
                 status, results, strategy["orderPlacementAttempted"]
             ):
                 connection.execute(
-                    "DELETE FROM strategy_reservations WHERE strategy_id=?", (strategy["id"],)
+                    f"DELETE FROM {self.reservations_table} WHERE {self._strategy_where('strategy_id=?')}",
+                    self._strategy_values((strategy["id"],)),
                 )
 
     def _reconcile_orders(self, strategy: dict[str, Any], *, recovering: bool = False) -> dict[str, Any]:
@@ -3970,28 +4842,34 @@ class StrategyService:
                 if recovering:
                     now = self.clock()
                     saved = connection.execute(
-                        "UPDATE strategies SET status=?, results_json=?, failure_reason=?, execution_id=NULL, "
+                        f"UPDATE {self.strategy_table} SET status=?, results_json=?, failure_reason=?, execution_id=NULL, "
                         "execution_lease_until=NULL, updated_at=? WHERE strategy_id=? AND status='APPLYING' "
-                        "AND execution_id IS ? AND (execution_lease_until IS NULL OR execution_lease_until<=?)",
+                        f"AND (execution_id=? OR (execution_id IS NULL AND ? IS NULL)) "
+                        f"AND (execution_lease_until IS NULL OR execution_lease_until<=?) "
+                        f"AND {self._strategy_where('1=1')}",
                         (
                             new_status, encode_json(results), error, now, strategy["id"],
-                            strategy["executionId"], now,
+                            strategy["executionId"], strategy["executionId"], now,
+                            *self._strategy_values(()),
                         ),
                     ).rowcount
                 else:
                     saved = connection.execute(
-                        "UPDATE strategies SET status=?, results_json=?, failure_reason=?, updated_at=? "
-                        "WHERE strategy_id=? AND status=? AND results_json=?",
+                        f"UPDATE {self.strategy_table} SET status=?, results_json=?, failure_reason=?, updated_at=? "
+                        f"WHERE {self._strategy_where('strategy_id=? AND status=? AND results_json=?')}",
                         (
                             new_status, encode_json(results), error, self.clock(),
-                            strategy["id"], strategy["status"], encode_json(strategy["results"]),
+                            *self._strategy_values((
+                                strategy["id"], strategy["status"], encode_json(strategy["results"]),
+                            )),
                         ),
                     ).rowcount
                 if saved == 1 and self._can_release_reservation(
                     new_status, results, strategy["orderPlacementAttempted"]
                 ):
                     connection.execute(
-                        "DELETE FROM strategy_reservations WHERE strategy_id=?", (strategy["id"],)
+                        f"DELETE FROM {self.reservations_table} WHERE {self._strategy_where('strategy_id=?')}",
+                        self._strategy_values((strategy["id"],)),
                     )
             strategy = self._load_row(strategy["id"])
         if strategy["replacementSourceId"] is not None:
@@ -4002,16 +4880,17 @@ class StrategyService:
         _, fingerprint = self._account()
         with self.store.connection() as connection:
             rows = connection.execute(
-                "SELECT strategy_id FROM strategies WHERE account_fingerprint=? "
-                "ORDER BY created_at DESC, strategy_id DESC",
-                (fingerprint,),
+                f"SELECT strategy_id FROM {self.strategy_table} WHERE "
+                f"{self._strategy_where('account_fingerprint=?')} ORDER BY created_at DESC, strategy_id DESC",
+                self._strategy_values((fingerprint,)),
             ).fetchall()
         selected_ids = [row["strategy_id"] for row in rows]
         for strategy_id in selected_ids:
             with self.store.connection() as connection:
                 current = connection.execute(
-                    "SELECT * FROM strategies WHERE strategy_id=? AND account_fingerprint=?",
-                    (strategy_id, fingerprint),
+                    f"SELECT * FROM {self.strategy_table} WHERE "
+                    f"{self._strategy_where('strategy_id=? AND account_fingerprint=?')}",
+                    self._strategy_values((strategy_id, fingerprint)),
                 ).fetchone()
             if current is None:
                 continue
@@ -4023,8 +4902,9 @@ class StrategyService:
         selected_id_set = set(selected_ids)
         with self.store.connection() as connection:
             refreshed_rows = connection.execute(
-                "SELECT * FROM strategies WHERE account_fingerprint=? ORDER BY created_at DESC, strategy_id DESC",
-                (fingerprint,),
+                f"SELECT * FROM {self.strategy_table} WHERE {self._strategy_where('account_fingerprint=?')} "
+                "ORDER BY created_at DESC, strategy_id DESC",
+                self._strategy_values((fingerprint,)),
             ).fetchall()
         refreshed_by_id = {
             row["strategy_id"]: self._decode_row(row)
@@ -4059,17 +4939,58 @@ class StrategyService:
             remaining_ids = {
                 row["strategy_id"]
                 for row in connection.execute(
-                    "SELECT strategy_id FROM strategies WHERE account_fingerprint=?", (fingerprint,)
+                    f"SELECT strategy_id FROM {self.strategy_table} WHERE {self._strategy_where('account_fingerprint=?')}",
+                    self._strategy_values((fingerprint,)),
                 ).fetchall()
             }
         return {"strategies": [row for row in projected if row["id"] in remaining_ids]}
+
+    def _owned_strategy_projection(self, strategy_id: str) -> dict[str, Any]:
+        if self.strategy_scope is None:
+            raise RuntimeError("owned strategy scope is required")
+        with self.store.connection() as connection:
+            row = connection.execute(
+                f"SELECT * FROM {self.strategy_table} WHERE "
+                f"{self._strategy_where('strategy_id=? AND account_fingerprint=?')}",
+                self._strategy_values((strategy_id, self.strategy_scope.account_fingerprint)),
+            ).fetchone()
+        if row is None:
+            raise APIError(404, "strategy_not_found", "The strategy was not found.")
+        # Historical accepted and UNKNOWN jobs remain readable after rotation.
+        # Current generations gate mutations and execution, not result access.
+        return self._decode_row(row)
+
+    def _list_owned(self) -> dict[str, Any]:
+        if self.strategy_scope is None:
+            raise RuntimeError("owned strategy scope is required")
+        with self.store.connection() as connection:
+            rows = connection.execute(
+                f"SELECT * FROM {self.strategy_table} WHERE "
+                f"{self._strategy_where('account_fingerprint=?')} ORDER BY created_at DESC, strategy_id DESC",
+                self._strategy_values((self.strategy_scope.account_fingerprint,)),
+            ).fetchall()
+        projected = []
+        for row in rows:
+            strategy = self._decode_row(row)
+            if self.automatic.is_candidate_stage(strategy):
+                projected.append(self.automatic.public_candidate_result(strategy))
+            else:
+                projected.append(self._basic_result(strategy))
+        return {"strategies": projected}
+
+    def _result_owned(self, strategy_id: str) -> dict[str, Any]:
+        strategy = self._owned_strategy_projection(strategy_id)
+        if self.automatic.is_candidate_stage(strategy):
+            return self.automatic.public_candidate_result(strategy)
+        return self._basic_result(strategy)
 
     def _delete(self, strategy_id: str) -> dict[str, Any]:
         strategy, _, fingerprint = self._current_strategy(strategy_id)
         now = self.clock()
         with self.store.transaction() as connection:
             current_row = connection.execute(
-                "SELECT * FROM strategies WHERE strategy_id=?", (strategy_id,)
+                f"SELECT * FROM {self.strategy_table} WHERE {self._strategy_where('strategy_id=?')}",
+                self._strategy_values((strategy_id,)),
             ).fetchone()
             if current_row is None:
                 raise APIError(404, "strategy_not_found", "The strategy was not found.")
@@ -4078,12 +4999,12 @@ class StrategyService:
                 raise APIError(409, "account_changed", "This strategy belongs to a different OKX account.")
             if self.automatic.is_candidate_stage(current):
                 reservation = connection.execute(
-                    "SELECT 1 FROM strategy_reservations WHERE strategy_id=? LIMIT 1",
-                    (strategy_id,),
+                    f"SELECT 1 FROM {self.reservations_table} WHERE {self._strategy_where('strategy_id=?')} LIMIT 1",
+                    self._strategy_values((strategy_id,)),
                 ).fetchone()
                 replacement = connection.execute(
-                    "SELECT 1 FROM strategies WHERE replacement_source_id=? LIMIT 1",
-                    (strategy_id,),
+                    f"SELECT 1 FROM {self.strategy_table} WHERE {self._strategy_where('replacement_source_id=?')} LIMIT 1",
+                    self._strategy_values((strategy_id,)),
                 ).fetchone()
                 safe_candidate = (
                     current["status"] == "DRAFT"
@@ -4104,12 +5025,18 @@ class StrategyService:
                         "strategy_immutable",
                         "Order placement and lifecycle state are not safe for deletion.",
                     )
-                self._delete_strategy_with_dependents(connection, strategy_id)
+                self._assert_owned_authority(connection)
+                self._delete_strategy_with_dependents(connection, strategy_id, self.strategy_scope)
                 return {"id": strategy_id, "status": "DELETED"}
-            if self._eligible_never_sent_record(connection, current, fingerprint, now):
-                self._delete_strategy_with_dependents(connection, strategy_id)
+            if self._eligible_never_sent_record(
+                connection, current, fingerprint, now, self.strategy_scope
+            ):
+                self._assert_owned_authority(connection)
+                self._delete_strategy_with_dependents(connection, strategy_id, self.strategy_scope)
                 return {"id": strategy_id, "status": "DELETED"}
-            if not self._eligible_terminal_delete_record(connection, current, fingerprint, now):
+            if not self._eligible_terminal_delete_record(
+                connection, current, fingerprint, now, self.strategy_scope
+            ):
                 raise APIError(
                     409,
                     "strategy_immutable",
@@ -4188,7 +5115,8 @@ class StrategyService:
 
         with self.store.transaction() as connection:
             latest_row = connection.execute(
-                "SELECT * FROM strategies WHERE strategy_id=?", (strategy_id,)
+                f"SELECT * FROM {self.strategy_table} WHERE {self._strategy_where('strategy_id=?')}",
+                self._strategy_values((strategy_id,)),
             ).fetchone()
             if latest_row is None:
                 raise APIError(404, "strategy_not_found", "The strategy was not found.")
@@ -4202,12 +5130,13 @@ class StrategyService:
             if not hmac.compare_digest(latest["accountFingerprint"], fingerprint):
                 raise APIError(409, "account_changed", "This strategy belongs to a different OKX account.")
             if not self._eligible_terminal_delete_record(
-                connection, latest, fingerprint, self.clock()
+                connection, latest, fingerprint, self.clock(), self.strategy_scope
             ):
                 raise APIError(
                     409,
                     "strategy_immutable",
                     "Order placement and lifecycle state changed during deletion checks.",
                 )
-            self._delete_strategy_with_dependents(connection, strategy_id)
+            self._assert_owned_authority(connection)
+            self._delete_strategy_with_dependents(connection, strategy_id, self.strategy_scope)
         return {"id": strategy_id, "status": "DELETED"}

@@ -1,6 +1,6 @@
 # Task 111 — Owned connections, encrypted credentials and durable commands
 
-Status: PENDING — execution authorized; waiting for predecessor PASS
+Status: BLOCKED_EXTERNAL_VERIFICATION — source audit PASS; real AES/PostgreSQL evidence pending
 Agent Role: implementation_executor
 Executor Class: E2
 Target Model: gpt-6-luna
@@ -8,8 +8,8 @@ Target Effort: max
 Target Route: gpt-6-luna / max
 Route Binding: EXPLICIT
 Parent Route Inheritance: FORBIDDEN
-Dispatch Route Status: PENDING
-Requested Model / Effort: PENDING (do not fill until actually dispatched)
+Dispatch Route Status: UNVERIFIABLE
+Requested Model / Effort: gpt-6-luna / max
 Observed Effective Model / Effort: unavailable
 Specification: `docs/agents/specs/2026-10-10-multi-user-okx-binance-design.md`
 Plan: `docs/agents/plans/2026-10-10-multi-user-okx-binance.md`
@@ -39,6 +39,7 @@ Provisioning/installation is operator-owned and is not part of the executor writ
 - `backend/app.py`
 - `backend/data_gateway.py`
 - `backend/strategy.py`
+- `backend/strategy_automatic.py` — only coupled owner-scope/store/route wiring of existing automatic strategy behavior; no new generation semantics.
 - `backend/strategy_scope.py`
 - `backend/strategy_queue.py`
 - `backend/strategy_worker.py`
@@ -47,6 +48,7 @@ Provisioning/installation is operator-owned and is not part of the executor writ
 - `backend/tests/test_command_claims.py`
 - `backend/tests/test_trade_api.py`
 - `backend/tests/test_strategy_scope.py`
+- `backend/tests/test_multiuser_store.py` — only the schema-version expectation affected by the approved additive version 1→2 upgrade; preserve other assertions and runtime gates.
 
 Read only the source/tests/docs needed for the listed contracts. New interfaces stage compatibility with existing consumers; leave the affected canonical unit buildable. Directory surfaces are restricted to the described hand-written source/test roles, not arbitrary settings or generated files.
 
@@ -84,7 +86,7 @@ Escalation trigger: shared consumers changed, related regression failure, or tas
 Required: YES
 Canonical build unit: backend Python package
 Exact secret-free build command: `python3.12 -m compileall -q backend`
-Run after the final executable/test change. Result/exit: PENDING. Buildable compatibility staging required; no PASS while awaiting a successor repair.
+Run after the final executable/test change. Result/exit: final `/opt/homebrew/bin/python3.12 -m compileall -q backend` observed exit0 on 2026-10-11 after AUD-111-32 remediation. Buildable compatibility staging required; no PASS while awaiting a successor repair.
 Backend compileall is paired with import/runtime tests; mocks cannot substitute PostgreSQL multi-process checks.
 
 Frontend gate: N/A.
@@ -99,12 +101,48 @@ Coordinator owns canonical status/audit/telemetry. Writer returns exact safe com
 
 ## 8. Pending checklist
 
-- [ ] User execution approval and predecessors ready.
-- [ ] Explicit implementation_executor model/effort dispatch; no inheritance.
+- [x] User execution approval and predecessors ready.
+- [x] Explicit implementation_executor model/effort dispatch; no inheritance.
 - [ ] Required operator setup verified without reading protected values.
-- [ ] Listed contract implemented with buildable staged consumers.
-- [ ] Formal RED observed before GREEN; regression ceiling respected.
-- [ ] Final canonical task build recorded.
+- [x] Listed source contract implemented with buildable staged consumers; real runtime proof pending.
+- [x] Formal RED observed before GREEN; regression ceiling respected.
+- [x] Final canonical task build recorded.
 - [ ] Applicable visual/device/runtime evidence recorded honestly.
-- [ ] No protected-content access, external secret transmission or unapproved live action.
-- [ ] Independent coordinator audit PASS.
+- [x] No protected-content access, external secret transmission or unapproved live action.
+- [x] Independent source audit PASS; full task verdict remains BLOCKED until required runtime evidence.
+
+## Predecessor readiness — 2026-10-10
+
+T110 coordinator PASS after user-provided Ubuntu real AES/PostgreSQL evidence and 69-test focused V3 with no skips. Existing source-first authorization remains applicable: no dependency install on Mac or agent VPS access; T111 runtime evidence must be obtained separately after its implementation. Executor has not been dispatched for T111 at this checkpoint.
+
+## Source dispatch — 2026-10-10
+
+User explicitly requested continuation after T110 PASS. E2 implementation executor dispatched with gpt-6-luna/max, explicit role/model/effort, fork none and no parent inheritance. Effective route unavailable. Source-first authorization retained: no packages installed on Mac, no agent access to VPS/config/secrets/live exchanges. Local fake-cipher/SQLite checks cannot establish real AES/PostgreSQL T111 behavior. Independent R3 source/concurrency audit and separate operator runtime evidence required before full PASS. No close/release primitive available for collected terminal children; no existing writer is running.
+
+## Supported-region implementation mapping
+
+D-006 resolves the existing supported-code boundary: explicit `region=global` maps only to the current `www.okx.com` transport. Reject all other regions/hostname inputs before upstream calls. No regional eligibility inference or `backend/okx.py` write is authorized. Demo requests must carry the documented simulation marker through an allowed scoped transport wrapper; never silently route them as live.
+
+## Affected test-contract amendment
+
+The additive T111 schema upgrade advances version 1→2; the existing T110 store assertion at `backend/tests/test_multiuser_store.py:127` is a compile/test-coupled consumer. Permit only updating that expected schema version to 2. Keep all identity, composite-owner, idempotency and PostgreSQL race assertions unchanged. Add actual upgrade/preserved-row behavior coverage in T111-owned tests. This is a required affected-test alignment within approved additive schema behavior, not a new product feature or weakening of tests.
+
+## Coupled automatic-strategy consumer
+
+R3 inspection confirms `StrategyService.dispatch` calls `AutomaticStrategyService` first, and `backend/strategy_automatic.py` directly reads/writes legacy strategy rows. Preserve approved existing OKX strategy behavior by permitting only necessary owned table/row predicates, scoped store and route wiring in this helper. Existing strategy-generation/sizing/risk semantics stay unchanged; no arbitrary SQL text rewrite or cloned algorithm. This closes a required affected-caller surface of P02, not a new strategy capability.
+
+## Pause checkpoint
+
+User requested saving progress and pausing. Writer interrupted, no active writer remains. Source/tests preserved locally; formal final verification/audit and owner strategy/worker integration incomplete. Resume from `docs/agents/validation/2026-10-10-t111-resume-checkpoint.md`. Do not claim T111 PASS, dispatch successors or deploy this checkpoint.
+
+## Resume — 2026-10-10
+
+User explicitly requested continuing from the saved checkpoint. Existing interrupted E2 implementation executor resumed with its original explicit gpt-6-luna/max binding and same bounded task contract; no duplicate writer. Prior checkpoint remains historical evidence. Complete strategy/worker integration and current-source verification/audit remain required; no install, VPS, deployment or Git action is authorized by resumption.
+
+## Related regression remediation — 2026-10-11
+
+Stable-snapshot V3 related tests found AUD-111-30 (T110 auth fixture initialization rejects the newly required connection vault) and AUD-111-31 (legacy batch-marker refusal returns HTTP500). Permit `backend/tests/test_multiuser_auth.py` only for the required fabricated connection-vault fixture alignment; retain all security assertions and real AES gate. Existing production missing-vault rejection must remain fail closed. Permit `backend/tests/test_strategy_api.py` only for a necessary changed private marker signature alignment, retaining refusal/no-network/persisted-state assertions. These are coupled callers of the approved changes, not new product semantics or weaker coverage. Reuse the existing explicitly bound E2 executor for remediation. Coordinator cannot modify executable behavior.
+
+## Source completion checkpoint — 2026-10-11
+
+AUD-111-01–32 reconciled (14 withdrawn); independent R3 source audit PASS and coordinator source/verification synthesis accepted. AUD32 final worker/scope regression46 tests OK/skipped1; prior unaffected related198 and core107 checkpoints remain valid only for their unchanged paths. Final coordinator ordered safety6 then intended-success5 tests all pass, exit0, followed by backend compileall exit0. Exact evidence is in the audit. No full task PASS: six T111 AES/PG cases and four affected T110 runtime cases must pass with no skips on the operator VPS. Runbook: `docs/agents/runbooks/2026-10-11-t111-vps-verification.md`; existing T110 dedicated test setup is reused, with no additional installation. No successor, commit/push, feature activation or deployment is authorized by this source checkpoint.

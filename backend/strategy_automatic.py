@@ -161,8 +161,9 @@ class AutomaticStrategyService:
             raise APIError(422, "candidate_selection_invalid", "The saved candidate selection is invalid.")
         with self.strategy.store.connection() as connection:
             row = connection.execute(
-                "SELECT * FROM strategies WHERE strategy_id=? AND account_fingerprint=?",
-                (candidate_id, account_fingerprint),
+                f"SELECT * FROM {self.strategy.strategy_table} WHERE "
+                f"{self.strategy._strategy_where('strategy_id=? AND account_fingerprint=?')}",
+                self.strategy._strategy_values((candidate_id, account_fingerprint)),
             ).fetchone()
         if row is None:
             raise APIError(404, "strategy_not_found", "The saved automatic draft was not found.")
@@ -409,8 +410,9 @@ class AutomaticStrategyService:
     def _find_request(self, fingerprint: str, request_id: str) -> dict[str, Any] | None:
         with self.strategy.store.connection() as connection:
             rows = connection.execute(
-                "SELECT * FROM strategies WHERE account_fingerprint=? ORDER BY created_at DESC",
-                (fingerprint,),
+                f"SELECT * FROM {self.strategy.strategy_table} WHERE "
+                f"{self.strategy._strategy_where('account_fingerprint=?')} ORDER BY created_at DESC",
+                self.strategy._strategy_values((fingerprint,)),
             ).fetchall()
         for row in rows:
             snapshot = decode_json(row["snapshot_json"])
@@ -874,8 +876,9 @@ class AutomaticStrategyService:
         )
         with self.strategy.store.transaction() as connection:
             rows = connection.execute(
-                "SELECT * FROM strategies WHERE account_fingerprint=?",
-                (fingerprint,),
+                f"SELECT * FROM {self.strategy.strategy_table} WHERE "
+                f"{self.strategy._strategy_where('account_fingerprint=?')}",
+                self.strategy._strategy_values((fingerprint,)),
             ).fetchall()
             for row in rows:
                 saved = decode_json(row["snapshot_json"])
@@ -891,18 +894,27 @@ class AutomaticStrategyService:
                     ):
                         raise APIError(409, "automatic_request_conflict", "This request ID is already bound to different input.")
                     return existing["id"]
-            connection.execute(
-                "INSERT INTO strategies(strategy_id, account_fingerprint, status, contract_json, snapshot_json, "
-                "orders_json, results_json, preview_hash, replacement_source_id, submission_mode, created_at, updated_at) "
-                "VALUES (?, ?, 'DRAFT', ?, ?, '[]', '[]', ?, NULL, NULL, ?, ?)",
-                (
-                    strategy_id,
-                    fingerprint,
-                    encode_json(contract),
-                    encode_json(snapshot),
-                    digest,
-                    now,
-                    now,
-                ),
-            )
+            if self.strategy.strategy_scope is None:
+                connection.execute(
+                    "INSERT INTO strategies(strategy_id, account_fingerprint, status, contract_json, snapshot_json, "
+                    "orders_json, results_json, preview_hash, replacement_source_id, submission_mode, created_at, updated_at) "
+                    "VALUES (?, ?, 'DRAFT', ?, ?, '[]', '[]', ?, NULL, NULL, ?, ?)",
+                    (strategy_id, fingerprint, encode_json(contract), encode_json(snapshot), digest, now, now),
+                )
+            else:
+                scope = self.strategy.strategy_scope
+                self.strategy._assert_owned_authority(connection)
+                connection.execute(
+                    "INSERT INTO multiuser_strategies(user_id, connection_id, strategy_id, account_fingerprint, "
+                    "status, contract_json, snapshot_json, orders_json, results_json, preview_hash, "
+                    "replacement_source_id, submission_mode, connection_version, credential_version, "
+                    "permission_version, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, 'DRAFT', ?, ?, '[]', '[]', ?, NULL, NULL, ?, ?, ?, ?, ?)",
+                    (
+                        scope.user_id, scope.connection_id, strategy_id, fingerprint,
+                        encode_json(contract), encode_json(snapshot), digest,
+                        scope.credential_version, scope.credential_version,
+                        scope.permission_version, now, now,
+                    ),
+                )
         return strategy_id

@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import math
+import hmac
+import secrets
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from .okx import bounded_error_code
-from .store import encode_json
+from .store import decode_json, encode_json
+from .strategy_scope import OwnedStrategyScope
 
 
 QUEUE_DEADLINE_SECONDS = 120
@@ -112,6 +115,20 @@ def normalize_queue(value: Any) -> dict[str, Any] | None:
 def safe_stop_reason(reason: Any, fallback: str = "preflight_unavailable") -> str:
     candidate = reason if isinstance(reason, str) else ""
     return candidate if candidate in _SAFE_STOP_REASONS else fallback
+
+
+def unresolved_leverage_attempt(
+    pre_send_at: Any, leverage_results: Any, _orders: Any = None
+) -> bool:
+    """Keep an owned strategy fenced when a leverage write lacks a durable outcome."""
+    if pre_send_at is None:
+        return False
+    if not isinstance(leverage_results, list) or not leverage_results:
+        return True
+    for result in leverage_results:
+        if not isinstance(result, dict) or result.get("status") not in ("applied", "rejected"):
+            return True
+    return False
 
 
 def stop_queue(
@@ -332,5 +349,225 @@ class StrategyQueueLedger:
             return not placement_attempted
         terminal = {"rejected", "filled", "canceled", "mmp_canceled", "not_submitted"}
         return status in ("APPLIED", "PARTIAL", "UNKNOWN", "COMPLETED") and all(
+            row.get("status") in terminal for row in results
+        )
+
+
+class OwnedStrategyQueueLedger:
+    """Persist one queue transition under an owner-scoped connection fence."""
+
+    def __init__(
+        self,
+        store: Any,
+        *,
+        scope: OwnedStrategyScope,
+        owner_id: str,
+        fence: int,
+        lease_seconds: float,
+        clock: Any,
+    ):
+        self.store = store
+        self.scope = scope
+        self.owner_id = owner_id
+        self.fence = fence
+        self.lease_seconds = lease_seconds
+        self.clock = clock
+
+    def persist_transition(
+        self,
+        strategy: dict[str, Any],
+        *,
+        queue: dict[str, Any],
+        results: list[dict[str, Any]],
+        status: str,
+        failure_reason: str | None,
+        leverage_results: list[dict[str, Any]],
+        mark_placement_attempted: bool = False,
+    ) -> bool:
+        strategy_id = strategy["id"]
+        expected_queue = strategy.get("queueJsonRaw")
+        if not isinstance(expected_queue, str):
+            return False
+        scope = self.scope
+        with self.store.transaction() as connection:
+            suffix = " FOR UPDATE" if getattr(self.store, "dialect", "sqlite") == "postgresql" else ""
+            owned = connection.execute(
+                "SELECT status, credential_version, permission_version, remote_identity_digest, "
+                "product_capabilities_json FROM exchange_connections WHERE user_id=? AND connection_id=?" + suffix,
+                (scope.user_id, scope.connection_id),
+            ).fetchone()
+            lease = connection.execute(
+                "SELECT lease_owner, fence, lease_until FROM multiuser_connection_leases "
+                "WHERE user_id=? AND connection_id=?" + suffix,
+                (scope.user_id, scope.connection_id),
+            ).fetchone()
+            current = connection.execute(
+                "SELECT status, account_fingerprint, queue_json, results_json, updated_at, lease_fence, "
+                "batch_attempted, order_placement_attempted, execution_id, pre_send_at, lease_owner, "
+                "execution_lease_until, lease_until FROM multiuser_strategies "
+                "WHERE user_id=? AND connection_id=? AND strategy_id=?" + suffix,
+                (scope.user_id, scope.connection_id, strategy_id),
+            ).fetchone()
+            claim = connection.execute(
+                "SELECT lease_owner, fence, lease_until FROM multiuser_strategy_claims "
+                "WHERE user_id=? AND connection_id=? AND strategy_id=?" + suffix,
+                (scope.user_id, scope.connection_id, strategy_id),
+            ).fetchone()
+            now = self.clock()
+            prior_queue = normalize_queue(decode_json(expected_queue))
+            prior_marker = None if prior_queue is None else prior_queue.get("inFlight")
+            marker = queue.get("inFlight") if isinstance(queue, dict) else None
+            marker_started = isinstance(marker, dict) and marker != prior_marker
+            post_send_commit = isinstance(prior_marker, dict) and marker is None
+            lease_until = None if lease is None else lease["lease_until"]
+            lease_live = (
+                lease is not None and lease["lease_owner"] == self.owner_id
+                and lease_until is not None and float(lease_until) > now
+            )
+            released_same_fence = (
+                lease is not None and lease["lease_owner"] is None
+                and (lease_until is None or float(lease_until) <= now)
+            )
+            claim_live = (
+                claim is not None and claim["lease_owner"] == self.owner_id
+                and int(claim["fence"]) == self.fence and claim["lease_until"] is not None
+                and float(claim["lease_until"]) > now
+            )
+            claim_same_fence = (
+                claim is not None and claim["lease_owner"] == self.owner_id
+                and int(claim["fence"]) == self.fence
+            )
+            if (
+                owned is None or lease is None or current is None or claim is None
+                or lease["lease_owner"] not in (None, self.owner_id)
+                or int(lease["fence"]) != self.fence
+                or (not lease_live and not (post_send_commit and released_same_fence)
+                    and not (post_send_commit and lease["lease_owner"] == self.owner_id))
+                or not claim_same_fence
+                or (not claim_live and not post_send_commit)
+                or current["status"] != "APPLYING"
+                or current["lease_owner"] != self.owner_id
+                or current["account_fingerprint"] != strategy["accountFingerprint"]
+                or current["queue_json"] != expected_queue
+                or current["results_json"] != encode_json(strategy["results"])
+                or current["updated_at"] != strategy["updatedAt"]
+                or int(current["lease_fence"] or 0) != self.fence
+            ):
+                return False
+
+            capabilities = decode_json(owned["product_capabilities_json"] or "[]")
+            if marker_started and (
+                owned["status"] != "ACTIVE"
+                or int(owned["credential_version"]) != scope.credential_version
+                or int(owned["permission_version"]) != scope.permission_version
+                or not hmac.compare_digest(owned["remote_identity_digest"], scope.remote_identity_digest)
+                or not isinstance(capabilities, list) or "trade" not in capabilities
+            ):
+                return False
+
+            renewed_until = now + self.lease_seconds if lease_live else current["execution_lease_until"]
+            if lease_live:
+                if connection.execute(
+                    "UPDATE multiuser_connection_leases SET lease_until=?, updated_at=? "
+                    "WHERE user_id=? AND connection_id=? AND lease_owner=? AND fence=? AND lease_until>?",
+                    (renewed_until, now, scope.user_id, scope.connection_id, self.owner_id, self.fence, now),
+                ).rowcount != 1:
+                    return False
+                if connection.execute(
+                    "UPDATE multiuser_strategy_claims SET lease_until=?, updated_at=? "
+                    "WHERE user_id=? AND connection_id=? AND strategy_id=? AND lease_owner=? AND fence=?",
+                    (renewed_until, now, scope.user_id, scope.connection_id, strategy_id, self.owner_id, self.fence),
+                ).rowcount != 1:
+                    return False
+            attempted = bool(strategy["orderPlacementAttempted"]) or mark_placement_attempted
+            updated = connection.execute(
+                "UPDATE multiuser_strategies SET status=?, queue_json=?, results_json=?, leverage_results_json=?, "
+                "order_placement_attempted=?, pre_send_at=CASE WHEN ?=0 THEN pre_send_at ELSE COALESCE(pre_send_at, ?) END, "
+                "execution_lease_until=?, lease_until=?, failure_reason=?, updated_at=? "
+                "WHERE user_id=? AND connection_id=? AND strategy_id=? AND status='APPLYING' "
+                "AND account_fingerprint=? AND queue_json=? AND results_json=? AND updated_at=? AND lease_fence=?",
+                (status, encode_json(queue), encode_json(results), encode_json(leverage_results),
+                 1 if attempted else 0, 1 if marker_started else 0,
+                 now, renewed_until, renewed_until, failure_reason, now, scope.user_id, scope.connection_id,
+                 strategy_id, strategy["accountFingerprint"], expected_queue,
+                 encode_json(strategy["results"]), strategy["updatedAt"], self.fence),
+            ).rowcount
+            if updated != 1:
+                return False
+
+            if marker_started:
+                prepared = strategy.get("prepared")
+                orders = prepared.get("orders") if isinstance(prepared, dict) else None
+                contract = strategy.get("contract")
+                instrument_id = contract.get("instrumentId") if isinstance(contract, dict) else None
+                target_index = marker.get("index") if marker.get("kind") == "placement" else None
+                target = None
+                if marker.get("kind") == "placement" and isinstance(orders, list) and type(target_index) is int:
+                    if 0 <= target_index < len(orders) and isinstance(orders[target_index], dict):
+                        target = orders[target_index]
+                elif marker.get("kind") == "leverage" and isinstance(orders, list):
+                    target = next(
+                        (row for row in orders if isinstance(row, dict) and row.get("side") == marker.get("side")),
+                        None,
+                    )
+                if not isinstance(instrument_id, str) or not instrument_id or not isinstance(target, dict):
+                    raise ValueError("owned queue marker does not match the prepared strategy")
+                connection.execute(
+                    "INSERT INTO multiuser_strategy_events(user_id, connection_id, strategy_id, event_id, "
+                    "event_type, payload_json, created_at) VALUES (?, ?, ?, ?, 'strategy_target_pre_send', ?, ?)",
+                    (scope.user_id, scope.connection_id, strategy_id, secrets.token_hex(16),
+                     encode_json({
+                         "kind": marker.get("kind"), "index": target_index,
+                         "side": target.get("side"), "clientOrderId": target.get("clientOrderId"),
+                         "instrumentId": instrument_id, "contracts": target.get("contracts"),
+                     }), now),
+                )
+
+            if status != "APPLYING":
+                connection.execute(
+                    "UPDATE multiuser_strategies SET execution_id=NULL, execution_lease_until=NULL, "
+                    "lease_owner=NULL, lease_until=NULL WHERE user_id=? AND connection_id=? AND strategy_id=? "
+                    "AND lease_fence=?",
+                    (scope.user_id, scope.connection_id, strategy_id, self.fence),
+                )
+                connection.execute(
+                    "UPDATE multiuser_connection_leases SET lease_owner=NULL, lease_until=NULL, operation_id=NULL, "
+                    "updated_at=? WHERE user_id=? AND connection_id=? AND lease_owner=? AND fence=?",
+                    (now, scope.user_id, scope.connection_id, self.owner_id, self.fence),
+                )
+                connection.execute(
+                    "UPDATE multiuser_strategy_claims SET lease_owner=NULL, lease_until=NULL, updated_at=? "
+                    "WHERE user_id=? AND connection_id=? AND strategy_id=? AND lease_owner=? AND fence=?",
+                    (now, scope.user_id, scope.connection_id, strategy_id, self.owner_id, self.fence),
+                )
+                unresolved_external_attempt = unresolved_leverage_attempt(
+                    current["pre_send_at"], leverage_results,
+                    (strategy.get("prepared") or {}).get("orders")
+                    if isinstance(strategy.get("prepared"), dict) else None,
+                )
+                if self._can_release_reservation(
+                    status, results, attempted, unresolved_external_attempt=unresolved_external_attempt
+                ):
+                    connection.execute(
+                        "DELETE FROM multiuser_strategy_reservations WHERE user_id=? AND connection_id=? "
+                        "AND strategy_id=?",
+                        (scope.user_id, scope.connection_id, strategy_id),
+                    )
+            return True
+
+    @staticmethod
+    def _can_release_reservation(
+        status: str,
+        results: list[dict[str, Any]],
+        placement_attempted: bool,
+        *,
+        unresolved_external_attempt: bool = False,
+    ) -> bool:
+        if unresolved_external_attempt:
+            return False
+        if status == "UNKNOWN":
+            return not placement_attempted
+        terminal = {"rejected", "filled", "canceled", "mmp_canceled", "not_submitted"}
+        return status in {"APPLIED", "PARTIAL", "UNKNOWN", "COMPLETED"} and all(
             row.get("status") in terminal for row in results
         )
