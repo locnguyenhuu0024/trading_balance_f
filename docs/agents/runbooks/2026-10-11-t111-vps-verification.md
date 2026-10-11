@@ -2,6 +2,20 @@
 
 Status: READY FOR OPERATOR VERIFICATION — source audit and local related regression pass. Pull the reviewed T111 revision from `codex/multi-user-okx-binance-plan` onto the VPS before running these commands. This runbook is not release approval.
 
+## Focused rerun after T118 fixture correction
+
+The operator's307-test run had one failure: the PostgreSQL API fixture omitted selectedLevels and was rejected before lease contention. T118 supplies a valid shared fixture and local coverage, preserving the production validators and exact PostgreSQL race assertions. After pulling the correction and loading the existing test environment as below, rerun only the affected scope:
+
+```bash
+backend/.venv-multiuser/bin/python -m unittest \
+  backend.tests.test_strategy_scope \
+  backend.tests.test_strategy_worker -q
+backend/.venv-multiuser/bin/python -m compileall -q backend
+printf 'compileall exit=%s\n' "$?"
+```
+
+Required: all affected tests pass with no PostgreSQL skip; compileall exit0. Send the concise test summary and build exit status. The earlier unaffected results can be reused; a full regression rerun is unnecessary for this fixture-only correction.
+
 Reuse the existing Python environment and dedicated test database from [T110 setup](2026-10-10-ubuntu-24-04-multiuser-setup.md). No additional packages or Mac installation are required. The operator owns `backend/.env.multiuser.test`; its exported `MULTIUSER_TEST_DATABASE_URL` must target only the dedicated disposable test database. Do not disclose its contents. These tests create and remove isolated random schemas, use fabricated exchange responses, and do not trade on an exchange. Keep feature flags disabled.
 
 From the repository root on the VPS, load the existing test environment without displaying values:

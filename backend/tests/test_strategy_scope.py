@@ -82,6 +82,72 @@ def _postgres_owned_worker_claim_worker(dsn: str, barrier: object, output: objec
         output.put(("worker-error", type(error).__name__))
 
 
+def _seed_owned_claim_race_fixture(connection: Any, scope: OwnedStrategyScope, now: float) -> None:
+    worker_orders = [{
+        "clientOrderId": "worker-order-1", "side": "long", "contracts": "1", "leverage": 3,
+    }]
+    worker_prepared = {
+        "submissionMode": "sequential", "_positionMode": "net_mode",
+        "orders": worker_orders, "previewHash": "worker-preview",
+    }
+    worker_queue = new_queue(enqueued_at=now - 10, total_count=1, preview_hash="worker-preview")
+    api_orders = [{
+        "clientOrderId": "api-order-1", "side": "short", "contracts": "1", "leverage": 3,
+    }]
+    api_prepared = {
+        "submissionMode": "sequential", "_positionMode": "net_mode",
+        "orders": api_orders, "previewHash": "api-preview",
+    }
+    api_contract = {
+        "instrumentId": INSTRUMENT,
+        "interval": "12Hutc",
+        "selectedLevels": [{"side": "short", "price": "61000"}],
+        "entryBySide": {"short": "61000"},
+        "totalMargin": "60",
+        "leverage": {"short": 3},
+        "sidePercent": {"short": "100"},
+        "allocation": "equal",
+    }
+
+    connection.execute(
+        "INSERT INTO multiuser_connection_leases(user_id, connection_id, lease_owner, fence, "
+        "lease_until, operation_id, updated_at) VALUES (?, ?, NULL, 4, ?, NULL, ?)",
+        (scope.user_id, scope.connection_id, now - 1, now - 10),
+    )
+    connection.execute(
+        "INSERT INTO multiuser_strategies(user_id, connection_id, strategy_id, status, "
+        "account_fingerprint, contract_json, snapshot_json, orders_json, results_json, "
+        "prepared_json, queue_json, preview_hash, attempt_started, submission_mode, "
+        "execution_id, execution_lease_until, lease_owner, lease_fence, lease_until, "
+        "credential_version, permission_version, created_at, updated_at) "
+        "VALUES (?, ?, 'worker-queued-job', 'APPLYING', ?, ?, ?, ?, ?, ?, ?, ?, 1, 'sequential', "
+        "'expired-worker', ?, 'expired-worker', 4, ?, 2, 3, ?, ?)",
+        (scope.user_id, scope.connection_id, scope.account_fingerprint,
+         encode_json({"instrumentId": INSTRUMENT}), encode_json({"_positionMode": "net_mode"}),
+         encode_json(worker_orders), encode_json(initial_results(worker_orders)),
+         encode_json(worker_prepared), encode_json(worker_queue), "worker-preview",
+         now - 1, now - 1, now - 100, now - 10),
+    )
+    connection.execute(
+        "INSERT INTO multiuser_strategy_claims(user_id, connection_id, strategy_id, lease_owner, "
+        "fence, lease_until, updated_at) VALUES (?, ?, 'worker-queued-job', NULL, 4, ?, ?)",
+        (scope.user_id, scope.connection_id, now - 1, now - 10),
+    )
+    connection.execute(
+        "INSERT INTO multiuser_strategies(user_id, connection_id, strategy_id, status, "
+        "account_fingerprint, contract_json, snapshot_json, orders_json, results_json, preview_hash, "
+        "confirmation_hash, prepared_expires_at, prepared_json, attempt_started, submission_mode, "
+        "credential_version, permission_version, created_at, updated_at) "
+        "VALUES (?, ?, 'api-prepared-strategy', 'PREPARED', ?, ?, ?, ?, '[]', ?, ?, ?, ?, 0, "
+        "'sequential', 2, 3, ?, ?)",
+        (scope.user_id, scope.connection_id, scope.account_fingerprint,
+         encode_json(api_contract),
+         encode_json({"_positionMode": "net_mode", "orders": api_orders}),
+         encode_json(api_orders), "api-preview", token_digest("api-confirmation", b"S" * 32),
+         now + 60, encode_json(api_prepared), now - 5, now - 5),
+    )
+
+
 class StrategyScopeContractTests(unittest.TestCase):
     def test_only_opposite_single_sided_hedge_scopes_are_independent(self) -> None:
         long_scope = scope_for_sides("long_short_mode", ["long"])
@@ -350,6 +416,68 @@ class OwnedStrategyLookupTests(unittest.TestCase):
                 "'ACTIVE', ?, 2, 3, 100.0, 100.0)",
                 (self.scope.user_id, self.scope.connection_id, self.scope.remote_identity_digest),
             )
+
+    def test_owned_api_claim_race_fixture_reaches_busy_guard(self) -> None:
+        self._seed_owned_connection()
+        now = self.service.clock()
+        with self.store.transaction() as connection:
+            _seed_owned_claim_race_fixture(connection, self.scope, now)
+
+        strategy = self.service._load_row("api-prepared-strategy")
+        with self.assertRaises(APIError) as raised:
+            self.service._claim_execution("api-prepared-strategy", strategy, "api-confirmation")
+
+        self.assertEqual(raised.exception.code, "connection_busy")
+        with self.store.connection() as connection:
+            lease = connection.execute(
+                "SELECT lease_owner, fence, lease_until, operation_id FROM multiuser_connection_leases "
+                "WHERE user_id=? AND connection_id=?",
+                (self.scope.user_id, self.scope.connection_id),
+            ).fetchone()
+            api_strategy = connection.execute(
+                "SELECT status, confirmation_hash, attempt_started FROM multiuser_strategies "
+                "WHERE user_id=? AND connection_id=? AND strategy_id='api-prepared-strategy'",
+                (self.scope.user_id, self.scope.connection_id),
+            ).fetchone()
+        self.assertEqual(tuple(lease), (None, 4, now - 1, None))
+        self.assertEqual(api_strategy["status"], "PREPARED")
+        self.assertEqual(api_strategy["confirmation_hash"], token_digest("api-confirmation", b"S" * 32))
+        self.assertEqual(api_strategy["attempt_started"], 0)
+
+    def test_owned_api_claim_rejects_malformed_race_fixture_before_busy_guard(self) -> None:
+        self._seed_owned_connection()
+        now = self.service.clock()
+        with self.store.transaction() as connection:
+            _seed_owned_claim_race_fixture(connection, self.scope, now)
+            connection.execute(
+                "UPDATE multiuser_strategies SET contract_json=? WHERE user_id=? AND connection_id=? "
+                "AND strategy_id='api-prepared-strategy'",
+                (encode_json({
+                    "instrumentId": INSTRUMENT, "interval": "12Hutc", "selectedLevels": [],
+                }), self.scope.user_id, self.scope.connection_id),
+            )
+
+        strategy = self.service._load_row("api-prepared-strategy")
+        with self.assertRaises(APIError) as raised:
+            self.service._claim_execution("api-prepared-strategy", strategy, "api-confirmation")
+
+        self.assertEqual(raised.exception.code, "invalid_strategy")
+        self.assertEqual(raised.exception.details["reason"], "invalid_order_count")
+        with self.store.connection() as connection:
+            lease = connection.execute(
+                "SELECT lease_owner, fence, lease_until, operation_id FROM multiuser_connection_leases "
+                "WHERE user_id=? AND connection_id=?",
+                (self.scope.user_id, self.scope.connection_id),
+            ).fetchone()
+            api_strategy = connection.execute(
+                "SELECT status, confirmation_hash, attempt_started FROM multiuser_strategies "
+                "WHERE user_id=? AND connection_id=? AND strategy_id='api-prepared-strategy'",
+                (self.scope.user_id, self.scope.connection_id),
+            ).fetchone()
+        self.assertEqual(tuple(lease), (None, 4, now - 1, None))
+        self.assertEqual(api_strategy["status"], "PREPARED")
+        self.assertEqual(api_strategy["confirmation_hash"], token_digest("api-confirmation", b"S" * 32))
+        self.assertEqual(api_strategy["attempt_started"], 0)
 
     def test_missing_owned_id_returns_404_before_upstream_call(self) -> None:
         with self.assertRaises(APIError) as raised:
@@ -1615,21 +1743,6 @@ class PostgresOwnedStrategyIntegrationTests(unittest.TestCase):
                 account_fingerprint="owner-scoped-fingerprint", remote_identity_digest="remote-digest",
                 credential_version=2, permission_version=3, environment="demo",
             )
-            worker_orders = [{
-                "clientOrderId": "worker-order-1", "side": "long", "contracts": "1", "leverage": 3,
-            }]
-            worker_prepared = {
-                "submissionMode": "sequential", "_positionMode": "net_mode",
-                "orders": worker_orders, "previewHash": "worker-preview",
-            }
-            worker_queue = new_queue(enqueued_at=now - 10, total_count=1, preview_hash="worker-preview")
-            api_orders = [{
-                "clientOrderId": "api-order-1", "side": "short", "contracts": "1", "leverage": 3,
-            }]
-            api_prepared = {
-                "submissionMode": "sequential", "_positionMode": "net_mode",
-                "orders": api_orders, "previewHash": "api-preview",
-            }
             with store.transaction() as connection:
                 connection.execute(
                     "INSERT INTO users(user_id, username, username_normalized, password_hash, status, created_at) "
@@ -1643,43 +1756,7 @@ class PostgresOwnedStrategyIntegrationTests(unittest.TestCase):
                     "'ACTIVE', ?, 2, 3, ?, ?)",
                     (scope.user_id, scope.connection_id, scope.remote_identity_digest, now - 100, now - 100),
                 )
-                connection.execute(
-                    "INSERT INTO multiuser_connection_leases(user_id, connection_id, lease_owner, fence, "
-                    "lease_until, operation_id, updated_at) VALUES (?, ?, NULL, 4, ?, NULL, ?)",
-                    (scope.user_id, scope.connection_id, now - 1, now - 10),
-                )
-                connection.execute(
-                    "INSERT INTO multiuser_strategies(user_id, connection_id, strategy_id, status, "
-                    "account_fingerprint, contract_json, snapshot_json, orders_json, results_json, "
-                    "prepared_json, queue_json, preview_hash, attempt_started, submission_mode, "
-                    "execution_id, execution_lease_until, lease_owner, lease_fence, lease_until, "
-                    "credential_version, permission_version, created_at, updated_at) "
-                    "VALUES (?, ?, 'worker-queued-job', 'APPLYING', ?, ?, ?, ?, ?, ?, ?, ?, 1, 'sequential', "
-                    "'expired-worker', ?, 'expired-worker', 4, ?, 2, 3, ?, ?)",
-                    (scope.user_id, scope.connection_id, scope.account_fingerprint,
-                     encode_json({"instrumentId": INSTRUMENT}), encode_json({"_positionMode": "net_mode"}),
-                     encode_json(worker_orders), encode_json(initial_results(worker_orders)),
-                     encode_json(worker_prepared), encode_json(worker_queue), "worker-preview",
-                     now - 1, now - 1, now - 100, now - 10),
-                )
-                connection.execute(
-                    "INSERT INTO multiuser_strategy_claims(user_id, connection_id, strategy_id, lease_owner, "
-                    "fence, lease_until, updated_at) VALUES (?, ?, 'worker-queued-job', NULL, 4, ?, ?)",
-                    (scope.user_id, scope.connection_id, now - 1, now - 10),
-                )
-                connection.execute(
-                    "INSERT INTO multiuser_strategies(user_id, connection_id, strategy_id, status, "
-                    "account_fingerprint, contract_json, snapshot_json, orders_json, results_json, preview_hash, "
-                    "confirmation_hash, prepared_expires_at, prepared_json, attempt_started, submission_mode, "
-                    "credential_version, permission_version, created_at, updated_at) "
-                    "VALUES (?, ?, 'api-prepared-strategy', 'PREPARED', ?, ?, ?, ?, '[]', ?, ?, ?, ?, 0, "
-                    "'sequential', 2, 3, ?, ?)",
-                    (scope.user_id, scope.connection_id, scope.account_fingerprint,
-                     encode_json({"instrumentId": INSTRUMENT}),
-                     encode_json({"_positionMode": "net_mode", "orders": api_orders}),
-                     encode_json(api_orders), "api-preview", token_digest("api-confirmation", b"S" * 32),
-                     now + 60, encode_json(api_prepared), now - 5, now - 5),
-                )
+                _seed_owned_claim_race_fixture(connection, scope, now)
 
             context = multiprocessing.get_context("spawn")
             barrier = context.Barrier(2)

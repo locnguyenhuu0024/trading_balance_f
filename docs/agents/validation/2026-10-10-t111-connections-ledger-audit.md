@@ -2,6 +2,16 @@
 
 Status: BLOCKED_EXTERNAL_VERIFICATION — final independent source audit PASS; required real AES/PostgreSQL evidence pending.
 
+## Operator runtime result and T118 remediation — 2026-10-11
+
+Operator reported307-test regression FAILED with one failure in PostgresOwnedStrategyIntegrationTests.test_pg_owner_api_claim_and_worker_claim_share_connection_fence: API returned invalid_strategy rather than connection_busy; worker result did not differ. No skip count appeared in the provided summary. Operator final compileall explicitly exit0. Runtime gate remains REWORK; no full T111 PASS.
+
+AUD-111-33: coordinator source inspection finds the API prepared fixture persists contract_json containing only instrumentId. Production _claim_execution calls _ensure_new_order_cap before lease acquisition and requires nonempty selectedLevels. Thus the malformed synthetic contract fails validation before proving the intended connection-lease exclusion. Do not accept invalid_strategy as an alternative race outcome or bypass production validation. Bounded fixture-only T118 dispatched E1/gpt-6-luna/xhigh explicitly, no inheritance; effective route unavailable. Allowed write only test_strategy_scope.py, add local protection for the actual pre-claim fixture shape, preserve PostgreSQL processes/barrier/exact results/persisted-state checks. Existing pre-existing telemetry2026-10-06 stays excluded. No child close/release primitive exists; terminal previous results preserved, only this writer active.
+
+T118 failing baseline observed by executor before fixture correction: `rtk proxy python3.12 -m unittest backend.tests.test_strategy_scope.OwnedStrategyLookupTests.test_owned_api_claim_race_fixture_reaches_busy_guard` ran1, exit1, invalid_strategy instead of independently expected connection_busy. Initial default Python3.9 cannot import the existing slots dataclass; using already available Python3.12 restores the correct task runtime, with no installation or source workaround.
+
+AUD33 source correction PASS after independent coordinator inspection: valid API selectedLevels and related fabricated contract fields are seeded through one helper shared by local and PG tests. No production behavior, process/barrier/exact race or persisted state assertion changed. Local47 tests pass (PG class intentionally excluded). Coordinator final malformed-contract negative1 then valid-busy positive1 each passed; fresh backend compileall0 and selected diff whitespace0. Exact commands in T118 task. T111 remains BLOCKED_EXTERNAL_VERIFICATION pending affected PostgreSQL rerun from the updated VPS runbook. Changes are being committed/pushed under the existing T111 Git authorization; this record does not establish a real PG pass.
+
 ## Stable related-regression checkpoint — 2026-10-11
 
 Executor terminal turn failed with a runtime usage-limit error before final report. Source preserved. Existing role/route-compatible writer received bounded remediation; existing R3 auditor received a final read-only review request. No route substitution or coordinator executable edit.
