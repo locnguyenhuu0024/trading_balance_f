@@ -2,9 +2,11 @@
 
 Status: READY FOR OPERATOR VERIFICATION — source audit and local related regression pass. Pull the reviewed T111 revision from `codex/multi-user-okx-binance-plan` onto the VPS before running these commands. This runbook is not release approval.
 
-## Focused rerun after T118 fixture correction
+## Focused rerun after T118/T119 test corrections
 
 The operator's307-test run had one failure: the PostgreSQL API fixture omitted selectedLevels and was rejected before lease contention. T118 supplies a valid shared fixture and local coverage, preserving the production validators and exact PostgreSQL race assertions. After pulling the correction and loading the existing test environment as below, rerun only the affected scope:
+
+The subsequent48-test run passed the exact API/worker claim-race result, then failed because tuple(mapping_row) returns column names. T119 reads the expected fields by name in both persisted lease/worker assertions, with local checks for correct mappings/SQLite rows and rejection of wrong persisted values. Production code is unchanged. The same affected48-test command below remains the operator verification target.
 
 ```bash
 backend/.venv-multiuser/bin/python -m unittest \

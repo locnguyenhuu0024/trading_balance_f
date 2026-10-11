@@ -1791,8 +1791,14 @@ class PostgresOwnedStrategyIntegrationTests(unittest.TestCase):
                     "WHERE user_id=? AND connection_id=? AND strategy_id='api-prepared-strategy'",
                     (scope.user_id, scope.connection_id),
                 ).fetchone()
-            self.assertEqual(tuple(lease), ("pg-owned-worker", 5, "worker-queued-job"))
-            self.assertEqual(tuple(worker_strategy), ("APPLYING", "pg-owned-worker", 5))
+            self.assertEqual(
+                (lease["lease_owner"], lease["fence"], lease["operation_id"]),
+                ("pg-owned-worker", 5, "worker-queued-job"),
+            )
+            self.assertEqual(
+                (worker_strategy["status"], worker_strategy["lease_owner"], worker_strategy["lease_fence"]),
+                ("APPLYING", "pg-owned-worker", 5),
+            )
             self.assertEqual(api_strategy["status"], "PREPARED")
             self.assertEqual(api_strategy["confirmation_hash"], token_digest("api-confirmation", b"S" * 32))
             self.assertEqual(api_strategy["attempt_started"], 0)

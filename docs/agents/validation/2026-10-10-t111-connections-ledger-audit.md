@@ -2,6 +2,14 @@
 
 Status: BLOCKED_EXTERNAL_VERIFICATION — final independent source audit PASS; required real AES/PostgreSQL evidence pending.
 
+## Second operator rerun — T119 / AUD-111-34
+
+Operator affected48-test run still fails one test, now at its persisted lease assertion: tuple(lease) gives column names rather than values. compileall explicitly exit0. The preceding exact API connection_busy/worker claimed fence5 assertion now passes, confirming T118 fixed admission to the actual race.
+
+PostgresIdentityStore configures psycopg dict_row: iterating that mapping yields keys. SQLite-only row fixtures iterate values. Both tuple(lease) and tuple(worker_strategy) in the PG race test must use explicit named-column values; production row adapters must remain unchanged. Coordinator checked analogous tuples in other T111 PG suites: migration uses raw psycopg default tuple rows, so those expressions are valid. T119 E0/gpt-6-luna/high explicitly dispatched, no inheritance/effective route unavailable, only these two assertions plus necessary focused evidence. Existing tests must still reject wrong owner/fence/state and retain exact expected values. No real PostgreSQL assertion PASS is claimed until operator rerun.
+
+AUD34 source correction PASS: executor changed only the two persisted-state actual expressions to named column access, retaining exact expected tuples. Actual AST-extracted assertions fail on correct mappings before fix; after fix accept mapping/SQLite representations and reject six wrong individual values. Coordinator independently inspected the complete diff and ran actual assertions in formal negative6-before-positive2 representation order, exit0. Fresh final backend compileall exit0 and diff whitespace exit0. No unrelated tests repeated. T119/T111 remain BLOCKED only on operator PG persisted-state rerun. Commit/push under existing user authorization; source-only harness never claimed as PostgreSQL evidence.
+
 ## Operator runtime result and T118 remediation — 2026-10-11
 
 Operator reported307-test regression FAILED with one failure in PostgresOwnedStrategyIntegrationTests.test_pg_owner_api_claim_and_worker_claim_share_connection_fence: API returned invalid_strategy rather than connection_busy; worker result did not differ. No skip count appeared in the provided summary. Operator final compileall explicitly exit0. Runtime gate remains REWORK; no full T111 PASS.

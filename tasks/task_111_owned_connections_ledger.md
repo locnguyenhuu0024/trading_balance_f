@@ -1,6 +1,6 @@
 # Task 111 — Owned connections, encrypted credentials and durable commands
 
-Status: BLOCKED_EXTERNAL_VERIFICATION — T118 fixture correction/source audit PASS; PostgreSQL rerun pending
+Status: BLOCKED_EXTERNAL_VERIFICATION — T119 mapping assertions corrected/audited; PG persisted-state rerun pending
 Agent Role: implementation_executor
 Executor Class: E2
 Target Model: gpt-6-luna
