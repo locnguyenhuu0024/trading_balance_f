@@ -551,6 +551,76 @@ class ExchangeReadRouteTests(unittest.TestCase):
         self.assertEqual(self.transport.calls, before)
         self.assertEqual(credential_reads, [])
 
+    def test_slow_owned_strategy_projection_freezes_stale_rows_with_truthful_timestamps(self) -> None:
+        principal = self.service.identity_auth.validate_session(self.token)
+        metadata = self.service.connections.strategy_metadata_context(principal, self.connection_id)
+        fingerprint = owned_strategy_fingerprint(self.user_id, self.connection_id)
+        now = self.now
+        with self.store.transaction() as connection:
+            for index in range(501):
+                connection.execute(
+                    "INSERT INTO multiuser_strategies(user_id, connection_id, strategy_id, status, "
+                    "account_fingerprint, contract_json, snapshot_json, orders_json, results_json, preview_hash, "
+                    "leverage_results_json, credential_version, permission_version, created_at, updated_at) "
+                    "VALUES (?, ?, ?, 'DRAFT', ?, ?, ?, '[]', '[]', '', '[]', ?, ?, ?, ?)",
+                    (
+                        self.user_id, self.connection_id, f"stale-route-strategy-{index:04d}", fingerprint,
+                        encode_json({"instrumentId": "BTC-USDT-SWAP", "interval": "1Dutc"}),
+                        encode_json({"sides": []}), metadata.credential_version, metadata.permission_version,
+                        now - index, now - index,
+                    ),
+                )
+
+        credential_reads: list[str] = []
+
+        def deny_vault(*_args, **_kwargs):
+            credential_reads.append("unexpected")
+            self.fail("owned strategy projections must not decrypt exchange credentials")
+
+        self.service.connections.vault.decrypt_credentials = deny_vault
+        before_transport = list(self.transport.calls)
+        gateway = self.service.data_gateway
+        monotonic = [10.0]
+        gateway._monotonic = lambda: monotonic[0]
+        original_normalized_page = gateway.normalized_page
+
+        def advance_during_local_projection(**kwargs):
+            fetcher = kwargs["fetcher"]
+            if kwargs["resource"] == "strategies" and kwargs["cursor"] is None:
+                def slow_fetcher():
+                    rows = fetcher()
+                    monotonic[0] += 1.1
+                    self.now += 1.1
+                    return rows
+
+                kwargs["fetcher"] = slow_fetcher
+            return original_normalized_page(**kwargs)
+
+        gateway.normalized_page = advance_during_local_projection
+        expected_as_of = gateway._iso_time(now)
+        _, first, _ = self._read(f"/v2/connections/{self.connection_id}/strategies?limit=50")
+        self.assertEqual(first["page"]["total"], 501)
+        self.assertEqual(len(first["strategies"]), 50)
+        self.assertTrue(first["dataMeta"]["stale"])
+        self.assertEqual(first["dataMeta"]["fetchedAt"], expected_as_of)
+        self.assertEqual(first["dataMeta"]["asOf"], expected_as_of)
+
+        cursor = first["page"]["nextCursor"]
+        with self.store.transaction() as connection:
+            connection.execute(
+                "DELETE FROM multiuser_strategies WHERE user_id=? AND connection_id=? AND strategy_id=?",
+                (self.user_id, self.connection_id, "stale-route-strategy-0050"),
+            )
+        _, second, _ = self._read(
+            f"/v2/connections/{self.connection_id}/strategies?limit=50&cursor={cursor}"
+        )
+        self.assertEqual(second["strategies"][0]["id"], "stale-route-strategy-0050")
+        self.assertTrue(second["dataMeta"]["stale"])
+        self.assertEqual(second["dataMeta"]["fetchedAt"], expected_as_of)
+        self.assertEqual(second["dataMeta"]["asOf"], expected_as_of)
+        self.assertEqual(self.transport.calls, before_transport)
+        self.assertEqual(credential_reads, [])
+
     def _insert_refresh_strategy(self, strategy_id: str = "refresh-strategy-01") -> tuple[StrategyService, str]:
         principal = self.service.identity_auth.validate_session(self.token)
         context = self.service.connections.account_context(principal, self.connection_id)

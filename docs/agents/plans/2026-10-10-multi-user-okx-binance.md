@@ -227,3 +227,7 @@ T111 predecessor PASS. Two independent R2 workstreams collected and synthesized;
 ## T112 source checkpoint — 2026-10-11
 
 P03 implementation and independent source audit PASS. Final ordered negative32/2skips then success22/3skips; related V3 sets119/5skips and92/1skip, compileall0 and scoped diff-check0. No executable changes followed verification. Full T112 remains BLOCKED_EXTERNAL_VERIFICATION for the operator runtime and separately authorized venue acceptance; T113/T114 are not opened. Source audit and exact checkpoint selectors are under `docs/agents/validation/2026-10-11-t112-read-adapters-audit.md` and `2026-10-11-t112-checkpoint-commands.md`. Operator instructions: `docs/agents/runbooks/2026-10-11-t112-vps-verification.md`. No Git authorization inferred or mutation performed.
+
+## T120 operator failure remediation — 2026-10-11
+
+Operator first119 suite failed one slow local projection; other92/no-skips and compile0 accepted. T120 PASS after deterministic failing501-row baseline, negative5 then success2, related68/no-skips, independent source audit and final build0. Persisted strategy snapshots may expose truthful stale=true; venue freshness and owner/session/generation fences unchanged. Repaired first suite now123 tests requires operator rerun; T112 full verdict and T113/T114 predecessor gates remain pending. Updated commands are in the existing T112 VPS runbook.

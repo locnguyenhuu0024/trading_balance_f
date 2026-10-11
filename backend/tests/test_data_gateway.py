@@ -1027,6 +1027,66 @@ class DataGatewayTests(unittest.TestCase):
         self.assertEqual(page["data"], [{"instrument": "BTCUSDT"}])
         self.assertEqual(instruments_calls, 1)
 
+    def test_normalized_venue_fetch_expiring_during_read_remains_data_stale(self) -> None:
+        def slow_venue_fetch() -> list[dict]:
+            self.monotonic += 1.1
+            self.wall += 1.1
+            return [{"instrument": "BTC-USDT-SWAP"}]
+
+        with self.assertRaises(GatewayError) as raised:
+            self.gateway.normalized_page(
+                resource="connection:positions", scope=("owner", "connection", "SWAP"),
+                cursor=None, limit=50, fetcher=slow_venue_fetch, ttl_seconds=1, private=True,
+                session_guard=self.guard, identity_guard=lambda: None,
+            )
+
+        self.assertEqual((raised.exception.status, raised.exception.code), (503, "data_stale"))
+        self.assertEqual(len(self.gateway._cache), 0)
+        self.assertEqual(len(self.gateway._snapshots), 0)
+
+    def test_normalized_logout_during_slow_strategy_projection_prevents_publication(self) -> None:
+        authenticated = True
+
+        def session_guard() -> None:
+            if not authenticated:
+                raise GatewayError(401, "authentication_required", "A valid session is required.")
+
+        def logout_during_projection() -> list[dict]:
+            nonlocal authenticated
+            self.monotonic += 1.1
+            self.wall += 1.1
+            authenticated = False
+            return [{"id": "strategy-1"}]
+
+        with self.assertRaises(GatewayError) as raised:
+            self.gateway.normalized_page(
+                resource="strategies", scope=("owned-strategies", "owner", "connection"),
+                cursor=None, limit=50, fetcher=logout_during_projection, ttl_seconds=1, private=True,
+                session_guard=session_guard, identity_guard=lambda: None,
+            )
+
+        self.assertEqual((raised.exception.status, raised.exception.code), (401, "authentication_required"))
+        self.assertEqual(len(self.gateway._cache), 0)
+        self.assertEqual(len(self.gateway._snapshots), 0)
+
+    def test_normalized_invalidation_during_slow_strategy_projection_prevents_publication(self) -> None:
+        def invalidate_during_projection() -> list[dict]:
+            self.monotonic += 1.1
+            self.wall += 1.1
+            self.gateway.invalidate_private()
+            return [{"id": "strategy-1"}]
+
+        with self.assertRaises(GatewayError) as raised:
+            self.gateway.normalized_page(
+                resource="strategies", scope=("owned-strategies", "owner", "connection"),
+                cursor=None, limit=50, fetcher=invalidate_during_projection, ttl_seconds=1, private=True,
+                session_guard=self.guard, identity_guard=lambda: None,
+            )
+
+        self.assertEqual((raised.exception.status, raised.exception.code), (409, "account_changed"))
+        self.assertEqual(len(self.gateway._cache), 0)
+        self.assertEqual(len(self.gateway._snapshots), 0)
+
     def test_normalized_identity_rate_limit_blocks_retry_network_and_is_fully_scoped(self) -> None:
         session_calls = 0
         authority_calls = 0

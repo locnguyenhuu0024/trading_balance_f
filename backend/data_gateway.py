@@ -478,7 +478,10 @@ class DataGateway:
                 private, session_guard, identity_guard, read_slot_held=True,
                 cooldown_key=self._normalized_cooldown_key(key), authority_guard=authority_guard,
             )
-            if not self.is_deadline_fresh(entry.deadline):
+            if (
+                not self.is_deadline_fresh(entry.deadline)
+                and not self._is_owned_strategy_projection_key(key)
+            ):
                 raise self._data_stale()
             with self._cache_lock:
                 if private and generation != self._private_read_generation:
@@ -625,6 +628,10 @@ class DataGateway:
         if len(key) >= 3 and key[0] == "private" and key[1] == "normalized":
             return key[:-1]
         return key
+
+    @staticmethod
+    def _is_owned_strategy_projection_key(key: tuple[Any, ...]) -> bool:
+        return len(key) >= 3 and key[0] == "private" and key[1:3] == ("normalized", "strategies")
 
     @staticmethod
     def _normalized_row_sort_key(row: dict[str, Any]) -> tuple[tuple[tuple[str, str], ...], str]:
