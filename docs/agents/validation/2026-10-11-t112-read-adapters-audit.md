@@ -100,3 +100,9 @@ Formal negative command: `rtk test /opt/homebrew/bin/python3.12 -m unittest back
 Formal success command: `rtk test /opt/homebrew/bin/python3.12 -m unittest backend.tests.test_exchange_read_routes.ExchangeReadRouteTests.test_slow_owned_strategy_projection_freezes_stale_rows_with_truthful_timestamps backend.tests.test_exchange_read_routes.ExchangeReadRouteTests.test_owned_strategy_projection_uses_bound_sql_and_frozen_pages_without_upstream -q`.
 
 Independent R3-T120-AUDIT-001 terminal SOURCE PASS collected: all three changed source/test files reviewed, AUD-112-031 resolved, no remaining actionable finding. Coordinator adopts T120 PASS and reinstates corrected T112 source PASS. Full T112 still awaits operator123 rerun and separate venue gates. Git delivery is the repaired continuation of the user-authorized T112 commit/push cycle; no new product feature or branch.
+
+## Repaired operator runtime accepted — 2026-10-11
+
+Revision732e279 operator full123 group OK/no skips in38.172s; targeted501-row stale/frozen pair2/2 OK in6.432s. Unchanged previously accepted92 group/no skips remains valid. Combined related coverage215 cases passed, no skips; repeated pair not double-counted. All four AES cases including new Binance two-field round-trip/AAD/tamper/purpose and both PostgreSQL integration cases executed successfully. Required runtime gates are satisfied; prior runtime-pending entries are superseded. No source/test edit followed T120 final independent source audit and coordinator build0. New operator compile output for732e279 was not provided and is not invented; valid final coordinator build evidence retained.
+
+Current verdict: T120 PASS; T112 source/runtime PASS, full task BLOCKED only on separately authorized venue acceptance. Frozen process-local staging remains T115 scope. No real venue proof, activation or successor dispatch is inferred from test fixture success.

@@ -1,6 +1,6 @@
 # T112 Ubuntu 24.04 verification
 
-Status: READY_AFTER_SOURCE_DELIVERY — source audit PASS; operator execution pending
+Status: RUNTIME_PASS — repaired123 group and unchanged92 group accepted without skips; venue gate separate
 Task: T112 / P03. Existing dedicated multi-user test runtime is reused. No new dependency or configuration action is required. This runbook is not permission to activate production, contact Binance/OKX, or run trades.
 
 ## Runtime verification after source delivery
@@ -50,3 +50,7 @@ backend/.venv-multiuser/bin/python -m unittest -v \
 ```
 
 Expected2 tests OK. Then rerun the first full group above (now123 cases) and compileall; the unchanged92-case operator result is retained. The fix permits only persisted strategy snapshots to report stale=true and keeps original timestamps, owner/session/generation guards and venue freshness unchanged. No new configuration/install or real venue call is needed.
+
+## Accepted operator result — 2026-10-11
+
+On revision732e279: first group123/123 OK in38.172s, focused slow/frozen pair2/2 OK in6.432s, no skips. Previously accepted92/92 consumer group is unchanged and retained. No additional runtime rerun is required for the current source. Final coordinator compileall0 after T120 remains valid; no newer VPS compile result is asserted. Direct venue acceptance remains separate and unverified.

@@ -1,6 +1,6 @@
 # Task 112 — Normalized OKX and Binance read adapters
 
-Status: BLOCKED_EXTERNAL_VERIFICATION — source audit PASS; operator runtime and venue evidence pending
+Status: BLOCKED_EXTERNAL_VERIFICATION — source/runtime PASS; venue acceptance pending
 Agent Role: implementation_executor
 Executor Class: E1
 Target Model: gpt-6-luna
@@ -107,7 +107,7 @@ Coordinator owns canonical status/audit/telemetry. Writer returns exact safe com
 - [x] Listed contract implemented with buildable staged consumers.
 - [x] Formal RED observed before GREEN; regression ceiling respected.
 - [x] Final canonical task build recorded.
-- [ ] Applicable visual/device/runtime evidence recorded honestly.
+- [x] Applicable visual/device/runtime evidence recorded honestly.
 - [x] No protected-content access, external secret transmission or unapproved live action.
 - [x] Independent coordinator audit PASS.
 
@@ -116,3 +116,9 @@ Coordinator owns canonical status/audit/telemetry. Writer returns exact safe com
 Independent audit SOURCE PASS, AUD-112-001–030 and residuals resolved. Ordered negative32/2skips before intended-success22/3skips; related119/5skips; additional existing strategy-list/scope/trade-API consumers92/1skip. Counts include skips. Both relevant V3 sets exited0; canonical backend compileall and scoped diff-check exited0 after final executable changes. Exact formal selectors: `docs/agents/validation/2026-10-11-t112-checkpoint-commands.md`; full reconciliation: `docs/agents/validation/2026-10-11-t112-read-adapters-audit.md`.
 
 Full task remains BLOCKED_EXTERNAL_VERIFICATION: new real AES Binance envelope and dedicated PostgreSQL consumer checks must run on the existing operator test runtime without skips. Venue acceptance remains separately authorized and unverified; demo activation stays fail-closed. Process-local snapshots/refresh do not establish T115 deployment-wide coordination. T113/T114 predecessor gate remains closed. Operator commands: `docs/agents/runbooks/2026-10-11-t112-vps-verification.md`. No new dependencies/configuration, live calls, installation, deployment, commit or push performed.
+
+## Operator runtime accepted — 2026-10-11
+
+Operator ran the repaired123-case exchange/gateway/ownership/vault group on revision732e279: OK in38.172s, no skips. The targeted slow/frozen501-row pair also passed2/2 in6.432s. Combined with previously accepted unchanged92-case strategy/scope/trade-API group, all215 related cases passed without skips; the targeted pair is included in123 and is not counted twice. Real AES Binance envelope and dedicated PostgreSQL runtime gates are satisfied. T120 source audit/build evidence remains valid with no executable change. No new post-T120 VPS compileall output was supplied; independently observed final coordinator compileall0 remains the current build evidence.
+
+This supersedes the earlier AES/PostgreSQL/runtime-pending statements. Remaining full T112 gate: separately authorized venue acceptance, including authoritative Binance demo identity/permissions. Source/runtime PASS is not live venue PASS. T113/T114 predecessor gates remain closed under the current plan.

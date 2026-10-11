@@ -1,6 +1,6 @@
 # Implementation plan: Multi-user OKX and Binance
 
-Status: APPROVED — source-first execution authorized; T110/T111 PASS; T112 SOURCE_PASS / BLOCKED_EXTERNAL_VERIFICATION
+Status: APPROVED — source-first execution authorized; T110/T111 PASS; T112 SOURCE_RUNTIME_PASS / VENUE_PENDING
 Date: 2026-10-10
 Revision: 1
 Tier: L
@@ -231,3 +231,7 @@ P03 implementation and independent source audit PASS. Final ordered negative32/2
 ## T120 operator failure remediation — 2026-10-11
 
 Operator first119 suite failed one slow local projection; other92/no-skips and compile0 accepted. T120 PASS after deterministic failing501-row baseline, negative5 then success2, related68/no-skips, independent source audit and final build0. Persisted strategy snapshots may expose truthful stale=true; venue freshness and owner/session/generation fences unchanged. Repaired first suite now123 tests requires operator rerun; T112 full verdict and T113/T114 predecessor gates remain pending. Updated commands are in the existing T112 VPS runbook.
+
+## T112 operator runtime accepted — 2026-10-11
+
+Repaired123-case runtime group and targeted2-case paging regression passed without skips on732e279. Combined with retained92-case consumer group,215 related tests passed without skips. Real AES and PostgreSQL runtime gates are satisfied; corrected source audit and final build0 retained. Full T112 still awaits separately authorized venue acceptance; T113/T114 predecessor dispatch remains withheld. No source change or venue request follows this evidence acceptance.
