@@ -1,6 +1,12 @@
 # T111 ownership/vault/command audit — 2026-10-10
 
-Status: BLOCKED_EXTERNAL_VERIFICATION — final independent source audit PASS; required real AES/PostgreSQL evidence pending.
+Status: PASS — final independent source audit and operator real AES/PostgreSQL verification accepted.
+
+## Accepted final operator evidence — 2026-10-11
+
+Latest operator affected strategy_scope/strategy_worker command reports48 tests OK with no skipped summary; final compileall explicit exit0. Reviewed revision includes T118/T119 test-only corrections; the real PG API-versus-worker exact claim and persisted-state assertions now pass. This resolves AUD33/34 and the last outstanding runtime gate.
+
+Evidence reuse: the earlier307-test runtime regression had only this PG test failing, with no skip summary. Other required AES, PG migration/command/T110 cases passed in that run and their executable source did not change during fixture/assertion corrections. Reuse those successful unaffected results plus the final48-test affected run. No fictitious full309-test successful run is asserted. Independent source audit, formal ordered local safety/success, relevant runtime and final build gates are satisfied. Coordinator final verdict T111 PASS; T118/T119 PASS; T112 predecessor ready. Synthetic/runtime PASS does not establish exchange demo/live integration or authorize production activation/deployment.
 
 ## Second operator rerun — T119 / AUD-111-34
 

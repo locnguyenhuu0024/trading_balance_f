@@ -1,6 +1,6 @@
 # T119 — PostgreSQL claim-state row assertion portability
 
-Status: BLOCKED_EXTERNAL_VERIFICATION — two assertions corrected; independent source audit PASS; PG rerun pending
+Status: PASS — mapping assertions/source audit and operator PostgreSQL persisted-state verification accepted
 Agent Role: implementation_executor
 Executor Class: E0
 Target Model: gpt-6-luna

@@ -1,6 +1,6 @@
 # Task 112 — Normalized OKX and Binance read adapters
 
-Status: PENDING — execution authorized; waiting for predecessor PASS
+Status: READY_FOR_PREFLIGHT — execution authorized; T111 predecessor PASS, adapter contract inspection next
 Agent Role: implementation_executor
 Executor Class: E1
 Target Model: gpt-6-luna
@@ -94,7 +94,7 @@ Coordinator owns canonical status/audit/telemetry. Writer returns exact safe com
 
 ## 8. Pending checklist
 
-- [ ] User execution approval and predecessors ready.
+- [x] User execution approval and predecessors ready.
 - [ ] Explicit implementation_executor model/effort dispatch; no inheritance.
 - [ ] Required operator setup verified without reading protected values.
 - [ ] Listed contract implemented with buildable staged consumers.

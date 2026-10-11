@@ -1,6 +1,6 @@
 # Implementation plan: Multi-user OKX and Binance
 
-Status: APPROVED — source-first execution authorized; T110 PASS; T111 BLOCKED_EXTERNAL_VERIFICATION (source audit PASS)
+Status: APPROVED — source-first execution authorized; T110/T111 PASS; T112 READY_FOR_PREFLIGHT
 Date: 2026-10-10
 Revision: 1
 Tier: L

@@ -1,6 +1,6 @@
 # T118 — Repair T111 PostgreSQL claim-race fixture
 
-Status: BLOCKED_EXTERNAL_VERIFICATION — fixture remediation/source audit PASS; operator PostgreSQL rerun pending
+Status: PASS — fixture correction/source audit and operator PostgreSQL rerun verified
 Agent Role: implementation_executor
 Executor Class: E1
 Target Model: gpt-6-luna
