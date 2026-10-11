@@ -235,3 +235,19 @@ Operator first119 suite failed one slow local projection; other92/no-skips and c
 ## T112 operator runtime accepted — 2026-10-11
 
 Repaired123-case runtime group and targeted2-case paging regression passed without skips on732e279. Combined with retained92-case consumer group,215 related tests passed without skips. Real AES and PostgreSQL runtime gates are satisfied; corrected source audit and final build0 retained. Full T112 still awaits separately authorized venue acceptance; T113/T114 predecessor dispatch remains withheld. No source change or venue request follows this evidence acceptance.
+
+## D-007 source-first T113 continuation — 2026-10-11
+
+User explicitly approves codeT113 with fixtures before demo acceptance, preserving the trade lock and demo verification before activation. T112 source/runtime PASS is the required predecessor milestone for this source-only branch; T112 venue PASS remains unverified and no longer blocks T113 source preflight. T113 production/demo feature activation and full venue verdict stay gated. Two independently material T113 workstreams (native exchange contract; durable ledger/API integration) are dispatched to explicitly bound R2 Sol-medium advisors; final synthesis and source writer readiness await both results. No T114 source work is opened by this choice.
+
+## User pause — 2026-10-11
+
+Progress saved; T113 paused before coordinator contract synthesis and executor dispatch. Both independent R2 reports are collected. No T113 executable changes begun. Resume from `docs/agents/checkpoints/2026-10-11-t113-preflight-paused.md`; D-007 remains valid, trading stays locked, venue verification remains pending.
+
+## T113 resumed — 2026-10-11
+
+User resumed checkpoint. Source Definition of Ready and required two-workstream fan-in PASS. Binding contract: `docs/agents/validation/2026-10-11-t113-preflight.md`; serial E2 writer followed by independent R3 audit. Venue acceptance and activation remain blocked under D-007.
+
+## T113 source checkpoint — 2026-10-11
+
+Authorized D-007 fixture-first source implementation and independent audit PASS; AUD-113-001–014 resolved through E2 implementation/R01 and E0 classifier R02. Final V3 59 run, 58 passed, 1 PostgreSQL skip; backend compile and diffcheck0. Evidence/secret-free VPS commands: `docs/agents/validation/2026-10-11-t113-source-audit.md`. PostgreSQL runtime and venue/demo acceptance remain pending; activation remains blocked. No T114 or new Git writes.

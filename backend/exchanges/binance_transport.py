@@ -1,4 +1,4 @@
-"""Fixed-host, GET-only Binance Spot and standard USD-M transport."""
+"""Fixed-host Binance transport with fixture-only native write support."""
 
 from __future__ import annotations
 
@@ -33,11 +33,26 @@ _ENDPOINTS = {
         ("GET", "/fapi/v2/account", True),
         ("GET", "/fapi/v2/balance", True),
         ("GET", "/fapi/v2/positionRisk", True),
+        ("GET", "/fapi/v1/positionSide/dual", True),
+        ("GET", "/fapi/v1/order", True),
         ("GET", "/fapi/v1/openOrders", True),
         ("GET", "/fapi/v1/exchangeInfo", False),
         ("GET", "/fapi/v1/ticker/price", False),
+        ("POST", "/fapi/v1/order", True),
+        ("DELETE", "/fapi/v1/order", True),
     }),
 }
+_WRITE_ENDPOINTS = frozenset({("POST", "/fapi/v1/order"), ("DELETE", "/fapi/v1/order")})
+_WRITE_PARAMETERS = {
+    ("POST", "/fapi/v1/order"): frozenset({
+        "symbol", "side", "type", "quantity", "positionSide", "reduceOnly", "newClientOrderId",
+    }),
+    ("DELETE", "/fapi/v1/order"): frozenset({"symbol", "orderId"}),
+}
+_DEFINITE_503_MESSAGES = frozenset({
+    "Service Unavailable.",
+    "Internal error; unable to process your request. Please try again.",
+})
 _HOSTS = {
     "live": {"SPOT": "api.binance.com", "USD_M": "fapi.binance.com"},
     "demo": {"SPOT": "demo-api.binance.com", "USD_M": "demo-fapi.binance.com"},
@@ -49,9 +64,28 @@ _CLOCK_OFFSET_TTL_SECONDS = 30.0
 class BinanceTransportError(AdapterError):
     """Sanitized Binance error that never carries the response body."""
 
+    def __init__(
+        self,
+        status: int,
+        code: str,
+        message: str,
+        *,
+        retry_after: str | None = None,
+        http_status: int | None = None,
+        native_code: int | None = None,
+        definite_failure: bool = False,
+    ):
+        super().__init__(status, code, message, retry_after=retry_after)
+        self.http_status = http_status
+        self.native_code = native_code
+        self.definite_failure = definite_failure
+
 
 class BinanceTransport:
-    """Signer and bounded transport for the documented read endpoint allowlist."""
+    """Signer and bounded transport for Binance endpoints.
+
+    Native writes require an explicitly injected transport; real HTTPS remains read-only.
+    """
 
     MAX_RESPONSE_BYTES = 2 * 1024 * 1024
     CONNECTION_TIMEOUT_SECONDS = 10
@@ -91,6 +125,10 @@ class BinanceTransport:
         self._offsets: dict[str, tuple[float, int]] = {}
         self._offset_lock = threading.Lock()
 
+    @property
+    def has_injected_transport(self) -> bool:
+        return self._transport is not None
+
     def host_for(self, product: str) -> str:
         if product not in _PRODUCTS:
             raise AdapterError(400, "unsupported_product", "The exchange product is unsupported.")
@@ -106,13 +144,39 @@ class BinanceTransport:
         method: str = "GET",
     ) -> Any:
         method = method.upper() if isinstance(method, str) else ""
+        return self.request(product, method, path, params, signed=signed)
+
+    def post(self, product: str, path: str, params: dict[str, Any] | None = None, *, signed: bool = False) -> Any:
+        return self.request(product, "POST", path, params, signed=signed)
+
+    def delete(self, product: str, path: str, params: dict[str, Any] | None = None, *, signed: bool = False) -> Any:
+        return self.request(product, "DELETE", path, params, signed=signed)
+
+    def request(
+        self,
+        product: str,
+        method: str,
+        path: str,
+        params: dict[str, Any] | None = None,
+        *,
+        signed: bool = False,
+    ) -> Any:
+        method = method.upper() if isinstance(method, str) else ""
         endpoint = (method, path, bool(signed))
         if product not in _PRODUCTS or endpoint not in _ENDPOINTS[product]:
-            raise AdapterError(422, "capability_unsupported", "The requested exchange read is unsupported.")
-        if method != "GET":
-            raise AdapterError(422, "capability_unsupported", "This exchange adapter is read-only.")
+            raise AdapterError(422, "capability_unsupported", "The requested exchange operation is unsupported.")
+        if (method, path) in _WRITE_ENDPOINTS and self._transport is None:
+            raise AdapterError(422, "capability_unsupported", "Native exchange writes are unavailable.")
+        if method != "GET" and (method, path) not in _WRITE_ENDPOINTS:
+            raise AdapterError(422, "capability_unsupported", "The requested exchange operation is unsupported.")
+        if (method, path) in _WRITE_ENDPOINTS:
+            allowed = _WRITE_PARAMETERS[(method, path)]
+            if not isinstance(params, dict) or not set(params) <= allowed:
+                raise AdapterError(400, "invalid_query", "The exchange query is invalid.")
         if signed and (not self._api_key or not self._api_secret):
             raise AdapterError(422, "capability_unsupported", "Private exchange credentials are unavailable.")
+        if (method, path) in _WRITE_ENDPOINTS and not signed:
+            raise AdapterError(422, "capability_unsupported", "Native exchange writes require signing.")
         query_values = self._query_values(params or {})
         if signed:
             offset = self._server_offset(product)
@@ -136,12 +200,55 @@ class BinanceTransport:
         except BinanceTransportError:
             raise
         except (OSError, http.client.HTTPException, TimeoutError):
-            raise BinanceTransportError(502, "exchange_unavailable", "The exchange read is unavailable.") from None
+            raise BinanceTransportError(
+                502, "exchange_unavailable", "The exchange operation is unavailable.",
+                http_status=None, definite_failure=False,
+            ) from None
         if isinstance(payload, dict) and payload.get("code") is not None:
-            code = payload.get("code")
-            if isinstance(code, (str, int)) and str(code).startswith("-"):
-                raise BinanceTransportError(502, "exchange_rejected", "The exchange read was rejected.")
+            native_code = self._native_code(payload.get("code"))
+            if native_code is not None and native_code < 0:
+                raise self._operation_error(payload, http_status=200)
         return payload
+
+    @staticmethod
+    def _native_code(value: Any) -> int | None:
+        if isinstance(value, bool) or not isinstance(value, (str, int)):
+            return None
+        token = str(value)
+        if not re.fullmatch(r"-?[0-9]{1,8}", token):
+            return None
+        try:
+            return int(token)
+        except ValueError:
+            return None
+
+    @classmethod
+    def _operation_error(
+        cls, payload: Any, *, http_status: int | None, retry_after: str | None = None,
+    ) -> BinanceTransportError:
+        native_code = cls._native_code(payload.get("code")) if isinstance(payload, dict) else None
+        native_message = payload.get("msg") if isinstance(payload, dict) else None
+        if native_code in {-1000, -1006, -1007, -4116, -2013}:
+            category, definite = "outcome_unknown", False
+        elif native_code in {-1008, -2022, -4118}:
+            category, definite = "exchange_rejected", True
+        elif http_status == 503 and isinstance(native_message, str) and native_message in _DEFINITE_503_MESSAGES:
+            category, definite = "exchange_rejected", True
+        elif native_code is not None and native_code < 0:
+            category, definite = "outcome_unknown", False
+        elif http_status == 503 or (http_status is not None and http_status >= 500):
+            category, definite = "outcome_unknown", False
+        elif http_status is not None and 400 <= http_status < 500:
+            category, definite = "exchange_rejected", True
+        else:
+            category, definite = "outcome_unknown", False
+        safe_status = 429 if http_status == 429 else 502
+        public_code = "rate_limited" if http_status == 429 else category
+        return BinanceTransportError(
+            safe_status, public_code, "The exchange operation could not be confirmed.",
+            retry_after=retry_after, http_status=http_status, native_code=native_code,
+            definite_failure=definite,
+        )
 
     @staticmethod
     def _query_values(params: dict[str, Any]) -> dict[str, str]:
@@ -187,6 +294,8 @@ class BinanceTransport:
     def _send(self, product: str, method: str, request_path: str, headers: dict[str, str]) -> Any:
         if self._transport is not None:
             return self._transport(method, request_path, headers, None)
+        if method != "GET":
+            raise BinanceTransportError(422, "capability_unsupported", "Native exchange writes are unavailable.")
         host = self.host_for(product)
         with self._pool_lock:
             pool = self._pools.get(host)
@@ -207,18 +316,16 @@ class BinanceTransport:
             if len(body) > self.MAX_RESPONSE_BYTES:
                 raise BinanceTransportError(502, "response_oversized", "The exchange response is unavailable.")
             retry_after = self._retry_after(response.getheader("Retry-After"))
-            if response.status < 200 or response.status >= 300:
-                status = 429 if response.status == 429 else 502
-                code = "rate_limited" if response.status == 429 else "exchange_rejected"
-                raise BinanceTransportError(
-                    status, code, "The exchange read is unavailable.", retry_after=retry_after
-                )
             try:
                 decoded = json.loads(body.decode("utf-8"))
             except (UnicodeError, json.JSONDecodeError):
+                if response.status < 200 or response.status >= 300:
+                    raise self._operation_error({}, http_status=response.status, retry_after=retry_after) from None
                 raise BinanceTransportError(502, "malformed_response", "The exchange response is unavailable.") from None
             if not isinstance(decoded, (dict, list)):
                 raise BinanceTransportError(502, "malformed_response", "The exchange response is unavailable.")
+            if response.status < 200 or response.status >= 300:
+                raise self._operation_error(decoded, http_status=response.status, retry_after=retry_after)
             discard = bool(getattr(response, "will_close", False))
             return decoded
         except BinanceTransportError:

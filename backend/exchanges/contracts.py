@@ -277,3 +277,48 @@ class TickerDTO:
 def metadata_version(value: dict[str, Any]) -> str:
     encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
     return hashlib.sha256(encoded).hexdigest()[:24]
+
+
+@dataclass(frozen=True, slots=True)
+class BinanceQuantityFilter:
+    """A native Binance quantity bound and optional exact increment grid."""
+
+    min_quantity: Decimal
+    max_quantity: Decimal
+    step_size: Decimal
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "minQty": decimal_text(self.min_quantity) or "0",
+            "maxQty": decimal_text(self.max_quantity) or "0",
+            "stepSize": decimal_text(self.step_size) or "0",
+        }
+
+    def accepts(self, quantity: Decimal) -> bool:
+        return (
+            quantity >= self.min_quantity
+            and quantity <= self.max_quantity
+            and (self.step_size == 0 or is_multiple(decimal_subtract(quantity, self.min_quantity), self.step_size))
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class BinanceUSDMOrderFilters:
+    """The distinct native quantity filters used by USD-M order intents."""
+
+    symbol: str
+    lot_size: BinanceQuantityFilter
+    market_lot_size: BinanceQuantityFilter
+    metadata_version: str
+
+    def raw_binding(self) -> dict[str, dict[str, str]]:
+        return {
+            "LOT_SIZE": self.lot_size.to_dict(),
+            "MARKET_LOT_SIZE": self.market_lot_size.to_dict(),
+        }
+
+    def validate_market_quantity(self, quantity: Any) -> Decimal:
+        value = required_decimal(quantity, positive=True)
+        if not self.lot_size.accepts(value) or not self.market_lot_size.accepts(value):
+            raise AdapterError(422, "quantity_unsupported", "The exchange quantity does not meet instrument filters.")
+        return value
