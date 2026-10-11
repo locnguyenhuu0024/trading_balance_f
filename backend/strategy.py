@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac
+import hashlib
 import math
 import re
 import secrets
@@ -71,6 +72,21 @@ _DEFAULT_JEV_SCREENING_THRESHOLDS = {
     "maxFailureRiskProbability": 0.4,
 }
 _JEV_SCREENING_THRESHOLD_KEYS = frozenset(_DEFAULT_JEV_SCREENING_THRESHOLDS)
+
+
+class _ReadOnlyOrderDetailsClient:
+    """Narrow callback boundary exposing only one documented read operation."""
+
+    __slots__ = ("__client",)
+
+    def __init__(self, client: Any):
+        object.__setattr__(self, "_ReadOnlyOrderDetailsClient__client", client)
+
+    def __setattr__(self, _name: str, _value: Any) -> None:
+        raise AttributeError("read-only exchange access")
+
+    def order_details(self, instrument_id: str, client_order_id: str) -> Any:
+        return self.__client.order_details(instrument_id, client_order_id)
 
 
 def _strategy_scope_where(scope: OwnedStrategyScope | None, predicate: str) -> str:
@@ -4977,6 +4993,207 @@ class StrategyService:
             else:
                 projected.append(self._basic_result(strategy))
         return {"strategies": projected}
+
+    def list_owned_projection(self, *, maximum_rows: int = 10_001) -> list[dict[str, Any]]:
+        """Read only the bounded persisted projection used by owned v2 pagination."""
+        if self.strategy_scope is None:
+            raise RuntimeError("owned strategy scope is required")
+        if isinstance(maximum_rows, bool) or not isinstance(maximum_rows, int) or maximum_rows != 10_001:
+            raise ValueError("the owned strategy projection bound is fixed")
+        with self.store.connection() as connection:
+            rows = connection.execute(
+                f"SELECT * FROM {self.strategy_table} WHERE "
+                f"{self._strategy_where('account_fingerprint=?')} ORDER BY created_at DESC, strategy_id DESC LIMIT ?",
+                (*self._strategy_values((self.strategy_scope.account_fingerprint,)), maximum_rows),
+            ).fetchall()
+        if len(rows) > 10_000:
+            raise APIError(503, "snapshot_capacity", "The strategy projection exceeds the supported snapshot size.")
+        projected = []
+        for row in rows:
+            strategy = self._decode_row(row)
+            if self.automatic.is_candidate_stage(strategy):
+                projected.append(self.automatic.public_candidate_result(strategy))
+            else:
+                projected.append(self._basic_result(strategy))
+        return projected
+
+    def inspect_read_only_refresh(self, strategy_id: str) -> tuple[dict[str, Any], str]:
+        """Load an eligible persisted revision without exchange or vault access."""
+        if self.strategy_scope is None:
+            raise APIError(404, "not_found", "The requested resource was not found.")
+        now = self.clock()
+        with self.store.transaction() as connection:
+            self._assert_owned_authority(connection)
+            row = connection.execute(
+                f"SELECT * FROM {self.strategy_table} WHERE {self._strategy_where('strategy_id=?')}"
+                + self._for_update(),
+                self._strategy_values((strategy_id,)),
+            ).fetchone()
+            if row is None:
+                raise APIError(404, "not_found", "The requested resource was not found.")
+            strategy = self._decode_row(row)
+            if (
+                strategy["status"] not in {"APPLIED", "PARTIAL"}
+                or strategy["queueJsonRaw"] is not None
+                or strategy.get("queueCorrupt")
+                or strategy.get("executionLeaseUntil") is not None
+                and float(strategy["executionLeaseUntil"]) > now
+                or not strategy.get("orderPlacementAttempted")
+                or not isinstance(strategy.get("results"), list)
+                or self.automatic.is_candidate_stage(strategy)
+                or strategy.get("credentialVersion") != self.strategy_scope.credential_version
+                or strategy.get("permissionVersion") != self.strategy_scope.permission_version
+            ):
+                raise APIError(409, "strategy_refresh_unavailable", "This strategy cannot be refreshed.")
+            scope = self.strategy_scope
+            lease = connection.execute(
+                "SELECT lease_until FROM multiuser_connection_leases WHERE user_id=? AND connection_id=?",
+                (scope.user_id, scope.connection_id),
+            ).fetchone()
+            if lease is not None and lease["lease_until"] is not None and float(lease["lease_until"]) > now:
+                raise APIError(409, "strategy_refresh_unavailable", "This strategy cannot be refreshed.")
+            if connection.execute(
+                "SELECT 1 FROM multiuser_strategy_claims WHERE user_id=? AND connection_id=? "
+                "AND lease_until>? LIMIT 1",
+                (scope.user_id, scope.connection_id, now),
+            ).fetchone() is not None:
+                raise APIError(409, "strategy_refresh_unavailable", "This strategy cannot be refreshed.")
+            if connection.execute(
+                "SELECT 1 FROM multiuser_operations WHERE user_id=? AND connection_id=? "
+                "AND status IN ('PREPARED', 'SENDING', 'UNKNOWN', 'RECONCILING') LIMIT 1",
+                (scope.user_id, scope.connection_id),
+            ).fetchone() is not None:
+                raise APIError(409, "strategy_refresh_unavailable", "This strategy cannot be refreshed.")
+            revision = self._read_only_refresh_revision(row)
+            return strategy, revision
+
+    @staticmethod
+    def _read_only_refresh_revision(row: Any) -> str:
+        fields = (
+            "strategy_id", "account_fingerprint", "status", "contract_json", "snapshot_json",
+            "orders_json", "results_json", "queue_json", "execution_id", "execution_lease_until",
+            "replacement_source_id", "failure_reason", "updated_at", "batch_attempted",
+            "order_placement_attempted",
+        )
+        value = [row[field] for field in fields]
+        return hashlib.sha256(encode_json(value).encode("utf-8")).hexdigest()
+
+    def run_read_only_refresh(
+        self,
+        strategy_id: str,
+        expected_revision: str,
+        *,
+        before_order_call: Callable[[], None],
+        verify_identity: Callable[[], None],
+    ) -> None:
+        """Perform only bounded order-detail reads, then CAS the observation."""
+        try:
+            strategy, revision = self.inspect_read_only_refresh(strategy_id)
+            if not hmac.compare_digest(revision, expected_revision):
+                return
+            verify_identity()
+        except Exception as error:
+            if self._read_only_refresh_authority_failure(error):
+                return
+            self._publish_read_only_refresh(
+                strategy_id, expected_revision, None, None, None, "exchange_unavailable"
+            )
+            return
+        try:
+            results, scan_error, _reads = _read_order_rows(
+                strategy, _ReadOnlyOrderDetailsClient(self.okx), preserve_last_known=True, max_reads=20,
+                stop_after_failure=True, before_order_call=before_order_call,
+            )
+        except Exception:
+            # A failed request/session/version guard must not publish observations.
+            return
+        try:
+            verify_identity()
+        except Exception as error:
+            if self._read_only_refresh_authority_failure(error):
+                return
+            scan_error = scan_error or "exchange_unavailable"
+        if scan_error is None:
+            status, failure_reason = _reconciled_strategy_state(strategy, results, recovering=False)
+            self._publish_read_only_refresh(
+                strategy_id, expected_revision, results, status, failure_reason, None
+            )
+        else:
+            self._publish_read_only_refresh(
+                strategy_id, expected_revision, None, None, None, scan_error
+            )
+
+    @staticmethod
+    def _read_only_refresh_authority_failure(error: Exception) -> bool:
+        return getattr(error, "code", None) in {
+            "authentication_required", "step_up_required", "strategy_not_found",
+            "connection_version_changed", "connection_changed", "account_changed",
+        }
+
+    def _publish_read_only_refresh(
+        self,
+        strategy_id: str,
+        expected_revision: str,
+        results: list[dict[str, Any]] | None,
+        status: str | None,
+        failure_reason: str | None,
+        scan_error: str | None,
+    ) -> None:
+        if self.strategy_scope is None:
+            return
+        now = self.clock()
+        with self.store.transaction() as connection:
+            self._assert_owned_authority(connection)
+            row = connection.execute(
+                f"SELECT * FROM {self.strategy_table} WHERE {self._strategy_where('strategy_id=?')}"
+                + self._for_update(),
+                self._strategy_values((strategy_id,)),
+            ).fetchone()
+            if row is None or not hmac.compare_digest(
+                self._read_only_refresh_revision(row), expected_revision
+            ):
+                return
+            current = self._decode_row(row)
+            if current["status"] not in {"APPLIED", "PARTIAL"} or current["queueJsonRaw"] is not None:
+                return
+            scope = self.strategy_scope
+            lease = connection.execute(
+                "SELECT lease_until FROM multiuser_connection_leases WHERE user_id=? AND connection_id=?",
+                (scope.user_id, scope.connection_id),
+            ).fetchone()
+            if lease is not None and lease["lease_until"] is not None and float(lease["lease_until"]) > now:
+                return
+            if connection.execute(
+                "SELECT 1 FROM multiuser_strategy_claims WHERE user_id=? AND connection_id=? "
+                "AND lease_until>? LIMIT 1",
+                (scope.user_id, scope.connection_id, now),
+            ).fetchone() is not None:
+                return
+            if scan_error is None and results is not None and status in {"APPLIED", "PARTIAL"}:
+                connection.execute(
+                    f"UPDATE {self.strategy_table} SET results_json=?, status=?, failure_reason=?, updated_at=? "
+                    f"WHERE {self._strategy_where('strategy_id=?')}",
+                    self._strategy_values((encode_json(results), status, failure_reason, now, strategy_id)),
+                )
+                connection.execute(
+                    "INSERT INTO multiuser_strategy_sync_state(user_id, connection_id, strategy_id, "
+                    "last_attempt_at, last_success_at, last_error, next_scan_at, consecutive_errors) "
+                    "VALUES (?, ?, ?, ?, ?, NULL, ?, 0) ON CONFLICT(user_id, connection_id, strategy_id) "
+                    "DO UPDATE SET last_attempt_at=excluded.last_attempt_at, "
+                    "last_success_at=excluded.last_success_at, last_error=NULL, "
+                    "next_scan_at=excluded.next_scan_at, consecutive_errors=0",
+                    (scope.user_id, scope.connection_id, strategy_id, now, now, now + _ORDER_SCAN_INTERVAL_SECONDS),
+                )
+            elif scan_error is not None:
+                connection.execute(
+                    "INSERT INTO multiuser_strategy_sync_state(user_id, connection_id, strategy_id, "
+                    "last_attempt_at, last_success_at, last_error, next_scan_at, consecutive_errors) "
+                    "VALUES (?, ?, ?, ?, NULL, ?, ?, 1) ON CONFLICT(user_id, connection_id, strategy_id) "
+                    "DO UPDATE SET last_attempt_at=excluded.last_attempt_at, last_error=excluded.last_error, "
+                    "next_scan_at=excluded.next_scan_at, "
+                    "consecutive_errors=multiuser_strategy_sync_state.consecutive_errors+1",
+                    (scope.user_id, scope.connection_id, strategy_id, now, scan_error, now),
+                )
 
     def _result_owned(self, strategy_id: str) -> dict[str, Any]:
         strategy = self._owned_strategy_projection(strategy_id)

@@ -15,6 +15,14 @@ class CredentialVault:
     _KEY_LENGTH = 32
     _NONCE_LENGTH = 12
 
+    @staticmethod
+    def _schema(exchange: str) -> tuple[tuple[str, ...], dict[str, int]]:
+        if exchange == "OKX":
+            return ("apiKey", "apiSecret", "passphrase"), {"apiKey": 256, "apiSecret": 512, "passphrase": 256}
+        if exchange == "BINANCE":
+            return ("apiKey", "apiSecret"), {"apiKey": 256, "apiSecret": 512}
+        raise ValueError("unsupported exchange credential schema")
+
     def __init__(self, master_key: bytes, key_id: str):
         if not isinstance(master_key, bytes) or len(master_key) != self._KEY_LENGTH:
             raise ValueError("credential vault key must be 32 bytes")
@@ -79,10 +87,13 @@ class CredentialVault:
         environment: str,
         region: str,
     ) -> tuple[bytes, bytes]:
-        if not isinstance(credentials, dict) or set(credentials) != {"apiKey", "apiSecret", "passphrase"}:
+        try:
+            fields, limits = self._schema(exchange)
+        except ValueError:
+            raise ValueError("typed exchange credentials are required") from None
+        if not isinstance(credentials, dict) or set(credentials) != set(fields):
             raise ValueError("typed exchange credentials are required")
         normalized: dict[str, str] = {}
-        limits = {"apiKey": 256, "apiSecret": 512, "passphrase": 256}
         for name, limit in limits.items():
             value = credentials[name]
             if not isinstance(value, str) or not value or len(value) > limit:
@@ -126,7 +137,11 @@ class CredentialVault:
             raise
         except Exception:
             raise CryptoInvalidCiphertext("credential ciphertext is invalid") from None
-        if not isinstance(decoded, dict) or set(decoded) != {"apiKey", "apiSecret", "passphrase"}:
+        try:
+            fields, _ = self._schema(exchange)
+        except ValueError:
+            raise CryptoInvalidCiphertext("credential ciphertext is invalid") from None
+        if not isinstance(decoded, dict) or set(decoded) != set(fields):
             raise CryptoInvalidCiphertext("credential ciphertext is invalid")
         if any(not isinstance(value, str) for value in decoded.values()):
             raise CryptoInvalidCiphertext("credential ciphertext is invalid")

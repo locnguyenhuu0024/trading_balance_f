@@ -15,9 +15,9 @@ from .account_context import (
     SUPPORTED_ENVIRONMENTS,
     SUPPORTED_EXCHANGES,
     SUPPORTED_REGIONS,
-    VerifiedOKXIdentity,
-    create_okx_client,
-    verify_okx_identity,
+    VerifiedExchangeIdentity,
+    create_exchange_client,
+    verify_exchange_identity,
 )
 from .credential_vault import CredentialVault
 from .principal import Principal
@@ -26,11 +26,12 @@ from .store_contract import IdentityStoreConflict, IdentityStoreUnavailable
 
 
 class ConnectionServiceError(Exception):
-    def __init__(self, status: int, code: str, message: str):
+    def __init__(self, status: int, code: str, message: str, *, headers: list[tuple[str, str]] | None = None):
         super().__init__(message)
         self.status = status
         self.code = code
         self.message = message
+        self.headers = headers or []
 
 
 @dataclass(frozen=True, slots=True)
@@ -255,18 +256,20 @@ class OwnedConnections:
 
     def _new_client(self, credentials: dict[str, str], *, exchange: str, environment: str, region: str) -> Any:
         try:
-            return create_okx_client(
+            return create_exchange_client(
                 credentials, exchange=exchange, environment=environment, region=region,
                 transport=self._transport, clock=self._clock,
             )
         except AccountContextError as error:
             raise ConnectionServiceError(400, "connection_invalid", str(error)) from None
 
-    def _verify(self, client: Any) -> VerifiedOKXIdentity:
+    def _verify(self, client: Any) -> VerifiedExchangeIdentity:
         try:
-            return verify_okx_identity(client)
+            return verify_exchange_identity(client)
         except AccountContextError as error:
-            raise ConnectionServiceError(400, "verification_failed", str(error)) from None
+            raise ConnectionServiceError(
+                error.status, error.code, str(error), headers=error.headers
+            ) from None
 
     @staticmethod
     def _requested_context(body: dict[str, Any]) -> tuple[str, str, str, str | None]:
@@ -293,11 +296,14 @@ class OwnedConnections:
 
     def create(self, principal: Principal, body: dict[str, Any]) -> dict[str, Any]:
         exchange, environment, region, nickname = self._requested_context(body)
-        credentials = {key: body.get(key) for key in ("apiKey", "apiSecret", "passphrase")}
+        fields = ("apiKey", "apiSecret", "passphrase") if exchange == "OKX" else ("apiKey", "apiSecret")
+        credentials = {key: body.get(key) for key in fields}
         connection_id = uuid.uuid4().hex
         now = self._clock()
         with self.store.transaction() as connection:
             self._require_principal(connection, principal, now, step_up=True)
+        if exchange == "BINANCE" and "passphrase" in body:
+            raise ConnectionServiceError(400, "connection_invalid", "The exchange credential schema is invalid.")
         credential_nonce, credential_ciphertext = self.vault.encrypt_credentials(
             credentials, user_id=principal.user_id, connection_id=connection_id,
             exchange=exchange, credential_version=1, environment=environment, region=region,
@@ -456,7 +462,6 @@ class OwnedConnections:
         return result
 
     def rotate_credentials(self, principal: Principal, connection_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        credentials = {key: body.get(key) for key in ("apiKey", "apiSecret", "passphrase")}
         now = self._clock()
         with self.store.transaction() as connection:
             self._require_principal(connection, principal, now, step_up=True)
@@ -468,6 +473,10 @@ class OwnedConnections:
             prior_version = int(row["credential_version"])
             prior_permission = int(row["permission_version"])
             exchange, environment, region = str(row["exchange"]), str(row["environment"]), str(row["region"])
+            fields = ("apiKey", "apiSecret", "passphrase") if exchange == "OKX" else ("apiKey", "apiSecret")
+            credentials = {key: body.get(key) for key in fields}
+        if exchange == "BINANCE" and "passphrase" in body:
+            raise ConnectionServiceError(400, "connection_invalid", "The exchange credential schema is invalid.")
         client = self._new_client(credentials, exchange=exchange, environment=environment, region=region)
         identity = self._verify(client)
         digest = self._identity_digest(exchange, environment, region, identity.uid)
@@ -597,6 +606,80 @@ class OwnedConnections:
                 tuple(value for value in capabilities if isinstance(value, str)),
                 str(row["remote_identity_digest"]), None,
             )
+
+    def assert_product_read_supported(
+        self, principal: Principal, connection_id: str, product: str, *, resource: str | None = None
+    ) -> Any:
+        """Check owner and stored product capability before vault or venue access."""
+        with self.store.transaction() as connection:
+            self._require_principal(connection, principal, step_up=False)
+            row = self._connection_row(connection, principal.user_id, connection_id, lock=True)
+            if row is None:
+                raise ConnectionServiceError(404, "not_found", "The requested resource was not found.")
+            self._require_principal(connection, principal, step_up=False)
+            if row["status"] not in {"ACTIVE", "RECONCILING"}:
+                raise ConnectionServiceError(409, "connection_unavailable", "The exchange connection is unavailable.")
+            if row["exchange"] == "BINANCE" and row["environment"] == "demo":
+                raise ConnectionServiceError(
+                    503, "verification_unavailable", "Binance demo identity verification is unavailable."
+                )
+            try:
+                capabilities = json.loads(row["product_capabilities_json"] or "[]")
+            except (TypeError, ValueError):
+                capabilities = []
+            if not isinstance(capabilities, list):
+                capabilities = []
+            required = "read:" + product
+            supported = required in capabilities or (row["exchange"] == "OKX" and "read" in capabilities)
+            if not supported:
+                raise ConnectionServiceError(422, "capability_unsupported", "This connection cannot read that product.")
+            if product == "SPOT" and resource == "positions":
+                raise ConnectionServiceError(422, "capability_unsupported", "Spot positions are not supported.")
+            return row
+
+    def assert_context_identity(
+        self, principal: Principal, context: ConnectionContext, *, product: str | None = None
+    ) -> VerifiedExchangeIdentity:
+        """Recheck session, versions, status and authoritative UID around reads."""
+        self.assert_context_authority(principal, context)
+        identity = self._verify(context.client)
+        digest = self._identity_digest(context.exchange, context.environment, context.region, identity.uid)
+        if not hmac.compare_digest(digest, context.remote_identity_digest):
+            raise ConnectionServiceError(409, "account_changed", "The exchange account changed during the read.")
+        if (
+            context.exchange == "BINANCE" and product is not None
+            and "read:" + product not in identity.capabilities
+        ):
+            raise ConnectionServiceError(409, "connection_changed", "The exchange read permission changed.")
+        # The final database-only check fences logout, rotation, and revocation
+        # that happen while the authoritative exchange identity is in flight.
+        self.assert_context_authority(principal, context)
+        return identity
+
+    def assert_context_authority(self, principal: Principal, context: ConnectionContext) -> None:
+        """Check persisted session and connection authority without exchange I/O."""
+        with self.store.transaction() as connection:
+            self._require_principal(connection, principal, step_up=False)
+            row = self._connection_row(connection, principal.user_id, context.connection_id, lock=True)
+            if (
+                row is None or row["status"] not in {"ACTIVE", "RECONCILING"}
+                or int(row["credential_version"]) != context.credential_version
+                or int(row["permission_version"]) != context.permission_version
+                or not hmac.compare_digest(str(row["remote_identity_digest"]), context.remote_identity_digest)
+            ):
+                raise ConnectionServiceError(409, "connection_changed", "The connection changed during the read.")
+            self._require_principal(connection, principal, step_up=False)
+
+    def assert_action_supported(self, principal: Principal, connection_id: str) -> None:
+        """Authorize ownership before rejecting unsupported venue mutations."""
+        with self.store.transaction() as connection:
+            self._require_principal(connection, principal, step_up=False)
+            row = self._connection_row(connection, principal.user_id, connection_id, lock=True)
+            if row is None:
+                raise ConnectionServiceError(404, "not_found", "The requested resource was not found.")
+            self._require_principal(connection, principal, step_up=False)
+            if row["exchange"] == "BINANCE":
+                raise ConnectionServiceError(422, "capability_unsupported", "Binance actions are not supported.")
 
     def account_context_for_job(
         self, user_id: str, connection_id: str, operation_id: str, lease_owner: str, fence: int

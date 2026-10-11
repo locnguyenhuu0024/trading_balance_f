@@ -1,6 +1,6 @@
 # Task 112 — Normalized OKX and Binance read adapters
 
-Status: READY_FOR_PREFLIGHT — execution authorized; T111 predecessor PASS, adapter contract inspection next
+Status: BLOCKED_EXTERNAL_VERIFICATION — source audit PASS; operator runtime and venue evidence pending
 Agent Role: implementation_executor
 Executor Class: E1
 Target Model: gpt-6-luna
@@ -8,8 +8,8 @@ Target Effort: xhigh
 Target Route: gpt-6-luna / xhigh
 Route Binding: EXPLICIT
 Parent Route Inheritance: FORBIDDEN
-Dispatch Route Status: PENDING
-Requested Model / Effort: PENDING (do not fill until actually dispatched)
+Dispatch Route Status: UNVERIFIABLE
+Requested Model / Effort: gpt-6-luna / xhigh (explicit spawn request)
 Observed Effective Model / Effort: unavailable
 Specification: `docs/agents/specs/2026-10-10-multi-user-okx-binance-design.md`
 Plan: `docs/agents/plans/2026-10-10-multi-user-okx-binance.md`
@@ -40,10 +40,15 @@ Provisioning/installation is operator-owned and is not part of the executor writ
 - `backend/service.py`
 - `backend/strategy.py`
 - `backend/account_context.py`
+- `backend/connections.py`
+- `backend/credential_vault.py`
 - `backend/tests/test_exchange_contracts.py`
 - `backend/tests/test_binance_reads.py`
 - `backend/tests/test_data_gateway.py`
 - `backend/tests/test_positions_read_pressure.py`
+- `backend/tests/test_multiuser_ownership.py`
+- `backend/tests/test_credential_vault.py`
+- `backend/tests/test_exchange_read_routes.py`
 
 Read only the source/tests/docs needed for the listed contracts. New interfaces stage compatibility with existing consumers; leave the affected canonical unit buildable. Directory surfaces are restricted to the described hand-written source/test roles, not arbitrary settings or generated files.
 
@@ -59,6 +64,8 @@ Reuse existing gateway/session fences/security helpers/OKX transport/native cont
 3. Normalize balances/positions/orders/freshness/capabilities; absent/unsupported never becomes zero or tradable.
 4. Separate exchange/product/instrument public keys from isolated private keys; implement scoped stable cursor pagination.
 5. Replace per-row synchronous strategy list reconciliation with persisted projection and bounded explicit refresh queue hook.
+
+Binding preflight: `docs/agents/validation/2026-10-11-t112-preflight.md` defines authoritative identity, demo gates, DTOs, exact routes/limits/pagination and request-bound read-only refresh. Legacy v1 list behavior is preserved. Two independent R2 workstreams collected; fan-out PASS.
 
 Follow P03; preserve the single backend boundary, owner filtering, decimal units, server-proven lifecycle and bounded resources. Expected unsafe-path behavior is defined by spec §8, not implementation convenience.
 
@@ -79,7 +86,7 @@ Escalation trigger: shared consumers changed, related regression failure, or tas
 Required: YES
 Canonical build unit: backend Python package
 Exact secret-free build command: `python3.12 -m compileall -q backend`
-Run after the final executable/test change. Result/exit: PENDING. Buildable compatibility staging required; no PASS while awaiting a successor repair.
+Run after the final executable/test change. Result/exit: PASS / 0; executor and fresh coordinator compile observed. Buildable compatibility staging required; no PASS while awaiting a successor repair.
 Backend compileall is paired with import/runtime tests; mocks cannot substitute PostgreSQL multi-process checks.
 
 Frontend gate: N/A.
@@ -90,16 +97,22 @@ External configuration/actions are spec §12 and the setup prerequisite above, a
 
 STOP for missing approval/predecessor/setup, observable route mismatch, missing owner/capability contract, scope expansion, secret-bearing output, unavailable required verification or broken task build. Unknown exchange outcome is retained and reconciled; never resolve it by repeating a write.
 
-Coordinator owns canonical status/audit/telemetry. Writer returns exact safe commands, scenario results, changed path names, build exit, limits and external-action list. Audit checks scope, AC, test quality, RED order, architecture, route binding, buildability, protected-file compliance and independently observed source. Verdict: PENDING.
+Coordinator owns canonical status/audit/telemetry. Writer returns exact safe commands, scenario results, changed path names, build exit, limits and external-action list. Audit checks scope, AC, test quality, RED order, architecture, route binding, buildability, protected-file compliance and independently observed source. Verdict: SOURCE_PASS; full task BLOCKED pending the external evidence below.
 
 ## 8. Pending checklist
 
 - [x] User execution approval and predecessors ready.
-- [ ] Explicit implementation_executor model/effort dispatch; no inheritance.
-- [ ] Required operator setup verified without reading protected values.
-- [ ] Listed contract implemented with buildable staged consumers.
-- [ ] Formal RED observed before GREEN; regression ceiling respected.
-- [ ] Final canonical task build recorded.
+- [x] Explicit implementation_executor model/effort dispatch; no inheritance.
+- [x] Required operator setup verified without reading protected values.
+- [x] Listed contract implemented with buildable staged consumers.
+- [x] Formal RED observed before GREEN; regression ceiling respected.
+- [x] Final canonical task build recorded.
 - [ ] Applicable visual/device/runtime evidence recorded honestly.
-- [ ] No protected-content access, external secret transmission or unapproved live action.
-- [ ] Independent coordinator audit PASS.
+- [x] No protected-content access, external secret transmission or unapproved live action.
+- [x] Independent coordinator audit PASS.
+
+## Final source checkpoint — 2026-10-11
+
+Independent audit SOURCE PASS, AUD-112-001–030 and residuals resolved. Ordered negative32/2skips before intended-success22/3skips; related119/5skips; additional existing strategy-list/scope/trade-API consumers92/1skip. Counts include skips. Both relevant V3 sets exited0; canonical backend compileall and scoped diff-check exited0 after final executable changes. Exact formal selectors: `docs/agents/validation/2026-10-11-t112-checkpoint-commands.md`; full reconciliation: `docs/agents/validation/2026-10-11-t112-read-adapters-audit.md`.
+
+Full task remains BLOCKED_EXTERNAL_VERIFICATION: new real AES Binance envelope and dedicated PostgreSQL consumer checks must run on the existing operator test runtime without skips. Venue acceptance remains separately authorized and unverified; demo activation stays fail-closed. Process-local snapshots/refresh do not establish T115 deployment-wide coordination. T113/T114 predecessor gate remains closed. Operator commands: `docs/agents/runbooks/2026-10-11-t112-vps-verification.md`. No new dependencies/configuration, live calls, installation, deployment, commit or push performed.

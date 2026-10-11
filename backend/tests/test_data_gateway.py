@@ -3,12 +3,14 @@ from __future__ import annotations
 from copy import deepcopy
 import threading
 import unittest
+from types import SimpleNamespace
 from concurrent.futures import Future, ThreadPoolExecutor
 from unittest.mock import patch
 
 from backend.app import WSGIApplication
 from backend.currency import CurrencyClient, CurrencyClientError
 from backend.data_gateway import DataGateway, GatewayError, GatewayIdentity
+from backend.exchanges.contracts import AdapterError
 from backend.okx import OKXError
 from backend.service import APIError, TradeService
 
@@ -423,6 +425,7 @@ class DataGatewayTests(unittest.TestCase):
         self.assertTrue(entered.wait(2))
 
         service = TradeService.__new__(TradeService)
+        service.settings = SimpleNamespace(multiuser_enabled=False)
         service.data_gateway = gateway
         service._source_address = lambda environ: "127.0.0.1"
         service._source_key = lambda source: "test-source"
@@ -452,6 +455,7 @@ class DataGatewayTests(unittest.TestCase):
         first = self.private("account/balance")
         self.assertEqual(first["data"][0]["totalEq"], "100.00")
         service = TradeService.__new__(TradeService)
+        service.settings = SimpleNamespace(multiuser_enabled=False)
         service.data_gateway = self.gateway
         service._source_address = lambda environ: "127.0.0.1"
         service._source_key = lambda source: "test-source"
@@ -878,6 +882,349 @@ class DataGatewayTests(unittest.TestCase):
         self.assertEqual(requests[0][1:3], ("GET", CurrencyClient.REQUEST_PATH))
         self.assertNotIn("Authorization", requests[0][3])
         self.assertFalse(any(key.startswith("OK-") for key in requests[0][3]))
+
+    def test_four_admitted_normalized_reads_finish_and_fifth_is_refused(self) -> None:
+        entered = threading.Condition()
+        release = threading.Event()
+        active = 0
+        maximum_active = 0
+        successes: list[int] = []
+        failures: list[BaseException] = []
+
+        def read(index: int) -> None:
+            nonlocal active, maximum_active
+
+            def fetch() -> list[dict]:
+                nonlocal active, maximum_active
+                with entered:
+                    active += 1
+                    maximum_active = max(maximum_active, active)
+                    entered.notify_all()
+                if not release.wait(5):
+                    raise TimeoutError("normalized read fixture was not released")
+                with entered:
+                    active -= 1
+                return [{"id": index}]
+
+            try:
+                self.gateway.normalized_page(
+                    resource=f"private-{index}",
+                    scope=(index,),
+                    cursor=None,
+                    limit=1,
+                    fetcher=fetch,
+                    ttl_seconds=60,
+                    private=True,
+                    session_guard=lambda: None,
+                    identity_guard=lambda: None,
+                )
+                successes.append(index)
+            except BaseException as error:
+                failures.append(error)
+
+        workers = [threading.Thread(target=read, args=(index,)) for index in range(4)]
+        for worker in workers:
+            worker.start()
+        with entered:
+            self.assertTrue(entered.wait_for(lambda: active == 4, timeout=3))
+        try:
+            with self.assertRaises(GatewayError) as raised:
+                self.gateway.normalized_page(
+                    resource="private-fifth",
+                    scope=(5,),
+                    cursor=None,
+                    limit=1,
+                    fetcher=lambda: [{"id": 5}],
+                    ttl_seconds=60,
+                    private=True,
+                    session_guard=lambda: None,
+                    identity_guard=lambda: None,
+                )
+            self.assertEqual((raised.exception.status, raised.exception.code), (503, "busy"))
+        finally:
+            release.set()
+        for worker in workers:
+            worker.join(5)
+
+        self.assertTrue(all(not worker.is_alive() for worker in workers))
+        self.assertEqual(sorted(successes), [0, 1, 2, 3])
+        self.assertEqual(failures, [])
+        self.assertEqual(maximum_active, 4)
+
+    def test_normalized_cooldowns_stay_bounded_and_survive_private_invalidation(self) -> None:
+        for index in range(257):
+            expected_status = 429 if index < 256 else 503
+            with self.subTest(index=index):
+                with self.assertRaises(GatewayError) as raised:
+                    self.gateway.normalized_page(
+                        resource="balances",
+                        scope=("owner", index),
+                        cursor=None,
+                        limit=1,
+                        fetcher=lambda: (_ for _ in ()).throw(
+                            AdapterError(429, "rate_limited", "safe rate limit", retry_after="30")
+                        ),
+                        ttl_seconds=60,
+                        private=True,
+                        session_guard=lambda: None,
+                        identity_guard=lambda: None,
+                    )
+                self.assertEqual(raised.exception.status, expected_status)
+
+        self.assertEqual(len(self.gateway._normalized_cooldowns), 256)
+        self.gateway.invalidate_private()
+        fetch_called = False
+
+        def fetch_after_invalidation() -> list[dict]:
+            nonlocal fetch_called
+            fetch_called = True
+            return [{"id": "should-not-be-read"}]
+
+        with self.assertRaises(GatewayError) as raised:
+            self.gateway.normalized_page(
+                resource="balances",
+                scope=("owner", 0),
+                cursor=None,
+                limit=1,
+                fetcher=fetch_after_invalidation,
+                ttl_seconds=60,
+                private=True,
+                session_guard=lambda: None,
+                identity_guard=lambda: None,
+            )
+        self.assertEqual((raised.exception.status, raised.exception.code), (429, "rate_limited"))
+        self.assertFalse(fetch_called)
+
+    def test_public_normalized_fetch_rate_limit_blocks_retry_and_is_resource_scoped(self) -> None:
+        ticker_calls = 0
+        instruments_calls = 0
+
+        def rate_limited_ticker() -> list[dict]:
+            nonlocal ticker_calls
+            ticker_calls += 1
+            raise AdapterError(429, "rate_limited", "safe public rate limit", retry_after="30")
+
+        def instruments() -> list[dict]:
+            nonlocal instruments_calls
+            instruments_calls += 1
+            return [{"instrument": "BTCUSDT"}]
+
+        scope = ("BINANCE", "global", "live", "market", "SPOT", "BTCUSDT")
+        for attempt in range(2):
+            with self.subTest(attempt=attempt), self.assertRaises(GatewayError) as limited:
+                self.gateway.normalized_page(
+                    resource="market:ticker", scope=scope, cursor=None, limit=1,
+                    fetcher=rate_limited_ticker, ttl_seconds=60, private=False,
+                )
+            self.assertEqual((limited.exception.status, limited.exception.code), (429, "rate_limited"))
+            self.assertIn(("Retry-After", "30"), limited.exception.headers)
+        self.assertEqual(ticker_calls, 1)
+
+        page = self.gateway.normalized_page(
+            resource="market:instruments", scope=scope, cursor=None, limit=1,
+            fetcher=instruments, ttl_seconds=60, private=False,
+        )
+        self.assertEqual(page["data"], [{"instrument": "BTCUSDT"}])
+        self.assertEqual(instruments_calls, 1)
+
+    def test_normalized_identity_rate_limit_blocks_retry_network_and_is_fully_scoped(self) -> None:
+        session_calls = 0
+        authority_calls = 0
+        identity_calls = 0
+        fetch_calls = 0
+
+        def session_guard() -> None:
+            nonlocal session_calls
+            session_calls += 1
+
+        def authority_guard() -> None:
+            nonlocal authority_calls
+            authority_calls += 1
+
+        def identity_guard() -> None:
+            nonlocal identity_calls
+            identity_calls += 1
+            raise AdapterError(429, "rate_limited", "safe identity rate limit", retry_after="30")
+
+        def fetcher() -> list[dict]:
+            nonlocal fetch_calls
+            fetch_calls += 1
+            return [{"asset": "BTC"}]
+
+        scope = ("owner", "connection", "OKX", "global", "demo", 3, 5, "digest", "SPOT", "")
+        with self.assertRaises(GatewayError) as first:
+            self.gateway.normalized_page(
+                resource="connection:balances", scope=scope, cursor=None, limit=1,
+                fetcher=fetcher, ttl_seconds=1, private=True, session_guard=session_guard,
+                authority_guard=authority_guard, identity_guard=identity_guard,
+            )
+        self.assertEqual((first.exception.status, first.exception.code), (429, "rate_limited"))
+        self.assertIn(("Retry-After", "30"), first.exception.headers)
+        self.assertEqual(identity_calls, 1)
+
+        for resource, next_scope in (
+            ("connection:balances", scope),
+            ("connection:orders", scope),
+            ("connection:balances", (*scope[:-1], "other-instrument")),
+            ("connection:balances", ("other-owner", *scope[1:])),
+        ):
+            with self.subTest(resource=resource, next_scope=next_scope):
+                with self.assertRaises(GatewayError) as retry:
+                    self.gateway.normalized_page(
+                        resource=resource, scope=next_scope, cursor=None, limit=1,
+                        fetcher=fetcher, ttl_seconds=1, private=True, session_guard=session_guard,
+                        authority_guard=authority_guard, identity_guard=identity_guard,
+                    )
+                self.assertEqual((retry.exception.status, retry.exception.code), (429, "rate_limited"))
+        self.assertEqual(identity_calls, 4)
+
+        before = (session_calls, authority_calls, identity_calls)
+        self.gateway.invalidate_private()
+        with self.assertRaises(GatewayError) as invalidated:
+            self.gateway.normalized_page(
+                resource="connection:balances", scope=scope, cursor=None, limit=1,
+                fetcher=fetcher, ttl_seconds=1, private=True, session_guard=session_guard,
+                authority_guard=authority_guard, identity_guard=identity_guard,
+            )
+        self.assertEqual((invalidated.exception.status, invalidated.exception.code), (429, "rate_limited"))
+        self.assertEqual((session_calls, authority_calls, identity_calls), (before[0] + 1, before[1] + 1, before[2]))
+        self.assertEqual(fetch_calls, 0)
+
+        def revoked_authority() -> None:
+            raise GatewayError(409, "connection_changed", "The connection changed.")
+
+        with self.assertRaises(GatewayError) as revoked:
+            self.gateway.normalized_page(
+                resource="connection:balances", scope=scope, cursor=None, limit=1,
+                fetcher=fetcher, ttl_seconds=1, private=True, session_guard=session_guard,
+                authority_guard=revoked_authority, identity_guard=identity_guard,
+            )
+        self.assertEqual((revoked.exception.status, revoked.exception.code), (409, "connection_changed"))
+        self.assertEqual(identity_calls, 4)
+
+    def test_normalized_fetch_rate_limit_retry_skips_uid_network_and_rechecks_authority(self) -> None:
+        session_calls = 0
+        authority_calls = 0
+        identity_calls = 0
+        fetch_calls = 0
+
+        def session_guard() -> None:
+            nonlocal session_calls
+            session_calls += 1
+
+        def authority_guard() -> None:
+            nonlocal authority_calls
+            authority_calls += 1
+
+        def identity_guard() -> None:
+            nonlocal identity_calls
+            identity_calls += 1
+
+        def rate_limited_fetch() -> list[dict]:
+            nonlocal fetch_calls
+            fetch_calls += 1
+            raise AdapterError(429, "rate_limited", "safe data rate limit", retry_after="30")
+
+        scope = ("owner", "connection", "BINANCE", "global", "live", 2, 4, "digest", "SPOT", "")
+        for attempt in range(2):
+            with self.subTest(attempt=attempt), self.assertRaises(GatewayError) as limited:
+                self.gateway.normalized_page(
+                    resource="connection:balances", scope=scope, cursor=None, limit=1,
+                    fetcher=rate_limited_fetch, ttl_seconds=1, private=True,
+                    session_guard=session_guard, authority_guard=authority_guard,
+                    identity_guard=identity_guard,
+                )
+            self.assertEqual((limited.exception.status, limited.exception.code), (429, "rate_limited"))
+            if attempt == 0:
+                self.assertEqual(identity_calls, 2)
+            else:
+                self.assertEqual(identity_calls, 2)
+        self.assertEqual(fetch_calls, 1)
+        self.assertGreaterEqual(authority_calls, 2)
+        self.assertGreaterEqual(session_calls, 2)
+
+    def test_normalized_snapshot_sorts_by_identity_and_canonical_tie_breaker_without_deduping(self) -> None:
+        rows = [
+            {"instrumentId": "Z-USDT", "display": "last"},
+            {"instrumentId": "A-USDT", "display": "z"},
+            {"instrumentId": "A-USDT", "display": "a"},
+            {"instrumentId": "A-USDT", "display": "a"},
+        ]
+        first = self.gateway.normalized_page(
+            resource="market:instruments",
+            scope=("OKX", "global", "demo"),
+            cursor=None,
+            limit=2,
+            fetcher=lambda: deepcopy(rows),
+            ttl_seconds=60,
+            private=False,
+        )
+        self.assertEqual(
+            [(row["instrumentId"], row["display"]) for row in first["data"]],
+            [("A-USDT", "a"), ("A-USDT", "a")],
+        )
+        second = self.gateway.normalized_page(
+            resource="market:instruments",
+            scope=("OKX", "global", "demo"),
+            cursor=first["page"]["nextCursor"],
+            limit=2,
+            fetcher=lambda: self.fail("frozen normalized snapshots must not refetch"),
+            ttl_seconds=60,
+            private=False,
+        )
+        self.assertEqual(
+            [(row["instrumentId"], row["display"]) for row in second["data"]],
+            [("A-USDT", "z"), ("Z-USDT", "last")],
+        )
+
+    def test_normalized_snapshot_uses_canonical_dto_instrument_identity_before_value_ties(self) -> None:
+        rows = [
+            {"instrument": "ETH-USDT", "baseQuantity": "0.01", "markPrice": "1"},
+            {"instrument": "BTC-USDT", "baseQuantity": "999", "markPrice": "999"},
+            {"instrument": "BTC-USDT", "baseQuantity": "1", "markPrice": "1"},
+        ]
+        first = self.gateway.normalized_page(
+            resource="connection:positions", scope=("owner", "connection", "SWAP"),
+            cursor=None, limit=1, fetcher=lambda: deepcopy(rows), ttl_seconds=60, private=False,
+        )
+        self.assertEqual(first["data"], [{"instrument": "BTC-USDT", "baseQuantity": "1", "markPrice": "1"}])
+        second = self.gateway.normalized_page(
+            resource="connection:positions", scope=("owner", "connection", "SWAP"),
+            cursor=first["page"]["nextCursor"], limit=1,
+            fetcher=lambda: self.fail("frozen normalized snapshots must not refetch"),
+            ttl_seconds=60, private=False,
+        )
+        third = self.gateway.normalized_page(
+            resource="connection:positions", scope=("owner", "connection", "SWAP"),
+            cursor=second["page"]["nextCursor"], limit=1,
+            fetcher=lambda: self.fail("frozen normalized snapshots must not refetch"),
+            ttl_seconds=60, private=False,
+        )
+        self.assertEqual((second["data"][0]["instrument"], second["data"][0]["baseQuantity"]), ("BTC-USDT", "999"))
+        self.assertEqual((third["data"][0]["instrument"], third["data"][0]["baseQuantity"]), ("ETH-USDT", "0.01"))
+
+    def test_private_invalidation_between_cache_return_and_snapshot_publish_is_fenced(self) -> None:
+        original_store_snapshot = self.gateway._store_read_snapshot
+
+        def invalidate_before_publish(*args, **kwargs):
+            self.gateway.invalidate_private()
+            return original_store_snapshot(*args, **kwargs)
+
+        self.gateway._store_read_snapshot = invalidate_before_publish
+        with self.assertRaises(GatewayError) as raised:
+            self.gateway.normalized_page(
+                resource="connection:balances",
+                scope=("owner", "connection", "v1"),
+                cursor=None,
+                limit=10,
+                fetcher=lambda: [{"asset": "BTC", "available": "1"}],
+                ttl_seconds=60,
+                private=True,
+                session_guard=lambda: None,
+                identity_guard=lambda: None,
+            )
+        self.assertEqual((raised.exception.status, raised.exception.code), (409, "account_changed"))
+        self.assertEqual(len(self.gateway._snapshots), 0)
 
 
 class ApplicationInitializationTests(unittest.TestCase):

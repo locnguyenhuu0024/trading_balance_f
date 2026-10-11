@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_DOWN
 from typing import Any, Callable
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlsplit
 
 from .auth import AuthenticationBusy, IdentityAuthError, IdentityAuthService
 from .command_ledger import CommandLedger, CommandLedgerError
@@ -25,6 +25,7 @@ from .connections import ConnectionServiceError, OwnedConnections
 from .currency import CurrencyTransport
 from .credential_vault import CredentialVault
 from .data_gateway import DataGateway, GatewayError
+from .exchanges import BinanceSpotAdapter, BinanceTransport, BinanceUSDMAdapter, OKXReadAdapter
 from .okx import OKXClient, OKXError, OKXTransportError, Transport, bounded_error_code
 from .principal import Principal
 from .security import (
@@ -306,6 +307,10 @@ def _public_position(position: dict[str, Any]) -> dict[str, Any]:
 
 
 class TradeService:
+    MAX_STRATEGY_REFRESH_JOBS = 16
+    MAX_STRATEGY_REFRESH_WORKERS = 2
+    STRATEGY_REFRESH_QUEUE_TTL_SECONDS = 30.0
+
     def __init__(
         self,
         settings: RuntimeSettings,
@@ -366,17 +371,26 @@ class TradeService:
             transport=transport,
             clock=clock,
         )
+        self._exchange_transport = transport
         self.data_gateway = DataGateway(
             self.okx,
             account_fingerprint=self._account_fingerprint,
             currency_transport=currency_transport,
             wall_clock=clock,
+            cursor_signing_key=settings.session_signing_key,
         )
         self._display_executor = ThreadPoolExecutor(
             max_workers=len(SUPPORTED_TYPES),
             thread_name_prefix="position-display",
         )
         self._display_admission = threading.BoundedSemaphore(2 * len(SUPPORTED_TYPES))
+        self._strategy_refresh_executor = ThreadPoolExecutor(
+            max_workers=self.MAX_STRATEGY_REFRESH_WORKERS,
+            thread_name_prefix="strategy-read-refresh",
+        )
+        self._strategy_refresh_admission = threading.BoundedSemaphore(self.MAX_STRATEGY_REFRESH_JOBS)
+        self._strategy_refresh_lock = threading.Lock()
+        self._strategy_refresh_jobs: dict[tuple[Any, ...], object] = {}
         from .strategy import StrategyService
 
         self.strategy = StrategyService(self)
@@ -398,7 +412,9 @@ class TradeService:
             except IdentityAuthError as error:
                 raise APIError(error.status, error.code, error.message) from None
             except ConnectionServiceError as error:
-                raise APIError(error.status, error.code, error.message) from None
+                raise APIError(error.status, error.code, error.message, headers=error.headers) from None
+            except GatewayError as error:
+                raise APIError(error.status, error.code, error.message, headers=error.headers) from None
             except CommandLedgerError as error:
                 raise APIError(error.status, error.code, error.message) from None
             except (AuthenticationBusy, IdentityStoreUnavailable, CryptoUnavailable, CryptoInvalidCiphertext):
@@ -534,6 +550,10 @@ class TradeService:
             until = self.identity_auth.step_up(principal, body.get("password"), body.get("totp"))
             return 200, {"stepUpUntil": self._utc_timestamp(until)}, []
 
+        read_result = self._dispatch_v2_normalized_read(method, path, environ)
+        if read_result is not None:
+            return read_result
+
         connection_service = self.connections
         command_ledger = self.commands
         if connection_service is None or command_ledger is None:
@@ -541,6 +561,7 @@ class TradeService:
         prepare_match = re.fullmatch(r"/v2/connections/([A-Za-z0-9_-]{8,64})/actions/prepare", path)
         if prepare_match is not None and method == "POST":
             _, principal = self._v2_authenticated(environ, state_changing=True)
+            connection_service.assert_action_supported(principal, prepare_match.group(1))
             self._check_v2_action_rate("action-prepare", source)
             return 201, {"operation": command_ledger.prepare(principal, prepare_match.group(1), body)}, []
         action_match = re.fullmatch(
@@ -554,10 +575,12 @@ class TradeService:
                 return 200, {"operation": command_ledger.get_result(principal, connection_id, operation_id)}, []
             if method == "POST" and action == "execute":
                 _, principal = self._v2_authenticated(environ, state_changing=True)
+                connection_service.assert_action_supported(principal, connection_id)
                 self._check_v2_action_rate("action-execute", source)
                 return 200, {"operation": command_ledger.execute(principal, connection_id, operation_id, body)}, []
             if method == "POST" and action == "reconcile":
                 _, principal = self._v2_authenticated(environ, state_changing=True)
+                connection_service.assert_action_supported(principal, connection_id)
                 self._check_v2_action_rate("action-reconcile", source)
                 return 200, {"operation": command_ledger.reconcile(principal, connection_id, operation_id)}, []
         strategy_match = re.fullmatch(
@@ -568,6 +591,7 @@ class TradeService:
             state_changing = method == "POST"
             _, principal = self._v2_authenticated(environ, state_changing=state_changing)
             if state_changing:
+                connection_service.assert_action_supported(principal, connection_id)
                 self._check_v2_action_rate("strategy", source)
             trade_action = (
                 state_changing
@@ -576,6 +600,12 @@ class TradeService:
                     r"[A-Za-z0-9_-]{8,64}/(prepare-apply|execute-apply)", suffix
                 ) is not None
             )
+            refresh_match = (
+                re.fullmatch(r"([A-Za-z0-9_-]{8,64})/refresh", suffix)
+                if state_changing and suffix is not None else None
+            )
+            if refresh_match is not None and body != {}:
+                raise APIError(400, "invalid_request", "A strategy refresh does not accept a request body.")
             local_projection_read = method == "GET" and (
                 suffix is None
                 or suffix == "settings"
@@ -585,7 +615,7 @@ class TradeService:
                 )
             )
             step_up_required = trade_action
-            if local_projection_read:
+            if local_projection_read or refresh_match is not None:
                 context = connection_service.strategy_metadata_context(principal, connection_id)
             elif trade_action:
                 context = connection_service.account_context(principal, connection_id, step_up=True)
@@ -597,11 +627,93 @@ class TradeService:
             from .strategy import StrategyService
 
             strategy = StrategyService(owner, strategy_scope=owner.strategy_scope)
+            if refresh_match is not None:
+                strategy_id = refresh_match.group(1)
+                _candidate, _revision = strategy.inspect_read_only_refresh(strategy_id)
+                refresh_context = connection_service.account_context(principal, connection_id)
+                if (
+                    refresh_context.exchange != context.exchange
+                    or refresh_context.credential_version != context.credential_version
+                    or refresh_context.permission_version != context.permission_version
+                    or not hmac.compare_digest(
+                        refresh_context.remote_identity_digest, context.remote_identity_digest
+                    )
+                ):
+                    raise APIError(409, "connection_changed", "The connection changed during the refresh request.")
+                refresh_owner = _OwnedStrategyOwner(self, principal, refresh_context)
+                strategy = StrategyService(refresh_owner, strategy_scope=refresh_owner.strategy_scope)
+                _candidate, revision = strategy.inspect_read_only_refresh(strategy_id)
+
+                def before_refresh_order() -> None:
+                    self._v2_authenticated(environ, state_changing=False)
+                    connection_service.assert_context_authority(principal, refresh_context)
+                    _candidate, current_revision = strategy.inspect_read_only_refresh(strategy_id)
+                    if not hmac.compare_digest(current_revision, revision):
+                        raise APIError(409, "connection_changed", "The strategy changed during the refresh.")
+
+                def verify_refresh_identity() -> None:
+                    self._v2_authenticated(environ, state_changing=False)
+                    connection_service.assert_context_identity(principal, refresh_context)
+
+                job_key = (
+                    principal.user_id,
+                    connection_id,
+                    refresh_context.credential_version,
+                    refresh_context.permission_version,
+                    strategy_id,
+                    revision,
+                )
+                coalesced = self._enqueue_read_only_strategy_refresh(
+                    job_key,
+                    lambda: strategy.run_read_only_refresh(
+                        strategy_id,
+                        revision,
+                        before_order_call=before_refresh_order,
+                        verify_identity=verify_refresh_identity,
+                    ),
+                )
+                return 202, {
+                    "refresh": {
+                        "strategyId": strategy_id,
+                        "status": "queued",
+                        "accepted": True,
+                        "coalesced": coalesced,
+                    }
+                }, []
+            if method == "GET" and suffix is None:
+                params = self._strict_v2_query(environ, {"cursor", "limit"}, set())
+                limit_text = params.get("limit", "50")
+                if not re.fullmatch(r"[0-9]{1,3}", limit_text) or not 1 <= int(limit_text) <= 200:
+                    raise APIError(400, "invalid_query", "The strategy query is invalid.")
+                limit = int(limit_text)
+                cursor = params.get("cursor")
+                if cursor is not None and len(cursor) > 2048:
+                    raise APIError(400, "invalid_query", "The strategy query is invalid.")
+                scope = ("owned-strategies", principal.user_id, connection_id)
+                if cursor is not None:
+                    self.data_gateway.preflight_normalized_cursor(
+                        resource="strategies", scope=scope, cursor=cursor, limit=limit,
+                    )
+                projection = self.data_gateway.normalized_page(
+                    resource="strategies", scope=scope, cursor=cursor, limit=limit,
+                    fetcher=strategy.list_owned_projection, ttl_seconds=1, private=True,
+                    session_guard=lambda: self._v2_authenticated(environ, state_changing=False),
+                    identity_guard=lambda: None,
+                )
+                return 200, {
+                    "strategies": projection["data"],
+                    "page": projection["page"],
+                    "dataMeta": projection["dataMeta"],
+                }, []
             internal_path = "/v1/strategies" if suffix is None else f"/v1/strategies/{suffix}"
             guard = lambda: self._owned_strategy_guard(
                 principal, owner.strategy_scope, step_up=step_up_required
             )
-            result = strategy.dispatch(method, internal_path, body, request_guard=guard)
+            try:
+                result = strategy.dispatch(method, internal_path, body, request_guard=guard)
+            finally:
+                if state_changing:
+                    self.data_gateway.invalidate_private()
             return 200, result, []
         if path == "/v2/connections" and method == "GET":
             _, principal = self._v2_authenticated(environ, state_changing=False)
@@ -644,6 +756,198 @@ class TradeService:
 
         raise APIError(404, "not_found", "The requested endpoint was not found.")
 
+    def _dispatch_v2_normalized_read(
+        self, method: str, path: str, environ: dict[str, Any]
+    ) -> tuple[int, dict[str, Any], list[tuple[str, str]]] | None:
+        public_resource = None
+        if path == "/v2/market/instruments":
+            public_resource = "instruments"
+        elif path == "/v2/market/ticker":
+            public_resource = "ticker"
+        private_match = re.fullmatch(
+            r"/v2/connections/([A-Za-z0-9_-]{8,64})/(balances|positions|orders)", path
+        )
+        if public_resource is None and private_match is None:
+            return None
+        if method != "GET":
+            raise APIError(405, "method_not_allowed", "This endpoint only accepts GET requests.", headers=[("Allow", "GET")])
+        if public_resource is not None:
+            params = self._strict_v2_query(
+                environ, {"exchange", "product", "environment", "region", "instrument", "cursor", "limit"},
+                {"exchange", "product", "environment", "region"} | ({"instrument"} if public_resource == "ticker" else set()),
+            )
+            exchange, product = params["exchange"], params["product"]
+            environment, region = params["environment"], params["region"]
+            instrument = params.get("instrument")
+            self._validate_v2_market_scope(exchange, product, environment, region, instrument)
+            limit_text = params.get("limit", "50")
+            if not re.fullmatch(r"[0-9]{1,3}", limit_text) or not 1 <= int(limit_text) <= 200:
+                raise APIError(400, "invalid_query", "The market query is invalid.")
+            limit = int(limit_text)
+            cursor = params.get("cursor")
+            if cursor is not None and len(cursor) > 2048:
+                raise APIError(400, "invalid_query", "The market query is invalid.")
+            if exchange == "OKX":
+                adapter = OKXReadAdapter(self.okx, environment=environment, region=region)
+            else:
+                transport = BinanceTransport(
+                    "", "", environment=environment, region=region,
+                    transport=self._exchange_transport, clock=self.clock,
+                )
+                adapter = (
+                    BinanceSpotAdapter(transport, environment=environment, region=region)
+                    if product == "SPOT"
+                    else BinanceUSDMAdapter(transport, environment=environment, region=region)
+                )
+            def fetch_public() -> list[dict[str, Any]]:
+                if public_resource == "instruments":
+                    rows = adapter.instruments(product, instrument) if exchange == "OKX" else adapter.instruments(instrument)
+                    return [row.to_dict() for row in rows]
+                if exchange == "OKX":
+                    quote = adapter.ticker(product, instrument, fetched_at=DataGateway._iso_time(self.clock()))
+                else:
+                    quote = adapter.ticker(instrument)
+                return [quote.to_dict()]
+
+            payload = self.data_gateway.normalized_page(
+                resource="market:" + public_resource,
+                scope=(exchange, region, environment, "market", product, instrument or ""),
+                cursor=cursor, limit=limit, fetcher=fetch_public,
+                ttl_seconds=60 if public_resource == "instruments" else 1, private=False,
+            )
+            return 200, payload, []
+
+        assert private_match is not None
+        connection_id, resource = private_match.groups()
+        connections = self.connections
+        if connections is None:
+            raise APIError(503, "identity_unavailable", "The connection service is unavailable.")
+        _, principal = self._v2_authenticated(environ, state_changing=False)
+        # Resolve ownership before validating capabilities or opening credentials.
+        metadata = connections.strategy_metadata_context(principal, connection_id)
+        params = self._strict_v2_query(
+            environ, {"product", "instrument", "cursor", "limit"}, {"product"}
+        )
+        product = params["product"]
+        allowed = {"OKX": {"SPOT", "MARGIN", "SWAP", "FUTURES"}, "BINANCE": {"SPOT", "USD_M"}}
+        if product not in allowed.get(metadata.exchange, set()):
+            raise APIError(400, "invalid_query", "The read query is invalid.")
+        instrument = params.get("instrument")
+        self._validate_v2_instrument(metadata.exchange, instrument)
+        limit_text = params.get("limit", "50")
+        if not re.fullmatch(r"[0-9]{1,3}", limit_text) or not 1 <= int(limit_text) <= 200:
+            raise APIError(400, "invalid_query", "The read query is invalid.")
+        limit = int(limit_text)
+        cursor = params.get("cursor")
+        if cursor is not None and len(cursor) > 2048:
+            raise APIError(400, "invalid_query", "The read query is invalid.")
+        scope = (principal.user_id, metadata.connection_id, metadata.exchange, metadata.region,
+                 metadata.environment, metadata.credential_version, metadata.permission_version,
+                 metadata.remote_identity_digest, product, instrument or "")
+        if cursor is not None:
+            self.data_gateway.preflight_normalized_cursor(
+                resource="connection:" + resource, scope=scope, cursor=cursor, limit=limit,
+            )
+        connections.assert_product_read_supported(principal, connection_id, product, resource=resource)
+        context = connections.account_context(principal, connection_id)
+        if context.exchange == "OKX":
+            adapter = OKXReadAdapter(context.client, environment=context.environment, region=context.region)
+        elif context.exchange == "BINANCE":
+            adapter = context.client.spot if product == "SPOT" else context.client.usdm
+        else:
+            raise APIError(422, "capability_unsupported", "The exchange read is unsupported.")
+
+        def current_session() -> None:
+            self._v2_authenticated(environ, state_changing=False)
+
+        def current_authority() -> None:
+            connections.assert_context_authority(principal, context)
+
+        identity_holder: dict[str, Any] = {}
+
+        def current_identity() -> None:
+            identity_holder["value"] = connections.assert_context_identity(principal, context, product=product)
+
+        def fetch_private() -> list[dict[str, Any]]:
+            if resource == "balances":
+                rows = adapter.balances(product) if context.exchange == "OKX" else adapter.balances()
+            elif resource == "positions":
+                if context.exchange == "OKX":
+                    identity = identity_holder.get("value")
+                    rows = adapter.positions(
+                        product, instrument,
+                        position_mode=getattr(identity, "position_mode", None),
+                    )
+                else:
+                    rows = adapter.positions(instrument)
+            else:
+                rows = adapter.orders(product, instrument) if context.exchange == "OKX" else adapter.orders(instrument)
+            return [row.to_dict() for row in rows]
+
+        def rows_complete(rows: list[dict[str, Any]]) -> bool:
+            if resource == "positions":
+                return all(row.get("baseQuantity") is not None for row in rows)
+            if resource == "orders":
+                return all(row.get("quantityUnit") is not None for row in rows)
+            return True
+
+        payload = self.data_gateway.normalized_page(
+            resource="connection:" + resource,
+            scope=scope,
+            cursor=cursor, limit=limit, fetcher=fetch_private, ttl_seconds=1, private=True,
+            session_guard=current_session, authority_guard=current_authority,
+            identity_guard=current_identity, complete=rows_complete,
+        )
+        return 200, payload, []
+
+    @staticmethod
+    def _strict_v2_query(
+        environ: dict[str, Any], allowed: set[str], required: set[str]
+    ) -> dict[str, str]:
+        raw = environ.get("QUERY_STRING", "")
+        if not isinstance(raw, str):
+            raise APIError(400, "invalid_query", "The read query is invalid.")
+        try:
+            if len(raw.encode("utf-8", "strict")) > 4096:
+                raise ValueError
+            pairs = parse_qsl(
+                raw, keep_blank_values=True, strict_parsing=True, encoding="utf-8", errors="strict",
+                max_num_fields=16,
+            )
+        except (UnicodeError, ValueError):
+            raise APIError(400, "invalid_query", "The read query is invalid.") from None
+        params: dict[str, str] = {}
+        for key, value in pairs:
+            if key in params or key not in allowed or not value:
+                raise APIError(400, "invalid_query", "The read query is invalid.")
+            params[key] = value
+        if required - set(params):
+            raise APIError(400, "invalid_query", "The read query is invalid.")
+        return params
+
+    @staticmethod
+    def _validate_v2_market_scope(
+        exchange: str, product: str, environment: str, region: str, instrument: str | None
+    ) -> None:
+        products = {"OKX": {"SPOT", "MARGIN", "SWAP", "FUTURES"}, "BINANCE": {"SPOT", "USD_M"}}
+        if exchange not in products or product not in products[exchange]:
+            raise APIError(400, "invalid_query", "The market query is invalid.")
+        if environment not in {"live", "demo"} or region != "global":
+            raise APIError(400, "invalid_query", "The market query is invalid.")
+        TradeService._validate_v2_instrument(exchange, instrument)
+
+    @staticmethod
+    def _validate_v2_instrument(exchange: str, instrument: str | None) -> None:
+        if instrument is None:
+            return
+        valid = (
+            re.fullmatch(r"[A-Z0-9]{3,32}", instrument) is not None
+            if exchange == "BINANCE"
+            else re.fullmatch(r"[A-Z0-9]+(?:-[A-Z0-9]+){1,3}", instrument) is not None
+        )
+        if not valid:
+            raise APIError(400, "invalid_query", "The read query is invalid.")
+
     def _owned_strategy_guard(
         self,
         principal: Principal,
@@ -681,6 +985,41 @@ class TradeService:
             return
         with self.identity_store.transaction() as current:
             check(current)
+
+    def _enqueue_read_only_strategy_refresh(
+        self, key: tuple[Any, ...], callback: Callable[[], None]
+    ) -> bool:
+        """Admit a bounded request-bound refresh; return whether it coalesced."""
+        with self._strategy_refresh_lock:
+            if key in self._strategy_refresh_jobs:
+                return True
+            if not self._strategy_refresh_admission.acquire(blocking=False):
+                raise APIError(503, "busy", "The strategy refresh queue is full.")
+            token = object()
+            self._strategy_refresh_jobs[key] = token
+            queued_at = time.monotonic()
+
+            def run() -> None:
+                try:
+                    if time.monotonic() - queued_at <= self.STRATEGY_REFRESH_QUEUE_TTL_SECONDS:
+                        callback()
+                except Exception:
+                    # The request has already received an accepted response;
+                    # failed authority or reads remain fail-closed in the callback.
+                    return
+                finally:
+                    with self._strategy_refresh_lock:
+                        if self._strategy_refresh_jobs.get(key) is token:
+                            self._strategy_refresh_jobs.pop(key, None)
+                        self._strategy_refresh_admission.release()
+
+            try:
+                self._strategy_refresh_executor.submit(run)
+            except Exception:
+                self._strategy_refresh_jobs.pop(key, None)
+                self._strategy_refresh_admission.release()
+                raise APIError(503, "busy", "The strategy refresh queue is unavailable.") from None
+            return False
 
     def _v2_authenticated(
         self, environ: dict[str, Any], *, state_changing: bool

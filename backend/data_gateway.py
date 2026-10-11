@@ -8,14 +8,20 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+import base64
+import hashlib
+import hmac
+import json
 from math import ceil, isfinite
 import re
+import secrets
 import threading
 import time
 from typing import Any, Callable
 from urllib.parse import parse_qsl
 
 from .currency import CurrencyClient, CurrencyClientError, CurrencyTransport
+from .exchanges.contracts import AdapterError
 from .okx import OKXClient, OKXError
 
 
@@ -88,6 +94,22 @@ class _Flight:
     value: Any = None
     error: GatewayError | None = None
     rate_limit_generation: int | None = None
+
+
+@dataclass
+class _ReadSnapshot:
+    snapshot_id: str
+    scope_hash: str
+    resource: str
+    rows: list[Any]
+    fetched_at: float
+    expires_at: float
+    stale_after: float
+    size_bytes: int
+    complete: bool
+    private: bool
+    last_access: float
+    private_generation: int
 
 
 _ROUTES: dict[str, _Route] = {
@@ -169,6 +191,12 @@ class DataGateway:
     IDENTITY_TTL_SECONDS = 1.0
     READ_ACQUIRE_TIMEOUT_SECONDS = 10.0
     FLIGHT_WAIT_TIMEOUT_SECONDS = 45.0
+    SNAPSHOT_TTL_SECONDS = 60.0
+    MAX_SNAPSHOTS = 32
+    MAX_SNAPSHOT_ROWS = 10_000
+    MAX_SNAPSHOT_BYTES = 1 * 1024 * 1024
+    MAX_RETAINED_SNAPSHOT_BYTES = 16 * 1024 * 1024
+    MAX_NORMALIZED_COOLDOWNS = 256
 
     def __init__(
         self,
@@ -178,6 +206,7 @@ class DataGateway:
         currency_transport: CurrencyTransport | None = None,
         monotonic_clock: Callable[[], float] = time.monotonic,
         wall_clock: Callable[[], float] = time.time,
+        cursor_signing_key: bytes | None = None,
     ):
         self._okx = okx
         self._account_fingerprint = account_fingerprint
@@ -199,6 +228,14 @@ class DataGateway:
         self._identity_cooldown_deadline = 0.0
         self._identity_generation = 0
         self._identity_flight: _Flight | None = None
+        self._snapshot_key = hmac.new(
+            cursor_signing_key if isinstance(cursor_signing_key, bytes) and cursor_signing_key else secrets.token_bytes(32),
+            b"trading-balance-f/normalized-read-cursors/v1", hashlib.sha256,
+        ).digest()
+        self._snapshots: OrderedDict[str, _ReadSnapshot] = OrderedDict()
+        self._snapshot_bytes = 0
+        self._normalized_cooldowns: dict[tuple[Any, ...], float] = {}
+        self._private_read_generation = 0
 
     def handle(
         self,
@@ -252,6 +289,470 @@ class DataGateway:
                 self._require_session_guard(session_guard)
                 error = self._supersede_rate_limit_after_invalidation(error)
             raise error from None
+
+    def normalized_page(
+        self,
+        *,
+        resource: str,
+        scope: tuple[Any, ...],
+        cursor: str | None,
+        limit: int,
+        fetcher: Callable[[], list[dict[str, Any]]],
+        ttl_seconds: int,
+        private: bool,
+        session_guard: SessionGuard | None = None,
+        authority_guard: SessionGuard | None = None,
+        identity_guard: SessionGuard | None = None,
+        complete: Callable[[list[dict[str, Any]]], bool] | None = None,
+    ) -> dict[str, Any]:
+        """Read normalized rows once, then serve a frozen integrity-bound page sequence."""
+        if not isinstance(resource, str) or not resource or not isinstance(scope, tuple):
+            raise self._invalid_query()
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
+            raise self._invalid_query()
+        scope_hash = hashlib.sha256(
+            json.dumps([resource, scope, limit], separators=(",", ":"), sort_keys=True, ensure_ascii=True).encode("ascii")
+        ).hexdigest()
+        with self._cache_lock:
+            private_generation = self._private_read_generation
+        cache_key = ("private" if private else "public", "normalized", resource, *scope)
+        if private:
+            cache_key += (private_generation,)
+        cooldown_key = self._normalized_cooldown_key(cache_key)
+        self._normalized_guard(
+            private, session_guard, identity_guard, cooldown_key=cooldown_key,
+            authority_guard=authority_guard,
+        )
+        cache_hit = True
+        if cursor is None:
+            entry, cache_hit = self._read_normalized_cached(
+                cache_key, fetcher, ttl_seconds=ttl_seconds, private=private,
+                session_guard=session_guard, identity_guard=identity_guard,
+                authority_guard=authority_guard,
+                private_generation=private_generation,
+            )
+            rows = deepcopy(entry.data)
+            if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+                raise self._unavailable()
+            try:
+                rows.sort(key=self._normalized_row_sort_key)
+            except (TypeError, ValueError, UnicodeError):
+                raise self._unavailable() from None
+            complete_value = True if complete is None else bool(complete(rows))
+            snapshot = self._store_read_snapshot(
+                resource, scope_hash, rows, entry, complete_value, private=private,
+                private_generation=private_generation,
+            )
+            offset = 0
+        else:
+            snapshot, offset = self._read_snapshot_cursor(cursor, resource, scope_hash)
+            cache_hit = True
+        self._normalized_guard(
+            private, session_guard, identity_guard, cooldown_key=cooldown_key,
+            authority_guard=authority_guard,
+        )
+        self._assert_snapshot_generation(snapshot)
+        if not self.is_deadline_fresh(snapshot.expires_at):
+            raise GatewayError(409, "snapshot_expired", "The read snapshot has expired.")
+        end = min(len(snapshot.rows), offset + limit)
+        next_cursor = None if end >= len(snapshot.rows) else self._encode_read_cursor(
+            snapshot, resource=resource, scope_hash=scope_hash, offset=end,
+        )
+        stale = not self.is_deadline_fresh(snapshot.stale_after)
+        return {
+            "code": "0",
+            "msg": "",
+            "data": deepcopy(snapshot.rows[offset:end]),
+            "page": {
+                "limit": limit,
+                "offset": offset,
+                "total": len(snapshot.rows),
+                "nextCursor": next_cursor,
+            },
+            "dataMeta": {
+                "fetchedAt": self._iso_time(snapshot.fetched_at),
+                "asOf": self._iso_time(snapshot.fetched_at),
+                "snapshotExpiresAt": self._iso_time(
+                    self._wall_clock() + max(0.0, snapshot.expires_at - self._monotonic())
+                ),
+                "stale": stale,
+                "complete": snapshot.complete,
+                "cacheHit": cache_hit,
+                "source": "backend",
+            },
+        }
+
+    def preflight_normalized_cursor(
+        self, *, resource: str, scope: tuple[Any, ...], cursor: str, limit: int
+    ) -> None:
+        """Validate cursor scope after owner lookup but before vault or venue access."""
+        scope_hash = hashlib.sha256(
+            json.dumps([resource, scope, limit], separators=(",", ":"), sort_keys=True, ensure_ascii=True).encode("ascii")
+        ).hexdigest()
+        self._read_snapshot_cursor(cursor, resource, scope_hash)
+
+    def _read_normalized_cached(
+        self,
+        key: tuple[Any, ...],
+        fetcher: Callable[[], list[dict[str, Any]]],
+        *,
+        ttl_seconds: int,
+        private: bool,
+        session_guard: SessionGuard | None,
+        authority_guard: SessionGuard | None,
+        identity_guard: SessionGuard | None,
+        private_generation: int,
+    ) -> tuple[_CacheEntry, bool]:
+        now = self._monotonic()
+        with self._cache_lock:
+            if private and private_generation != self._private_read_generation:
+                raise self._account_changed()
+            cached = self._cache.get(key)
+            if cached is not None and cached.deadline > now:
+                self._cache.move_to_end(key)
+                entry = cached
+                flight = None
+                leader = False
+            else:
+                if cached is not None:
+                    self._cache.pop(key, None)
+                for expired_key, deadline in list(self._normalized_cooldowns.items()):
+                    if deadline <= now:
+                        self._normalized_cooldowns.pop(expired_key, None)
+                public_cooldown = self._normalized_cooldowns.get(self._normalized_cooldown_key(key), 0.0)
+                if not private and public_cooldown > now:
+                    raise GatewayError(
+                        429, "rate_limited", "The exchange is rate limited. Try again later.",
+                        headers=[("Retry-After", str(max(1, ceil(public_cooldown - now))))],
+                    )
+                flight = self._inflight.get(key)
+                if flight is None:
+                    if len(self._inflight) >= self.MAX_INFLIGHT_KEYS:
+                        raise self._normalized_busy()
+                    flight = _Flight()
+                    self._inflight[key] = flight
+                    leader = True
+                else:
+                    leader = False
+                entry = None
+        if entry is not None:
+            self._normalized_guard(
+                private, session_guard, identity_guard, cooldown_key=self._normalized_cooldown_key(key),
+                authority_guard=authority_guard,
+            )
+            return deepcopy(entry), True
+        assert flight is not None
+        if not leader:
+            if not flight.event.wait(self.FLIGHT_WAIT_TIMEOUT_SECONDS):
+                raise self._normalized_busy()
+            self._normalized_guard(
+                private, session_guard, identity_guard, cooldown_key=self._normalized_cooldown_key(key),
+                authority_guard=authority_guard,
+            )
+            if flight.error is not None:
+                raise self._effective_flight_error(flight)
+            if not isinstance(flight.value, _CacheEntry):
+                raise self._unavailable()
+            return deepcopy(flight.value), False
+
+        started = self._monotonic()
+        fetched_at = self._wall_clock()
+        generation = private_generation
+        slot_acquired = False
+        try:
+            self._normalized_guard(
+                private, session_guard, identity_guard, cooldown_key=self._normalized_cooldown_key(key),
+                authority_guard=authority_guard,
+            )
+            if not self._read_slots.acquire(blocking=False):
+                raise self._normalized_busy()
+            slot_acquired = True
+            rows = fetcher()
+            if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+                raise self._unavailable()
+            entry = _CacheEntry(
+                data=deepcopy(rows), fetched_at=fetched_at, expires_at=fetched_at + ttl_seconds,
+                deadline=started + ttl_seconds, private=private,
+            )
+            self._normalized_guard(
+                private, session_guard, identity_guard, read_slot_held=True,
+                cooldown_key=self._normalized_cooldown_key(key), authority_guard=authority_guard,
+            )
+            if not self.is_deadline_fresh(entry.deadline):
+                raise self._data_stale()
+            with self._cache_lock:
+                if private and generation != self._private_read_generation:
+                    raise self._account_changed()
+                if self._inflight.get(key) is not flight or flight.error is not None:
+                    raise self._account_changed() if private else self._normalized_busy()
+                self._insert_cache_locked(key, entry)
+                flight.value = entry
+        except Exception as error:
+            mapped = self._map_normalized_error(error)
+            if mapped.status == 429:
+                mapped = self._remember_normalized_rate_limit(
+                    self._normalized_cooldown_key(key), mapped
+                ) or mapped
+            if flight.error is None:
+                flight.error = mapped
+                flight.rate_limit_generation = mapped.rate_limit_generation
+        finally:
+            if slot_acquired:
+                self._read_slots.release()
+            with self._cache_lock:
+                if self._inflight.get(key) is flight:
+                    self._inflight.pop(key, None)
+                flight.event.set()
+        if flight.error is not None:
+            self._normalized_guard(
+                private, session_guard, identity_guard, cooldown_key=self._normalized_cooldown_key(key),
+                authority_guard=authority_guard,
+            )
+            raise self._effective_flight_error(flight)
+        if not isinstance(flight.value, _CacheEntry):
+            raise self._unavailable()
+        return deepcopy(flight.value), False
+
+    def _normalized_guard(
+        self, private: bool, session_guard: SessionGuard | None, identity_guard: SessionGuard | None,
+        *, read_slot_held: bool = False, cooldown_key: tuple[Any, ...] | None = None,
+        authority_guard: SessionGuard | None = None,
+    ) -> None:
+        if not private:
+            return
+        if session_guard is None:
+            raise GatewayError(401, "authentication_required", "A valid session is required.")
+        self._run_normalized_guard_callback(session_guard)
+        cooldown = None if cooldown_key is None else self._active_normalized_cooldown(cooldown_key)
+        if cooldown is not None:
+            if authority_guard is not None:
+                self._run_normalized_guard_callback(authority_guard)
+            raise cooldown
+        if identity_guard is None:
+            raise GatewayError(409, "connection_changed", "The exchange connection changed during the read.")
+        try:
+            if read_slot_held:
+                identity_guard()
+            else:
+                if not self._read_slots.acquire(blocking=False):
+                    raise self._normalized_busy()
+                try:
+                    identity_guard()
+                finally:
+                    self._read_slots.release()
+        except Exception as error:
+            mapped = self._normalized_guard_error(error)
+            if mapped.status == 429 and cooldown_key is not None:
+                mapped = self._remember_normalized_rate_limit(cooldown_key, mapped) or mapped
+            raise mapped from None
+
+    def _run_normalized_guard_callback(self, callback: SessionGuard) -> None:
+        try:
+            callback()
+        except Exception as error:
+            raise self._normalized_guard_error(error) from None
+
+    @staticmethod
+    def _normalized_guard_error(error: Exception) -> GatewayError:
+        if isinstance(error, GatewayError):
+            return error
+        if isinstance(error, AdapterError):
+            headers = [] if not error.retry_after else [("Retry-After", error.retry_after)]
+            return GatewayError(error.status, error.code, error.message, headers=headers)
+        status = getattr(error, "status", None)
+        code = getattr(error, "code", None)
+        message = getattr(error, "message", None)
+        headers = getattr(error, "headers", None)
+        if status in {400, 401, 403, 404, 409, 422, 429, 503} and isinstance(code, str):
+            return GatewayError(
+                status, code, message if isinstance(message, str) else "The exchange connection changed during the read.",
+                headers=headers if isinstance(headers, list) else [],
+            )
+        return GatewayError(503, "account_unavailable", "Current account data is unavailable.")
+
+    def _active_normalized_cooldown(self, cooldown_key: tuple[Any, ...]) -> GatewayError | None:
+        now = self._monotonic()
+        with self._cache_lock:
+            for expired_key, deadline in list(self._normalized_cooldowns.items()):
+                if deadline <= now:
+                    self._normalized_cooldowns.pop(expired_key, None)
+            deadline = self._normalized_cooldowns.get(cooldown_key)
+            if deadline is None or deadline <= now:
+                return None
+            remaining = max(1, ceil(deadline - now))
+            return GatewayError(
+                429, "rate_limited", "The exchange is rate limited. Try again later.",
+                headers=[("Retry-After", str(remaining))],
+            )
+
+    def _remember_normalized_rate_limit(
+        self, cooldown_key: tuple[Any, ...], error: GatewayError
+    ) -> GatewayError | None:
+        if error.status != 429:
+            return None
+        retry = self._retry_after_seconds(
+            next((value for name, value in error.headers if name.lower() == "retry-after"), None)
+        )
+        with self._cache_lock:
+            now = self._monotonic()
+            for expired_key, deadline in list(self._normalized_cooldowns.items()):
+                if deadline <= now:
+                    self._normalized_cooldowns.pop(expired_key, None)
+            if cooldown_key not in self._normalized_cooldowns and len(self._normalized_cooldowns) >= self.MAX_NORMALIZED_COOLDOWNS:
+                return self._normalized_busy()
+            self._normalized_cooldowns[cooldown_key] = now + retry
+        return None
+
+    def _map_normalized_error(self, error: Exception) -> GatewayError:
+        if isinstance(error, GatewayError):
+            return error
+        if isinstance(error, AdapterError):
+            headers = [] if not error.retry_after else [("Retry-After", error.retry_after)]
+            return GatewayError(error.status, error.code, error.message, headers=headers)
+        status = getattr(error, "status", None)
+        code = getattr(error, "code", None)
+        message = getattr(error, "message", None)
+        headers = getattr(error, "headers", None)
+        if status in {400, 401, 403, 404, 409, 422, 429, 503} and isinstance(code, str):
+            return GatewayError(
+                status, code, message if isinstance(message, str) else "The exchange read is unavailable.",
+                headers=headers if isinstance(headers, list) else [],
+            )
+        return self._unavailable()
+
+    @staticmethod
+    def _normalized_cooldown_key(key: tuple[Any, ...]) -> tuple[Any, ...]:
+        if len(key) >= 3 and key[0] == "private" and key[1] == "normalized":
+            return key[:-1]
+        return key
+
+    @staticmethod
+    def _normalized_row_sort_key(row: dict[str, Any]) -> tuple[tuple[tuple[str, str], ...], str]:
+        identity_fields = (
+            "instrument", "instrumentId", "instId", "symbol", "asset", "currency",
+            "clientOrderId", "orderId", "strategyId", "id",
+        )
+        secret_markers = ("secret", "credential", "password", "passphrase", "token", "nonce", "signature", "ciphertext")
+
+        def without_secrets(value: Any) -> Any:
+            if isinstance(value, dict):
+                return {
+                    key: without_secrets(item)
+                    for key, item in value.items()
+                    if isinstance(key, str) and not any(marker in key.lower() for marker in secret_markers)
+                }
+            if isinstance(value, list):
+                return [without_secrets(item) for item in value]
+            return value
+
+        sanitized = without_secrets(row)
+        identity = tuple(
+            (field, json.dumps(sanitized[field], sort_keys=True, separators=(",", ":"), ensure_ascii=True))
+            for field in identity_fields if field in sanitized
+        )
+        canonical = json.dumps(sanitized, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        return identity, canonical
+
+    def _store_read_snapshot(
+        self, resource: str, scope_hash: str, rows: list[Any], entry: _CacheEntry,
+        complete: bool, *, private: bool, private_generation: int,
+    ) -> _ReadSnapshot:
+        if len(rows) > self.MAX_SNAPSHOT_ROWS:
+            raise GatewayError(503, "snapshot_capacity", "The normalized read exceeds the supported snapshot size.")
+        try:
+            encoded = json.dumps(rows, separators=(",", ":"), sort_keys=True, ensure_ascii=True).encode("utf-8")
+        except (TypeError, ValueError, UnicodeError):
+            raise self._unavailable() from None
+        size_bytes = len(encoded)
+        if size_bytes > self.MAX_SNAPSHOT_BYTES:
+            raise GatewayError(503, "snapshot_capacity", "The normalized read exceeds the supported snapshot size.")
+        now = self._monotonic()
+        snapshot = _ReadSnapshot(
+            secrets.token_urlsafe(18), scope_hash, resource, deepcopy(rows), entry.fetched_at,
+            now + self.SNAPSHOT_TTL_SECONDS, entry.deadline, size_bytes, complete, private, now,
+            private_generation,
+        )
+        with self._cache_lock:
+            if private and private_generation != self._private_read_generation:
+                raise self._account_changed()
+            for snapshot_id, old in list(self._snapshots.items()):
+                if old.expires_at <= now:
+                    self._snapshots.pop(snapshot_id, None)
+                    self._snapshot_bytes -= old.size_bytes
+            while (
+                len(self._snapshots) >= self.MAX_SNAPSHOTS
+                or self._snapshot_bytes + size_bytes > self.MAX_RETAINED_SNAPSHOT_BYTES
+            ):
+                _, old = self._snapshots.popitem(last=False)
+                self._snapshot_bytes -= old.size_bytes
+            if self._snapshot_bytes + size_bytes > self.MAX_RETAINED_SNAPSHOT_BYTES:
+                raise GatewayError(503, "snapshot_capacity", "The normalized read snapshot capacity is full.")
+            self._snapshots[snapshot.snapshot_id] = snapshot
+            self._snapshot_bytes += size_bytes
+        return snapshot
+
+    def _encode_read_cursor(self, snapshot: _ReadSnapshot, *, resource: str, scope_hash: str, offset: int) -> str:
+        payload = json.dumps(
+            {"v": 1, "snapshot": snapshot.snapshot_id, "resource": resource,
+             "scope": scope_hash, "offset": offset,
+             "expires": int(self._wall_clock() + max(0.0, snapshot.expires_at - self._monotonic()))},
+            sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+        ).encode("ascii")
+        body = base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+        signature = hmac.new(self._snapshot_key, body.encode("ascii"), hashlib.sha256).hexdigest()
+        return body + "." + signature
+
+    def _read_snapshot_cursor(self, cursor: str, resource: str, scope_hash: str) -> tuple[_ReadSnapshot, int]:
+        if not isinstance(cursor, str) or len(cursor) > 2048 or cursor.count(".") != 1:
+            raise self._invalid_query()
+        body, signature = cursor.split(".", 1)
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,1800}", body) or not re.fullmatch(r"[0-9a-f]{64}", signature):
+            raise self._invalid_query()
+        expected = hmac.new(self._snapshot_key, body.encode("ascii"), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(signature, expected):
+            raise self._invalid_query()
+        try:
+            payload = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)).decode("ascii"))
+        except (ValueError, UnicodeError, json.JSONDecodeError):
+            raise self._invalid_query() from None
+        if (
+            not isinstance(payload, dict) or set(payload) != {"v", "snapshot", "resource", "scope", "offset", "expires"}
+            or payload.get("v") != 1 or not isinstance(payload.get("snapshot"), str)
+            or not isinstance(payload.get("resource"), str) or not isinstance(payload.get("scope"), str)
+            or isinstance(payload.get("offset"), bool) or not isinstance(payload.get("offset"), int)
+            or isinstance(payload.get("expires"), bool) or not isinstance(payload.get("expires"), int)
+        ):
+            raise self._invalid_query()
+        if payload["resource"] != resource or payload["scope"] != scope_hash:
+            raise GatewayError(404, "not_found", "The requested resource was not found.")
+        now = self._monotonic()
+        if self._wall_clock() >= payload["expires"]:
+            raise GatewayError(409, "snapshot_expired", "The read snapshot has expired.")
+        with self._cache_lock:
+            snapshot = self._snapshots.get(payload["snapshot"])
+            if snapshot is None or snapshot.expires_at <= now:
+                if snapshot is not None:
+                    self._snapshots.pop(payload["snapshot"], None)
+                    self._snapshot_bytes -= snapshot.size_bytes
+                raise GatewayError(409, "snapshot_expired", "The read snapshot has expired.")
+            if snapshot.resource != resource or snapshot.scope_hash != scope_hash:
+                raise GatewayError(404, "not_found", "The requested resource was not found.")
+            if snapshot.private and snapshot.private_generation != self._private_read_generation:
+                raise self._account_changed()
+            offset = payload["offset"]
+            if offset < 0 or offset >= len(snapshot.rows):
+                raise self._invalid_query()
+            snapshot.last_access = now
+            self._snapshots.move_to_end(snapshot.snapshot_id)
+            return deepcopy(snapshot), offset
+
+    def _assert_snapshot_generation(self, snapshot: _ReadSnapshot) -> None:
+        with self._cache_lock:
+            if snapshot.private and (
+                snapshot.private_generation != self._private_read_generation
+                or snapshot.snapshot_id not in self._snapshots
+            ):
+                raise self._account_changed()
 
     def read_internal(
         self,
@@ -355,9 +856,14 @@ class DataGateway:
                 identity_flight.event.set()
             self._identity_condition.notify_all()
             with self._cache_lock:
+                self._private_read_generation += 1
                 for key, entry in list(self._cache.items()):
                     if entry.private:
                         self._cache.pop(key, None)
+                for snapshot_id, snapshot in list(self._snapshots.items()):
+                    if snapshot.private:
+                        self._snapshots.pop(snapshot_id, None)
+                        self._snapshot_bytes -= snapshot.size_bytes
                 for key, flight in list(self._inflight.items()):
                     if key and key[0] == "private":
                         flight.error = self._account_changed()
@@ -1247,6 +1753,10 @@ class DataGateway:
     @staticmethod
     def _busy() -> GatewayError:
         return GatewayError(503, "data_unavailable", "The requested data is temporarily unavailable.")
+
+    @staticmethod
+    def _normalized_busy() -> GatewayError:
+        return GatewayError(503, "busy", "The requested data is temporarily unavailable.")
 
     @staticmethod
     def _unavailable() -> GatewayError:

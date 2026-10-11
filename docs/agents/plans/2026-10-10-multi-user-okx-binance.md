@@ -1,6 +1,6 @@
 # Implementation plan: Multi-user OKX and Binance
 
-Status: APPROVED — source-first execution authorized; T110/T111 PASS; T112 READY_FOR_PREFLIGHT
+Status: APPROVED — source-first execution authorized; T110/T111 PASS; T112 SOURCE_PASS / BLOCKED_EXTERNAL_VERIFICATION
 Date: 2026-10-10
 Revision: 1
 Tier: L
@@ -26,7 +26,7 @@ Estimated effort: 30–50 engineering days for this staged beta, roughly 6–10 
 
 ## 2. Preconditions and scope
 
-Implements REQ-001–007 / AC-001–007 under D-001–003 and A-001–010. Execution is authorized by the user request on 2026-10-10 to read the pending plan and start tasks. T110 is PASS after accepted operator-run real-runtime verification; T111 source-first execution has resumed at the user request and T112–T116 remain PENDING on predecessors. Before starting a task: approval of this revision and brief, predecessor PASS, exact protected setup required by that task provisioned by the operator, explicit executor role/model/effort binding and independent audit owner.
+Implements REQ-001–007 / AC-001–007 under D-001–003 and A-001–010. Execution is authorized by the user request on 2026-10-10 to read the pending plan and start tasks. T110 is PASS after accepted operator-run real-runtime verification; T111 is PASS; T112 source audit is PASS with operator runtime and venue evidence pending. T113–T116 remain PENDING on predecessor gates. Before starting a task: approval of this revision and brief, predecessor PASS, exact protected setup required by that task provisioned by the operator, explicit executor role/model/effort binding and independent audit owner.
 
 Before runtime tasks, verify the chosen PostgreSQL/cryptography package versions and Python compatibility without reading dependency manifests. Have the operator pin/install compatible releases and supply an isolated test DB/vault keys. No production configuration discovery is needed for source-only development; actual setup and launch remain gated.
 
@@ -219,3 +219,11 @@ T110 source and T117 final-audit remediation accepted by independent source revi
 ## Operator verification accepted — 2026-10-10
 
 T110 PASS: real AES plus three PostgreSQL concurrency tests passed on the Ubuntu VPS; focused related regression69 tests passed with no skips. Negative2 then positive1 passed in the prescribed order. Operator compileall returned without diagnostics; existing fresh coordinator build exit0 remains valid on unchanged source. T111 predecessor is satisfied, while remaining task-local runtime checks still require their own evidence. No deployment/trade activation follows from this result.
+
+## T112 source preflight — 2026-10-11
+
+T111 predecessor PASS. Two independent R2 workstreams collected and synthesized; fan-out PASS. Binding implementation details, necessary connection/vault/test surfaces, demo authoritative-verification gate and process-local snapshot/refresh staging are recorded in `docs/agents/validation/2026-10-11-t112-preflight.md`. P03 product scope and source-first approval retained; no venue launch or action enabled. T112 explicitly dispatched E1 gpt-6-luna/xhigh, effective route unavailable. No Git write authorization inferred for this new task.
+
+## T112 source checkpoint — 2026-10-11
+
+P03 implementation and independent source audit PASS. Final ordered negative32/2skips then success22/3skips; related V3 sets119/5skips and92/1skip, compileall0 and scoped diff-check0. No executable changes followed verification. Full T112 remains BLOCKED_EXTERNAL_VERIFICATION for the operator runtime and separately authorized venue acceptance; T113/T114 are not opened. Source audit and exact checkpoint selectors are under `docs/agents/validation/2026-10-11-t112-read-adapters-audit.md` and `2026-10-11-t112-checkpoint-commands.md`. Operator instructions: `docs/agents/runbooks/2026-10-11-t112-vps-verification.md`. No Git authorization inferred or mutation performed.
