@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
+import re
 from typing import Any
 
 from ..okx import OKXClient, OKXError
@@ -31,6 +32,7 @@ _PRODUCT_TYPES = {
 }
 _MAX_NATIVE_ROWS = 10_000
 _NATIVE_PAGE_SIZE = 100
+_MARGIN_CURRENCY = re.compile(r"[A-Z0-9]{2,16}")
 
 
 class OKXReadAdapter:
@@ -93,6 +95,21 @@ class OKXReadAdapter:
             position_side = row.get("posSide")
             side = position_side if position_side in {"long", "short", "net"} else None
             native_asset = self._text(row.get("posCcy"), maximum=20)
+            margin_mode = row.get("mgnMode")
+            if not isinstance(margin_mode, str) or margin_mode not in {"cross", "isolated"}:
+                margin_mode = None
+            margin_currency = row.get("ccy")
+            if not self._valid_margin_currency(margin_currency):
+                margin_currency = row.get("marginCcy") if product == Product.MARGIN.value else None
+            if not self._valid_margin_currency(margin_currency):
+                margin_currency = None
+            position_id = row.get("posId")
+            if (
+                not isinstance(position_id, str)
+                or not position_id.strip()
+                or len(position_id) > 128
+            ):
+                position_id = None
             if product == Product.MARGIN.value:
                 quantity_unit = "base" if native_asset == item.base_asset else None
                 base_quantity = native_quantity if quantity_unit == "base" else None
@@ -107,6 +124,7 @@ class OKXReadAdapter:
                 item.contract_value_unit, item.contract_type, item.settlement_asset,
                 decimal_value(row.get("avgPx")), decimal_value(row.get("markPx")),
                 decimal_value(row.get("upl")), side, position_mode, item.metadata_version, native_asset,
+                margin_mode, margin_currency, position_id,
             ))
         return result
 
@@ -130,6 +148,9 @@ class OKXReadAdapter:
                 raise AdapterError(502, "exchange_data_unavailable", "Exchange order data is unavailable.")
             order_type = (self._text(row.get("ordType"), maximum=32) or "").lower()
             side = (self._text(row.get("side"), maximum=16) or "").lower()
+            limit_price = decimal_value(row.get("px")) if order_type == "limit" else None
+            if limit_price is not None and limit_price <= 0:
+                limit_price = None
             if product in {"SWAP", "FUTURES"}:
                 quantity_unit, native_asset = "contracts", item.contract_value_unit
             elif product == "MARGIN" and order_type == "market" and side == "buy":
@@ -151,9 +172,13 @@ class OKXReadAdapter:
                 (self._text(row.get("state"), maximum=32) or "unknown").lower(), quantity,
                 quantity_unit,
                 filled, decimal_value(row.get("avgPx")), self._timestamp(row.get("cTime")), item.metadata_version,
-                native_asset, "contracts" if product in {"SWAP", "FUTURES"} else "base",
+                native_asset, "contracts" if product in {"SWAP", "FUTURES"} else "base", limit_price,
             ))
         return result
+
+    @staticmethod
+    def _valid_margin_currency(value: Any) -> bool:
+        return isinstance(value, str) and _MARGIN_CURRENCY.fullmatch(value) is not None
 
     def instruments(self, product: str, instrument: str | None = None) -> list[InstrumentMetadataDTO]:
         native_type = _PRODUCT_TYPES.get(product)

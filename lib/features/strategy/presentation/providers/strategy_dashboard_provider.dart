@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../connections/presentation/providers/multi_user_provider.dart';
 import '../../../orders/presentation/providers/trade_session_provider.dart';
 import '../../data/strategy_api_client.dart';
 import '../../data/strategy_market_repository.dart';
@@ -1290,6 +1291,43 @@ final strategyDashboardProvider = ChangeNotifierProvider.autoDispose
       unawaited(controller.load());
       return controller;
     });
+
+final ownedStrategyDashboardProvider = ChangeNotifierProvider.autoDispose
+    .family<StrategyDashboardController, String>((ref, sessionId) {
+      ref.watch(userSessionStoreProvider.select((store) => store.generation));
+      final scope = ref.watch(
+        connectionScopeStoreProvider.select((store) => store.current),
+      );
+      final sessions = ref.read(userSessionStoreProvider);
+      final scopes = ref.read(connectionScopeStoreProvider);
+      final owner = sessions.current;
+      if (owner == null ||
+          owner.sessionId != sessionId ||
+          scope == null ||
+          !scope.belongsTo(owner)) {
+        throw const StrategyApiException(
+          code: 'session_changed',
+          message: 'Phiên hoặc kết nối chiến thuật đã thay đổi.',
+          statusCode: 401,
+        );
+      }
+      final sessionGeneration = sessions.generation;
+      final scopeGeneration = scope.generation;
+      bool sessionIsCurrent() =>
+          sessions.matches(sessionGeneration, owner) &&
+          scopes.matches(scopeGeneration, scope);
+
+      final controller = StrategyDashboardController(
+        api: ref.watch(strategyApiProvider),
+        bearerToken: sessionId,
+        sessionIsCurrent: sessionIsCurrent,
+        onUnauthorized: () {
+          if (sessionIsCurrent()) sessions.update(null);
+        },
+      );
+      unawaited(controller.load());
+      return controller;
+    }, dependencies: [strategyApiProvider]);
 
 String _retryText(Object? value) => value is String ? value : '';
 

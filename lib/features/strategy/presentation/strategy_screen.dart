@@ -4,12 +4,16 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/session/connection_scope.dart';
+import '../../../core/session/user_session.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/pnl_color.dart';
 import '../../../core/widgets/manual_refresh_button.dart';
 import '../../../core/widgets/responsive_form_content.dart';
+import '../../connections/presentation/connections_page.dart';
 import '../../orders/data/trade_api_client.dart';
 import '../../orders/presentation/providers/trade_session_provider.dart';
+import '../../connections/presentation/providers/multi_user_provider.dart';
 import '../domain/strategy_draft_entries.dart';
 import '../domain/strategy_models.dart';
 import 'providers/strategy_dashboard_provider.dart';
@@ -20,7 +24,16 @@ import 'strategy_settings_dialog.dart';
 import 'strategy_wizard_dialog.dart';
 
 class StrategyScreen extends ConsumerStatefulWidget {
-  const StrategyScreen({super.key});
+  const StrategyScreen({
+    super.key,
+    this.ownedSession,
+    this.ownedScope,
+    this.ownedGeneration,
+  });
+
+  final UserSession? ownedSession;
+  final ConnectionScope? ownedScope;
+  final int? ownedGeneration;
 
   @override
   ConsumerState<StrategyScreen> createState() => _StrategyScreenState();
@@ -70,10 +83,24 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
 
   @override
   Widget build(BuildContext context) {
-    final sessionState = ref.watch(tradeSessionProvider);
-    final session = sessionState.session;
-    final dashboard = sessionState.isAuthenticated && session != null
-        ? ref.watch(strategyDashboardProvider(session.bearerToken))
+    final owner = widget.ownedSession;
+    final scope = widget.ownedScope;
+    final ownedMode = owner != null && scope != null;
+    final legacyState = owner == null ? ref.watch(tradeSessionProvider) : null;
+    final session = owner != null && scope != null
+        ? TradeSession(
+            bearerToken: owner.sessionId,
+            accountIdentifier: scope.connectionId,
+            expiresAt: owner.expiresAt,
+          )
+        : legacyState?.session;
+    final authenticated = owner == null
+        ? legacyState?.isAuthenticated == true
+        : owner.canReadPrivate && session != null && _sessionMatches(session);
+    final dashboard = authenticated && session != null
+        ? ownedMode
+              ? ref.watch(ownedStrategyDashboardProvider(owner.sessionId))
+              : ref.watch(strategyDashboardProvider(session.bearerToken))
         : null;
     _scheduleDashboardBinding(dashboard);
     final width = MediaQuery.sizeOf(context).width;
@@ -82,13 +109,24 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
       appBar: AppBar(
         title: const Text('Chiến Thuật'),
         actions: [
+          if (ownedMode && owner.canReadPrivate && !owner.canTrade)
+            IconButton(
+              key: const Key('strategy-step-up'),
+              tooltip: 'Xác minh lại bằng TOTP',
+              onPressed: () => _stepUp(context, owner),
+              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+              icon: const Icon(Icons.verified_user_outlined),
+            ),
           IconButton(
             key: const Key('strategy-settings-button'),
             tooltip: 'Cài đặt',
             onPressed: () => _openSettings(
               context,
-              sessionState.isAuthenticated ? session?.bearerToken : null,
+              authenticated ? session?.bearerToken : null,
               dashboard,
+              isSessionCurrent: session == null
+                  ? null
+                  : () => _sessionMatches(session),
             ),
             icon: const Icon(Icons.settings_outlined),
           ),
@@ -112,7 +150,7 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
                 112,
               ),
               children: [
-                if (!sessionState.isAuthenticated || session == null)
+                if (!authenticated || session == null)
                   const _SignedOutCard()
                 else ...[
                   Align(
@@ -203,6 +241,8 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
         bearerToken: session.bearerToken,
         strategyId: id,
         actionsForStrategy: actionsFor,
+        isSessionCurrent: () => _sessionMatches(session),
+        ownedAuthority: widget.ownedSession != null,
       ),
     );
 
@@ -235,7 +275,9 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
 
     return _StrategyActions(
       actionBusy: dashboard.isActionInFlight(id),
-      blockApply: oversizedDraft,
+      blockApply:
+          oversizedDraft ||
+          (widget.ownedSession != null && !widget.ownedSession!.canTrade),
       onReview: candidateStage && strategy['canReview'] == true
           ? () {
               final current = currentStrategy();
@@ -269,7 +311,7 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
               final current = currentStrategy();
               if (!oversizedDraft &&
                   _text(current?['status']).toUpperCase() == 'DRAFT') {
-                _applySaved(context, dashboard, current!);
+                _applySaved(context, dashboard, current!, session);
               }
             }
           : null,
@@ -321,6 +363,10 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
         onSaved: dashboard.refresh,
         replacementSourceId: replacementSourceId,
         initialCandidateDraft: initialCandidateDraft,
+        isSessionCurrent: () => _sessionMatches(session),
+        onUnauthorized: () => _expireCapturedSession(session),
+        confirmationContext: _strategyConnectionContext(),
+        canApplyCurrent: () => _tradeAuthorityMatches(session),
       ),
     );
   }
@@ -333,8 +379,12 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
     final candidateDraft = await showDialog<Map<String, dynamic>>(
       context: context,
       barrierDismissible: false,
-      builder: (_) =>
-          StrategyAutomaticDraftDialog(session: session, dashboard: dashboard),
+      builder: (_) => StrategyAutomaticDraftDialog(
+        session: session,
+        dashboard: dashboard,
+        isSessionCurrent: () => _sessionMatches(session),
+        onUnauthorized: () => _expireCapturedSession(session),
+      ),
     );
     if (!context.mounted ||
         candidateDraft == null ||
@@ -368,35 +418,118 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
   }
 
   bool _sessionMatches(TradeSession session) {
+    if (!mounted) return false;
+    final owner = widget.ownedSession;
+    final scope = widget.ownedScope;
+    if (owner != null && scope != null) {
+      final sessions = ref.read(userSessionStoreProvider);
+      final scopes = ref.read(connectionScopeStoreProvider);
+      final generation = widget.ownedGeneration;
+      return generation != null &&
+          session.bearerToken == owner.sessionId &&
+          sessions.matches(generation, owner) &&
+          scopes.matches(scope.generation, scope);
+    }
     final state = ref.read(tradeSessionProvider);
     return state.isAuthenticated &&
         state.session?.bearerToken == session.bearerToken;
   }
 
+  bool _tradeAuthorityMatches(TradeSession session) {
+    if (!_sessionMatches(session)) return false;
+    final captured = widget.ownedSession;
+    if (captured == null) return true;
+    final current = ref.read(userSessionStoreProvider).current;
+    return current != null &&
+        current.sameIdentity(captured) &&
+        current.bearerToken == captured.bearerToken &&
+        current.canTrade;
+  }
+
+  String _strategyConnectionContext() {
+    final scope = widget.ownedScope;
+    if (scope == null) return 'Phiên giao dịch hiện tại';
+    final connection = ref.read(selectedConnectionProvider).current;
+    final name = connection?.connectionId == scope.connectionId
+        ? connection!.displayName
+        : scope.connectionId;
+    final environment = scope.environment == 'demo' ? 'demo' : 'live';
+    return '$name · ${scope.exchange} · ${scope.product} · $environment · ${scope.region}';
+  }
+
+  void _expireCapturedSession(TradeSession session) {
+    if (!_sessionMatches(session)) return;
+    if (widget.ownedSession != null) {
+      ref.read(userSessionStoreProvider).update(null);
+    } else {
+      ref.read(tradeSessionProvider.notifier).expire();
+    }
+  }
+
   void _openSettings(
     BuildContext context,
     String? bearerToken,
-    StrategyDashboardController? dashboard,
-  ) {
+    StrategyDashboardController? dashboard, {
+    bool Function()? isSessionCurrent,
+  }) {
     showDialog<void>(
       context: context,
       builder: (context) => StrategySettingsDialog(
         bearerToken: bearerToken,
         dashboard: dashboard,
+        isSessionCurrent: isSessionCurrent,
       ),
     );
+  }
+
+  Future<void> _stepUp(BuildContext context, UserSession captured) async {
+    final sessions = ref.read(userSessionStoreProvider);
+    if (sessions.current?.sameIdentity(captured) != true ||
+        sessions.current?.bearerToken != captured.bearerToken) {
+      return;
+    }
+    final credentials = await showConnectionStepUpDialog(
+      context,
+      owner: captured,
+    );
+    if (credentials == null || !context.mounted) return;
+    if (sessions.current?.sameIdentity(captured) != true ||
+        sessions.current?.bearerToken != captured.bearerToken) {
+      return;
+    }
+    await ref
+        .read(multiUserControllerProvider)
+        .stepUp(password: credentials.password, totp: credentials.totp);
+    if (!context.mounted) return;
+    final current = sessions.current;
+    if (current?.sameIdentity(captured) == true && current?.canTrade == true) {
+      _showMessage(context, 'Xác minh lại hoàn tất.');
+    } else {
+      _showMessage(
+        context,
+        ref.read(multiUserControllerProvider).errorMessage ??
+            'Không thể xác minh lại phiên.',
+      );
+    }
   }
 
   Future<void> _applySaved(
     BuildContext context,
     StrategyDashboardController dashboard,
     Map<String, dynamic> strategy,
+    TradeSession capturedSession,
   ) async {
     final id = _text(strategy['id']);
     if (id.isEmpty) return;
     final outcome = await dashboard.applyDraft(
       id,
-      confirm: (prepared) => _confirmOrders(context, dashboard, prepared),
+      confirm: (prepared) => _confirmOrders(
+        context,
+        dashboard,
+        prepared,
+        capturedSession,
+        instrumentId: _text(strategy['instrumentId']),
+      ),
     );
     if (!context.mounted || !dashboard.ownsSession) return;
     if (outcome.kind == StrategyApplyOutcomeKind.cancelled) return;
@@ -454,6 +587,10 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
           flow: flow,
           sourceStrategy: strategy,
           bearerToken: session.bearerToken,
+          isSessionCurrent: () => _sessionMatches(session),
+          confirmationContext: _strategyConnectionContext(),
+          instrumentId: _text(strategy['instrumentId']),
+          canApplyCurrent: () => _tradeAuthorityMatches(session),
         ),
       ),
     );
@@ -490,66 +627,46 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
     BuildContext context,
     StrategyDashboardController dashboard,
     Map<String, dynamic> prepared,
-  ) async {
+    TradeSession capturedSession, {
+    required String instrumentId,
+  }) async {
     final orders = _preparedOrders(prepared);
     final mode = StrategyLimitOrderSubmissionMode.parse(
       prepared['submissionMode'],
     );
-    if (orders.isEmpty || mode == null || !dashboard.ownsSession) return false;
-    final sessionState = ref.read(tradeSessionProvider);
-    final bearerToken = sessionState.session?.bearerToken;
-    final confirmed =
-        await showDialog<bool>(
-          context: context,
-          barrierDismissible: false,
-          builder: (context) => AlertDialog(
-            title: const Text('Xác nhận danh sách lệnh'),
-            content: SizedBox(
-              width: 560,
-              child: SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Máy chủ đã kiểm tra lại giá và thông tin hợp đồng. Cơ chế dưới đây đã được cố định cho danh sách này.',
-                    ),
-                    const SizedBox(height: 8),
-                    _SubmissionModeSummary(mode: mode),
-                    const SizedBox(height: 8),
-                    _PreparedFinancialSummary(prepared: prepared),
-                    const SizedBox(height: 12),
-                    for (var i = 0; i < orders.length; i++)
-                      _OrderSummaryRow(index: i + 1, order: orders[i]),
-                  ],
-                ),
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(false),
-                child: const Text('Hủy'),
-              ),
-              Consumer(
-                builder: (context, ref, _) {
-                  final state = ref.watch(tradeSessionProvider);
-                  final ownsSession =
-                      state.isAuthenticated &&
-                      state.session?.bearerToken == bearerToken &&
-                      dashboard.ownsSession;
-                  return FilledButton(
-                    key: const Key('strategy-confirm-apply'),
-                    onPressed: ownsSession
-                        ? () => Navigator.of(context).pop(true)
-                        : null,
-                    child: const Text('Xác nhận gửi lệnh'),
-                  );
-                },
-              ),
-            ],
+    if (orders.isEmpty ||
+        mode == null ||
+        !dashboard.ownsSession ||
+        !_sessionMatches(capturedSession)) {
+      return false;
+    }
+    final expiresAt = DateTime.tryParse(_text(prepared['expiresAt']))?.toUtc();
+    if (expiresAt == null || !expiresAt.isAfter(DateTime.now().toUtc())) {
+      return false;
+    }
+    return showPreparedStrategyConfirmation(
+      context,
+      expiresAt: expiresAt,
+      connectionContext: _strategyConnectionContext(),
+      instrumentId: instrumentId,
+      isSessionCurrent: () =>
+          dashboard.ownsSession && _tradeAuthorityMatches(capturedSession),
+      details: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Máy chủ đã kiểm tra lại giá và thông tin hợp đồng. Cơ chế dưới đây đã được cố định cho danh sách này.',
           ),
-        ) ??
-        false;
-    return confirmed && dashboard.ownsSession;
+          const SizedBox(height: 8),
+          _SubmissionModeSummary(mode: mode),
+          const SizedBox(height: 8),
+          _PreparedFinancialSummary(prepared: prepared),
+          const SizedBox(height: 12),
+          for (var i = 0; i < orders.length; i++)
+            _OrderSummaryRow(index: i + 1, order: orders[i]),
+        ],
+      ),
+    );
   }
 
   Future<void> _deleteStrategy(
@@ -1146,6 +1263,8 @@ class _StrategyDetailsDialog extends StatelessWidget {
     required this.bearerToken,
     required this.strategyId,
     required this.actionsForStrategy,
+    required this.ownedAuthority,
+    this.isSessionCurrent,
   });
 
   final StrategyDashboardController dashboard;
@@ -1153,13 +1272,22 @@ class _StrategyDetailsDialog extends StatelessWidget {
   final String strategyId;
   final _StrategyActions Function(Map<String, dynamic> strategy)
   actionsForStrategy;
+  final bool ownedAuthority;
+  final bool Function()? isSessionCurrent;
 
   @override
   Widget build(BuildContext context) {
     final screenSize = MediaQuery.sizeOf(context);
     return Consumer(
       builder: (context, ref, child) {
-        final sessionState = ref.watch(tradeSessionProvider);
+        final sessionMatches = isSessionCurrent;
+        if (ownedAuthority) {
+          ref.watch(
+            userSessionStoreProvider.select((store) => store.generation),
+          );
+        } else {
+          ref.watch(tradeSessionProvider);
+        }
         return Dialog(
           insetPadding: const EdgeInsets.all(16),
           child: SizedBox(
@@ -1193,10 +1321,15 @@ class _StrategyDetailsDialog extends StatelessWidget {
                   child: AnimatedBuilder(
                     animation: dashboard,
                     builder: (context, child) {
-                      final ownsCapturedSession =
-                          sessionState.isAuthenticated &&
-                          sessionState.session?.bearerToken == bearerToken &&
-                          dashboard.ownsSession;
+                      final ownsCapturedSession = sessionMatches != null
+                          ? sessionMatches() && dashboard.ownsSession
+                          : ref.read(tradeSessionProvider).isAuthenticated &&
+                                ref
+                                        .read(tradeSessionProvider)
+                                        .session
+                                        ?.bearerToken ==
+                                    bearerToken &&
+                                dashboard.ownsSession;
                       if (!ownsCapturedSession) {
                         return const _UnavailableStrategyDetail(
                           message:

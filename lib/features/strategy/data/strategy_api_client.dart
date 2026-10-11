@@ -1,6 +1,10 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/network/backend_data_client.dart';
+import '../../../core/session/connection_scope.dart';
+import '../../connections/data/multi_user_api_client.dart';
+import '../../connections/domain/connection_models.dart';
 import '../../orders/data/trade_api_client.dart';
 import '../../orders/data/trade_api_browser_adapter_stub.dart'
     if (dart.library.html) '../../orders/data/trade_api_browser_adapter.dart'
@@ -454,6 +458,284 @@ class StrategyApiClient
   }
 }
 
+/// Reuses the native strategy workflow while binding every private request to
+/// the selected v2 connection. The legacy token parameter is an identity key
+/// required by the compatibility interface and is never used for transport.
+class OwnedStrategyApi
+    implements StrategyApi, AutomaticStrategyApi, StrategySettingsApi {
+  OwnedStrategyApi({required MultiUserApiClient client, required this.scope})
+    : _client = client;
+
+  final MultiUserApiClient _client;
+  final ConnectionScope scope;
+
+  @override
+  Future<Map<String, dynamic>> preview(
+    String bearerToken,
+    Map<String, dynamic> body,
+  ) => _request('POST', 'preview', body: body);
+
+  @override
+  Future<Map<String, dynamic>> saveDraft(
+    String bearerToken,
+    Map<String, dynamic> body,
+  ) => _request('POST', '', body: body);
+
+  @override
+  Future<Map<String, dynamic>> createAutomaticDrafts(
+    String bearerToken, {
+    required String instrumentId,
+    required String interval,
+    required String requestId,
+    String direction = 'both',
+  }) => _request(
+    'POST',
+    'automatic-drafts',
+    body: {
+      'instrumentId': instrumentId.trim().toUpperCase(),
+      'interval': interval,
+      'requestId': requestId,
+      'direction': direction,
+    },
+  );
+
+  @override
+  Future<StrategyRetryCandidates> getRetryCandidates(
+    String bearerToken,
+    String sourceStrategyId,
+  ) async {
+    final response = await _request(
+      'GET',
+      '${_id(sourceStrategyId)}/retry-candidates',
+    );
+    final result = StrategyRetryCandidates.tryParse(response);
+    if (result == null) throw _invalidRetryResponse();
+    return result;
+  }
+
+  @override
+  Future<StrategyRetryPreview> previewRetry(
+    String bearerToken,
+    String sourceStrategyId, {
+    required String sourceRevision,
+    required List<String> sourceClientOrderIds,
+  }) async {
+    final response = await _request(
+      'POST',
+      '${_id(sourceStrategyId)}/retry-preview',
+      body: {
+        'sourceRevision': sourceRevision,
+        'sourceClientOrderIds': sourceClientOrderIds,
+      },
+    );
+    final result = StrategyRetryPreview.tryParse(response);
+    if (result == null) throw _invalidRetryResponse();
+    return result;
+  }
+
+  @override
+  Future<StrategyRetryDraft> createRetryDraft(
+    String bearerToken,
+    String sourceStrategyId, {
+    required String sourceRevision,
+    required List<String> sourceClientOrderIds,
+    required String previewHash,
+    required String retryRequestId,
+  }) async {
+    final response = await _request(
+      'POST',
+      '${_id(sourceStrategyId)}/retry-drafts',
+      body: {
+        'sourceRevision': sourceRevision,
+        'sourceClientOrderIds': sourceClientOrderIds,
+        'previewHash': previewHash,
+        'retryRequestId': retryRequestId,
+      },
+    );
+    final result = StrategyRetryDraft.tryParse(response);
+    if (result == null) throw _invalidRetryResponse();
+    return result;
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> listStrategies(String bearerToken) async {
+    final values = <Map<String, dynamic>>[];
+    final cursors = <String>{};
+    String? cursor;
+    DataMeta? snapshot;
+    for (var pageIndex = 0; pageIndex < 100; pageIndex++) {
+      final response = await _request(
+        'GET',
+        '',
+        query: {'limit': 100, if (cursor != null) 'cursor': cursor},
+      );
+      final data = response['strategies'];
+      final page = connectionJsonMap(response['page']);
+      if (data is! List || response['page'] is! Map) {
+        throw _invalidStrategyResponse();
+      }
+      final rawMeta = response['dataMeta'];
+      if (rawMeta is Map && rawMeta.keys.every((key) => key is String)) {
+        final metadata = Map<String, dynamic>.from(rawMeta);
+        final expiryValue = metadata['snapshotExpiresAt'];
+        final snapshotExpiresAt = expiryValue is String
+            ? DateTime.tryParse(expiryValue)?.toUtc()
+            : null;
+        if (metadata['stale'] is bool &&
+            metadata['complete'] is bool &&
+            ((metadata['stale'] as bool) ||
+                !(metadata['complete'] as bool) ||
+                snapshotExpiresAt == null ||
+                !snapshotExpiresAt.isAfter(DateTime.now().toUtc()))) {
+          throw const StrategyApiException(
+            code: 'strategy_snapshot_unavailable',
+            message:
+                'Danh sách chiến thuật chưa có bản dữ liệu mới và đầy đủ. Giữ dữ liệu đã biết và tải lại.',
+            statusCode: 503,
+          );
+        }
+      }
+      DataMeta meta;
+      try {
+        meta = DataMeta.fromJson(response['dataMeta']);
+      } on FormatException {
+        throw _invalidStrategyResponse();
+      }
+      if (meta.stale || !meta.complete || !meta.usableForActions) {
+        throw const StrategyApiException(
+          code: 'strategy_snapshot_unavailable',
+          message:
+              'Danh sách chiến thuật chưa có bản dữ liệu mới và đầy đủ. Giữ dữ liệu đã biết và tải lại.',
+          statusCode: 503,
+        );
+      }
+      if ((snapshot != null &&
+          (snapshot.asOf != meta.asOf ||
+              snapshot.snapshotExpiresAt != meta.snapshotExpiresAt ||
+              snapshot.stale != meta.stale ||
+              snapshot.complete != meta.complete))) {
+        throw _invalidStrategyResponse();
+      }
+      snapshot ??= meta;
+      for (final item in data) {
+        if (item is! Map || item.keys.any((key) => key is! String)) {
+          throw _invalidStrategyResponse();
+        }
+        values.add(tradeJsonMap(item));
+      }
+      final next = page['nextCursor'];
+      if (next == null) return List.unmodifiable(values);
+      if (next is! String ||
+          next.isEmpty ||
+          next.length > 2048 ||
+          !cursors.add(next)) {
+        throw _invalidStrategyResponse();
+      }
+      cursor = next;
+    }
+    throw _invalidStrategyResponse();
+  }
+
+  @override
+  Future<Map<String, dynamic>> prepareApply(String bearerToken, String id) =>
+      _request('POST', '${_id(id)}/prepare-apply', body: const {});
+
+  @override
+  Future<Map<String, dynamic>> executeApply(
+    String bearerToken,
+    String id,
+    String confirmationToken,
+  ) => _request(
+    'POST',
+    '${_id(id)}/execute-apply',
+    body: {'confirmationToken': confirmationToken},
+  );
+
+  @override
+  Future<Map<String, dynamic>> getResult(String bearerToken, String id) =>
+      _request('GET', '${_id(id)}/result');
+
+  @override
+  Future<Map<String, dynamic>> getQuote(String bearerToken, String id) =>
+      _request('GET', '${_id(id)}/quote');
+
+  @override
+  Future<String> getLimitOrderSubmissionMode(String bearerToken) async {
+    final response = await _request('GET', 'settings');
+    return _validatedSubmissionMode(response['limitOrderSubmissionMode']);
+  }
+
+  @override
+  Future<String> saveLimitOrderSubmissionMode(
+    String bearerToken,
+    String mode,
+  ) async {
+    final response = await _request(
+      'POST',
+      'settings',
+      body: {'limitOrderSubmissionMode': mode},
+    );
+    return _validatedSubmissionMode(response['limitOrderSubmissionMode']);
+  }
+
+  @override
+  Future<StrategySettings> getStrategySettings(String bearerToken) async {
+    final result = StrategySettings.tryParse(await _request('GET', 'settings'));
+    if (result == null) throw _invalidSettingsResponse();
+    return result;
+  }
+
+  @override
+  Future<StrategySettings> saveStrategySettings(
+    String bearerToken,
+    StrategySettings settings,
+  ) async {
+    final result = StrategySettings.tryParse(
+      await _request('POST', 'settings', body: settings.toJson()),
+    );
+    if (result == null || result != settings) throw _invalidSettingsResponse();
+    return result;
+  }
+
+  @override
+  Future<void> deleteDraft(String bearerToken, String id) async {
+    await _request('POST', '${_id(id)}/delete', body: const {});
+  }
+
+  Future<Map<String, dynamic>> _request(
+    String method,
+    String suffix, {
+    Map<String, Object?>? body,
+    Map<String, Object>? query,
+  }) async {
+    try {
+      return await _client.strategyRequest(
+        scope,
+        method: method,
+        suffix: suffix,
+        body: body,
+        queryParameters: query,
+      );
+    } on BackendDataException catch (error) {
+      throw StrategyApiException(
+        code: error.code,
+        statusCode: error.statusCode,
+        message: error.message,
+      );
+    }
+  }
+
+  String _id(String value) {
+    if (!RegExp(r'^[A-Za-z0-9_-]{8,64}$').hasMatch(value)) {
+      throw const StrategyApiException(
+        code: 'invalid_request',
+        message: 'Mã chiến thuật không hợp lệ.',
+      );
+    }
+    return value;
+  }
+}
+
 bool _validRetrySelection(String revision, List<String> ids) =>
     revision.isNotEmpty &&
     revision.length <= 512 &&
@@ -470,6 +752,11 @@ StrategyApiException _invalidRetryResponse() => const StrategyApiException(
 StrategyApiException _invalidSettingsResponse() => const StrategyApiException(
   code: 'invalid_response',
   message: 'The trade API returned invalid strategy settings.',
+);
+
+StrategyApiException _invalidStrategyResponse() => const StrategyApiException(
+  code: 'invalid_response',
+  message: 'Máy chủ trả về danh sách chiến thuật không hợp lệ.',
 );
 
 String _failureMessage(DioException error, {bool automaticDrafts = false}) {

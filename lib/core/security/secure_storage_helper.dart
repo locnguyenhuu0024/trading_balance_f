@@ -30,6 +30,7 @@ class SecureStorageHelper {
   static const String _okxApiKey = 'OKX_API_KEY';
   static const String _okxSecretKey = 'OKX_SECRET_KEY';
   static const String _okxPassphrase = 'OKX_PASSPHRASE';
+  static const String _v2SessionBearer = 'TRADE_V2_SESSION_BEARER';
   static const String _hideBalance = 'HIDE_BALANCE';
   static const String _bioAuth = 'BIO_AUTH';
   // THÊM MỚI: Keys cho Theme và Tiền tệ
@@ -41,6 +42,7 @@ class SecureStorageHelper {
   static const String _rememberedTradePasswordPrefix =
       'REMEMBERED_TRADE_PASSWORD_V1_';
   final Map<String, Future<void>> _rememberedTradePasswordTails = {};
+  Future<void>? _v2SessionBearerTail;
   int _rememberedTradePasswordVersion = 0;
 
   /// Reads a remembered trade password from platform secure storage.
@@ -239,6 +241,39 @@ class SecureStorageHelper {
   Future<String?> getOkxApiKey() => _storage.read(key: _okxApiKey);
   Future<String?> getOkxSecretKey() => _storage.read(key: _okxSecretKey);
   Future<String?> getOkxPassphrase() => _storage.read(key: _okxPassphrase);
+
+  /// Stores only the server-issued opaque native session token.
+  Future<void> saveV2SessionBearer(String token) {
+    if (token.isEmpty || token.length > 4096 || token.trim() != token) {
+      // Never include an invalid bearer in diagnostics or exception text.
+      throw ArgumentError('Invalid opaque session token.');
+    }
+    return _withV2SessionBearerLock(
+      () => _storage.write(key: _v2SessionBearer, value: token),
+    );
+  }
+
+  Future<String?> getV2SessionBearer() =>
+      _withV2SessionBearerLock(() => _storage.read(key: _v2SessionBearer));
+
+  Future<void> clearV2SessionBearer() =>
+      _withV2SessionBearerLock(() => _storage.delete(key: _v2SessionBearer));
+
+  Future<T> _withV2SessionBearerLock<T>(Future<T> Function() action) async {
+    final previous = _v2SessionBearerTail;
+    final completion = Completer<void>();
+    final tail = completion.future;
+    _v2SessionBearerTail = tail;
+    if (previous != null) await previous;
+    try {
+      return await action();
+    } finally {
+      completion.complete();
+      if (identical(_v2SessionBearerTail, tail)) {
+        _v2SessionBearerTail = null;
+      }
+    }
+  }
 
   /// Xoá toàn bộ thông tin
   Future<void> clearOkxCredentials() async {

@@ -11,7 +11,6 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'core/navigation/main_navigation_shell.dart';
 import 'core/navigation/navigation_preferences.dart';
 import 'core/navigation/navigation_preferences_provider.dart';
 import 'core/security/secure_storage_helper.dart';
@@ -24,6 +23,7 @@ import 'core/widgets/app_startup.dart';
 import 'features/portfolio/presentation/portfolio_screen.dart'
     show hideBalanceProvider;
 import 'features/settings/presentation/settings_screen.dart';
+import 'features/connections/presentation/multi_user_entry_screen.dart';
 
 @immutable
 class AppStartupData {
@@ -212,7 +212,7 @@ class TradingBalanceApp extends ConsumerWidget {
           home ??
           (requireBiometrics
               ? const BiometricAuthScreen()
-              : const MainNavigationShell()),
+              : const MultiUserEntryScreen()),
     );
   }
 }
@@ -281,7 +281,7 @@ class _BiometricAuthScreenState extends State<BiometricAuthScreen> {
   Widget build(BuildContext context) {
     final palette = AppPalette.of(context);
     if (_isAuthenticated) {
-      return const MainNavigationShell();
+      return const MultiUserEntryScreen();
     }
 
     return Scaffold(
@@ -382,13 +382,9 @@ class WebStorageHelper extends SecureStorageHelper {
     required String apiKey,
     required String secretKey,
     required String passphrase,
-  }) async {
-    await Future.wait([
-      _prefs.setString('OKX_API_KEY', apiKey),
-      _prefs.setString('OKX_SECRET_KEY', secretKey),
-      _prefs.setString('OKX_PASSPHRASE', passphrase),
-    ]);
-  }
+  }) async => throw UnsupportedError(
+    'Exchange credentials cannot be stored on the web.',
+  );
 
   @override
   Future<bool> getHideBalanceDefault() async =>
@@ -471,14 +467,23 @@ class WebStorageHelper extends SecureStorageHelper {
   }
 
   @override
-  Future<String?> getOkxApiKey() async => _prefs.getString('OKX_API_KEY');
+  Future<String?> getOkxApiKey() async => null;
 
   @override
-  Future<String?> getOkxSecretKey() async => _prefs.getString('OKX_SECRET_KEY');
+  Future<String?> getOkxSecretKey() async => null;
 
   @override
-  Future<String?> getOkxPassphrase() async =>
-      _prefs.getString('OKX_PASSPHRASE');
+  Future<String?> getOkxPassphrase() async => null;
+
+  @override
+  Future<void> saveV2SessionBearer(String token) async =>
+      throw UnsupportedError('Web sessions use the server cookie.');
+
+  @override
+  Future<String?> getV2SessionBearer() async => null;
+
+  @override
+  Future<void> clearV2SessionBearer() async {}
 
   @override
   Future<void> clearOkxCredentials() async {

@@ -117,7 +117,13 @@ void main() {
 
     await tester.tap(find.byKey(const Key('navigation-destination-2')));
     await tester.pump();
-    expect(find.text('Quản lý Giao dịch'), findsOneWidget);
+    expect(find.text('Lệnh và vị thế'), findsOneWidget);
+    expect(
+      find.text(
+        'Chọn một kết nối sàn và sản phẩm trong Cài đặt để xem dữ liệu riêng tư.',
+      ),
+      findsOneWidget,
+    );
 
     await tester.tap(find.byKey(const Key('navigation-destination-5')));
     await tester.pump();
@@ -126,9 +132,10 @@ void main() {
 
     await tester.tap(find.byKey(const Key('navigation-destination-6')));
     await tester.pump(const Duration(milliseconds: 250));
+    expect(find.text('Chiến thuật'), findsOneWidget);
     expect(
       find.text(
-        'Đăng nhập phiên giao dịch hiện tại để xem chiến thuật đã lưu hoặc tạo chiến thuật mới.',
+        'Chọn một kết nối sàn và sản phẩm trong Cài đặt để xem dữ liệu riêng tư.',
       ),
       findsOneWidget,
     );
@@ -345,43 +352,45 @@ void main() {
     },
   );
 
-  testWidgets('sixth visible destination opens the support and resistance screen', (
-    tester,
-  ) async {
-    final watchlist = WatchlistController(
-      store: WatchlistStore(storage: _MemoryWatchlistStorage()),
-      loadActiveInstruments: (marketMode) async =>
-          const <SupportResistanceInstrument>[],
-    );
-    await watchlist.load();
-    final levels = SupportResistanceLevelsController(
-      loadLevels:
-          ({required marketMode, required instrumentId, required timeframe}) =>
-              Future<SupportResistanceMarketSnapshot>.error(
-                StateError(
-                  'No market request expected for an empty watchlist.',
-                ),
-              ),
-    );
+  testWidgets(
+    'sixth visible destination opens the support and resistance screen',
+    (tester) async {
+      final watchlist = WatchlistController(
+        store: WatchlistStore(storage: _MemoryWatchlistStorage()),
+        loadActiveInstruments: (marketMode) async =>
+            const <SupportResistanceInstrument>[],
+      );
+      await watchlist.load();
+      final levels = SupportResistanceLevelsController(
+        loadLevels:
+            ({
+              required marketMode,
+              required instrumentId,
+              required timeframe,
+            }) => Future<SupportResistanceMarketSnapshot>.error(
+              StateError('No market request expected for an empty watchlist.'),
+            ),
+      );
 
-    await tester.pumpWidget(
-      ProviderScope(
-        overrides: [
-          supportResistanceWatchlistProvider.overrideWith((ref) => watchlist),
-          supportResistanceLevelsProvider.overrideWith((ref) => levels),
-        ],
-        child: const MaterialApp(home: MainNavigationShell()),
-      ),
-    );
-    await tester.pump();
-    await tester.tap(find.byKey(const Key('navigation-destination-5')));
-    await tester.pump(const Duration(milliseconds: 250));
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            supportResistanceWatchlistProvider.overrideWith((ref) => watchlist),
+            supportResistanceLevelsProvider.overrideWith((ref) => levels),
+          ],
+          child: const MaterialApp(home: MainNavigationShell()),
+        ),
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('navigation-destination-5')));
+      await tester.pump(const Duration(milliseconds: 250));
 
-    expect(find.text('Hỗ trợ và kháng cự'), findsOneWidget);
-    expect(find.text('Chọn coin để bắt đầu'), findsOneWidget);
+      expect(find.text('Hỗ trợ và kháng cự'), findsOneWidget);
+      expect(find.text('Chọn coin để bắt đầu'), findsOneWidget);
 
-    await tester.pumpWidget(const SizedBox.shrink());
-  });
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
 }
 
 class _MemoryWatchlistStorage implements WatchlistStorage {

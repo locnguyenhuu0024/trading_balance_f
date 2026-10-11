@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -16,6 +17,13 @@ import 'package:trading_balance_f/core/widgets/responsive_form_content.dart';
 import 'package:trading_balance_f/features/orders/data/trade_api_client.dart';
 import 'package:trading_balance_f/features/orders/presentation/providers/trade_session_provider.dart';
 import 'package:trading_balance_f/core/network/request_coordinator.dart';
+import 'package:trading_balance_f/core/session/connection_scope.dart';
+import 'package:trading_balance_f/core/session/user_session.dart';
+import 'package:trading_balance_f/features/connections/domain/connection_models.dart';
+import 'package:trading_balance_f/features/connections/data/multi_user_api_client.dart';
+import 'package:trading_balance_f/features/connections/presentation/private_data_screens.dart'
+    show MultiUserStrategyScreen;
+import 'package:trading_balance_f/features/connections/presentation/providers/multi_user_provider.dart';
 import 'package:trading_balance_f/features/strategy/data/strategy_api_client.dart';
 import 'package:trading_balance_f/features/strategy/data/strategy_market_repository.dart';
 import 'package:trading_balance_f/features/strategy/domain/strategy_models.dart';
@@ -1005,7 +1013,9 @@ void main() {
     expect(api.automaticRequests, hasLength(1));
 
     session.switchTo('session-b-token');
-    await tester.pumpAndSettle();
+    // The intentionally unresolved automatic request keeps its progress
+    // animation active. Pump only enough frames to observe the session change.
+    await _pumpFrames(tester);
     api.automaticDraftCompleter!.complete(
       _candidateDraftRecord(
         id: 'late-auto-draft',
@@ -1014,7 +1024,7 @@ void main() {
         requestId: api.automaticRequests.single['requestId'] as String,
       ),
     );
-    await tester.pumpAndSettle();
+    await _pumpFrames(tester);
 
     expect(find.byType(StrategyWizardDialog), findsNothing);
     expect(find.byKey(const Key('strategy-selection-count')), findsNothing);
@@ -1439,6 +1449,10 @@ void main() {
     final api = _FakeStrategyApi()
       ..prepared = {
         'confirmationToken': 'one-use-token',
+        'expiresAt': DateTime.now()
+            .toUtc()
+            .add(const Duration(minutes: 2))
+            .toIso8601String(),
         'submissionMode': 'batch',
         'estimatedOpeningFees': '0.03',
         'orders': [
@@ -1484,6 +1498,366 @@ void main() {
     expect(api.executeCalls, 1);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'owned prepared strategy confirmation caps at 30 seconds and rejects changed authority before execute',
+    (tester) async {
+      final scenarios =
+          <
+            ({
+              String name,
+              void Function(_OwnedStrategyHarness) change,
+              bool expireServerDeadline,
+              bool expireLocalDeadline,
+            })
+          >[
+            (
+              name: 'connection account changes',
+              change: (harness) => harness.selectScope(
+                connectionId: 'conn_demo_002',
+                exchange: 'BINANCE',
+                product: 'USD_M',
+                credentialVersion: 1,
+                permissionVersion: 1,
+                nickname: 'B account',
+              ),
+              expireServerDeadline: false,
+              expireLocalDeadline: false,
+            ),
+            (
+              name: 'product changes',
+              change: (harness) => harness.selectScope(
+                connectionId: 'conn_demo_001',
+                exchange: 'OKX',
+                product: 'FUTURES',
+                credentialVersion: 1,
+                permissionVersion: 1,
+                nickname: 'A account',
+              ),
+              expireServerDeadline: false,
+              expireLocalDeadline: false,
+            ),
+            (
+              name: 'credential version changes',
+              change: (harness) => harness.selectScope(
+                connectionId: 'conn_demo_001',
+                exchange: 'OKX',
+                product: 'SWAP',
+                credentialVersion: 2,
+                permissionVersion: 1,
+                nickname: 'A account',
+              ),
+              expireServerDeadline: false,
+              expireLocalDeadline: false,
+            ),
+            (
+              name: 'step-up expires',
+              change: (harness) => harness.sessions.update(
+                harness.owner.withStepUp(
+                  DateTime.now().toUtc().subtract(const Duration(seconds: 1)),
+                ),
+              ),
+              expireServerDeadline: false,
+              expireLocalDeadline: false,
+            ),
+            (
+              name:
+                  'local 30-second confirmation deadline expires before server TTL',
+              change: (_) {},
+              expireServerDeadline: false,
+              expireLocalDeadline: true,
+            ),
+            (
+              name:
+                  'server confirmation expiry occurs before the local 30-second cap',
+              change: (_) {},
+              expireServerDeadline: true,
+              expireLocalDeadline: false,
+            ),
+          ];
+
+      for (final scenario in scenarios) {
+        final harness = _OwnedStrategyHarness();
+        if (scenario.expireServerDeadline) {
+          harness.api.prepared['expiresAt'] = DateTime.now()
+              .toUtc()
+              .add(const Duration(seconds: 3))
+              .toIso8601String();
+        }
+        await tester.pumpWidget(harness.widget);
+        await _pumpFrames(tester);
+        await tester.tap(find.byKey(const Key('strategy-apply-draft-1')));
+        await _pumpFrames(tester);
+
+        expect(
+          find.byKey(const Key('strategy-prepared-countdown')),
+          findsOneWidget,
+          reason: scenario.name,
+        );
+        final countdown = tester
+            .widget<Text>(find.byKey(const Key('strategy-prepared-countdown')))
+            .data!;
+        final remaining = int.parse(
+          RegExp(r'hiệu lực (\d+) giây').firstMatch(countdown)!.group(1)!,
+        );
+        expect(remaining, inInclusiveRange(1, 30), reason: scenario.name);
+        expect(harness.api.prepareCalls, 1, reason: scenario.name);
+        expect(harness.api.executeCalls, 0, reason: scenario.name);
+
+        if (scenario.expireLocalDeadline) {
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(seconds: 31)),
+          );
+          await tester.pump(const Duration(seconds: 1));
+        } else if (scenario.expireServerDeadline) {
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(seconds: 4)),
+          );
+          await tester.pump(const Duration(seconds: 1));
+        } else {
+          scenario.change(harness);
+          expect(
+            harness.scopes.matches(harness.scope.generation, harness.scope),
+            scenario.name == 'step-up expires',
+            reason: scenario.name,
+          );
+          await _pumpFrames(tester);
+        }
+        await tester.pump(const Duration(seconds: 1));
+        await tester.pump();
+
+        expect(
+          find.byKey(const Key('strategy-confirm-apply')),
+          findsNothing,
+          reason: scenario.name,
+        );
+        expect(harness.api.executeCalls, 0, reason: scenario.name);
+        harness.sessions.update(
+          harness.owner.withStepUp(
+            DateTime.now().toUtc().subtract(const Duration(seconds: 1)),
+          ),
+        );
+        await _pumpFrames(tester, 2);
+        await tester.pumpWidget(const SizedBox.shrink());
+      }
+    },
+  );
+
+  testWidgets(
+    'cancelled native confirmation ignores batched authority changes during reverse animation',
+    (tester) async {
+      final observer = _PopRecordingNavigatorObserver();
+      final harness = _OwnedStrategyHarness(navigatorObserver: observer);
+      await tester.pumpWidget(harness.widget);
+      await _pumpFrames(tester);
+      final strategyRoute = observer.pushed.single;
+      await tester.tap(find.byKey(const Key('strategy-apply-draft-1')));
+      await _pumpFrames(tester);
+      expect(find.byKey(const Key('strategy-confirm-apply')), findsOneWidget);
+      final confirmationRoute = observer.pushed.last;
+      expect(confirmationRoute, isNot(same(strategyRoute)));
+
+      await tester.tap(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.text('Hủy'),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 40));
+      harness.selectScope(
+        connectionId: 'conn_demo_002',
+        exchange: 'BINANCE',
+        product: 'USD_M',
+        credentialVersion: 1,
+        permissionVersion: 1,
+        nickname: 'B account',
+      );
+      harness.sessions.update(
+        harness.owner.withStepUp(
+          DateTime.now().toUtc().subtract(const Duration(seconds: 1)),
+        ),
+      );
+      await _pumpFrames(tester, 3);
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pumpAndSettle();
+
+      expect(observer.popped, [confirmationRoute]);
+      expect(strategyRoute.isActive, isTrue);
+      expect(find.byType(StrategyScreen), findsOneWidget);
+      expect(find.byKey(const Key('strategy-confirm-apply')), findsNothing);
+      expect(harness.api.prepareCalls, 1);
+      expect(harness.api.executeCalls, 0);
+      expect(tester.takeException(), isNull);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      harness.sessions.dispose();
+      harness.scopes.dispose();
+    },
+  );
+
+  testWidgets(
+    'production strategy wrapper replacement fences retained root wizard callbacks',
+    (tester) async {
+      final owner = UserSession(
+        userId: 'user-a',
+        username: 'alice',
+        sessionId: 'session-a',
+        mode: 'ordinary',
+        expiresAt: DateTime.now().add(const Duration(hours: 1)),
+        stepUpUntil: DateTime.now().add(const Duration(minutes: 5)),
+        bearerToken: 'opaque-a',
+      );
+      final sessions = UserSessionStore(initialSession: owner);
+      final scopes = ConnectionScopeStore();
+      scopes.select(
+        session: owner,
+        connectionId: 'conn_demo_001',
+        exchange: 'OKX',
+        environment: 'demo',
+        region: 'global',
+        product: 'SWAP',
+        credentialVersion: 1,
+        permissionVersion: 1,
+      );
+      final selected = SelectedConnectionStore()
+        ..select(
+          const ConnectionRecord(
+            connectionId: 'conn_demo_001',
+            exchange: 'OKX',
+            environment: 'demo',
+            region: 'global',
+            capabilities: ['read', 'trade'],
+            nickname: 'A account',
+            status: 'ACTIVE',
+            credentialVersion: 1,
+            permissionVersion: 1,
+          ),
+        );
+      final market = _FakeMarketRepository()
+        ..instrumentsCompleter = Completer<List<StrategyInstrument>>();
+      final adapter = _OwnedStrategyListAdapter();
+      final backend = BackendDataClient(
+        dio: Dio()..httpClientAdapter = adapter,
+        baseUrl: 'https://fixture.example/gateway',
+        isWeb: false,
+      );
+      final api = MultiUserApiClient(
+        backend: backend,
+        sessions: sessions,
+        scopes: scopes,
+        isWeb: false,
+      );
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        backend.close(force: true);
+        sessions.dispose();
+        scopes.dispose();
+      });
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            userSessionStoreProvider.overrideWith((ref) => sessions),
+            connectionScopeStoreProvider.overrideWith((ref) => scopes),
+            selectedConnectionProvider.overrideWith((ref) => selected),
+            multiUserApiClientProvider.overrideWith((ref) => api),
+            strategyMarketRepositoryProvider.overrideWithValue(market),
+          ],
+          child: const MaterialApp(home: MultiUserStrategyScreen()),
+        ),
+      );
+      await _pumpFrames(tester);
+      expect(find.byKey(const Key('strategy-create-button')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('strategy-create-button')));
+      await _pumpFrames(tester);
+      expect(find.byType(StrategyWizardDialog), findsOneWidget);
+
+      scopes.select(
+        session: owner,
+        connectionId: 'conn_demo_002',
+        exchange: 'OKX',
+        environment: 'demo',
+        region: 'global',
+        product: 'SWAP',
+        credentialVersion: 1,
+        permissionVersion: 1,
+      );
+      selected.select(
+        const ConnectionRecord(
+          connectionId: 'conn_demo_002',
+          exchange: 'OKX',
+          environment: 'demo',
+          region: 'global',
+          capabilities: ['read', 'trade'],
+          nickname: 'B account',
+          status: 'ACTIVE',
+          credentialVersion: 1,
+          permissionVersion: 1,
+        ),
+      );
+      await _pumpFrames(tester);
+      market.instrumentsCompleter!.complete(const [
+        StrategyInstrument(
+          instrumentId: 'BTC-USDT-SWAP',
+          base: 'BTC',
+          tickSizeText: '0.01',
+        ),
+      ]);
+      await _pumpFrames(tester);
+
+      expect(tester.takeException(), isNull);
+      expect(find.byType(StrategyWizardDialog), findsOneWidget);
+      expect(adapter.writePaths, isEmpty);
+    },
+  );
+
+  testWidgets(
+    'owned StrategyScreen opens the root step-up dialog and clears credentials when it closes',
+    (tester) async {
+      final harness = _OwnedStrategyHarness(stepUpActive: false);
+      final rootNavigator = GlobalKey<NavigatorState>();
+      final nestedNavigator = GlobalKey<NavigatorState>();
+      await tester.pumpWidget(
+        harness.nestedWidget(
+          rootNavigator: rootNavigator,
+          nestedNavigator: nestedNavigator,
+        ),
+      );
+      await _pumpFrames(tester);
+
+      await tester.tap(find.byKey(const Key('strategy-step-up')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('Xác minh lại'), findsOneWidget);
+      expect(rootNavigator.currentState!.canPop(), isTrue);
+      expect(nestedNavigator.currentState!.canPop(), isFalse);
+
+      final password = tester
+          .widget<TextFormField>(find.byType(TextFormField).at(0))
+          .controller!;
+      final totp = tester
+          .widget<TextFormField>(find.byType(TextFormField).at(1))
+          .controller!;
+      await tester.enterText(find.byType(TextFormField).at(0), 'secret-a');
+      await tester.enterText(find.byType(TextFormField).at(1), '123456');
+      await tester.pump();
+      expect(password.text, 'secret-a');
+      expect(totp.text, '123456');
+
+      rootNavigator.currentState!.pop();
+      await tester.pumpAndSettle();
+
+      expect(password.text, isEmpty);
+      expect(totp.text, isEmpty);
+      expect(find.text('Xác minh lại'), findsNothing);
+      expect(find.byType(TextFormField), findsNothing);
+      expect(harness.api.prepareCalls, 0);
+      expect(harness.api.executeCalls, 0);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
 
   testWidgets(
     'RED-002 disables an oversized unstarted draft and shows recreate guidance',
@@ -2511,6 +2885,173 @@ class _AuthenticatedSessionController extends TradeSessionController {
   }
 }
 
+class _OwnedStrategyHarness {
+  _OwnedStrategyHarness({bool stepUpActive = true, this.navigatorObserver}) {
+    owner = UserSession(
+      userId: 'user-a',
+      username: 'alice',
+      sessionId: 'session-a',
+      mode: 'ordinary',
+      expiresAt: DateTime.now().add(const Duration(hours: 1)),
+      stepUpUntil: stepUpActive
+          ? DateTime.now().add(const Duration(minutes: 5))
+          : null,
+      bearerToken: 'opaque-a',
+    );
+    sessions = UserSessionStore(initialSession: owner);
+    scopes = ConnectionScopeStore();
+    scope = scopes.select(
+      session: owner,
+      connectionId: 'conn_demo_001',
+      exchange: 'OKX',
+      environment: 'demo',
+      region: 'global',
+      product: 'SWAP',
+      credentialVersion: 1,
+      permissionVersion: 1,
+    )!;
+    selected = SelectedConnectionStore()
+      ..select(
+        const ConnectionRecord(
+          connectionId: 'conn_demo_001',
+          exchange: 'OKX',
+          environment: 'demo',
+          region: 'global',
+          capabilities: ['read', 'trade'],
+          nickname: 'A account',
+          status: 'ACTIVE',
+          credentialVersion: 1,
+          permissionVersion: 1,
+        ),
+      );
+    api = _FakeStrategyApi()
+      ..prepared = {
+        'confirmationToken': 'one-use-token',
+        'expiresAt': DateTime.now()
+            .toUtc()
+            .add(const Duration(minutes: 2))
+            .toIso8601String(),
+        'submissionMode': 'batch',
+        'estimatedOpeningFees': '0.03',
+        'orders': [
+          {
+            'side': 'long',
+            'role': 'entry',
+            'limitPrice': '65000',
+            'contracts': '1',
+            'margin': '13',
+            'leverage': 5,
+            'openingFeeEstimate': '0.03',
+          },
+        ],
+      };
+    market = _FakeMarketRepository();
+  }
+
+  late final UserSession owner;
+  late final UserSessionStore sessions;
+  late final ConnectionScopeStore scopes;
+  late final ConnectionScope scope;
+  late final SelectedConnectionStore selected;
+  late final _FakeStrategyApi api;
+  late final _FakeMarketRepository market;
+  final NavigatorObserver? navigatorObserver;
+
+  Widget get widget => ProviderScope(
+    overrides: [
+      userSessionStoreProvider.overrideWith((ref) => sessions),
+      connectionScopeStoreProvider.overrideWith((ref) => scopes),
+      selectedConnectionProvider.overrideWith((ref) => selected),
+      strategyApiProvider.overrideWithValue(api),
+      strategyMarketRepositoryProvider.overrideWithValue(market),
+    ],
+    child: MaterialApp(
+      navigatorObservers: [if (navigatorObserver != null) navigatorObserver!],
+      home: StrategyScreen(
+        ownedSession: owner,
+        ownedScope: scope,
+        ownedGeneration: sessions.generation,
+      ),
+    ),
+  );
+
+  Widget nestedWidget({
+    required GlobalKey<NavigatorState> rootNavigator,
+    required GlobalKey<NavigatorState> nestedNavigator,
+  }) => ProviderScope(
+    overrides: [
+      userSessionStoreProvider.overrideWith((ref) => sessions),
+      connectionScopeStoreProvider.overrideWith((ref) => scopes),
+      selectedConnectionProvider.overrideWith((ref) => selected),
+      strategyApiProvider.overrideWithValue(api),
+      strategyMarketRepositoryProvider.overrideWithValue(market),
+    ],
+    child: MaterialApp(
+      navigatorKey: rootNavigator,
+      home: Navigator(
+        key: nestedNavigator,
+        onGenerateRoute: (_) => MaterialPageRoute<void>(
+          builder: (_) => StrategyScreen(
+            ownedSession: owner,
+            ownedScope: scope,
+            ownedGeneration: sessions.generation,
+          ),
+        ),
+      ),
+    ),
+  );
+
+  void selectScope({
+    required String connectionId,
+    required String exchange,
+    required String product,
+    required int credentialVersion,
+    required int permissionVersion,
+    required String nickname,
+  }) {
+    scopes.select(
+      session: sessions.current!,
+      connectionId: connectionId,
+      exchange: exchange,
+      environment: 'demo',
+      region: 'global',
+      product: product,
+      credentialVersion: credentialVersion,
+      permissionVersion: permissionVersion,
+    );
+    selected.select(
+      ConnectionRecord(
+        connectionId: connectionId,
+        exchange: exchange,
+        environment: 'demo',
+        region: 'global',
+        capabilities: const ['read', 'trade'],
+        nickname: nickname,
+        status: 'ACTIVE',
+        credentialVersion: credentialVersion,
+        permissionVersion: permissionVersion,
+      ),
+    );
+  }
+}
+
+class _PopRecordingNavigatorObserver extends NavigatorObserver {
+  final pushed = <Route<dynamic>>[];
+  final popped = <Route<dynamic>>[];
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    pushed.add(route);
+    super.didPush(route, previousRoute);
+  }
+
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    popped.add(route);
+    super.didPop(route, previousRoute);
+  }
+}
+
 class _FakeStrategyApi implements StrategyApi, AutomaticStrategyApi {
   int quoteCalls = 0;
   int deleteCalls = 0;
@@ -3006,4 +3547,41 @@ class _FakeMarketRepository extends StrategyMarketRepository {
       observedAt: DateTime.now().toUtc(),
     );
   }
+}
+
+class _OwnedStrategyListAdapter implements HttpClientAdapter {
+  final List<String> writePaths = [];
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    if (options.method != 'GET') writePaths.add(options.path);
+    final now = DateTime.now().toUtc();
+    final response = {
+      'strategies': const <Map<String, dynamic>>[],
+      'page': {'nextCursor': null},
+      'dataMeta': {
+        'fetchedAt': now.toIso8601String(),
+        'asOf': now.toIso8601String(),
+        'snapshotExpiresAt': now
+            .add(const Duration(minutes: 5))
+            .toIso8601String(),
+        'stale': false,
+        'complete': true,
+      },
+    };
+    return ResponseBody.fromString(
+      jsonEncode(response),
+      200,
+      headers: {
+        Headers.contentTypeHeader: ['application/json'],
+      },
+    );
+  }
+
+  @override
+  void close({bool force = false}) {}
 }

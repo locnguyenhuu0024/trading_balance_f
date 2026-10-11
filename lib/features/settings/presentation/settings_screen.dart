@@ -19,7 +19,7 @@ import '../../../core/widgets/manual_refresh_button.dart';
 import '../../../core/widgets/responsive_form_content.dart';
 import '../../fractal_tracker/presentation/providers/fractal_provider.dart';
 import '../../portfolio/presentation/portfolio_screen.dart';
-import 'settings_trade_access_page.dart';
+import '../../connections/presentation/connections_page.dart';
 
 // --- Các Provider quản lý cấu hình toàn cục ---
 final themeModeProvider = StateProvider<ThemeMode>((ref) => ThemeMode.system);
@@ -778,7 +778,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     onTap: () {
                       Navigator.of(context).push(
                         MaterialPageRoute<void>(
-                          builder: (_) => const SettingsTradeAccessPage(),
+                          builder: (_) => const ConnectionsPage(),
                         ),
                       );
                     },

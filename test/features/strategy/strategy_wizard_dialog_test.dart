@@ -1661,6 +1661,10 @@ class _FakeStrategyApi implements StrategyApi {
     prepareCalls++;
     return {
       'confirmationToken': 'one-use-token',
+      'expiresAt': DateTime.now()
+          .toUtc()
+          .add(const Duration(minutes: 2))
+          .toIso8601String(),
       'submissionMode': 'sequential',
       'estimatedOpeningFees': (0.03 * preparedOrderCount).toStringAsFixed(2),
       'orders': List.generate(

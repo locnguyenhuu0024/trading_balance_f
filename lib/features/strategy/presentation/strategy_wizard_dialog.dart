@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../connections/presentation/providers/multi_user_provider.dart';
 import '../../orders/data/trade_api_client.dart';
 import '../../orders/presentation/providers/trade_session_provider.dart';
 import '../../../core/theme/app_theme.dart';
@@ -15,6 +16,190 @@ import '../domain/strategy_settings.dart';
 import 'providers/strategy_dashboard_provider.dart';
 import 'strategy_number_formatter.dart';
 
+Future<bool> showPreparedStrategyConfirmation(
+  BuildContext context, {
+  required DateTime expiresAt,
+  required String connectionContext,
+  required String instrumentId,
+  required bool Function() isSessionCurrent,
+  required Widget details,
+}) async {
+  final serverExpiry = expiresAt.toUtc();
+  final localDeadline = DateTime.now().toUtc().add(const Duration(seconds: 30));
+  final expiry = serverExpiry.isBefore(localDeadline)
+      ? serverExpiry
+      : localDeadline;
+  if (!expiry.isAfter(DateTime.now().toUtc()) || !isSessionCurrent()) {
+    return false;
+  }
+  final accepted = await showDialog<bool>(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => _PreparedStrategyConfirmationDialog(
+      expiresAt: expiry,
+      serverExpiresAt: serverExpiry,
+      connectionContext: connectionContext,
+      instrumentId: instrumentId,
+      isSessionCurrent: isSessionCurrent,
+      details: details,
+    ),
+  );
+  return accepted == true &&
+      DateTime.now().toUtc().isBefore(expiry) &&
+      isSessionCurrent();
+}
+
+class _PreparedStrategyConfirmationDialog extends ConsumerStatefulWidget {
+  const _PreparedStrategyConfirmationDialog({
+    required this.expiresAt,
+    required this.serverExpiresAt,
+    required this.connectionContext,
+    required this.instrumentId,
+    required this.isSessionCurrent,
+    required this.details,
+  });
+
+  final DateTime expiresAt;
+  final DateTime serverExpiresAt;
+  final String connectionContext;
+  final String instrumentId;
+  final bool Function() isSessionCurrent;
+  final Widget details;
+
+  @override
+  ConsumerState<_PreparedStrategyConfirmationDialog> createState() =>
+      _PreparedStrategyConfirmationDialogState();
+}
+
+class _PreparedStrategyConfirmationDialogState
+    extends ConsumerState<_PreparedStrategyConfirmationDialog> {
+  Timer? _timer;
+  NavigatorState? _navigator;
+  ModalRoute<dynamic>? _route;
+  bool _closing = false;
+  int _remainingSeconds = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _updateRemaining();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
+  }
+
+  bool get _isCurrent =>
+      DateTime.now().toUtc().isBefore(widget.expiresAt) &&
+      widget.isSessionCurrent();
+
+  void _updateRemaining() {
+    final milliseconds = widget.expiresAt
+        .difference(DateTime.now().toUtc())
+        .inMilliseconds;
+    _remainingSeconds = milliseconds <= 0 ? 0 : (milliseconds + 999) ~/ 1000;
+  }
+
+  void _tick() {
+    if (!mounted || _closing) return;
+    if (!_isCurrent) {
+      _close(false);
+      return;
+    }
+    final prior = _remainingSeconds;
+    _updateRemaining();
+    if (prior != _remainingSeconds) setState(() {});
+  }
+
+  void _checkAfterAuthorityChange() {
+    if (_isCurrent || !mounted || _closing) return;
+    _close(false, afterFrame: true);
+  }
+
+  void _close(bool accepted, {bool afterFrame = false}) {
+    if (!mounted || _closing) return;
+    _closing = true;
+    _timer?.cancel();
+
+    void popCapturedRoute() {
+      if (!mounted) return;
+      final route = _route;
+      final navigator = _navigator;
+      if (route == null ||
+          navigator == null ||
+          !identical(ModalRoute.of(context), route) ||
+          !route.isCurrent) {
+        return;
+      }
+      navigator.pop(accepted);
+    }
+
+    if (afterFrame) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => popCapturedRoute());
+    } else {
+      popCapturedRoute();
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _navigator ??= Navigator.of(context);
+    _route ??= ModalRoute.of(context);
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    ref.listen(
+      userSessionStoreProvider.select((store) => store.generation),
+      (_, _) => _checkAfterAuthorityChange(),
+    );
+    ref.listen(
+      connectionScopeStoreProvider.select((store) => store.generation),
+      (_, _) => _checkAfterAuthorityChange(),
+    );
+    ref.listen(tradeSessionProvider, (_, _) => _checkAfterAuthorityChange());
+    return PopScope(
+      canPop: false,
+      child: AlertDialog(
+        title: const Text('Xác nhận danh sách lệnh'),
+        content: SizedBox(
+          width: 560,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Tài khoản: ${widget.connectionContext}'),
+                if (widget.instrumentId.isNotEmpty)
+                  Text('Mã thị trường: ${widget.instrumentId}'),
+                Text(
+                  'Xác nhận còn hiệu lực $_remainingSeconds giây · máy chủ hết hạn ${widget.serverExpiresAt.toLocal()}',
+                  key: const Key('strategy-prepared-countdown'),
+                  semanticsLabel:
+                      'Xác nhận còn hiệu lực $_remainingSeconds giây',
+                ),
+                const SizedBox(height: 8),
+                widget.details,
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => _close(false), child: const Text('Hủy')),
+          FilledButton(
+            key: const Key('strategy-confirm-apply'),
+            onPressed: _isCurrent ? () => _close(true) : null,
+            child: const Text('Xác nhận gửi lệnh'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 enum _StrategyDirection { long, short, both }
 
 class StrategyWizardDialog extends ConsumerStatefulWidget {
@@ -25,6 +210,10 @@ class StrategyWizardDialog extends ConsumerStatefulWidget {
     required this.onSaved,
     this.replacementSourceId,
     this.initialCandidateDraft,
+    this.isSessionCurrent,
+    this.onUnauthorized,
+    this.confirmationContext,
+    this.canApplyCurrent,
   });
 
   final TradeSession session;
@@ -32,6 +221,10 @@ class StrategyWizardDialog extends ConsumerStatefulWidget {
   final Future<void> Function() onSaved;
   final String? replacementSourceId;
   final Map<String, dynamic>? initialCandidateDraft;
+  final bool Function()? isSessionCurrent;
+  final VoidCallback? onUnauthorized;
+  final String? confirmationContext;
+  final bool Function()? canApplyCurrent;
 
   @override
   ConsumerState<StrategyWizardDialog> createState() =>
@@ -77,11 +270,15 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
 
   bool get _isSessionCurrent {
     if (!mounted) return false;
+    final ownedCheck = widget.isSessionCurrent;
+    if (ownedCheck != null) return ownedCheck() && widget.dashboard.ownsSession;
     final state = ref.read(tradeSessionProvider);
     return state.isAuthenticated &&
         state.session?.bearerToken == widget.session.bearerToken &&
         widget.dashboard.ownsSession;
   }
+
+  bool get _canApplyCurrent => widget.canApplyCurrent?.call() ?? true;
 
   @override
   void initState() {
@@ -728,9 +925,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
       });
     } on StrategyApiException catch (error) {
       if (!mounted || !_isSessionCurrent) return;
-      if (error.isUnauthorized) {
-        ref.read(tradeSessionProvider.notifier).expire();
-      }
+      _expireSessionIfUnauthorized(error);
       setState(() {
         _isRequestingPreview = false;
         _workflowError = error.message;
@@ -810,7 +1005,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
   }
 
   Future<void> _saveDraft() async {
-    if (!_canActOnPreview) return;
+    if (!_canApplyNow) return;
     setState(() {
       _isSaving = true;
       _isSavingDraft = true;
@@ -850,56 +1045,35 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
     if (orders.isEmpty || mode == null || !mounted || !_isSessionCurrent) {
       return false;
     }
-    final confirmed = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: const Text('Xác nhận danh sách lệnh'),
-        content: SizedBox(
-          width: 560,
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Đây là danh sách đã được máy chủ chuẩn hóa lại. Cơ chế gửi bên dưới đã được cố định cho danh sách này.',
-                ),
-                const SizedBox(height: 8),
-                _SubmissionModeSummary(mode: mode),
-                const SizedBox(height: 8),
-                _PreparedFinancialSummary(prepared: prepared),
-                const SizedBox(height: 12),
-                for (var index = 0; index < orders.length; index++)
-                  _PreparedOrderTile(index: index + 1, order: orders[index]),
-              ],
-            ),
+    final expiresAt = DateTime.tryParse(_text(prepared['expiresAt']))?.toUtc();
+    if (expiresAt == null || !expiresAt.isAfter(DateTime.now().toUtc())) {
+      return false;
+    }
+    final confirmed = await showPreparedStrategyConfirmation(
+      context,
+      expiresAt: expiresAt,
+      connectionContext:
+          widget.confirmationContext ?? 'Phiên giao dịch hiện tại',
+      instrumentId: _instrumentId ?? _text(prepared['instrumentId']),
+      isSessionCurrent: () =>
+          _isSessionCurrent && widget.dashboard.ownsSession && _canApplyCurrent,
+      details: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Đây là danh sách đã được máy chủ chuẩn hóa lại. Cơ chế gửi bên dưới đã được cố định cho danh sách này.',
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Hủy'),
-          ),
-          Consumer(
-            builder: (context, ref, _) {
-              final state = ref.watch(tradeSessionProvider);
-              final ownsSession =
-                  state.isAuthenticated &&
-                  state.session?.bearerToken == widget.session.bearerToken &&
-                  widget.dashboard.ownsSession;
-              return FilledButton(
-                key: const Key('strategy-confirm-apply'),
-                onPressed: ownsSession
-                    ? () => Navigator.of(context).pop(true)
-                    : null,
-                child: const Text('Xác nhận gửi lệnh'),
-              );
-            },
-          ),
+          const SizedBox(height: 8),
+          _SubmissionModeSummary(mode: mode),
+          const SizedBox(height: 8),
+          _PreparedFinancialSummary(prepared: prepared),
+          const SizedBox(height: 12),
+          for (var index = 0; index < orders.length; index++)
+            _PreparedOrderTile(index: index + 1, order: orders[index]),
         ],
       ),
     );
-    return confirmed == true && mounted && _isSessionCurrent;
+    return confirmed && mounted && _isSessionCurrent;
   }
 
   Future<void> _applyNow() async {
@@ -983,6 +1157,8 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
       !_isRequestingPreview &&
       _hasValidNewSubmissionPreview;
 
+  bool get _canApplyNow => _canActOnPreview && _canApplyCurrent;
+
   bool get _hasValidNewSubmissionPreview {
     final preview = _preview;
     final hash = _previewHash;
@@ -1001,7 +1177,11 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
 
   @override
   Widget build(BuildContext context) {
-    ref.watch(tradeSessionProvider);
+    if (widget.isSessionCurrent == null) {
+      ref.watch(tradeSessionProvider);
+    } else {
+      ref.watch(userSessionStoreProvider.select((store) => store.generation));
+    }
     final width = MediaQuery.sizeOf(context).width;
     return Dialog(
       insetPadding: EdgeInsets.symmetric(
@@ -1510,7 +1690,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
           ),
           AsyncFormButton(
             key: const Key('strategy-apply-now'),
-            onPressed: _canActOnPreview ? _applyNow : null,
+            onPressed: _canApplyNow ? _applyNow : null,
             isBusy: _isSaving && !_isSavingDraft,
             label: 'Áp dụng ngay',
             busyLabel: 'Đang áp dụng…',
@@ -1534,7 +1714,12 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
 
   void _expireSessionIfUnauthorized(Object error) {
     if (error is StrategyApiException && error.isUnauthorized) {
-      ref.read(tradeSessionProvider.notifier).expire();
+      final callback = widget.onUnauthorized;
+      if (callback != null) {
+        callback();
+      } else {
+        ref.read(tradeSessionProvider.notifier).expire();
+      }
     }
   }
 }

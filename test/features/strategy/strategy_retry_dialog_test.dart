@@ -601,7 +601,10 @@ Map<String, dynamic> _retryPrepared() => {
   'id': 'retry-child-1',
   'status': 'PREPARED',
   'confirmationToken': 'one-use-retry-token',
-  'expiresAt': '2026-10-03T00:01:00Z',
+  'expiresAt': DateTime.now()
+      .toUtc()
+      .add(const Duration(minutes: 2))
+      .toIso8601String(),
   'plannedMargin': '1234.56789',
   'unallocatedMargin': '0',
   'estimatedOpeningFees': '0.000000003',

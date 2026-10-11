@@ -78,12 +78,12 @@ Check 360px mobile, 768px tablet, 1440px desktop; long names, 200% text, dark/li
 
 Performance targets (proposed, not measured): selector acknowledges input ≤100ms p95; correct cached account data ≤300ms p95 and fresh data ≤2s p95 under the spec's network profile; 60Hz frame work ≤16.7ms p95 during 500-row scroll; no offscreen per-account poller. Use Riverpod selective subscriptions, virtualized lists and latest-generation cancellation. Preserve existing refresh behavior and failure messages.
 
-Rendered review is required after implementation: representative mobile/desktop and critical connection/switch/error/confirmation states; Android device check is a launch gate. Status now: NOT_RUN — planning only. Code checks cannot claim visual PASS.
+Rendered review is required after implementation: representative mobile/desktop and critical connection/switch/error/confirmation states; Android device check is a launch gate. Rendered/source-fixture review: PASS on2026-10-11 after coordinator physical image inspection and independent R3 review/runtime corrections. Twelve font-backed portfolio matrix renders and auth/connection/confirmation/UNKNOWN/overview critical states are recorded in docs/agents/validation/2026-10-11-t114-final-verification.md. Android-device acceptance remains BLOCKED_EVIDENCE / pending launch gate; proposed quantitative frame/network targets are not measured. Code-only inspection was not used to claim visual PASS.
 
 ## 6. Approval gate
 
 - [x] Product, audience, job and representative content grounded.
 - [x] Required states, design reuse and anti-generic critique documented.
 - [x] Accessibility/performance targets and evidence requirements specified.
-- [ ] User approves this brief as part of the canonical plan.
-- [ ] Implementation and rendered design audit pass.
+- [x] User approves this brief as part of the canonical plan; T114 explicitly requested on 2026-10-11.
+- [x] Implementation and rendered source/fixture design audit pass; Android-device launch gate remains pending.

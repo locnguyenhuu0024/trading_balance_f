@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../connections/presentation/providers/multi_user_provider.dart';
 import '../../../core/widgets/responsive_form_content.dart';
 import '../data/strategy_api_client.dart';
 import '../domain/strategy_models.dart';
@@ -15,12 +18,20 @@ class StrategyRetryDialog extends ConsumerStatefulWidget {
     required this.flow,
     required this.sourceStrategy,
     required this.bearerToken,
+    this.isSessionCurrent,
+    this.confirmationContext,
+    this.instrumentId,
+    this.canApplyCurrent,
   });
 
   final StrategyDashboardController dashboard;
   final StrategyRetryFlow flow;
   final Map<String, dynamic> sourceStrategy;
   final String bearerToken;
+  final bool Function()? isSessionCurrent;
+  final String? confirmationContext;
+  final String? instrumentId;
+  final bool Function()? canApplyCurrent;
 
   @override
   ConsumerState<StrategyRetryDialog> createState() =>
@@ -39,6 +50,11 @@ class _StrategyRetryDialogState extends ConsumerState<StrategyRetryDialog> {
   bool _creating = false;
   bool _preparing = false;
   bool _executing = false;
+  DateTime? _preparedExpiresAt;
+  DateTime? _serverExpiresAt;
+  Timer? _expiryTimer;
+  int _remainingSeconds = 0;
+  bool _closing = false;
 
   bool get _busy =>
       _loading || _previewing || _creating || _preparing || _executing;
@@ -120,18 +136,38 @@ class _StrategyRetryDialogState extends ConsumerState<StrategyRetryDialog> {
   }
 
   Future<void> _prepareChild() async {
-    if (_busy || _draft == null || _prepared != null) return;
+    if (_busy || _draft == null || _prepared != null || !_ownsSession) return;
     setState(() {
       _preparing = true;
       _error = null;
     });
     try {
       final prepared = await widget.flow.prepareChild();
-      if (!mounted) return;
+      if (!mounted || !_ownsSession) return;
+      final serverExpiry = DateTime.tryParse(
+        _text(prepared['expiresAt']),
+      )?.toUtc();
+      final localDeadline = DateTime.now().toUtc().add(
+        const Duration(seconds: 30),
+      );
+      final expiresAt = serverExpiry == null
+          ? null
+          : serverExpiry.isBefore(localDeadline)
+          ? serverExpiry
+          : localDeadline;
       setState(() {
         _prepared = prepared;
+        _serverExpiresAt = serverExpiry;
+        _preparedExpiresAt =
+            expiresAt != null && expiresAt.isAfter(DateTime.now().toUtc())
+            ? expiresAt
+            : null;
         _preparing = false;
+        if (_preparedExpiresAt == null) {
+          _error = 'Thời hạn xác nhận không hợp lệ. Không thể gửi lệnh.';
+        }
       });
+      if (_preparedExpiresAt != null) _startExpiryGuard();
     } on Object catch (error) {
       if (!mounted) return;
       setState(() {
@@ -142,7 +178,8 @@ class _StrategyRetryDialogState extends ConsumerState<StrategyRetryDialog> {
   }
 
   Future<void> _executeOnce() async {
-    if (_busy || _prepared == null || !widget.dashboard.ownsSession) return;
+    if (_busy || _prepared == null || !_preparedIsCurrent) return;
+    _expiryTimer?.cancel();
     setState(() {
       _executing = true;
       _error = null;
@@ -182,18 +219,101 @@ class _StrategyRetryDialogState extends ConsumerState<StrategyRetryDialog> {
   }
 
   void _cancel() {
+    if (_closing) return;
+    _closing = true;
+    _expiryTimer?.cancel();
     widget.flow.cancel();
     Navigator.of(
       context,
     ).pop(const StrategyRetryOutcome(StrategyRetryOutcomeKind.cancelled));
   }
 
+  bool get _ownsSession {
+    final check = widget.isSessionCurrent;
+    if (check != null) return check() && widget.dashboard.ownsSession;
+    return ref.read(tradeSessionProvider).session?.bearerToken ==
+            widget.bearerToken &&
+        widget.dashboard.ownsSession;
+  }
+
+  bool get _preparedIsCurrent {
+    final expiry = _preparedExpiresAt;
+    return expiry != null &&
+        DateTime.now().toUtc().isBefore(expiry) &&
+        _ownsSession &&
+        (widget.canApplyCurrent?.call() ?? true);
+  }
+
+  void _startExpiryGuard() {
+    _expiryTimer?.cancel();
+    _updateRemaining();
+    _expiryTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      _checkPreparedAuthority();
+    });
+  }
+
+  void _updateRemaining() {
+    final expiry = _preparedExpiresAt;
+    final milliseconds = expiry == null
+        ? 0
+        : expiry.difference(DateTime.now().toUtc()).inMilliseconds;
+    _remainingSeconds = milliseconds <= 0 ? 0 : (milliseconds + 999) ~/ 1000;
+  }
+
+  void _checkPreparedAuthority() {
+    if (!mounted || _prepared == null || _executing) return;
+    if (!_preparedIsCurrent) {
+      _cancel();
+      return;
+    }
+    final previous = _remainingSeconds;
+    _updateRemaining();
+    if (previous != _remainingSeconds) setState(() {});
+  }
+
+  void _cancelOnAuthorityChange() {
+    if (_prepared == null || _executing || _preparedIsCurrent || !mounted) {
+      return;
+    }
+    if (_closing) return;
+    _closing = true;
+    _expiryTimer?.cancel();
+    widget.flow.cancel();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        Navigator.of(
+          context,
+        ).pop(const StrategyRetryOutcome(StrategyRetryOutcomeKind.cancelled));
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _expiryTimer?.cancel();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final currentSession = ref.watch(tradeSessionProvider).session;
-    final ownsVisibleSession =
-        currentSession?.bearerToken == widget.bearerToken &&
-        widget.dashboard.ownsSession;
+    ref.listen(
+      userSessionStoreProvider.select((store) => store.generation),
+      (_, _) => _cancelOnAuthorityChange(),
+    );
+    ref.listen(
+      connectionScopeStoreProvider.select((store) => store.generation),
+      (_, _) => _cancelOnAuthorityChange(),
+    );
+    ref.listen(tradeSessionProvider, (_, _) => _cancelOnAuthorityChange());
+    final sessionCurrent = widget.isSessionCurrent;
+    final ownsVisibleSession = sessionCurrent != null
+        ? sessionCurrent() && widget.dashboard.ownsSession
+        : ref.watch(tradeSessionProvider).session?.bearerToken ==
+                  widget.bearerToken &&
+              widget.dashboard.ownsSession;
+    if (sessionCurrent != null) {
+      ref.watch(userSessionStoreProvider.select((store) => store.generation));
+    }
     final size = MediaQuery.sizeOf(context);
     final preview = _preview;
     final candidates = _candidates;
@@ -324,6 +444,17 @@ class _StrategyRetryDialogState extends ConsumerState<StrategyRetryDialog> {
                             'Bản gửi lại: ${_text(_prepared!['id'])} · Nguồn: ${widget.flow.sourceStrategyId}',
                           ),
                           Text(
+                            'Tài khoản: ${widget.confirmationContext ?? 'Phiên giao dịch hiện tại'}',
+                          ),
+                          if ((widget.instrumentId ?? '').isNotEmpty)
+                            Text('Mã thị trường: ${widget.instrumentId}'),
+                          Text(
+                            _preparedExpiresAt == null
+                                ? 'Không có thời hạn xác nhận hợp lệ.'
+                                : 'Xác nhận còn hiệu lực $_remainingSeconds giây · máy chủ hết hạn ${_serverExpiresAt!.toLocal()}',
+                            key: const Key('strategy-retry-expiry'),
+                          ),
+                          Text(
                             'Cơ chế gửi đã cố định: ${StrategyLimitOrderSubmissionMode.parse(_prepared!['submissionMode'])?.label ?? 'không khả dụng'}',
                           ),
                           _PreparedRetryCosts(prepared: _prepared!),
@@ -411,7 +542,8 @@ class _StrategyRetryDialogState extends ConsumerState<StrategyRetryDialog> {
                         onPressed:
                             ownsVisibleSession &&
                                 !_busy &&
-                                !widget.flow.executeAttempted
+                                !widget.flow.executeAttempted &&
+                                _preparedIsCurrent
                             ? _executeOnce
                             : null,
                         label: 'Xác nhận và gửi một lần',

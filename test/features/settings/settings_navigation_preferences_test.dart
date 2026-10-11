@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -49,21 +48,33 @@ class _SettingsStorage extends SecureStorageHelper {
   final bool failTextScaleSave;
   final Completer<void>? navigationSaveGate;
   final bool pendingApiKeyRead;
+  var okxApiKeyReads = 0;
+  var okxSecretKeyReads = 0;
+  var okxPassphraseReads = 0;
   NavigationPreferences? savedNavigationPreferences;
   double? savedAppTextScale;
 
   // Keep the initial legacy read pending so opening the access page does not
   // depend on a platform secure-storage implementation in this widget test.
   @override
-  Future<String?> getOkxApiKey() => pendingApiKeyRead
-      ? Completer<String?>().future
-      : Future<String?>.value(null);
+  Future<String?> getOkxApiKey() {
+    okxApiKeyReads++;
+    return pendingApiKeyRead
+        ? Completer<String?>().future
+        : Future<String?>.value(null);
+  }
 
   @override
-  Future<String?> getOkxSecretKey() async => null;
+  Future<String?> getOkxSecretKey() async {
+    okxSecretKeyReads++;
+    return null;
+  }
 
   @override
-  Future<String?> getOkxPassphrase() async => null;
+  Future<String?> getOkxPassphrase() async {
+    okxPassphraseReads++;
+    return null;
+  }
 
   @override
   Future<bool> getHideBalanceDefault() async => false;
@@ -200,10 +211,11 @@ void main() {
     );
   });
 
-  testWidgets('opens the API and trade access subpage from Settings', (
+  testWidgets('opens ConnectionsPage without reading legacy trade secrets', (
     tester,
   ) async {
-    await tester.pumpWidget(settingsApp(_SettingsStorage()));
+    final storage = _SettingsStorage();
+    await tester.pumpWidget(settingsApp(storage));
     await tester.pump();
 
     expect(
@@ -218,9 +230,15 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
 
-    expect(find.text('API và giao dịch'), findsOneWidget);
-    expect(find.text('Đang tải thông tin API đã lưu…'), findsOneWidget);
-    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    expect(find.text('API và kết nối'), findsOneWidget);
+    expect(find.text('Chưa đăng nhập.'), findsOneWidget);
+    expect(
+      find.text('Phiên đã thay đổi. Hãy mở lại trang sau khi đăng nhập.'),
+      findsOneWidget,
+    );
+    final addConnection = find.byKey(const Key('add-verified-connection'));
+    expect(addConnection, findsOneWidget);
+    expect(tester.widget<OutlinedButton>(addConnection).onPressed, isNull);
     expect(
       find.byKey(const Key('settings-okx-credential-bundle')),
       findsNothing,
@@ -228,14 +246,17 @@ void main() {
     expect(find.text('API Key'), findsNothing);
     expect(find.text('Secret Key'), findsNothing);
     expect(find.text('Passphrase'), findsNothing);
-    expect(find.text('Giao dịch riêng tư'), findsOneWidget);
     expect(find.byKey(const Key('settings-trade-access-button')), findsNothing);
+    expect(storage.okxApiKeyReads, 0);
+    expect(storage.okxSecretKeyReads, 0);
+    expect(storage.okxPassphraseReads, 0);
   });
 
-  testWidgets('opens the ready API and trade access subpage', (tester) async {
-    await tester.pumpWidget(
-      settingsApp(_SettingsStorage(pendingApiKeyRead: false)),
-    );
+  testWidgets('legacy credentials stay unread on the connection entry page', (
+    tester,
+  ) async {
+    final storage = _SettingsStorage(pendingApiKeyRead: false);
+    await tester.pumpWidget(settingsApp(storage));
     await tester.pump();
 
     final accessEntry = find.byKey(const Key('settings-trade-access-button'));
@@ -245,14 +266,23 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
 
-    await tester.tap(find.byKey(const Key('settings-toggle-okx-entry-mode')));
-    await tester.pump();
-
-    expect(find.text('API Key'), findsOneWidget);
-    expect(find.text('Secret Key'), findsOneWidget);
-    expect(find.text('Passphrase'), findsOneWidget);
-    expect(find.text('Giao dịch riêng tư'), findsOneWidget);
+    expect(find.text('API và kết nối'), findsOneWidget);
+    expect(find.text('Chưa đăng nhập.'), findsOneWidget);
+    expect(find.text('API Key'), findsNothing);
+    expect(find.text('Secret Key'), findsNothing);
+    expect(find.text('Passphrase'), findsNothing);
+    expect(
+      tester
+          .widget<OutlinedButton>(
+            find.byKey(const Key('add-verified-connection')),
+          )
+          .onPressed,
+      isNull,
+    );
     expect(find.byKey(const Key('settings-trade-access-button')), findsNothing);
+    expect(storage.okxApiKeyReads, 0);
+    expect(storage.okxSecretKeyReads, 0);
+    expect(storage.okxPassphraseReads, 0);
   });
 
   testWidgets(

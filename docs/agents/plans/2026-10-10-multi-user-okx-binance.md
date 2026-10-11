@@ -1,6 +1,6 @@
 # Implementation plan: Multi-user OKX and Binance
 
-Status: APPROVED — source-first execution authorized; T110/T111 PASS; T112 SOURCE_RUNTIME_PASS / VENUE_PENDING
+Status: APPROVED — source-first execution authorized; T110/T111 PASS; T112 SOURCE_RUNTIME_PASS / VENUE_PENDING; T114 SOURCE_FIXTURE_PASS / VENUE_DEVICE_PENDING
 Date: 2026-10-10
 Revision: 1
 Tier: L
@@ -251,3 +251,25 @@ User resumed checkpoint. Source Definition of Ready and required two-workstream 
 ## T113 source checkpoint — 2026-10-11
 
 Authorized D-007 fixture-first source implementation and independent audit PASS; AUD-113-001–014 resolved through E2 implementation/R01 and E0 classifier R02. Final V3 59 run, 58 passed, 1 PostgreSQL skip; backend compile and diffcheck0. Evidence/secret-free VPS commands: `docs/agents/validation/2026-10-11-t113-source-audit.md`. PostgreSQL runtime and venue/demo acceptance remain pending; activation remains blocked. No T114 or new Git writes.
+
+## T113 VPS runtime checkpoint — 2026-10-11
+
+Operator evidence accepted: affected suites59/59 PASS with no skips (40.061s); included PostgreSQL claim/revoke/expired-fence case separately PASS (8.798s); compileall0. Do not double-count the repeated PG case. T113 source/runtime fixture checkpoint PASS; venue/demo and activation remain pending. Scope limits and evidence in `docs/agents/validation/2026-10-11-t113-source-audit.md`. No source changes or successor dispatch at that checkpoint.
+
+## T114 source-first authorization and preflight — 2026-10-11
+
+Under D-008 the user explicitly requests T114 after the presented fixture-first continuation. Two independent R2 UI/API-scope reports and a narrow additive DTO follow-up are reconciled; fan-out PASS. Binding refinement: `docs/agents/validation/2026-10-11-t114-preflight.md`. Complete the existing OKX target DTO fields plus affected Flutter consumers in one serial E1 unit, preserving production Binance locks. T112 venue acceptance and Android/device launch evidence remain pending; source fixtures do not authorize activation. Approved F2 brief and canonical web-build/rendered gates remain binding. No Git mutation is authorized.
+
+## T114 user pause — 2026-10-11
+
+User explicitly requested saving progress and pausing. The serial E1 writer was interrupted and the independent early R3 audit was collected; no further implementation or verification runs. Working changes remain incomplete and uncommitted. Resume from `docs/agents/checkpoints/2026-10-11-t114-implementation-paused.md`: finish strategy ownership wiring and AUD-114-008–013 remediation, then complete the remaining UI/consumer contracts, tests, rendered review and canonical build. Thirteen transport/DTO tests passed at an earlier checkpoint; the latest strategy-route regression is intentionally RED and final buildability is not established. D-008 remains valid; production trading gates stay locked.
+
+## T114 continuation — 2026-10-11
+
+Explicit user resume restores the unchanged D-008 approved T114 source-development scope. Continue from docs/agents/checkpoints/2026-10-11-t114-implementation-paused.md and the current source snapshot. T114 is IN PROGRESS; pending checklist and AUD-114-001–013 remain open until final independent proof. Sole serial E1-T114-RESUME-001 is explicitly bound gpt-6-luna/xhigh; independent read-only R3-T114-RESUME-AUDIT-001 is bound gpt-6.1-sol/high. Effective routes are unavailable/UNVERIFIABLE. No prior children are exposed in this chat runtime, and no close/release primitive exists. No Git, deployment or exchange action is included.
+
+## T114 completed source/fixture checkpoint — 2026-10-11
+
+D-008 continuation completed. Authoritative and independent R3 SOURCE_FIXTURE PASS after39 concrete findings reconciled; final E2 bounded corrections pass actual production public/strategy lifetime tests. Latest multiuser73/73, strategy171/171 and affected startup/storage/settings/navigation/market106/106; unaffected backendcompile0/runtime31 and earlier core/order proof reused. Canonical Flutter web build0 after LAST executable/test change, scoped diff0; analyzer remains125 advisory warning/info (exit1, zeroerrors), no clean-analysis claim. Physical font-backed F2 matrix/critical-state review PASS, Android/real venue/demo gates pending and Binance production locked.
+
+Task/audit/evidence: tasks/task_114_multiuser_connection_ui.md; docs/agents/validation/2026-10-11-t114-source-audit.md; docs/agents/validation/2026-10-11-t114-final-verification.md. All source/tests frozen; terminal agents collected, runtime release primitive unavailable. No Git/install/configuration/deployment/live venue action. No T115/T116 dispatch or launch authorization inferred. Historical pause/intermediate paragraphs above remain evidence of their original snapshots and are superseded by this final checkpoint.

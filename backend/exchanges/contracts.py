@@ -173,6 +173,9 @@ class PositionDTO:
     position_mode: str | None
     metadata_version: str | None
     native_asset: str | None = None
+    margin_mode: str | None = None
+    margin_currency: str | None = None
+    position_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -185,6 +188,8 @@ class PositionDTO:
             "settlementAsset": self.settlement_asset, "entryPrice": decimal_text(self.entry_price),
             "markPrice": decimal_text(self.mark_price), "unrealizedPnl": decimal_text(self.unrealized_pnl),
             "side": self.side, "positionMode": self.position_mode, "metadataVersion": self.metadata_version,
+            "marginMode": self.margin_mode, "marginCurrency": self.margin_currency,
+            "positionId": self.position_id,
         }
 
 
@@ -208,6 +213,7 @@ class OrderDTO:
     metadata_version: str | None
     native_asset: str | None = None
     filled_quantity_unit: str | None = None
+    limit_price: Decimal | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -219,6 +225,7 @@ class OrderDTO:
             "filledQuantityUnit": self.filled_quantity_unit,
             "averagePrice": decimal_text(self.average_price), "eventTime": self.created_at,
             "metadataVersion": self.metadata_version, "nativeAsset": self.native_asset,
+            "limitPrice": decimal_text(self.limit_price),
         }
 
 

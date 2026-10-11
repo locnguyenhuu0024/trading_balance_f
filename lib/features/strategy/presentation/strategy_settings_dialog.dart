@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../connections/presentation/providers/multi_user_provider.dart';
 import '../../../core/widgets/responsive_form_content.dart';
 import '../../orders/presentation/providers/trade_session_provider.dart';
 import '../domain/strategy_models.dart';
@@ -14,10 +15,12 @@ class StrategySettingsDialog extends ConsumerStatefulWidget {
     super.key,
     required this.bearerToken,
     required this.dashboard,
+    this.isSessionCurrent,
   });
 
   final String? bearerToken;
   final StrategyDashboardController? dashboard;
+  final bool Function()? isSessionCurrent;
 
   @override
   ConsumerState<StrategySettingsDialog> createState() =>
@@ -143,6 +146,8 @@ class _StrategySettingsDialogState
   }
 
   bool _sessionMatches(TradeSessionState state) {
+    final ownedCheck = widget.isSessionCurrent;
+    if (ownedCheck != null) return ownedCheck();
     final expectedToken = widget.bearerToken;
     if (expectedToken == null) {
       return !state.isAuthenticated && state.session == null;
@@ -151,6 +156,10 @@ class _StrategySettingsDialogState
         state.session?.bearerToken == expectedToken &&
         (widget.dashboard?.ownsSession ?? false);
   }
+
+  bool _currentSessionMatches() =>
+      widget.isSessionCurrent?.call() ??
+      _sessionMatches(ref.read(tradeSessionProvider));
 
   void _markDraftEdited() {
     setState(() {
@@ -216,9 +225,7 @@ class _StrategySettingsDialogState
     required StrategyJevScreeningThresholds? thresholds,
   }) async {
     final dashboard = widget.dashboard;
-    if (dashboard == null ||
-        mode == null ||
-        !_sessionMatches(ref.read(tradeSessionProvider))) {
+    if (dashboard == null || mode == null || !_currentSessionMatches()) {
       return;
     }
     final fullSettings = dashboard.supportsFullStrategySettings;
@@ -231,7 +238,7 @@ class _StrategySettingsDialogState
                 ),
               )
         : await dashboard.saveLimitOrderSubmissionMode(mode);
-    if (!mounted || !_sessionMatches(ref.read(tradeSessionProvider))) return;
+    if (!mounted || !_currentSessionMatches()) return;
     if (saved) {
       setState(() {
         _draftWasEdited = false;
@@ -259,8 +266,14 @@ class _StrategySettingsDialogState
 
   @override
   Widget build(BuildContext context) {
-    final sessionState = ref.watch(tradeSessionProvider);
-    final sessionMatches = _sessionMatches(sessionState);
+    final sessionMatches = widget.isSessionCurrent == null
+        ? _sessionMatches(ref.watch(tradeSessionProvider))
+        : () {
+            ref.watch(
+              userSessionStoreProvider.select((store) => store.generation),
+            );
+            return widget.isSessionCurrent!.call();
+          }();
     final dashboard = widget.dashboard;
     final width = MediaQuery.sizeOf(context).width;
     final height = MediaQuery.sizeOf(context).height;

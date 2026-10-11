@@ -3,11 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../features/fractal_tracker/presentation/fractal_screen.dart';
 import '../../features/market/presentation/market_screen.dart';
-import '../../features/orders/presentation/orders_screen.dart';
-import '../../features/portfolio/presentation/portfolio_screen.dart';
+import '../../features/connections/presentation/private_data_screens.dart';
+import '../../features/portfolio/presentation/portfolio_screen.dart'
+    show isDarkModeProvider;
 import '../../features/settings/presentation/settings_screen.dart';
 import '../../features/support_resistance/presentation/support_resistance_screen.dart';
-import '../../features/strategy/presentation/strategy_screen.dart';
 import '../theme/app_theme.dart';
 import 'navigation_destination_data.dart';
 import 'navigation_preferences.dart';
@@ -39,20 +39,32 @@ class _MainNavigationShellState extends ConsumerState<MainNavigationShell> {
 
     switch (selectedIndex) {
       case 1:
-        return const FractalScreen();
+        return const MultiUserPublicPanelBoundary(
+          feed: 'Biểu đồ Fractal OKX SPOT',
+          supportedProducts: {'SPOT'},
+          child: FractalScreen(),
+        );
       case 2:
-        return const OrdersScreen();
+        return const MultiUserOrdersScreen();
       case 3:
-        return const MarketScreen();
+        return const MultiUserPublicPanelBoundary(
+          feed: 'Bảng giá OKX SPOT',
+          supportedProducts: {'SPOT'},
+          child: MarketScreen(),
+        );
       case 4:
         return const SettingsScreen();
       case 6:
-        return const SupportResistanceScreen();
+        return const MultiUserPublicPanelBoundary(
+          feed: 'Hỗ trợ và kháng cự OKX',
+          supportedProducts: {'SPOT', 'SWAP'},
+          child: SupportResistanceScreen(),
+        );
       case 7:
-        return const StrategyScreen();
+        return const MultiUserStrategyScreen();
       case 0:
       default:
-        return const PortfolioScreen();
+        return const MultiUserPortfolioScreen();
     }
   }
 
@@ -133,9 +145,25 @@ class _MainNavigationShellState extends ConsumerState<MainNavigationShell> {
         },
         child: AppDestinationTransition(
           destinationId: selectedScreenIndex,
-          child: KeyedSubtree(
-            key: ValueKey<int>(selectedScreenIndex),
-            child: _buildSelectedScreen(context, selectedScreenIndex),
+          child: SafeArea(
+            top: true,
+            bottom: false,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const MultiUserConnectionContextStrip(),
+                Expanded(
+                  child: MediaQuery.removePadding(
+                    context: context,
+                    removeTop: true,
+                    child: KeyedSubtree(
+                      key: ValueKey<int>(selectedScreenIndex),
+                      child: _buildSelectedScreen(context, selectedScreenIndex),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

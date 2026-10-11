@@ -3,6 +3,8 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/session/user_session.dart';
+import '../../connections/presentation/providers/multi_user_provider.dart';
 import '../../../core/widgets/responsive_form_content.dart';
 import '../../orders/data/trade_api_client.dart';
 import '../../orders/presentation/providers/trade_session_provider.dart';
@@ -27,10 +29,14 @@ class StrategyAutomaticDraftDialog extends ConsumerStatefulWidget {
     super.key,
     required this.session,
     required this.dashboard,
+    this.isSessionCurrent,
+    this.onUnauthorized,
   });
 
   final TradeSession session;
   final StrategyDashboardController dashboard;
+  final bool Function()? isSessionCurrent;
+  final VoidCallback? onUnauthorized;
 
   @override
   ConsumerState<StrategyAutomaticDraftDialog> createState() =>
@@ -55,6 +61,8 @@ class _StrategyAutomaticDraftDialogState
 
   bool get _isSessionCurrent {
     if (!mounted) return false;
+    final ownedCheck = widget.isSessionCurrent;
+    if (ownedCheck != null) return ownedCheck() && widget.dashboard.ownsSession;
     final state = ref.read(tradeSessionProvider);
     return state.isAuthenticated &&
         state.session?.bearerToken == widget.session.bearerToken &&
@@ -190,7 +198,9 @@ class _StrategyAutomaticDraftDialogState
     } on StrategyApiException catch (error) {
       if (!mounted || !_isSessionCurrent) return;
       if (error.isUnauthorized) {
-        ref.read(tradeSessionProvider.notifier).expire();
+        (widget.onUnauthorized ??
+                () => ref.read(tradeSessionProvider.notifier).expire())
+            .call();
       }
       setState(() {
         _isGenerating = false;
@@ -207,13 +217,23 @@ class _StrategyAutomaticDraftDialogState
 
   @override
   Widget build(BuildContext context) {
-    ref.watch(tradeSessionProvider);
-    ref.listen(tradeSessionProvider, (previous, next) {
-      if (!next.isAuthenticated ||
-          next.session?.bearerToken != widget.session.bearerToken) {
-        _dismissForSessionChange();
-      }
-    });
+    if (widget.isSessionCurrent == null) {
+      ref.watch(tradeSessionProvider);
+      ref.listen(tradeSessionProvider, (previous, next) {
+        if (!next.isAuthenticated ||
+            next.session?.bearerToken != widget.session.bearerToken) {
+          _dismissForSessionChange();
+        }
+      });
+    } else {
+      ref.watch(userSessionStoreProvider.select((store) => store.generation));
+      ref.listen<UserSession?>(
+        userSessionStoreProvider.select((store) => store.current),
+        (previous, next) {
+          if (!widget.isSessionCurrent!.call()) _dismissForSessionChange();
+        },
+      );
+    }
     final width = MediaQuery.sizeOf(context).width;
     return Dialog(
       insetPadding: EdgeInsets.symmetric(

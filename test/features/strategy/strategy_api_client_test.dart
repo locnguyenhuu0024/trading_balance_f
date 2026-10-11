@@ -611,12 +611,14 @@ class _TradeAdapter implements HttpClientAdapter {
     this.postSettingsMode,
     this.getSettingsThresholds,
     this.postSettingsThresholds,
+    this.strategyListResponse,
   });
 
   final String getSettingsMode;
   final String? postSettingsMode;
   final Map<String, dynamic>? getSettingsThresholds;
   final Map<String, dynamic>? postSettingsThresholds;
+  final Map<String, dynamic>? strategyListResponse;
   final List<RequestOptions> requests = [];
 
   @override
@@ -639,7 +641,7 @@ class _TradeAdapter implements HttpClientAdapter {
         _retryCandidatesResponse(),
       '/v1/strategies/source-123/retry-preview' => _retryPreviewResponse(),
       '/v1/strategies/source-123/retry-drafts' => _retryDraftResponse(),
-      '/v1/strategies' => {'strategies': <Object>[]},
+      '/v1/strategies' => strategyListResponse ?? _strategyListResponse(),
       '/v1/strategies/draft-123/prepare-apply' => {
         'confirmationToken': 'confirm-once',
         'orders': [
@@ -680,6 +682,27 @@ class _TradeAdapter implements HttpClientAdapter {
 
   @override
   void close({bool force = false}) {}
+}
+
+Map<String, dynamic> _strategyListResponse({
+  bool stale = false,
+  bool complete = true,
+  DateTime? expiresAt,
+}) {
+  final now = DateTime.now().toUtc();
+  return {
+    'strategies': <Object>[],
+    'page': {'nextCursor': null},
+    'dataMeta': {
+      'fetchedAt': now.toIso8601String(),
+      'asOf': now.toIso8601String(),
+      'snapshotExpiresAt': (expiresAt ?? now.add(const Duration(minutes: 1)))
+          .toIso8601String(),
+      'stale': stale,
+      'complete': complete,
+      'source': 'server',
+    },
+  };
 }
 
 class _FailureAdapter implements HttpClientAdapter {

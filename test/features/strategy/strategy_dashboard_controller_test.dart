@@ -283,6 +283,28 @@ void main() {
     expect(controller.quoteIsFresh('BTC-USDT-SWAP'), isTrue);
   });
 
+  test('stale list response keeps known rows and marks recovery state', () async {
+    final api = _FakeStrategyApi();
+    final controller = _controller(api);
+    addTearDown(controller.dispose);
+    await controller.load();
+    final knownRows = List<Map<String, dynamic>>.from(controller.strategies);
+    expect(knownRows, isNotEmpty);
+    expect(controller.metricsAreStale, isFalse);
+
+    api.listError = const StrategyApiException(
+      code: 'strategy_snapshot_unavailable',
+      message:
+          'Danh sách chiến thuật chưa có bản dữ liệu mới và đầy đủ. Giữ dữ liệu đã biết và tải lại.',
+      statusCode: 503,
+    );
+    await controller.refresh();
+
+    expect(controller.strategies, knownRows);
+    expect(controller.metricsAreStale, isTrue);
+    expect(controller.loadError, contains('bản dữ liệu'));
+  });
+
   test(
     'failed quote snapshots retry only after another explicit load',
     () async {

@@ -4,6 +4,7 @@ import unittest
 from decimal import Decimal, getcontext
 
 from backend.exchanges.contracts import (
+    OrderDTO,
     PositionDTO,
     decimal_add,
     decimal_multiply,
@@ -94,6 +95,105 @@ class ExchangeContractTests(unittest.TestCase):
         self.assertIn("settlementAsset", position)
         self.assertIn("metadataVersion", position)
         self.assertNotIn("native_quantity", position)
+
+    def test_action_identity_fields_are_nullable_additive_wire_fields(self) -> None:
+        position = PositionDTO(
+            exchange="OKX",
+            product="SWAP",
+            environment="demo",
+            region="global",
+            instrument="BTC-USDT-SWAP",
+            native_quantity=Decimal("3"),
+            native_unit="contracts",
+            base_quantity=Decimal("0.03"),
+            contract_value=Decimal("0.01"),
+            contract_value_unit="BTC",
+            contract_type="linear",
+            settlement_asset="USDT",
+            entry_price=Decimal("2000"),
+            mark_price=Decimal("2010"),
+            unrealized_pnl=Decimal("0"),
+            side="long",
+            position_mode="net_mode",
+            metadata_version="meta-v1",
+            margin_mode="isolated",
+            margin_currency="USDT",
+            position_id="pos-1",
+        ).to_dict()
+        self.assertEqual(position["marginMode"], "isolated")
+        self.assertEqual(position["marginCurrency"], "USDT")
+        self.assertEqual(position["positionId"], "pos-1")
+
+        binance_compatible = PositionDTO(
+            "BINANCE", "USD_M", "live", "global", "BTCUSDT", Decimal("1"),
+            "base", Decimal("1"), None, None, "PERPETUAL", "USDT", None,
+            None, None, "long", "one_way", "meta-v1",
+        ).to_dict()
+        self.assertIsNone(binance_compatible["marginMode"])
+        self.assertIsNone(binance_compatible["marginCurrency"])
+        self.assertIsNone(binance_compatible["positionId"])
+
+        order = OrderDTO(
+            "OKX", "SWAP", "demo", "global", "order-1", None,
+            "BTC-USDT-SWAP", "buy", "limit", "live", Decimal("2"),
+            "contracts", Decimal("0"), Decimal("2030"), None, "meta-v1",
+            limit_price=Decimal("2025.50"),
+        ).to_dict()
+        self.assertEqual(order["limitPrice"], "2025.50")
+        self.assertEqual(order["averagePrice"], "2030")
+
+    def test_okx_action_identity_uses_only_valid_native_fields(self) -> None:
+        client = _FabricatedOKX()
+        adapter = OKXReadAdapter(client, environment="demo", region="global")
+        client.positions = [
+            {
+                "instId": "BTC-USDT-SWAP", "pos": "3", "posSide": "long",
+                "posCcy": "BTC", "mgnMode": "cross", "ccy": "USDT",
+                "marginCcy": "ETH", "posId": "native-position-1", "avgPx": "2000",
+            },
+            {
+                "instId": "BTC-USDT-SWAP", "pos": "1", "posSide": "short",
+                "posCcy": "BTC", "mgnMode": "CROSS", "ccy": "USD-T",
+                "posId": 42, "avgPx": "2000",
+            },
+        ]
+        rows = [row.to_dict() for row in adapter.positions("SWAP")]
+        self.assertEqual(rows[0]["marginMode"], "cross")
+        self.assertEqual(rows[0]["marginCurrency"], "USDT")
+        self.assertEqual(rows[0]["positionId"], "native-position-1")
+        self.assertIsNone(rows[1]["marginMode"])
+        self.assertIsNone(rows[1]["marginCurrency"])
+        self.assertIsNone(rows[1]["positionId"])
+
+        client.positions = [{
+            "instId": "BTC-USDT", "pos": "0.03", "posCcy": "BTC",
+            "mgnMode": "isolated", "marginCcy": "USDT", "posId": "margin-1",
+        }]
+        margin = adapter.positions("MARGIN")[0].to_dict()
+        self.assertEqual(margin["marginCurrency"], "USDT")
+        self.assertNotEqual(margin["marginCurrency"], margin["nativeAsset"])
+
+        client.orders = [
+            {
+                "instId": "BTC-USDT-SWAP", "ordId": "limit-1", "sz": "2",
+                "accFillSz": "0", "side": "buy", "ordType": "limit",
+                "px": "2025.50", "avgPx": "999", "state": "live",
+            },
+            {
+                "instId": "BTC-USDT-SWAP", "ordId": "market-1", "sz": "2",
+                "accFillSz": "0", "side": "buy", "ordType": "market",
+                "px": "2025.50", "avgPx": "999", "state": "live",
+            },
+            {
+                "instId": "BTC-USDT-SWAP", "ordId": "bad-1", "sz": "2",
+                "accFillSz": "0", "side": "buy", "ordType": "limit",
+                "px": "-1", "avgPx": "999", "state": "live",
+            },
+        ]
+        orders = [row.to_dict() for row in adapter.orders("SWAP")]
+        self.assertEqual(orders[0]["limitPrice"], "2025.50")
+        self.assertIsNone(orders[1]["limitPrice"])
+        self.assertIsNone(orders[2]["limitPrice"])
 
     def test_okx_balances_and_current_positions_preserve_full_native_observations(self) -> None:
         client = _FabricatedOKX()
