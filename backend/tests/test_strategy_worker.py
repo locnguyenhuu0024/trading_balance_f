@@ -3,10 +3,13 @@ from __future__ import annotations
 import threading
 import unittest
 import os
+import signal
 import sqlite3
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
+from backend import strategy_worker
 from backend.okx import OKXTransportError
 from backend.security import token_digest
 from backend.store import SQLiteStore, decode_json, encode_json
@@ -531,6 +534,39 @@ class StrategyWorkerTests(unittest.TestCase):
         settings = WorkerSettings.from_environ(values)
         self.assertEqual(settings.operation_db_path, values["OPERATION_DB_PATH"])
         self.assertEqual(settings.session_signing_key, SIGNING_KEY)
+
+    def test_red_standalone_entrypoint_waits_without_loading_worker_runtime(self) -> None:
+        handlers: dict[int, Any] = {}
+
+        class StopEvent:
+            stopped = False
+            wait_calls = 0
+
+            def wait(self, _timeout: float | None = None) -> bool:
+                self.wait_calls += 1
+                handlers[signal.SIGTERM](signal.SIGTERM, None)
+                return self.stopped
+
+            def set(self) -> None:
+                self.stopped = True
+
+        stop_event = StopEvent()
+
+        with (
+            mock.patch.object(strategy_worker.WorkerSettings, "from_environ") as load_settings,
+            mock.patch.object(strategy_worker, "StrategyOrderWorker") as worker_factory,
+            mock.patch.object(strategy_worker.threading, "Event", return_value=stop_event),
+            mock.patch.object(
+                strategy_worker.signal,
+                "signal",
+                side_effect=lambda signum, handler: handlers.__setitem__(signum, handler),
+            ),
+        ):
+            strategy_worker.main()
+
+        load_settings.assert_not_called()
+        worker_factory.assert_not_called()
+        self.assertEqual(stop_event.wait_calls, 1)
 
     def test_green_monitor_schema_upgrade_keeps_existing_strategy_rows(self) -> None:
         with self.store.transaction() as connection:

@@ -12,6 +12,34 @@ import 'package:trading_balance_f/features/strategy/presentation/providers/strat
 import 'package:trading_balance_f/features/strategy/presentation/strategy_settings_dialog.dart';
 
 void main() {
+  testWidgets('sequential mode is disabled while the pause is active', (
+    tester,
+  ) async {
+    final api = _FakeStrategyApi()
+      ..settingsGetOverride = const StrategySettings(
+        limitOrderSubmissionMode: 'batch',
+        jevScreeningThresholds: StrategyJevScreeningThresholds.defaults,
+      );
+    final harness = await _pumpSettings(tester, api);
+
+    expect(_selectedMode(tester), 'batch');
+    expect(
+      tester
+          .widget<RadioListTile<String>>(
+            find.byKey(const Key('strategy-settings-sequential')),
+          )
+          .enabled,
+      isFalse,
+    );
+    expect(
+      find.textContaining(
+        'Chế độ này đang tạm dừng. Chiến thuật mới sử dụng Gửi theo lô.',
+      ),
+      findsOneWidget,
+    );
+    harness.dashboard.dispose();
+  });
+
   testWidgets('JEV percentage settings reject values above 100', (
     tester,
   ) async {

@@ -17,7 +17,8 @@ from backend.app import create_application
 from backend.okx import OKXError
 from backend.security import token_digest
 from backend.service import APIError, RuntimeSettings, TradeService
-from backend.store import encode_json
+from backend.store import decode_json, encode_json
+from backend.strategy_queue import initial_results, new_queue
 from backend.strategy_worker import StrategyOrderWorker, WorkerSettings
 
 
@@ -439,6 +440,106 @@ class StrategyApiTests(unittest.TestCase):
         self.assertEqual(status, 200, saved)
         return saved["id"], preview
 
+    def seed_legacy_sequential_queue(self, strategy_id: str) -> dict[str, Any]:
+        """Freeze a pre-pause queue fixture without reopening sequential API creation."""
+        with self.service.store.connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM strategies WHERE strategy_id=?", (strategy_id,)
+            ).fetchone()
+        self.assertIsNotNone(row)
+        strategy = self.service.strategy._decode_row(row)
+        prepared = deepcopy(strategy["prepared"])
+        orders = deepcopy(strategy["orders"])
+        self.assertIsInstance(prepared, dict)
+        self.assertIsInstance(orders, list)
+        prepared["submissionMode"] = "sequential"
+        queue = new_queue(
+            enqueued_at=self.now,
+            total_count=len(orders),
+            preview_hash=strategy["previewHash"],
+        )
+        scope = self.service.strategy._persisted_scope(strategy)
+        self.assertTrue(scope.valid)
+        results = initial_results(orders)
+        with self.service.store.transaction() as connection:
+            connection.execute(
+                "UPDATE strategies SET status='APPLYING', attempt_started=1, "
+                "confirmation_hash=NULL, prepared_expires_at=NULL, prepared_json=?, "
+                "submission_mode='sequential', batch_attempted=0, "
+                "order_placement_attempted=0, queue_json=?, results_json=?, "
+                "execution_id=NULL, execution_lease_until=NULL, updated_at=? "
+                "WHERE strategy_id=?",
+                (encode_json(prepared), encode_json(queue), encode_json(results), self.now, strategy_id),
+            )
+            connection.execute(
+                "INSERT INTO strategy_reservations(account_fingerprint, instrument_id, strategy_id, "
+                "position_mode, side_scope, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    strategy["accountFingerprint"], strategy["contract"]["instrumentId"],
+                    strategy_id, scope.position_mode, scope.side_scope, self.now,
+                ),
+            )
+        return self.service.strategy._load_row(strategy_id)
+
+    def test_red_new_preparation_uses_batch_for_legacy_sequential_preference(self) -> None:
+        fingerprint = token_digest(
+            "okx-account-uid:v1:" + self.exchange.account_uid, SIGNING_KEY
+        )
+        with self.service.store.transaction() as connection:
+            connection.execute(
+                "UPDATE strategy_account_preferences SET limit_order_submission_mode='sequential' "
+                "WHERE account_fingerprint=?", (fingerprint,),
+            )
+
+        strategy_id, _ = self.save_draft(self.one_sided_contract())
+        status, prepared = self.request(
+            "POST", f"/v1/strategies/{strategy_id}/prepare-apply", {}
+        )
+
+        self.assertEqual(status, 200, prepared)
+        self.assertEqual(prepared["submissionMode"], "batch")
+        with self.service.store.connection() as connection:
+            row = connection.execute(
+                "SELECT submission_mode, prepared_json, queue_json FROM strategies "
+                "WHERE strategy_id=?", (strategy_id,),
+            ).fetchone()
+        self.assertEqual(row["submission_mode"], "batch")
+        self.assertEqual(decode_json(row["prepared_json"])["submissionMode"], "batch")
+        self.assertIsNone(row["queue_json"])
+
+    def test_red_old_prepared_sequential_strategy_conflicts_without_writes(self) -> None:
+        strategy_id, _ = self.save_draft(self.one_sided_contract())
+        status, prepared = self.request(
+            "POST", f"/v1/strategies/{strategy_id}/prepare-apply", {}
+        )
+        self.assertEqual(status, 200, prepared)
+        self.assertEqual(prepared["submissionMode"], "batch")
+        with self.service.store.transaction() as connection:
+            row = connection.execute(
+                "SELECT prepared_json FROM strategies WHERE strategy_id=?", (strategy_id,)
+            ).fetchone()
+            legacy_prepared = decode_json(row["prepared_json"])
+            legacy_prepared["submissionMode"] = "sequential"
+            connection.execute(
+                "UPDATE strategies SET prepared_json=?, submission_mode='sequential' "
+                "WHERE strategy_id=?",
+                (encode_json(legacy_prepared), strategy_id),
+            )
+
+        status, refusal = self.request(
+            "POST", f"/v1/strategies/{strategy_id}/execute-apply",
+            {"confirmationToken": prepared["confirmationToken"]},
+        )
+
+        self.assertEqual(status, 409, refusal)
+        self.assertEqual(refusal["error"], "sequential_submission_unavailable")
+        self.assertIn("batch", refusal["message"].lower())
+        persisted = self.service.strategy._load_row(strategy_id)
+        self.assertEqual(persisted["status"], "PREPARED")
+        self.assertFalse(persisted["attemptStarted"])
+        self.assertIsNone(persisted["queue"])
+        self.assertEqual(self.exchange.trade_writes, [])
+
     def apply_strategy(self) -> str:
         strategy_id, _ = self.save_draft()
         self.exchange.pos_mode = "long_short_mode"
@@ -705,32 +806,25 @@ class StrategyApiTests(unittest.TestCase):
         self.assertEqual(self.exchange.trade_writes, [])
 
     def test_red_prepared_position_mode_change_blocks_batch_claim_before_writes(self) -> None:
-        for submission_mode in ("batch", "sequential"):
-            with self.subTest(submission_mode=submission_mode):
-                status, settings = self.request(
-                    "POST", "/v1/strategies/settings",
-                    {"limitOrderSubmissionMode": submission_mode},
-                )
-                self.assertEqual(status, 200, settings)
-                self.exchange.pos_mode = "long_short_mode"
-                strategy_id, _ = self.save_draft(self.one_sided_contract())
-                status, prepared = self.request("POST", f"/v1/strategies/{strategy_id}/prepare-apply", {})
-                self.assertEqual(status, 200, prepared)
-                self.exchange.pos_mode = "net_mode"
+        self.exchange.pos_mode = "long_short_mode"
+        strategy_id, _ = self.save_draft(self.one_sided_contract())
+        status, prepared = self.request("POST", f"/v1/strategies/{strategy_id}/prepare-apply", {})
+        self.assertEqual(status, 200, prepared)
+        self.exchange.pos_mode = "net_mode"
 
-                status, refusal = self.request(
-                    "POST", f"/v1/strategies/{strategy_id}/execute-apply",
-                    {"confirmationToken": prepared["confirmationToken"]},
-                )
+        status, refusal = self.request(
+            "POST", f"/v1/strategies/{strategy_id}/execute-apply",
+            {"confirmationToken": prepared["confirmationToken"]},
+        )
 
-                self.assertEqual(status, 409, refusal)
-                self.assertEqual(refusal["error"], "account_mode_unsupported")
-                self.assertEqual(self.exchange.trade_writes, [])
-                persisted = self.service.strategy._load_row(strategy_id)
-                self.assertEqual(persisted["status"], "PREPARED")
-                self.assertEqual(persisted["confirmationHash"], token_digest(
-                    prepared["confirmationToken"], SIGNING_KEY
-                ))
+        self.assertEqual(status, 409, refusal)
+        self.assertEqual(refusal["error"], "account_mode_unsupported")
+        self.assertEqual(self.exchange.trade_writes, [])
+        persisted = self.service.strategy._load_row(strategy_id)
+        self.assertEqual(persisted["status"], "PREPARED")
+        self.assertEqual(persisted["confirmationHash"], token_digest(
+            prepared["confirmationToken"], SIGNING_KEY
+        ))
 
     def test_red_hedge_batch_reservations_allow_only_opposite_single_sides(self) -> None:
         self.exchange.pos_mode = "long_short_mode"
@@ -813,27 +907,38 @@ class StrategyApiTests(unittest.TestCase):
             [(strategy_ids[0], "long"), (strategy_ids[1], "short")],
         )
 
-    def test_green_hedge_sequential_queues_allow_opposite_and_refuse_same_side(self) -> None:
+    def test_sequential_mode_save_is_refused_without_changing_effective_batch(self) -> None:
         self.exchange.pos_mode = "long_short_mode"
-        status, settings = self.request(
+        status, refusal = self.request(
             "POST", "/v1/strategies/settings", {"limitOrderSubmissionMode": "sequential"}
         )
+        self.assertEqual(status, 409, refusal)
+        self.assertEqual(refusal["error"], "sequential_submission_unavailable")
+        status, settings = self.request("GET", "/v1/strategies/settings")
         self.assertEqual(status, 200, settings)
+        self.assertEqual(settings["limitOrderSubmissionMode"], "batch")
+        strategy_id, _ = self.save_draft(self.one_sided_contract("long"))
+        status, prepared = self.request("POST", f"/v1/strategies/{strategy_id}/prepare-apply", {})
+        self.assertEqual(status, 200, prepared)
+        self.assertEqual(prepared["submissionMode"], "batch")
+        status, applied = self.request(
+            "POST", f"/v1/strategies/{strategy_id}/execute-apply",
+            {"confirmationToken": prepared["confirmationToken"]},
+        )
+        self.assertEqual(status, 200, applied)
+        self.assertEqual(applied["status"], "APPLIED")
 
-        queued: list[tuple[str, dict[str, Any]]] = []
+    def test_legacy_sequential_reservations_allow_opposite_and_refuse_same_hedge_side(self) -> None:
+        self.exchange.pos_mode = "long_short_mode"
+        legacy_ids: list[str] = []
         for side in ("long", "short"):
             strategy_id, _ = self.save_draft(self.one_sided_contract(side))
             status, prepared = self.request("POST", f"/v1/strategies/{strategy_id}/prepare-apply", {})
             self.assertEqual(status, 200, prepared)
-            status, result = self.request(
-                "POST", f"/v1/strategies/{strategy_id}/execute-apply",
-                {"confirmationToken": prepared["confirmationToken"]},
-            )
-            self.assertEqual(status, 200, result)
-            self.assertEqual(result["status"], "APPLYING")
-            queued.append((strategy_id, result))
+            self.seed_legacy_sequential_queue(strategy_id)
+            legacy_ids.append(strategy_id)
 
-        self.assertEqual(len(self.exchange.trade_writes), 0)
+        self.assertEqual(self.exchange.trade_writes, [])
         refused_id, _ = self.save_draft(self.one_sided_contract("long"))
         status, refused_prepared = self.request(
             "POST", f"/v1/strategies/{refused_id}/prepare-apply", {}
@@ -856,8 +961,8 @@ class StrategyApiTests(unittest.TestCase):
         self.assertEqual(
             [(row["strategy_id"], row["position_mode"], row["side_scope"]) for row in reservations],
             [
-                (queued[0][0], "long_short_mode", "long"),
-                (queued[1][0], "long_short_mode", "short"),
+                (legacy_ids[0], "long_short_mode", "long"),
+                (legacy_ids[1], "long_short_mode", "short"),
             ],
         )
 
@@ -1144,24 +1249,24 @@ class StrategyApiTests(unittest.TestCase):
     def test_red_batch_and_sequential_claims_recheck_persisted_order_count(self) -> None:
         for mode in ("batch", "sequential"):
             with self.subTest(mode=mode):
-                status, settings = self.request(
-                    "POST", "/v1/strategies/settings", {"limitOrderSubmissionMode": mode}
-                )
-                self.assertEqual(status, 200, settings)
                 strategy_id, _ = self.save_draft(self.multi_order_contract(10))
                 status, prepared = self.request("POST", f"/v1/strategies/{strategy_id}/prepare-apply", {})
                 self.assertEqual(status, 200, prepared)
+                self.assertEqual(prepared["submissionMode"], "batch")
                 strategy, _, _ = self.service.strategy._current_strategy(strategy_id)
                 with self.service.store.transaction() as connection:
                     row = connection.execute(
                         "SELECT prepared_json FROM strategies WHERE strategy_id=?", (strategy_id,)
                     ).fetchone()
                     persisted_prepared = json.loads(row["prepared_json"])
+                    if mode == "sequential":
+                        persisted_prepared["submissionMode"] = "sequential"
                     persisted_prepared["orders"].append(deepcopy(persisted_prepared["orders"][-1]))
                     connection.execute(
-                        "UPDATE strategies SET prepared_json=? WHERE strategy_id=?",
-                        (encode_json(persisted_prepared), strategy_id),
+                        "UPDATE strategies SET prepared_json=?, submission_mode=? WHERE strategy_id=?",
+                        (encode_json(persisted_prepared), mode, strategy_id),
                     )
+                strategy = self.service.strategy._load_row(strategy_id)
 
                 with self.assertRaises(APIError) as raised:
                     if mode == "sequential":
@@ -1233,10 +1338,11 @@ class StrategyApiTests(unittest.TestCase):
         for mode, label, instrument_id, contract in cases:
             if instrument_id != INSTRUMENT:
                 self._add_fake_instrument(instrument_id)
-            status, settings = self.request(
-                "POST", "/v1/strategies/settings", {"limitOrderSubmissionMode": mode}
-            )
-            self.assertEqual(status, 200, settings)
+            if mode == "batch":
+                status, settings = self.request(
+                    "POST", "/v1/strategies/settings", {"limitOrderSubmissionMode": mode}
+                )
+                self.assertEqual(status, 200, settings)
             with self.subTest(mode=mode, contract=label):
                 self.exchange.pos_mode = "long_short_mode" if "mixed" in label else "net_mode"
                 batch_count = len(self.exchange.batch_writes)
@@ -1247,18 +1353,20 @@ class StrategyApiTests(unittest.TestCase):
                 )
                 self.assertEqual(status, 200, prepared)
                 self.assertEqual(len(prepared["orders"]), 10)
-                status, applied = self.request(
-                    "POST", f"/v1/strategies/{strategy_id}/execute-apply",
-                    {"confirmationToken": prepared["confirmationToken"]},
-                )
-                self.assertEqual(status, 200, applied)
                 if mode == "batch":
+                    status, applied = self.request(
+                        "POST", f"/v1/strategies/{strategy_id}/execute-apply",
+                        {"confirmationToken": prepared["confirmationToken"]},
+                    )
+                    self.assertEqual(status, 200, applied)
                     self.assertEqual(applied["status"], "APPLIED")
                     self.assertEqual(len(self.exchange.batch_writes), batch_count + 1)
                     self.assertEqual(len(self.exchange.batch_writes[-1][2]), 10)
                 else:
-                    self.assertEqual(applied["status"], "APPLYING")
-                    self.assertEqual(applied["queueProgress"]["totalCount"], 10)
+                    self.seed_legacy_sequential_queue(strategy_id)
+                    legacy = self.service.strategy._load_row(strategy_id)
+                    self.assertEqual(legacy["status"], "APPLYING")
+                    self.assertEqual(legacy["queue"]["totalCount"], 10)
                     self.assertEqual(self.exchange.single_order_attempts, order_count)
                     self.assertTrue(self._worker().run_once())
                     status, result = self.request("GET", f"/v1/strategies/{strategy_id}/result")
@@ -1267,10 +1375,11 @@ class StrategyApiTests(unittest.TestCase):
                     self.assertEqual(self.exchange.single_order_attempts, order_count + 10)
 
     def _assert_automatic_single_side_budget_execution(self, side: str, mode: str) -> None:
-        status, settings = self.request(
-            "POST", "/v1/strategies/settings", {"limitOrderSubmissionMode": mode}
-        )
-        self.assertEqual(status, 200, settings)
+        if mode == "batch":
+            status, settings = self.request(
+                "POST", "/v1/strategies/settings", {"limitOrderSubmissionMode": mode}
+            )
+            self.assertEqual(status, 200, settings)
         self.exchange.pos_mode = "long_short_mode"
         level_id = f"automatic-{side}-{mode}"
         level = {"levelId": level_id, "side": side, "price": "59000" if side == "long" else "61000"}
@@ -1317,21 +1426,21 @@ class StrategyApiTests(unittest.TestCase):
             "POST", f"/v1/strategies/{candidate_id}/prepare-apply", {}
         )
         self.assertEqual(status, 200, prepared)
-        self.assertEqual(prepared["submissionMode"], mode)
+        self.assertEqual(prepared["submissionMode"], "batch")
         self.assertEqual(len(prepared["orders"]), 1)
         self.assertEqual(prepared["orders"][0]["side"], side)
-        status, applying = self.request(
-            "POST", f"/v1/strategies/{candidate_id}/execute-apply",
-            {"confirmationToken": prepared["confirmationToken"]},
-        )
-        self.assertEqual(status, 200, applying)
         expected_order_side = "buy" if side == "long" else "sell"
         if mode == "batch":
+            status, applying = self.request(
+                "POST", f"/v1/strategies/{candidate_id}/execute-apply",
+                {"confirmationToken": prepared["confirmationToken"]},
+            )
+            self.assertEqual(status, 200, applying)
             self.assertEqual(applying["status"], "APPLIED")
             order = self.exchange.batch_writes[-1][2][0]
             final_result = applying
         else:
-            self.assertEqual(applying["status"], "APPLYING")
+            self.seed_legacy_sequential_queue(candidate_id)
             self.assertTrue(self._worker().run_once())
             status, applied = self.request("GET", f"/v1/strategies/{candidate_id}/result")
             self.assertEqual(status, 200, applied)
@@ -2405,21 +2514,12 @@ class StrategyApiTests(unittest.TestCase):
             ).fetchone())
 
     def test_green_t73_stopped_sequential_not_submitted_rows_remain_deletable(self) -> None:
-        status, setting = self.request(
-            "POST", "/v1/strategies/settings", {"limitOrderSubmissionMode": "sequential"}
-        )
-        self.assertEqual(status, 200, setting)
         strategy_id, _ = self.save_draft(self.multi_order_contract(2))
         status, prepared = self.request(
             "POST", f"/v1/strategies/{strategy_id}/prepare-apply", {}
         )
         self.assertEqual(status, 200, prepared)
-        status, queued = self.request(
-            "POST", f"/v1/strategies/{strategy_id}/execute-apply",
-            {"confirmationToken": prepared["confirmationToken"]},
-        )
-        self.assertEqual(status, 200, queued)
-        self.assertEqual(queued["queueStatus"], "pending")
+        self.seed_legacy_sequential_queue(strategy_id)
         self.exchange.leverage_response = {"code": "51008", "data": [{}]}
         self.assertTrue(self._worker().run_once())
         self.exchange.leverage_response = None
@@ -3564,21 +3664,12 @@ class StrategyApiTests(unittest.TestCase):
             {**review, "previewHash": preview["previewHash"], "retryRequestId": "retry-resume-child-001"},
         )
         self.assertEqual(status, 200, child)
-        status, setting = self.request(
-            "POST", "/v1/strategies/settings", {"limitOrderSubmissionMode": "sequential"}
-        )
-        self.assertEqual(status, 200, setting)
         status, prepared = self.request("POST", f"/v1/strategies/{child['id']}/prepare-apply", {})
         self.assertEqual(status, 200, prepared)
         self.assertEqual(prepared["id"], child["id"])
         self.assertEqual(prepared["resubmission"]["sourceStrategyId"], source_id)
         self.assertEqual(prepared["resubmission"]["sourceClientOrderIds"], ids)
-        status, queued = self.request(
-            "POST", f"/v1/strategies/{child['id']}/execute-apply",
-            {"confirmationToken": prepared["confirmationToken"]},
-        )
-        self.assertEqual(status, 200, queued)
-        self.assertEqual(queued["queueStatus"], "pending")
+        self.seed_legacy_sequential_queue(child["id"])
 
         with self.service.store.transaction() as connection:
             persisted = connection.execute(
@@ -3620,22 +3711,13 @@ class StrategyApiTests(unittest.TestCase):
         self.assertEqual(posted[0]["sz"], source_result["orders"][1]["contracts"])
 
     def test_green_stopped_sequential_leverage_rejection_allows_fixed_unsent_tail_retry(self) -> None:
-        status, setting = self.request(
-            "POST", "/v1/strategies/settings", {"limitOrderSubmissionMode": "sequential"}
-        )
-        self.assertEqual(status, 200, setting)
         source_contract = self.multi_order_contract(2)
         source_id, _ = self.save_draft(source_contract)
         status, source_prepared = self.request(
             "POST", f"/v1/strategies/{source_id}/prepare-apply", {}
         )
         self.assertEqual(status, 200, source_prepared)
-        status, queued_source = self.request(
-            "POST", f"/v1/strategies/{source_id}/execute-apply",
-            {"confirmationToken": source_prepared["confirmationToken"]},
-        )
-        self.assertEqual(status, 200, queued_source)
-        self.assertEqual(queued_source["queueStatus"], "pending")
+        self.seed_legacy_sequential_queue(source_id)
         self.exchange.leverage_response = {"code": "51008", "data": [{}]}
         self.assertTrue(self._worker().run_once())
         self.exchange.leverage_response = None
@@ -3678,11 +3760,7 @@ class StrategyApiTests(unittest.TestCase):
         self.assertEqual(prepared["id"], child["id"])
         self.assertEqual(prepared["resubmission"]["sourceStrategyId"], source_id)
         self.assertEqual(prepared["resubmission"]["sourceClientOrderIds"], [tail["clientOrderId"]])
-        status, child_queued = self.request(
-            "POST", f"/v1/strategies/{child['id']}/execute-apply",
-            {"confirmationToken": prepared["confirmationToken"]},
-        )
-        self.assertEqual(status, 200, child_queued)
+        self.seed_legacy_sequential_queue(child["id"])
         self.assertTrue(self._worker().run_once())
         status, applied = self.request("GET", f"/v1/strategies/{child['id']}/result")
         self.assertEqual(status, 200, applied)
@@ -3758,16 +3836,12 @@ class StrategyApiTests(unittest.TestCase):
         draft_body["retryRequestId"] = "retry-request-consume-002"
         status, child = self.request("POST", f"/v1/strategies/{source_id}/retry-drafts", draft_body)
         self.assertEqual(status, 200, child)
-        status, setting = self.request("POST", "/v1/strategies/settings", {"limitOrderSubmissionMode": "sequential"})
-        self.assertEqual(status, 200, setting)
         status, prepared = self.request("POST", f"/v1/strategies/{child['id']}/prepare-apply", {})
         self.assertEqual(status, 200, prepared)
-        status, queued = self.request(
-            "POST", f"/v1/strategies/{child['id']}/execute-apply",
-            {"confirmationToken": prepared["confirmationToken"]},
-        )
-        self.assertEqual(status, 200, queued)
-        self.assertTrue(queued["queueStatus"] in {"pending", "sending"})
+        self.seed_legacy_sequential_queue(child["id"])
+        queued = self.service.strategy._load_row(child["id"])
+        self.assertEqual(queued["status"], "APPLYING")
+        self.assertEqual(queued["queue"]["phase"], "pending")
         self.assertFalse(queued["orderPlacementAttempted"])
 
         status, deleted_child = self.request("POST", f"/v1/strategies/{child['id']}/delete", {})
@@ -3813,18 +3887,9 @@ class StrategyApiTests(unittest.TestCase):
             {**review, "previewHash": preview["previewHash"], "retryRequestId": "retry-worker-green-01"},
         )
         self.assertEqual(status, 200, child)
-        status, setting = self.request(
-            "POST", "/v1/strategies/settings", {"limitOrderSubmissionMode": "sequential"}
-        )
-        self.assertEqual(status, 200, setting)
         status, prepared = self.request("POST", f"/v1/strategies/{child['id']}/prepare-apply", {})
         self.assertEqual(status, 200, prepared)
-        status, queued = self.request(
-            "POST", f"/v1/strategies/{child['id']}/execute-apply",
-            {"confirmationToken": prepared["confirmationToken"]},
-        )
-        self.assertEqual(status, 200, queued)
-        self.assertEqual(queued["queueStatus"], "pending")
+        self.seed_legacy_sequential_queue(child["id"])
         writes_before_worker = len(self.exchange.trade_writes)
 
         self.assertTrue(self._worker().run_once())
@@ -3956,10 +4021,11 @@ class StrategyApiTests(unittest.TestCase):
                      "retryRequestId": f"retry-claim-{mode}-request"},
                 )
                 self.assertEqual(status, 200, child)
-                status, setting = self.request(
-                    "POST", "/v1/strategies/settings", {"limitOrderSubmissionMode": mode}
-                )
-                self.assertEqual(status, 200, setting)
+                if mode == "batch":
+                    status, setting = self.request(
+                        "POST", "/v1/strategies/settings", {"limitOrderSubmissionMode": mode}
+                    )
+                    self.assertEqual(status, 200, setting)
                 status, prepared = self.request(
                     "POST", f"/v1/strategies/{child['id']}/prepare-apply", {}
                 )
@@ -3967,6 +4033,18 @@ class StrategyApiTests(unittest.TestCase):
                 writes_before_claim = len(self.exchange.trade_writes)
                 method_name = "_claim_queue" if mode == "sequential" else "_claim_execution"
                 original_claim = getattr(self.service.strategy, method_name)
+                if mode == "sequential":
+                    with self.service.store.transaction() as connection:
+                        row = connection.execute(
+                            "SELECT prepared_json FROM strategies WHERE strategy_id=?", (child["id"],)
+                        ).fetchone()
+                        legacy_prepared = json.loads(row["prepared_json"])
+                        legacy_prepared["submissionMode"] = "sequential"
+                        connection.execute(
+                            "UPDATE strategies SET prepared_json=?, submission_mode='sequential' "
+                            "WHERE strategy_id=?",
+                            (encode_json(legacy_prepared), child["id"]),
+                        )
 
                 def mutate_source_then_claim(*args: Any, **kwargs: Any) -> Any:
                     with self.service.store.transaction() as connection:
@@ -3985,12 +4063,21 @@ class StrategyApiTests(unittest.TestCase):
                 with patch.object(
                     self.service.strategy, method_name, side_effect=mutate_source_then_claim
                 ):
-                    status, refusal = self.request(
-                        "POST", f"/v1/strategies/{child['id']}/execute-apply",
-                        {"confirmationToken": prepared["confirmationToken"]},
-                    )
-                self.assertEqual(status, 409, refusal)
-                self.assertEqual(refusal["error"], "retry_source_stale")
+                    if mode == "sequential":
+                        legacy_child = self.service.strategy._load_row(child["id"])
+                        with self.assertRaises(APIError) as raised:
+                            self.service.strategy._claim_queue(
+                                child["id"], legacy_child, prepared["confirmationToken"]
+                            )
+                        self.assertEqual(raised.exception.status, 409)
+                        self.assertEqual(raised.exception.code, "retry_source_stale")
+                    else:
+                        status, refusal = self.request(
+                            "POST", f"/v1/strategies/{child['id']}/execute-apply",
+                            {"confirmationToken": prepared["confirmationToken"]},
+                        )
+                        self.assertEqual(status, 409, refusal)
+                        self.assertEqual(refusal["error"], "retry_source_stale")
                 self.assertEqual(len(self.exchange.trade_writes), writes_before_claim)
                 with self.service.store.connection() as connection:
                     current_child = connection.execute(

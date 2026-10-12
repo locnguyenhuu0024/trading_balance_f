@@ -407,11 +407,11 @@ class _StrategySettingsDialogState
                                       key: const Key(
                                         'strategy-settings-sequential',
                                       ),
-                                      enabled: controlsEnabled,
+                                      enabled: false,
                                       value: 'sequential',
                                       title: const Text('Hàng đợi tuần tự'),
                                       subtitle: const Text(
-                                        'Lệnh tiếp theo được gửi sau khi máy chủ xác nhận lệnh trước đã được nhận, không phải sau khi lệnh khớp.',
+                                        'Chế độ này đang tạm dừng. Chiến thuật mới sử dụng Gửi theo lô.',
                                       ),
                                     ),
                                     RadioListTile<String>(

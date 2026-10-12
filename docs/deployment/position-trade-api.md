@@ -245,7 +245,15 @@ sudo docker restart trading-balance-trade-api
 
 ### Strategy order-monitor worker
 
-The strategy worker runs as a separate container from the same API image. It submits durable sequential limit-order queues and monitors submitted orders through OKX order details and positions. Store its env file under the root-owned `/etc/trading-balance` directory because the `/home/deploy/trading_balance_f` parent is writable and causes `sudoedit` to reject that path. Use the same OKX account and session signing key as the API, and set `OPERATION_DB_PATH` to the API's absolute container path for the SQLite database on its persistent mount:
+**Paused for this release:** Before pulling or deploying the updated code, stop the already running worker on the Docker host:
+
+```sh
+sudo docker stop trading-balance-strategy-worker
+```
+
+A code push, frontend restart, or API restart does not stop a worker container that is already running its old image. Do not start or restart the worker while the pause is active. The updated worker module waits idle if it is launched; new strategies use batch submission, and existing sequential queues remain unchanged and paused.
+
+The remaining worker deployment instructions are retained for a future, explicitly approved re-enable. Do not follow them during this pause. The worker normally runs as a separate container from the API image and submits durable sequential queues while monitoring submitted orders through OKX order details and positions. Store its env file under the root-owned `/etc/trading-balance` directory because the `/home/deploy/trading_balance_f` parent is writable and causes `sudoedit` to reject that path. Use the same OKX account and session signing key as the API, and set `OPERATION_DB_PATH` to the API's absolute container path for the SQLite database on its persistent mount:
 
 ```sh
 if ! sudo test -e /etc/trading-balance/trade-api-worker.env && ! sudo test -L /etc/trading-balance/trade-api-worker.env; then
@@ -254,11 +262,11 @@ fi
 sudoedit /etc/trading-balance/trade-api-worker.env
 ```
 
-For a release containing sequential queues, stop both the old API and worker, then back up the application SQLite database using the normal operator procedure. Install the same new image for the API and worker, start both services with the persistent database mounted, and verify both containers are running before releasing a compatible frontend that exposes the preference. The API and worker must share the same SQLite file so the lease fence, queue cursor, ACKs, and reservation state remain coordinated.
+For a future release that explicitly re-enables sequential queues, stop both the old API and worker, then back up the application SQLite database using the normal operator procedure. Install the same new image for the API and worker, start both services with the persistent database mounted, and verify both containers are running before releasing a compatible frontend that exposes the preference. The API and worker must share the same SQLite file so the lease fence, queue cursor, ACKs, and reservation state remain coordinated.
 
-For rollback, first roll back the frontend, then stop both the API and worker while preserving the SQLite database and all queue markers. After sequential queues have finished or stopped and ambiguous placements are resolved, prefer `batch` for new preparations. Do not erase markers or start older binaries while any sequential queue is `APPLYING` or has an unresolved placement. Let the matching API and worker reconcile those rows, or leave both services stopped and preserve the database for review. Once queue state is resolved, roll the API and worker back together to the same prior image. The additive database migration is retained across an application rollback.
+For a future rollback that explicitly re-enables sequential processing, first roll back the frontend, then stop both the API and worker while preserving the SQLite database and all queue markers. After sequential queues have finished or stopped and ambiguous placements are resolved, prefer `batch` for new preparations. Do not erase markers or start older binaries while any sequential queue is `APPLYING` or has an unresolved placement. Let the matching API and worker reconcile those rows, or leave both services stopped and preserve the database for review. Once queue state is resolved, roll the API and worker back together to the same prior image. The additive database migration is retained across an application rollback.
 
-Add these five entries, replacing each placeholder privately on the host:
+For a future worker re-enable, add these five entries, replacing each placeholder privately on the host:
 
 ```dotenv
 OKX_API_KEY=<SET_BY_USER_SAME_AS_API>
@@ -268,7 +276,7 @@ SESSION_SIGNING_KEY=<SET_BY_USER_SAME_AS_API>
 OPERATION_DB_PATH=<SET_BY_USER_SAME_ABSOLUTE_CONTAINER_PATH_AS_API>
 ```
 
-After the updated API container is running, start the worker from the Docker host. It uses the rebuilt API image, shares the API container's persistent volumes, runs as UID 10001 with a read-only filesystem and the same container hardening, and publishes no port:
+**Future re-enable only — do not run while the pause is active.** After the updated API container is running, start the worker from the Docker host. It uses the rebuilt API image, shares the API container's persistent volumes, runs as UID 10001 with a read-only filesystem and the same container hardening, and publishes no port:
 
 ```sh
 sudo docker run --detach --name trading-balance-strategy-worker --restart unless-stopped \
@@ -279,13 +287,13 @@ sudo docker run --detach --name trading-balance-strategy-worker --restart unless
   trading-balance-trade-api -m backend.strategy_worker
 ```
 
-To restart the worker without changing its image, run:
+**Future re-enable only — do not run while the pause is active.** To restart the worker without changing its image, run:
 
 ```sh
 sudo docker restart trading-balance-strategy-worker
 ```
 
-To replace the API and worker images together, run this sequence from the repository root. It conditionally removes an existing worker, rebuilds the image, then recreates the API before the worker so the worker shares the API container's volumes:
+**Historical combined rollout for a future re-enable only.** During the current pause, stop the old worker and deploy the API without running the worker creation command at the end of this sequence. When sequential processing is explicitly re-enabled, this sequence conditionally removes an existing worker, rebuilds the image, then recreates the API before the worker so the worker shares the API container's volumes:
 
 ```sh
 sudo docker build -f backend/Dockerfile -t trading-balance-trade-api .
@@ -309,14 +317,14 @@ sudo docker run --detach --name trading-balance-strategy-worker --restart unless
   trading-balance-trade-api -m backend.strategy_worker
 ```
 
-Check that Docker reports both containers running with these read-only commands:
+After explicitly re-enabling the worker, check that Docker reports both containers running with these read-only commands:
 
 ```sh
 sudo docker inspect --format '{{.State.Running}}' trading-balance-trade-api
 sudo docker inspect --format '{{.State.Running}}' trading-balance-strategy-worker
 ```
 
-After 5–10 seconds, open an applied, noncompleted strategy with outstanding submitted orders in the UI and confirm its order status and last successful scan freshness update, since draft or completed strategies receive no new worker scans. Container status and `/v1/health` only show process/API health; they do not prove that the worker synchronized with OKX.
+After 5–10 seconds of a future re-enable, open an applied, noncompleted strategy with outstanding submitted orders in the UI and confirm its order status and last successful scan freshness update, since draft or completed strategies receive no new worker scans. Container status and `/v1/health` only show process/API health; they do not prove that the worker synchronized with OKX.
 
 Check container status and its published loopback port with this read-only command:
 

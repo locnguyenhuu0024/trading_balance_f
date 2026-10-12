@@ -484,7 +484,8 @@ class StrategyService:
 
     def _get_settings(self) -> dict[str, Any]:
         _, fingerprint = self._account()
-        return self._settings_for_fingerprint(fingerprint)
+        settings = self._settings_for_fingerprint(fingerprint)
+        return {**settings, "limitOrderSubmissionMode": "batch"}
 
     def _save_settings(self, body: dict[str, Any]) -> dict[str, Any]:
         allowed_keys = {"limitOrderSubmissionMode", "jevScreeningThresholds"}
@@ -501,6 +502,11 @@ class StrategyService:
             raise APIError(
                 400, "invalid_submission_mode",
                 "limitOrderSubmissionMode must be sequential or batch.",
+            )
+        if mode_supplied and requested_mode == "sequential":
+            raise APIError(
+                409, "sequential_submission_unavailable",
+                "Sequential submissions are temporarily paused. Use batch for new strategies.",
             )
         requested_thresholds: dict[str, Any] | None = None
         if thresholds_supplied:
@@ -543,7 +549,7 @@ class StrategyService:
                 ),
             )
         return {
-            "limitOrderSubmissionMode": mode,
+            "limitOrderSubmissionMode": "batch",
             "jevScreeningThresholds": thresholds,
         }
 
@@ -2916,12 +2922,13 @@ class StrategyService:
                 "WHERE account_fingerprint=?",
                 (fingerprint,),
             ).fetchone()
-            submission_mode = "sequential" if preference is None else preference["limit_order_submission_mode"]
-            if submission_mode not in ("sequential", "batch"):
+            stored_mode = "sequential" if preference is None else preference["limit_order_submission_mode"]
+            if stored_mode not in ("sequential", "batch"):
                 raise APIError(
                     500, "strategy_settings_unavailable",
                     "The saved strategy submission preference is invalid.",
                 )
+            submission_mode = "batch"
             prepared["submissionMode"] = submission_mode
             changed = connection.execute(
                 "UPDATE strategies SET status='PREPARED', confirmation_hash=?, prepared_expires_at=?, "
@@ -3140,6 +3147,12 @@ class StrategyService:
         submission_mode = strategy["submissionMode"] or "batch"
         diagnostics.set_submission_mode(submission_mode)
         prepared_mode = prepared.get("submissionMode")
+        if submission_mode == "sequential" or prepared_mode == "sequential":
+            raise APIError(
+                409, "sequential_submission_unavailable",
+                "This strategy was prepared for sequential submission, which is temporarily paused. "
+                "Recreate and review it under batch mode.",
+            )
         if prepared_mode is not None and prepared_mode != submission_mode:
             raise APIError(409, "prepared_strategy_invalid", "The prepared submission mode is inconsistent.")
         try:

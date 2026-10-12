@@ -76,29 +76,25 @@ class StrategyQueueTests(unittest.TestCase):
     def _start_queue(
         self, count: int = 3, instrument_id: str = INSTRUMENT
     ) -> tuple[str, dict[str, Any]]:
-        status, saved_setting = self.api.request(
-            "POST", "/v1/strategies/settings", {"limitOrderSubmissionMode": "sequential"}
-        )
-        self.assertEqual(status, 200, saved_setting)
         strategy_id, _ = self.api.save_draft(self._contract(count, instrument_id))
         status, prepared = self.api.request(
             "POST", f"/v1/strategies/{strategy_id}/prepare-apply", {}
         )
         self.assertEqual(status, 200, prepared)
-        status, applying = self.api.request(
-            "POST", f"/v1/strategies/{strategy_id}/execute-apply",
-            {"confirmationToken": prepared["confirmationToken"]},
-        )
-        self.assertEqual(status, 200, applying)
+        self.assertEqual(prepared["submissionMode"], "batch")
+        self.api.seed_legacy_sequential_queue(strategy_id)
+        applying = self._read_strategy(strategy_id)
         self.assertEqual(applying["status"], "APPLYING")
         self.assertEqual(applying["submissionMode"], "sequential")
-        self.assertEqual(applying["queueStatus"], "pending")
+        self.assertEqual(applying["queue"]["phase"], "pending")
         status, duplicate = self.api.request(
             "POST", f"/v1/strategies/{strategy_id}/execute-apply",
             {"confirmationToken": prepared["confirmationToken"]},
         )
         self.assertEqual(status, 200, duplicate)
         self.assertEqual(duplicate["status"], "APPLYING")
+        self.assertEqual(duplicate["submissionMode"], "sequential")
+        self.assertEqual(duplicate["queueStatus"], "pending")
         self.assertEqual(self.api.exchange.single_order_attempts, 0)
         return strategy_id, prepared
 
@@ -588,7 +584,7 @@ class StrategyQueueTests(unittest.TestCase):
         self.assertGreaterEqual(starts[20] - starts[19], 0.250)
         self.assertEqual(self._read_strategy(second_id)["status"], "APPLIED")
 
-    def test_default_preference_is_sequential_and_prepare_freezes_mode(self) -> None:
+    def test_default_preference_and_new_preparation_use_batch(self) -> None:
         fingerprint = token_digest("okx-account-uid:v1:" + self.api.exchange.account_uid, SIGNING_KEY)
         with self.api.service.store.transaction() as connection:
             connection.execute(
@@ -596,30 +592,76 @@ class StrategyQueueTests(unittest.TestCase):
             )
         status, settings = self.api.request("GET", "/v1/strategies/settings")
         self.assertEqual(status, 200, settings)
-        self.assertEqual(settings["limitOrderSubmissionMode"], "sequential")
+        self.assertEqual(settings["limitOrderSubmissionMode"], "batch")
 
         strategy_id, _ = self.api.save_draft(self._contract(1))
         status, prepared = self.api.request(
             "POST", f"/v1/strategies/{strategy_id}/prepare-apply", {}
         )
         self.assertEqual(status, 200, prepared)
-        self.assertEqual(prepared["submissionMode"], "sequential")
-        status, saved = self.api.request(
-            "POST", "/v1/strategies/settings", {"limitOrderSubmissionMode": "batch"}
-        )
-        self.assertEqual(status, 200, saved)
+        self.assertEqual(prepared["submissionMode"], "batch")
         status, applying = self.api.request(
             "POST", f"/v1/strategies/{strategy_id}/execute-apply",
             {"confirmationToken": prepared["confirmationToken"]},
         )
         self.assertEqual(status, 200, applying)
-        self.assertEqual(applying["submissionMode"], "sequential")
-        self.assertEqual(applying["queueStatus"], "pending")
+        self.assertEqual(applying["submissionMode"], "batch")
+        self.assertEqual(applying["status"], "APPLIED")
 
         self.api.exchange.account_uid = "987654321"
         status, other_account = self.api.request("GET", "/v1/strategies/settings")
         self.assertEqual(status, 200, other_account)
-        self.assertEqual(other_account["limitOrderSubmissionMode"], "sequential")
+        self.assertEqual(other_account["limitOrderSubmissionMode"], "batch")
+
+    def test_legacy_applying_queue_refresh_and_duplicate_execute_preserve_markers(self) -> None:
+        strategy_id, prepared = self._start_queue(count=3)
+        with self.api.service.store.transaction() as connection:
+            row = connection.execute(
+                "SELECT queue_json, results_json FROM strategies WHERE strategy_id=?",
+                (strategy_id,),
+            ).fetchone()
+            queue = decode_json(row["queue_json"])
+            results = decode_json(row["results_json"])
+            queue.update({"phase": "sending", "cursor": 1, "inFlight": {"kind": "placement", "index": 1}})
+            results[0] = {
+                **results[0], "status": "accepted", "placementState": "accepted",
+                "exchangeOrderId": "accepted-before-pause",
+            }
+            results[1] = {**results[1], "status": "unknown", "placementState": "unknown"}
+            connection.execute(
+                "UPDATE strategies SET queue_json=?, results_json=?, order_placement_attempted=1 "
+                "WHERE strategy_id=?",
+                (encode_json(queue), encode_json(results), strategy_id),
+            )
+        with self.api.service.store.connection() as connection:
+            before = connection.execute(
+                "SELECT status, submission_mode, attempt_started, batch_attempted, "
+                "order_placement_attempted, queue_json, results_json "
+                "FROM strategies WHERE strategy_id=?", (strategy_id,),
+            ).fetchone()
+        writes_before = list(self.api.exchange.trade_writes)
+        status, refreshed = self.api.request("GET", f"/v1/strategies/{strategy_id}/result")
+        self.assertEqual(status, 200, refreshed)
+        self.assertEqual(refreshed["status"], "APPLYING")
+        self.assertEqual(refreshed["queueStatus"], "sending")
+        status, listed = self.api.request("GET", "/v1/strategies")
+        self.assertEqual(status, 200, listed)
+        self.assertTrue(any(item["id"] == strategy_id for item in listed["strategies"]))
+        status, duplicate = self.api.request(
+            "POST", f"/v1/strategies/{strategy_id}/execute-apply",
+            {"confirmationToken": prepared["confirmationToken"]},
+        )
+        self.assertEqual(status, 200, duplicate)
+        self.assertEqual(duplicate["status"], "APPLYING")
+        with self.api.service.store.connection() as connection:
+            after = connection.execute(
+                "SELECT status, submission_mode, attempt_started, batch_attempted, "
+                "order_placement_attempted, queue_json, results_json "
+                "FROM strategies WHERE strategy_id=?", (strategy_id,),
+            ).fetchone()
+        self.assertEqual(dict(after), dict(before))
+        self.assertEqual(self.api.exchange.trade_writes, writes_before)
+        self.assertEqual(self.api.exchange.single_order_attempts, 0)
 
     def test_order_ack_missing_or_malformed_top_code_is_unknown(self) -> None:
         response_row = {"sCode": "0", "ordId": "exchange-1", "clOrdId": "client-1"}
