@@ -109,7 +109,7 @@ Return BLOCKED if old uncertain queue markers cannot be preserved, if the only s
 - [x] Run backend tests/build and Flutter tests/build
 - [x] Audit only allowed source/test/docs paths; do not inspect protected configuration
 - [x] Independent coordinator audit PASS
-- [ ] Commit and push the approved branch after all gates PASS
+- [x] Commit and push the approved branch after all gates PASS
 
 ## 12. Coordinator Audit
 
@@ -134,3 +134,5 @@ Verdict: PASS
 - Earlier protected-file read incident was disclosed and user authorized independent-source continuation; its contents were discarded. No protected file was changed.
 - Runtime exposes no child close/release primitive; completed child results were collected, with no conflicting writers.
 - Production action remains user-owned: on the Docker host run `sudo docker stop trading-balance-strategy-worker`, verify it is stopped, then deploy the updated API/frontend. Push alone does not pause the old running image.
+
+Git integration: implementation commit `bb98cee` pushed to `origin/codex/pause-strategy-worker`. Branch was created from local `main` at `a31553c`. Production deployment remains outside this task.
