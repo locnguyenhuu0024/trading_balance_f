@@ -13,7 +13,6 @@ REPO_ROOT="$SCRIPT_DIR"
 
 DOCKERFILE_PATH="${DOCKERFILE_PATH:-backend/Dockerfile}"
 API_ENV_FILE="${API_ENV_FILE:-/etc/trading-balance/trade-api.env}"
-WORKER_ENV_FILE="${WORKER_ENV_FILE:-/etc/trading-balance/trade-api-worker.env}"
 PERSISTENT_DIR="${PERSISTENT_DIR:-/var/lib/trading-balance}"
 
 resolve_path() {
@@ -25,20 +24,21 @@ resolve_path() {
 
 DOCKERFILE_PATH="$(resolve_path "$DOCKERFILE_PATH")"
 API_ENV_FILE="$(resolve_path "$API_ENV_FILE")"
-WORKER_ENV_FILE="$(resolve_path "$WORKER_ENV_FILE")"
 PERSISTENT_DIR="$(resolve_path "$PERSISTENT_DIR")"
 
 usage() {
   cat <<'USAGE'
 Usage: ./docker_manage.sh [--api-only] <build|start|stop|restart|rebuild|status|logs|help> [api|worker]
 
-The optional api|worker target is accepted only by logs. Lifecycle commands
-manage both containers by default; --api-only selects only the API container.
+The worker is paused: start, restart, and rebuild stop an existing worker first
+and manage only the API; stop handles the worker before the API. No command
+starts, restarts, or recreates the worker. Status and logs can still inspect the
+retained worker container. The optional api|worker target is accepted only by logs.
+--api-only remains accepted as a compatibility alias and enforces the same pause.
 
 Path overrides for local use:
   DOCKERFILE_PATH  Dockerfile path (default: backend/Dockerfile)
   API_ENV_FILE     API env-file path (default: /etc/trading-balance/trade-api.env)
-  WORKER_ENV_FILE  Worker env-file path (default: /etc/trading-balance/trade-api-worker.env)
   PERSISTENT_DIR   SQLite bind-mount directory (default: /var/lib/trading-balance)
 USAGE
 }
@@ -74,11 +74,14 @@ container_state() {
   fi
 }
 
-api_only_guard() {
+stop_worker_if_running() {
   local worker_state
-  worker_state="$(container_state "$WORKER_CONTAINER")"
-  if [[ "$worker_state" != "missing" ]]; then
-    fail "--api-only requires the worker container to be absent; found it $worker_state."
+  worker_state="$(container_state "$WORKER_CONTAINER")" || return 1
+  if [[ "$worker_state" == "running" ]]; then
+    docker stop "$WORKER_CONTAINER" || {
+      fail "Could not stop the worker container; the API was left untouched."
+      return 1
+    }
   fi
 }
 
@@ -93,9 +96,6 @@ require_directory() {
 require_runtime_paths() {
   require_file "API env" "$API_ENV_FILE" || return 1
   require_directory "persistent data" "$PERSISTENT_DIR" || return 1
-  if [[ "$API_ONLY" == "false" ]]; then
-    require_file "worker env" "$WORKER_ENV_FILE" || return 1
-  fi
 }
 
 require_image() {
@@ -118,22 +118,6 @@ api_run() {
     "$IMAGE"
 }
 
-worker_run() {
-  docker run --detach \
-    --name "$WORKER_CONTAINER" \
-    --restart unless-stopped \
-    --read-only \
-    --tmpfs /tmp:rw,noexec,nosuid,size=64m \
-    --cap-drop=ALL \
-    --security-opt=no-new-privileges \
-    --pids-limit=128 \
-    --user 10001:10001 \
-    --env-file "$WORKER_ENV_FILE" \
-    --volumes-from "$API_CONTAINER" \
-    --entrypoint python3 \
-    "$IMAGE" -m backend.strategy_worker
-}
-
 show_one_status() {
   local name="$1"
   local state
@@ -146,9 +130,6 @@ report_rebuild_failure() {
   local state
   printf 'Rebuild recreation failed; current container state:\n' >&2
   for name in "$API_CONTAINER" "$WORKER_CONTAINER"; do
-    if [[ "$API_ONLY" == "true" && "$name" == "$WORKER_CONTAINER" ]]; then
-      continue
-    fi
     if state="$(container_state "$name")"; then
       printf '  %s: %s\n' "$name" "$state" >&2
     else
@@ -158,9 +139,8 @@ report_rebuild_failure() {
   printf 'No automatic rollback was attempted. Use status and the normal operator recovery process.\n' >&2
 }
 
-API_ONLY=false
 if [[ "${1:-}" == "--api-only" ]]; then
-  API_ONLY=true
+  # Compatibility alias: every lifecycle path now keeps the worker paused.
   shift
 fi
 
@@ -184,9 +164,6 @@ if [[ "$COMMAND" == "logs" ]]; then
     api|worker) ;;
     *) fail "logs target must be api or worker." || exit 2 ;;
   esac
-  if [[ "$API_ONLY" == "true" && "$LOG_TARGET" == "worker" ]]; then
-    fail "worker logs are unavailable in --api-only mode." || exit 2
-  fi
 elif [[ "$#" -ne 0 ]]; then
   fail "only logs accepts an api or worker target." || exit 2
 fi
@@ -212,18 +189,10 @@ case "$COMMAND" in
 
   start)
     require_docker || exit 1
-    if [[ "$API_ONLY" == "true" ]]; then
-      api_only_guard || exit 1
-    fi
+    stop_worker_if_running || exit 1
 
     API_STATE="$(container_state "$API_CONTAINER")"
-    if [[ "$API_ONLY" == "false" ]]; then
-      WORKER_STATE="$(container_state "$WORKER_CONTAINER")"
-    else
-      WORKER_STATE="not-selected"
-    fi
-
-    if [[ "$API_STATE" == "missing" || "$WORKER_STATE" == "missing" ]]; then
+    if [[ "$API_STATE" == "missing" ]]; then
       require_runtime_paths || exit 1
       require_image || exit 1
     fi
@@ -233,31 +202,11 @@ case "$COMMAND" in
     elif [[ "$API_STATE" == "stopped" ]]; then
       docker start "$API_CONTAINER" || { fail "Could not start the API container."; exit 1; }
     fi
-
-    if [[ "$API_ONLY" == "false" ]]; then
-      API_STATE="$(container_state "$API_CONTAINER")"
-      if [[ "$API_STATE" != "running" ]]; then
-        fail "API container is $API_STATE; worker was not started."
-        exit 1
-      fi
-      if [[ "$WORKER_STATE" == "missing" ]]; then
-        worker_run || { fail "Could not create the worker container."; exit 1; }
-      elif [[ "$WORKER_STATE" == "stopped" ]]; then
-        docker start "$WORKER_CONTAINER" || { fail "Could not start the worker container."; exit 1; }
-      fi
-    fi
     ;;
 
   stop)
     require_docker || exit 1
-    if [[ "$API_ONLY" == "true" ]]; then
-      api_only_guard || exit 1
-    else
-      WORKER_STATE="$(container_state "$WORKER_CONTAINER")"
-      if [[ "$WORKER_STATE" == "running" ]]; then
-        docker stop "$WORKER_CONTAINER" || { fail "Could not stop the worker container."; exit 1; }
-      fi
-    fi
+    stop_worker_if_running || exit 1
     API_STATE="$(container_state "$API_CONTAINER")"
     if [[ "$API_STATE" == "running" ]]; then
       docker stop "$API_CONTAINER" || { fail "Could not stop the API container."; exit 1; }
@@ -266,54 +215,25 @@ case "$COMMAND" in
 
   restart)
     require_docker || exit 1
-    if [[ "$API_ONLY" == "true" ]]; then
-      api_only_guard || exit 1
-    fi
+    stop_worker_if_running || exit 1
     API_STATE="$(container_state "$API_CONTAINER")"
-    if [[ "$API_ONLY" == "false" ]]; then
-      WORKER_STATE="$(container_state "$WORKER_CONTAINER")"
-      if [[ "$API_STATE" == "missing" || "$WORKER_STATE" == "missing" ]]; then
-        fail "restart requires both selected containers to exist; API=$API_STATE, worker=$WORKER_STATE."
-        exit 1
-      fi
-    elif [[ "$API_STATE" == "missing" ]]; then
+    if [[ "$API_STATE" == "missing" ]]; then
       fail "restart requires the API container to exist."
       exit 1
     fi
     docker restart "$API_CONTAINER" || { fail "Could not restart the API container."; exit 1; }
-    if [[ "$API_ONLY" == "false" ]]; then
-      docker restart "$WORKER_CONTAINER" || { fail "Could not restart the worker container."; exit 1; }
-    fi
     ;;
 
   rebuild)
     require_file "Dockerfile" "$DOCKERFILE_PATH" || exit 1
-    require_runtime_paths || exit 1
     require_docker || exit 1
-    if [[ "$API_ONLY" == "true" ]]; then
-      api_only_guard || exit 1
-    fi
+    stop_worker_if_running || exit 1
+    require_runtime_paths || exit 1
 
     cd -- "$REPO_ROOT"
     if ! docker build -f "$DOCKERFILE_PATH" -t "$IMAGE" .; then
-      fail "Image build failed; containers were left untouched."
+      fail "Image build failed; the API container was left untouched and the worker remains paused."
       exit 1
-    fi
-
-    if [[ "$API_ONLY" == "false" ]]; then
-      WORKER_STATE="$(container_state "$WORKER_CONTAINER")"
-      if [[ "$WORKER_STATE" == "running" ]]; then
-        if ! docker stop "$WORKER_CONTAINER"; then
-          fail "Could not stop the worker container before replacement."
-          report_rebuild_failure
-          exit 1
-        fi
-      fi
-      if [[ "$WORKER_STATE" != "missing" ]] && ! docker rm "$WORKER_CONTAINER"; then
-        fail "Could not remove the worker container before replacement."
-        report_rebuild_failure
-        exit 1
-      fi
     fi
 
     API_STATE="$(container_state "$API_CONTAINER")"
@@ -335,27 +255,12 @@ case "$COMMAND" in
       report_rebuild_failure
       exit 1
     fi
-    if [[ "$API_ONLY" == "false" ]]; then
-      API_STATE="$(container_state "$API_CONTAINER")"
-      if [[ "$API_STATE" != "running" ]]; then
-        fail "API container is $API_STATE after recreation; worker was not recreated."
-        report_rebuild_failure
-        exit 1
-      fi
-      if ! worker_run; then
-        fail "Could not recreate the worker container."
-        report_rebuild_failure
-        exit 1
-      fi
-    fi
     ;;
 
   status)
     require_docker || exit 1
     show_one_status "$API_CONTAINER"
-    if [[ "$API_ONLY" == "false" ]]; then
-      show_one_status "$WORKER_CONTAINER"
-    fi
+    show_one_status "$WORKER_CONTAINER"
     ;;
 
   logs)
