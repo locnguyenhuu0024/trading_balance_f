@@ -92,7 +92,7 @@ class StrategySettingsApiTests(unittest.TestCase):
 
     def test_default_custom_boundary_roundtrip_and_partial_group_writes(self) -> None:
         self.assertEqual(self.get_settings(), {
-            "limitOrderSubmissionMode": "sequential",
+            "limitOrderSubmissionMode": "batch",
             "jevScreeningThresholds": DEFAULT_THRESHOLDS,
         })
 
@@ -106,7 +106,7 @@ class StrategySettingsApiTests(unittest.TestCase):
         })
         self.assertEqual(status, 200, saved)
         self.assertEqual(saved, {
-            "limitOrderSubmissionMode": "sequential",
+            "limitOrderSubmissionMode": "batch",
             "jevScreeningThresholds": custom,
         })
 
@@ -128,8 +128,9 @@ class StrategySettingsApiTests(unittest.TestCase):
             },
         }
         status, saved = self.request("POST", "/v1/strategies/settings", combined)
-        self.assertEqual(status, 200, saved)
-        self.assertEqual(saved, combined)
+        self.assertEqual(status, 409, saved)
+        self.assertEqual(saved["error"], "sequential_submission_unavailable")
+        self.assertEqual(self.get_settings()["jevScreeningThresholds"], custom)
 
     def test_settings_are_isolated_by_authenticated_account_fingerprint(self) -> None:
         account_a = {
@@ -145,7 +146,7 @@ class StrategySettingsApiTests(unittest.TestCase):
 
         self.exchange.account_uid = "settings-account-b"
         self.assertEqual(self.get_settings(), {
-            "limitOrderSubmissionMode": "sequential",
+            "limitOrderSubmissionMode": "batch",
             "jevScreeningThresholds": DEFAULT_THRESHOLDS,
         })
         account_b = {
@@ -163,6 +164,63 @@ class StrategySettingsApiTests(unittest.TestCase):
             "limitOrderSubmissionMode": "batch",
             "jevScreeningThresholds": account_a,
         })
+
+    def test_red_legacy_sequential_preference_is_effective_batch_and_cannot_be_saved(self) -> None:
+        fingerprint = token_digest("okx-account-uid:v1:settings-account-a", SIGNING_KEY)
+        with self.service.store.transaction() as connection:
+            connection.execute(
+                "INSERT INTO strategy_account_preferences(account_fingerprint, "
+                "limit_order_submission_mode, jev_min_structural_quality, "
+                "jev_min_entry_suitability_probability, jev_max_failure_risk_probability, updated_at) "
+                "VALUES (?, 'sequential', ?, ?, ?, ?)",
+                (
+                    fingerprint,
+                    DEFAULT_THRESHOLDS["minStructuralQuality"],
+                    DEFAULT_THRESHOLDS["minEntrySuitabilityProbability"],
+                    DEFAULT_THRESHOLDS["maxFailureRiskProbability"],
+                    self.now,
+                ),
+            )
+
+        effective = self.get_settings()
+        self.assertEqual(effective["limitOrderSubmissionMode"], "batch")
+
+        status, refusal = self.request("POST", "/v1/strategies/settings", {
+            "limitOrderSubmissionMode": "sequential",
+        })
+        self.assertEqual(status, 409, refusal)
+        self.assertEqual(refusal["error"], "sequential_submission_unavailable")
+
+        with self.service.store.connection() as connection:
+            row = connection.execute(
+                "SELECT limit_order_submission_mode FROM strategy_account_preferences "
+                "WHERE account_fingerprint=?", (fingerprint,),
+            ).fetchone()
+        self.assertEqual(row["limit_order_submission_mode"], "sequential")
+
+        thresholds = {
+            "minStructuralQuality": 4,
+            "minEntrySuitabilityProbability": 0.4,
+            "maxFailureRiskProbability": 0.8,
+        }
+        status, saved = self.request("POST", "/v1/strategies/settings", {
+            "jevScreeningThresholds": thresholds,
+        })
+        self.assertEqual(status, 200, saved)
+        self.assertEqual(saved, {
+            "limitOrderSubmissionMode": "batch",
+            "jevScreeningThresholds": thresholds,
+        })
+        with self.service.store.connection() as connection:
+            row = connection.execute(
+                "SELECT limit_order_submission_mode, jev_min_structural_quality, "
+                "jev_min_entry_suitability_probability, jev_max_failure_risk_probability "
+                "FROM strategy_account_preferences WHERE account_fingerprint=?", (fingerprint,),
+            ).fetchone()
+        self.assertEqual(row["limit_order_submission_mode"], "sequential")
+        self.assertEqual(row["jev_min_structural_quality"], thresholds["minStructuralQuality"])
+        self.assertEqual(row["jev_min_entry_suitability_probability"], thresholds["minEntrySuitabilityProbability"])
+        self.assertEqual(row["jev_max_failure_risk_probability"], thresholds["maxFailureRiskProbability"])
 
     def test_invalid_combined_thresholds_are_atomic_red_001(self) -> None:
         initial = self.get_settings()

@@ -1350,12 +1350,20 @@ class StrategyOrderWorker:
 
 
 def main() -> None:
-    settings = WorkerSettings.from_environ()
-    worker = StrategyOrderWorker(settings)
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     signal.signal(signal.SIGINT, lambda *_: stop.set())
-    worker.run_forever(stop)
+    diagnostics.emit_event(
+        "worker_paused", component="worker", stage="startup", outcome="disabled",
+        reason="paused_by_policy",
+    )
+    try:
+        stop.wait()
+    finally:
+        diagnostics.emit_event(
+            "worker_shutdown", component="worker", stage="shutdown", outcome="success"
+        )
+        diagnostics.shutdown()
 
 
 if __name__ == "__main__":

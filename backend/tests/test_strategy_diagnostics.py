@@ -70,10 +70,6 @@ class StrategyDiagnosticsTests(unittest.TestCase):
         ]
 
     def _start_queue(self, fixture: Any, count: int = 3) -> tuple[str, dict[str, Any]]:
-        status, saved_setting = fixture.request(
-            "POST", "/v1/strategies/settings", {"limitOrderSubmissionMode": "sequential"}
-        )
-        self.assertEqual(status, 200, saved_setting)
         selected = [
             {"side": "long", "price": str(59000 - index * 100),
              "levelId": "queue-entry" if index == 0 else f"queue-level-{index + 1}"}
@@ -89,12 +85,8 @@ class StrategyDiagnosticsTests(unittest.TestCase):
             "POST", f"/v1/strategies/{strategy_id}/prepare-apply", {}
         )
         self.assertEqual(status, 200, prepared)
-        status, queued = fixture.request(
-            "POST", f"/v1/strategies/{strategy_id}/execute-apply",
-            {"confirmationToken": prepared["confirmationToken"]},
-        )
-        self.assertEqual(status, 200, queued)
-        self.assertEqual(queued["queueStatus"], "pending")
+        self.assertEqual(prepared["submissionMode"], "batch")
+        fixture.seed_legacy_sequential_queue(strategy_id)
         return strategy_id, prepared
 
     @staticmethod
@@ -441,7 +433,7 @@ class StrategyDiagnosticsTests(unittest.TestCase):
             self.assertFalse(diagnostics.should_emit_heartbeat(159.999))
             self.assertTrue(diagnostics.should_emit_heartbeat(160.0))
 
-    def test_green_sequential_api_worker_fifo_ack_and_commit_trail(self) -> None:
+    def test_green_legacy_queue_worker_fifo_ack_and_commit_trail(self) -> None:
         fixture, worker, _ = self._queue_fixture()
         with patch.object(StrategyService, "_with_client_ids", staticmethod(self._deterministic_ids)):
             with _Capture() as capture:
@@ -486,9 +478,7 @@ class StrategyDiagnosticsTests(unittest.TestCase):
             [row["stage"] for row in records if row["event"] == "preflight" and row["component"] == "worker"],
             ["preflight_initial", "preflight_post_leverage"],
         )
-        enqueue = next(row for row in records if row["event"] == "enqueue_result")
-        self.assertTrue(enqueue["persisted"])
-        self.assertEqual(enqueue["strategy_ref"], diagnostics.strategy_ref(strategy_id))
+        self.assertFalse(any(row["event"] == "enqueue_result" for row in records))
         serialized = "\n".join(json.dumps(row) for row in records)
         self.assertNotIn(strategy_id, serialized)
         for order in prepared["orders"]:
