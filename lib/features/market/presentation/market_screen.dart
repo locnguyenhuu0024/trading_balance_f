@@ -5,8 +5,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
-import 'package:trading_balance_f/core/network/backend_data_client.dart';
-import 'package:trading_balance_f/features/orders/presentation/providers/trade_session_provider.dart';
+import 'package:trading_balance_f/core/network/okx_data_client.dart';
 import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/crypto_icon.dart';
@@ -47,7 +46,7 @@ class MarketTicker {
 final marketListProvider = FutureProvider.autoDispose<List<MarketTicker>>((
   ref,
 ) async {
-  final client = ref.watch(backendDataClientProvider);
+  final client = ref.watch(okxDataClientProvider);
 
   final response = await client.get(
     '/api/v5/market/tickers',

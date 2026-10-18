@@ -1,7 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:trading_balance_f/core/network/backend_data_client.dart';
-import 'package:trading_balance_f/features/orders/presentation/providers/trade_session_provider.dart';
+import 'package:trading_balance_f/core/network/okx_data_client.dart';
 
 import '../../../core/network/request_coordinator.dart';
 import '../domain/strategy_calculator.dart';
@@ -25,7 +24,7 @@ class StrategyMarketRepository {
   static const candlePageSize = 300;
   static const maximumPublicTickerAge = Duration(seconds: 15);
 
-  final BackendDataClient _client;
+  final OkxDataClient _client;
   final RequestCoordinator requestCoordinator;
   final StrategyMarketClock clock;
   final StrategyLevelCalculator calculator;
@@ -166,8 +165,9 @@ class StrategyMarketRepository {
         final high = _marketPrice(row['h']);
         final low = _marketPrice(row['l']);
         final close = _marketPrice(row['c']);
-        if (open == null || high == null || low == null || close == null)
+        if (open == null || high == null || low == null || close == null) {
           continue;
+        }
         final candle = StrategyCandle(
           timestamp: timestamp,
           open: open.value,
@@ -248,10 +248,7 @@ class StrategyMarketRepository {
       return await requestCoordinator.run<Response<dynamic>>(
         lane: RequestLane.public,
         key: key,
-        request: () => _client.get(
-          endpoint,
-          queryParameters: query,
-        ),
+        request: () => _client.get(endpoint, queryParameters: query),
       );
     } on RequestBackoffException {
       throw const StrategyMarketException(
@@ -358,7 +355,7 @@ class StrategyMarketRepository {
 final strategyMarketRepositoryProvider = Provider<StrategyMarketRepository>((
   ref,
 ) {
-  final client = ref.watch(backendDataClientProvider);
+  final client = ref.watch(okxDataClientProvider);
   return StrategyMarketRepository(
     client,
     requestCoordinator: ref.watch(requestCoordinatorProvider),

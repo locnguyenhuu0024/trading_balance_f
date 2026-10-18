@@ -8,7 +8,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:trading_balance_f/core/network/backend_data_client.dart';
+import 'package:trading_balance_f/core/network/okx_data_client.dart';
 import 'package:trading_balance_f/core/theme/app_theme.dart';
 import 'package:trading_balance_f/features/orders/data/trade_api_client.dart';
 import 'package:trading_balance_f/features/orders/presentation/providers/trade_session_provider.dart';
@@ -1718,7 +1718,7 @@ class _FakeStrategyApi implements StrategyApi {
 class _FakeStrategyMarketRepository extends StrategyMarketRepository {
   _FakeStrategyMarketRepository()
     : super(
-        BackendDataClient(dio: Dio(), baseUrl: 'https://data.example'),
+        OkxDataClient(dio: Dio()),
         requestCoordinator: RequestCoordinator(
           minimumSpacing: Duration.zero,
           delay: (_) async {},

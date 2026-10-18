@@ -4,7 +4,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:dio/dio.dart';
-import 'package:trading_balance_f/core/network/backend_data_client.dart';
+import 'package:trading_balance_f/core/network/okx_data_client.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -2934,7 +2934,7 @@ class _FakeStrategyApi implements StrategyApi, AutomaticStrategyApi {
 class _FakeMarketRepository extends StrategyMarketRepository {
   _FakeMarketRepository()
     : super(
-        BackendDataClient(dio: Dio(), baseUrl: 'https://data.example'),
+        OkxDataClient(dio: Dio()),
         requestCoordinator: RequestCoordinator(
           minimumSpacing: Duration.zero,
           delay: (_) async {},

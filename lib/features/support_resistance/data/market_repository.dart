@@ -1,5 +1,5 @@
 import 'package:dio/dio.dart';
-import 'package:trading_balance_f/core/network/backend_data_client.dart';
+import 'package:trading_balance_f/core/network/okx_data_client.dart';
 
 import '../../../core/network/request_coordinator.dart';
 import '../domain/level_calculator.dart';
@@ -24,7 +24,7 @@ class SupportResistanceRepository {
   static const String candlesEndpoint = '/api/v5/market/candles';
   static const int maximumCandleCount = 300;
 
-  final BackendDataClient _client;
+  final OkxDataClient _client;
   final RequestCoordinator requestCoordinator;
   final SupportResistanceRepositoryClock clock;
   final SupportResistanceCalculator calculator;
@@ -309,10 +309,7 @@ class SupportResistanceRepository {
       return await requestCoordinator.run<Response<dynamic>>(
         lane: RequestLane.public,
         key: _requestKey(endpoint, queryParameters),
-        request: () => _client.get(
-          endpoint,
-          queryParameters: queryParameters,
-        ),
+        request: () => _client.get(endpoint, queryParameters: queryParameters),
       );
     } on RequestBackoffException catch (error) {
       throw SupportResistanceRepositoryException(

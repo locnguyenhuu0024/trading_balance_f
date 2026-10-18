@@ -3,7 +3,7 @@ import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:trading_balance_f/core/network/backend_data_client.dart';
+import 'package:trading_balance_f/core/network/okx_data_client.dart';
 import 'package:trading_balance_f/core/network/request_coordinator.dart';
 import 'package:trading_balance_f/features/support_resistance/data/market_repository.dart';
 import 'package:trading_balance_f/features/support_resistance/domain/models.dart';
@@ -33,7 +33,7 @@ void main() {
         }
         if (request.uri.path ==
             _backendPath(SupportResistanceRepository.candlesEndpoint)) {
-          if (request.queryParameters['after'] == null) {
+          if (request.uri.queryParameters['after'] == null) {
             return _ok(<Object?>[
               _row(openTime, 100, 1000, 99, 100, '0'),
               ...closed.skip(1).toList().reversed.map(_rowFor),
@@ -65,10 +65,10 @@ void main() {
           )
           .toList();
       expect(candleRequests, hasLength(2));
-      expect(candleRequests.first.queryParameters['instId'], 'ETH-USDT');
-      expect(candleRequests.first.queryParameters['bar'], '1H');
-      expect(candleRequests.first.queryParameters['limit'], 300);
-      expect(candleRequests.last.queryParameters['after'], isNotNull);
+      expect(candleRequests.first.uri.queryParameters['instId'], 'ETH-USDT');
+      expect(candleRequests.first.uri.queryParameters['bar'], '1H');
+      expect(candleRequests.first.uri.queryParameters['limit'], '300');
+      expect(candleRequests.last.uri.queryParameters['after'], isNotNull);
     },
   );
 
@@ -101,7 +101,7 @@ void main() {
       final adapter = _RecordingAdapter((request) {
         if (request.uri.path ==
             _backendPath(SupportResistanceRepository.tickerEndpoint)) {
-          final instrument = request.queryParameters['instId'];
+          final instrument = request.uri.queryParameters['instId'];
           return _ok(<Object?>[
             <String, Object?>{'instId': instrument, 'last': '100.3'},
           ]);
@@ -145,7 +145,7 @@ void main() {
                 request.uri.path ==
                 _backendPath(SupportResistanceRepository.tickerEndpoint),
           )
-          .map((request) => request.queryParameters['instId'])
+          .map((request) => request.uri.queryParameters['instId'])
           .toList();
       final candleKeys = adapter.requests
           .where(
@@ -153,7 +153,7 @@ void main() {
                 request.uri.path ==
                 _backendPath(SupportResistanceRepository.candlesEndpoint),
           )
-          .map((request) => request.queryParameters)
+          .map((request) => request.uri.queryParameters)
           .toList();
       expect(tickerKeys, <String>['ETH-USDT', 'ETH-USDT-SWAP']);
       expect(candleKeys.map((query) => query['instId']), <String>[
@@ -173,7 +173,7 @@ void main() {
       final adapter = _RecordingAdapter((request) {
         if (request.uri.path ==
             _backendPath(SupportResistanceRepository.instrumentsEndpoint)) {
-          if (request.queryParameters['instType'] == 'SPOT') {
+          if (request.uri.queryParameters['instType'] == 'SPOT') {
             return _ok(<Object?>[
               _instrument('ETH-USDT', 'SPOT', 'ETH', quote: 'USDT'),
               _instrument('ETH-USDC', 'SPOT', 'ETH', quote: 'USDC'),
@@ -206,8 +206,8 @@ void main() {
       expect(perpetual.map((item) => item.instrumentId), <String>[
         'ETH-USDT-SWAP',
       ]);
-      expect(adapter.requests[0].queryParameters['instType'], 'SPOT');
-      expect(adapter.requests[1].queryParameters['instType'], 'SWAP');
+      expect(adapter.requests[0].uri.queryParameters['instType'], 'SPOT');
+      expect(adapter.requests[1].uri.queryParameters['instType'], 'SWAP');
     },
   );
 
@@ -257,7 +257,7 @@ void main() {
       }
 
       expect(
-        adapter.requests.map((request) => request.queryParameters['bar']),
+        adapter.requests.map((request) => request.uri.queryParameters['bar']),
         <String>['1H', '4H', '6Hutc', '1Dutc', '1Wutc'],
       );
     },
@@ -380,10 +380,7 @@ SupportResistanceRepository _repository(
   DateTime now,
 ) {
   return SupportResistanceRepository(
-    BackendDataClient(
-      dio: Dio()..httpClientAdapter = adapter,
-      baseUrl: 'https://data.example',
-    ),
+    OkxDataClient(dio: Dio()..httpClientAdapter = adapter),
     requestCoordinator: RequestCoordinator(
       clock: () => now,
       minimumSpacing: Duration.zero,
@@ -392,8 +389,7 @@ SupportResistanceRepository _repository(
   );
 }
 
-String _backendPath(String legacyPath) =>
-    legacyPath.replaceFirst('/api/v5/', '/v1/data/');
+String _backendPath(String nativePath) => nativePath;
 
 List<SupportResistanceCandle> _levelCandles({
   required int count,

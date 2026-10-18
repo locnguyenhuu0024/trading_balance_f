@@ -5,13 +5,15 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/currency/currency_display_mode.dart';
-import 'package:trading_balance_f/core/network/backend_data_client.dart';
-import 'package:trading_balance_f/core/network/backend_data_session.dart';
 import 'package:trading_balance_f/core/network/foreground_read_gate.dart';
+import 'package:trading_balance_f/core/network/okx_data_client.dart';
+import 'package:trading_balance_f/core/network/okx_read_scope.dart';
 import 'package:trading_balance_f/core/network/okx_websocket_service.dart';
-import 'package:trading_balance_f/core/theme/app_theme.dart';
+import 'package:trading_balance_f/core/network/request_coordinator.dart';
+import 'package:trading_balance_f/core/security/secure_storage_helper.dart';
 import 'package:trading_balance_f/features/market/presentation/providers/market_provider.dart';
 import 'package:trading_balance_f/features/orders/data/trade_api_client.dart';
 import 'package:trading_balance_f/features/orders/presentation/providers/trade_session_provider.dart';
@@ -21,141 +23,115 @@ import 'package:trading_balance_f/features/portfolio/presentation/providers/port
 import 'package:trading_balance_f/features/settings/presentation/settings_screen.dart';
 
 void main() {
-  testWidgets('old portfolio data is hidden while replacement session loads', (
+  testWidgets(
+    'signed-out direct balance loads and manual refresh works during restoration',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 1200);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final api = TradeApiClient(baseUrl: 'https://trade.example');
+      final session = _PortfolioSessionController(api, loading: true);
+      final adapter = _PendingPortfolioAdapter();
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            ..._directClientOverrides(adapter, tester.binding.clock.now),
+            tradeApiProvider.overrideWithValue(api),
+            tradeSessionProvider.overrideWith((ref) => session),
+            livePriceProvider.overrideWith((ref) => LivePriceNotifier()),
+            okxWebsocketProvider.overrideWithValue(_FakeOkxWebsocketService()),
+            currencyProvider.overrideWith((ref) => CurrencyDisplayMode.usd),
+            vndExchangeRateProvider.overrideWith((ref) async => 25400),
+            themeModeProvider.overrideWith((ref) => ThemeMode.light),
+            hideBalanceProvider.overrideWith((ref) => false),
+          ],
+          child: const MaterialApp(home: PortfolioScreen()),
+        ),
+      );
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(PortfolioScreen)),
+      );
+
+      await _pumpPortfolioUntil(tester, () => adapter.responses.length == 1);
+      expect(session.state.isLoading, isTrue);
+      expect(adapter.requests.single.uri.path, '/api/v5/account/balance');
+      adapter.reply(0, 200, _balancePayload('100'));
+      await _pumpPortfolioUntil(
+        tester,
+        () => find
+            .byKey(const Key('portfolio-asset-summary'))
+            .evaluate()
+            .isNotEmpty,
+      );
+      expect(find.byKey(const Key('portfolio-asset-summary')), findsOneWidget);
+      expect(session.state.session, isNull);
+
+      await tester.tap(find.byKey(const Key('portfolio-manual-refresh')));
+      await _pumpPortfolioUntil(tester, () => adapter.responses.length == 2);
+      expect(adapter.requests, hasLength(2));
+      adapter.reply(1, 200, _balancePayload('200'));
+      await _pumpPortfolioUntil(
+        tester,
+        () => container.read(portfolioFutureProvider).value?.totalEq == '200',
+      );
+      expect(container.read(portfolioFutureProvider).value?.totalEq, '200');
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets('credential generation fences a late balance response', (
     tester,
   ) async {
-    tester.view.physicalSize = const Size(800, 1200);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    final api = TradeApiClient(baseUrl: 'https://trade.example');
-    final controller = _PortfolioSessionController(api);
     final adapter = _PendingPortfolioAdapter();
-    final client = BackendDataClient(
-      dio: Dio()..httpClientAdapter = adapter,
-      baseUrl: 'https://data.example',
+    final container = ProviderContainer(
+      overrides: _directClientOverrides(adapter, tester.binding.clock.now),
     );
+    final storage =
+        container.read(secureStorageProvider) as _PortfolioCredentialStorage;
+    final subscription = container.listen(portfolioFutureProvider, (_, _) {});
+    addTearDown(() {
+      subscription.close();
+      container.dispose();
+    });
 
-    await tester.pumpWidget(
-      ProviderScope(
-        overrides: [
-          tradeApiProvider.overrideWithValue(api),
-          tradeSessionProvider.overrideWith((ref) => controller),
-          backendDataClientProvider.overrideWithValue(client),
-          foregroundReadGateProvider.overrideWith((ref) {
-            final gate = ForegroundReadGate(now: tester.binding.clock.now);
-            ref.onDispose(gate.dispose);
-            return gate;
-          }),
-          livePriceProvider.overrideWith((ref) => LivePriceNotifier()),
-          okxWebsocketProvider.overrideWithValue(_FakeOkxWebsocketService()),
-          currencyProvider.overrideWith((ref) => CurrencyDisplayMode.usd),
-          vndExchangeRateProvider.overrideWith((ref) async => 25400),
-          themeModeProvider.overrideWith((ref) => ThemeMode.light),
-          hideBalanceProvider.overrideWith((ref) => false),
-        ],
-        child: const MaterialApp(home: PortfolioScreen()),
-      ),
-    );
+    await _waitFor(tester, () => adapter.responses.length == 1);
+    await storage.rotate();
+    await _waitFor(tester, () => adapter.responses.length == 2);
 
-    await tester.pump(const Duration(milliseconds: 1));
-    expect(adapter.responses, hasLength(1));
     adapter.reply(0, 200, _balancePayload('100'));
-    await _pumpPortfolioUntil(
-      tester,
-      () => find
-          .byKey(const Key('portfolio-asset-summary'))
-          .evaluate()
-          .isNotEmpty,
-    );
-    expect(find.byKey(const Key('portfolio-asset-summary')), findsOneWidget);
-
-    controller.replace(_activeSession(accountIdentifier: 'account-b'));
-    await _pumpPortfolioUntil(tester, () => adapter.responses.length == 2);
-    expect(adapter.responses, hasLength(2));
-    expect(find.byKey(const Key('portfolio-asset-summary')), findsNothing);
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    await tester.pump();
+    expect(container.read(portfolioFutureProvider).hasValue, isFalse);
 
     adapter.reply(1, 200, _balancePayload('200'));
-    await _pumpPortfolioUntil(
-      tester,
-      () => find
-          .byKey(const Key('portfolio-asset-summary'))
-          .evaluate()
-          .isNotEmpty,
-    );
-    expect(find.byKey(const Key('portfolio-asset-summary')), findsOneWidget);
-    await tester.pumpWidget(const SizedBox.shrink());
+    await _waitPortfolioProvider(container, tester);
+    expect(container.read(portfolioFutureProvider).value?.totalEq, '200');
   });
 
-  testWidgets('production portfolio provider skips reads during restoration', (
+  testWidgets('rate-limit cooldown survives portfolio screen re-entry', (
     tester,
   ) async {
     final api = TradeApiClient(baseUrl: 'https://trade.example');
-    final controller = _PortfolioSessionController(api, loading: true);
-    final adapter = _ImmediatePortfolioAdapter(200, _balancePayload('100'));
-    final container = _portfolioContainer(
-      controller,
-      adapter,
-      now: tester.binding.clock.now,
-    );
-    final subscription = container.listen(portfolioFutureProvider, (_, _) {});
-    var sessionChanges = 0;
-    final sessionSubscription = container.listen(
-      tradeSessionProvider,
-      (_, _) => sessionChanges++,
-    );
-    var generationChanges = 0;
-    final generationSubscription = container.listen(
-      backendDataSessionProvider.select((session) => session.generation),
-      (_, _) => generationChanges++,
-    );
-
-    await tester.pump();
-    expect(adapter.requests, 0);
-    controller.replace(_activeSession());
-    expect(container.read(tradeSessionProvider).isLoading, isFalse);
-    expect(container.read(tradeSessionProvider).session, isNotNull);
-    expect(sessionChanges, 1);
-    expect(generationChanges, 1);
-    await _flushPortfolio(tester, container);
-    for (var attempts = 0; attempts < 5 && adapter.requests == 0; attempts++) {
-      await tester.pump();
-    }
-    expect(adapter.requests, 1);
-    expect(container.read(portfolioFutureProvider).hasValue, isTrue);
-
-    subscription.close();
-    sessionSubscription.close();
-    generationSubscription.close();
-    await _flushPortfolio(tester, container);
-    container.dispose();
-  });
-
-  testWidgets('production portfolio cooldown survives screen re-entry', (
-    tester,
-  ) async {
-    final api = TradeApiClient(baseUrl: 'https://trade.example');
-    final controller = _PortfolioSessionController(api);
     final adapter = _ImmediatePortfolioAdapter(
       429,
-      {'message': 'limited'},
+      {'code': '50011', 'msg': 'limited', 'data': []},
       headers: {
         'retry-after': ['120'],
       },
     );
     final container = _portfolioContainer(
-      controller,
+      _PortfolioSessionController(api),
       adapter,
       now: tester.binding.clock.now,
     );
     final first = container.listen(portfolioFutureProvider, (_, _) {});
 
-    await _flushPortfolio(tester, container);
+    await _flushPortfolio(tester);
     expect(adapter.requests, 1);
     expect(container.read(portfolioFutureProvider).hasError, isTrue);
     first.close();
-    await _flushPortfolio(tester, container);
+    await _flushPortfolio(tester);
     await tester.pump(const Duration(seconds: 30));
 
     final reentered = container.listen(portfolioFutureProvider, (_, _) {});
@@ -169,11 +145,11 @@ void main() {
     expect(adapter.requests, 2);
 
     reentered.close();
-    await _flushPortfolio(tester, container);
+    await _flushPortfolio(tester);
     container.dispose();
   });
 
-  testWidgets('operation-only changes do not restart production balance read', (
+  testWidgets('backend session changes do not restart a direct balance read', (
     tester,
   ) async {
     final api = TradeApiClient(baseUrl: 'https://trade.example');
@@ -186,7 +162,35 @@ void main() {
     );
     final subscription = container.listen(portfolioFutureProvider, (_, _) {});
 
-    await _flushPortfolio(tester, container);
+    await _flushPortfolio(tester);
+    expect(adapter.responses, hasLength(1));
+    controller.replace(_activeSession(accountIdentifier: 'account-b'));
+    await _flushPortfolio(tester);
+    expect(adapter.responses, hasLength(1));
+
+    adapter.reply(0, 200, _balancePayload('100'));
+    await _waitPortfolioProvider(container, tester);
+    expect(container.read(portfolioFutureProvider).value?.totalEq, '100');
+
+    subscription.close();
+    await _flushPortfolio(tester);
+    container.dispose();
+  });
+
+  testWidgets('operation-only backend state does not restart a direct read', (
+    tester,
+  ) async {
+    final api = TradeApiClient(baseUrl: 'https://trade.example');
+    final controller = _PortfolioSessionController(api);
+    final adapter = _PendingPortfolioAdapter();
+    final container = _portfolioContainer(
+      controller,
+      adapter,
+      now: tester.binding.clock.now,
+    );
+    final subscription = container.listen(portfolioFutureProvider, (_, _) {});
+
+    await _flushPortfolio(tester);
     expect(adapter.responses, hasLength(1));
     controller.rememberOperation(
       const PendingTradeOperation(
@@ -196,57 +200,19 @@ void main() {
         status: 'IN_PROGRESS',
       ),
     );
-    await _flushPortfolio(tester, container);
+    await _flushPortfolio(tester);
     expect(adapter.responses, hasLength(1));
 
     adapter.reply(0, 200, _balancePayload('100'));
-    await _pumpPortfolioUntil(
-      tester,
-      () => container.read(portfolioFutureProvider).hasValue,
-    );
+    await _waitPortfolioProvider(container, tester);
     expect(container.read(portfolioFutureProvider).value?.totalEq, '100');
 
     subscription.close();
-    await _flushPortfolio(tester, container);
+    await _flushPortfolio(tester);
     container.dispose();
   });
 
-  testWidgets('production portfolio rejects a stale session response', (
-    tester,
-  ) async {
-    final api = TradeApiClient(baseUrl: 'https://trade.example');
-    final controller = _PortfolioSessionController(api);
-    final adapter = _PendingPortfolioAdapter();
-    final container = _portfolioContainer(
-      controller,
-      adapter,
-      now: tester.binding.clock.now,
-    );
-    final subscription = container.listen(portfolioFutureProvider, (_, _) {});
-
-    await _flushPortfolio(tester, container);
-    expect(adapter.responses, hasLength(1));
-    controller.replace(_activeSession(accountIdentifier: 'account-b'));
-    await _pumpPortfolioUntil(tester, () => adapter.responses.length == 2);
-    expect(adapter.responses, hasLength(2));
-
-    adapter.reply(0, 200, _balancePayload('100'));
-    await tester.pump(const Duration(milliseconds: 1));
-    expect(container.read(portfolioFutureProvider).hasValue, isFalse);
-
-    adapter.reply(1, 200, _balancePayload('200'));
-    await _pumpPortfolioUntil(
-      tester,
-      () => container.read(portfolioFutureProvider).hasValue,
-    );
-    expect(container.read(portfolioFutureProvider).value?.totalEq, '200');
-
-    subscription.close();
-    await _flushPortfolio(tester, container);
-    container.dispose();
-  });
-
-  testWidgets('Portfolio polling stops after terminal configuration error', (
+  testWidgets('terminal local credential errors stop automatic polling', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(800, 1200);
@@ -265,9 +231,10 @@ void main() {
           ),
           portfolioFutureProvider.overrideWith((ref) async {
             loadCalls++;
-            throw const BackendDataException(
-              code: 'api_not_configured',
-              message: 'Not configured.',
+            throw const OkxDataException(
+              code: 'okx_credentials_required',
+              message: 'Add OKX API credentials.',
+              statusCode: 401,
             );
           }),
           livePriceProvider.overrideWith((ref) => LivePriceNotifier()),
@@ -283,72 +250,9 @@ void main() {
     await tester.pump();
     await tester.pump();
     expect(loadCalls, 1);
+
     await tester.pump(const Duration(seconds: 30));
     expect(loadCalls, 1);
-    await tester.pumpWidget(const SizedBox.shrink());
-  });
-
-  testWidgets('session restoration and initial read stay in loading state', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(800, 1200);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-
-    final api = TradeApiClient(baseUrl: 'https://trade.example');
-    final sessionController = _PortfolioSessionController(api, loading: true);
-    final initialRead = Completer<OkxAccountData>();
-    var loadCalls = 0;
-
-    await tester.pumpWidget(
-      ProviderScope(
-        overrides: [
-          tradeApiProvider.overrideWithValue(api),
-          tradeSessionProvider.overrideWith((ref) => sessionController),
-          portfolioFutureProvider.overrideWith((ref) {
-            ref.watch(tradeSessionProvider.select((state) => state.isLoading));
-            ref.watch(tradeSessionProvider.select((state) => state.session));
-            if (ref.read(tradeSessionProvider).isLoading) {
-              throw const BackendDataException(
-                code: 'session_loading',
-                message: 'Restoring session.',
-              );
-            }
-            loadCalls++;
-            return initialRead.future;
-          }),
-          livePriceProvider.overrideWith((ref) => LivePriceNotifier()),
-          okxWebsocketProvider.overrideWithValue(_FakeOkxWebsocketService()),
-          currencyProvider.overrideWith((ref) => CurrencyDisplayMode.usd),
-          vndExchangeRateProvider.overrideWith((ref) async => 25400),
-          themeModeProvider.overrideWith((ref) => ThemeMode.light),
-          hideBalanceProvider.overrideWith((ref) => false),
-        ],
-        child: const MaterialApp(home: PortfolioScreen()),
-      ),
-    );
-
-    await tester.pump();
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
-    expect(find.textContaining('Lỗi kết nối'), findsNothing);
-    expect(loadCalls, 0);
-
-    sessionController.replace(_activeSession());
-    await tester.pump();
-    await tester.pump();
-    expect(loadCalls, 1);
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
-    expect(find.textContaining('Lỗi kết nối'), findsNothing);
-
-    initialRead.complete(
-      const OkxAccountData(
-        details: [OkxCoinDetail(ccy: 'BTC', eq: '1', eqUsd: '100', upl: '0')],
-      ),
-    );
-    await tester.pump();
-    await tester.pump();
-    expect(find.byKey(const Key('portfolio-asset-summary')), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
@@ -361,7 +265,6 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
 
     final api = TradeApiClient(baseUrl: 'https://trade.example');
-    final sessionController = _PortfolioSessionController(api);
     final retry = Completer<OkxAccountData>();
     var loadCalls = 0;
 
@@ -369,13 +272,14 @@ void main() {
       ProviderScope(
         overrides: [
           tradeApiProvider.overrideWithValue(api),
-          tradeSessionProvider.overrideWith((ref) => sessionController),
+          tradeSessionProvider.overrideWith(
+            (ref) => _PortfolioSessionController(api),
+          ),
           portfolioFutureProvider.overrideWith((ref) {
-            ref.watch(tradeSessionProvider.select((state) => state.isLoading));
-            ref.watch(tradeSessionProvider.select((state) => state.session));
             loadCalls++;
-            if (loadCalls == 1)
+            if (loadCalls == 1) {
               return Future.error(Exception('balance failed'));
+            }
             return retry.future;
           }),
           livePriceProvider.overrideWith((ref) => LivePriceNotifier()),
@@ -407,29 +311,63 @@ void main() {
   });
 }
 
+List<Override> _directClientOverrides(
+  HttpClientAdapter adapter,
+  DateTime Function() now,
+) => [
+  secureStorageProvider.overrideWith((ref) {
+    final storage = _PortfolioCredentialStorage();
+    ref.onDispose(storage.dispose);
+    return storage;
+  }),
+  okxDirectReadGateProvider.overrideWith((ref) {
+    final gate = ForegroundReadGate(now: now);
+    ref.onDispose(gate.dispose);
+    return gate;
+  }),
+  okxDataClientProvider.overrideWith((ref) {
+    final storage = ref.watch(secureStorageProvider);
+    final client = OkxDataClient(
+      dio: Dio()..httpClientAdapter = adapter,
+      secureStorage: storage,
+      requestCoordinator: RequestCoordinator(
+        clock: now,
+        minimumSpacing: Duration.zero,
+        delay: (_) async {},
+      ),
+    );
+    ref.onDispose(client.dispose);
+    return client;
+  }),
+];
+
 ProviderContainer _portfolioContainer(
   _PortfolioSessionController controller,
   HttpClientAdapter adapter, {
   required DateTime Function() now,
-}) {
-  final client = BackendDataClient(
-    dio: Dio()..httpClientAdapter = adapter,
-    baseUrl: 'https://data.example',
-  );
-  return ProviderContainer(
-    overrides: [
-      tradeSessionProvider.overrideWith((ref) => controller),
-      backendDataClientProvider.overrideWithValue(client),
-      foregroundReadGateProvider.overrideWith((ref) {
-        final gate = ForegroundReadGate(now: now);
-        ref.onDispose(gate.dispose);
-        return gate;
-      }),
-    ],
-  );
+}) => ProviderContainer(
+  overrides: [
+    ..._directClientOverrides(adapter, now),
+    tradeSessionProvider.overrideWith((ref) => controller),
+  ],
+);
+
+class _PortfolioCredentialStorage extends SecureStorageHelper {
+  _PortfolioCredentialStorage() : super(const FlutterSecureStorage());
+
+  Future<void> rotate() => trackOkxCredentialMutation(() async {});
+
+  @override
+  Future<String?> getOkxApiKey() async => 'fixture-key';
+
+  @override
+  Future<String?> getOkxSecretKey() async => 'fixture-secret';
+
+  @override
+  Future<String?> getOkxPassphrase() async => 'fixture-passphrase';
 }
 
-Future<void> _flushPortfolio(WidgetTester tester, ProviderContainer _) async {
+Future<void> _flushPortfolio(WidgetTester tester) async {
   await tester.pump(const Duration(milliseconds: 1));
 }
 
@@ -437,7 +375,27 @@ Future<void> _pumpPortfolioUntil(
   WidgetTester tester,
   bool Function() isReady,
 ) async {
-  for (var attempt = 0; attempt < 20 && !isReady(); attempt++) {
+  for (var attempt = 0; attempt < 40 && !isReady(); attempt++) {
+    await tester.pump(const Duration(milliseconds: 1));
+  }
+}
+
+Future<void> _waitFor(WidgetTester tester, bool Function() condition) async {
+  for (var attempt = 0; attempt < 100 && !condition(); attempt++) {
+    await tester.pump(const Duration(milliseconds: 1));
+  }
+  expect(condition(), isTrue, reason: 'Timed out waiting for condition.');
+}
+
+Future<void> _waitPortfolioProvider(
+  ProviderContainer container,
+  WidgetTester tester,
+) async {
+  for (
+    var attempt = 0;
+    attempt < 40 && !container.read(portfolioFutureProvider).hasValue;
+    attempt++
+  ) {
     await tester.pump(const Duration(milliseconds: 1));
   }
 }
@@ -490,6 +448,7 @@ class _ImmediatePortfolioAdapter implements HttpClientAdapter {
 
 class _PendingPortfolioAdapter implements HttpClientAdapter {
   final List<Completer<ResponseBody>> responses = [];
+  final List<RequestOptions> requests = [];
 
   @override
   Future<ResponseBody> fetch(
@@ -497,6 +456,7 @@ class _PendingPortfolioAdapter implements HttpClientAdapter {
     Stream<Uint8List>? requestStream,
     Future<void>? cancelFuture,
   ) {
+    requests.add(options);
     final response = Completer<ResponseBody>();
     responses.add(response);
     return response.future;

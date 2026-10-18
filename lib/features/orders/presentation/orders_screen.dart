@@ -2,10 +2,12 @@
 // File Path: lib/features/orders/presentation/orders_screen.dart
 
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/formatting/adaptive_number_format.dart';
 import '../../../core/navigation/navigation_content_frame.dart';
+import '../../../core/network/okx_read_scope.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/pnl_color.dart';
 import '../../../core/timezone/app_time_zone.dart';
@@ -15,7 +17,6 @@ import 'providers/order_provider.dart';
 import 'providers/order_cancellation_flow_provider.dart';
 import '../data/okx_order_model.dart';
 import '../data/okx_position_model.dart';
-import 'providers/position_action_flow_provider.dart';
 import 'providers/trade_session_provider.dart';
 import 'package:intl/intl.dart';
 import '../../portfolio/presentation/portfolio_screen.dart'; // Thêm import này để lấy trạng thái Dark Mode
@@ -26,7 +27,6 @@ import 'widgets/order_filter_controls.dart';
 import 'widgets/order_notional.dart';
 import 'widgets/order_cancellation_control.dart';
 import 'widgets/responsive_order_grid.dart';
-import 'widgets/position_action_controls.dart';
 import 'widgets/trade_account_controls.dart';
 
 String formatOrderTimestamp(String rawTimestamp, String timeZoneId) {
@@ -53,32 +53,18 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     _refreshTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       final currentTab = ref.read(orderTabProvider);
       final currentFilter = ref.read(orderFilterProvider);
-
-      final tradeSession = ref.read(tradeSessionProvider);
-      if (tradeSession.session != null && !tradeSession.isAuthenticated) {
-        ref.read(tradeSessionProvider.notifier).expire();
-        return;
-      }
-      if (tradeSession.isLoading || !tradeSession.isAuthenticated) return;
-
       if (currentTab == OrderTab.positions && currentFilter == 'SPOT') return;
 
       final currentRead = currentTab == OrderTab.positions
-          ? (tradeSession.isAuthenticated
-                ? ref.read(tradePositionsProvider)
-                : ref.read(positionsFutureProvider))
+          ? ref.read(positionsFutureProvider)
           : ref.read(ordersFutureProvider);
       if (currentRead.isLoading ||
-          isTerminalForegroundReadFailure(currentRead.asError?.error)) {
+          isTerminalOkxReadFailure(currentRead.asError?.error)) {
         return;
       }
 
       if (currentTab == OrderTab.positions) {
-        if (tradeSession.isAuthenticated) {
-          ref.invalidate(tradePositionsProvider);
-        } else {
-          ref.invalidate(positionsFutureProvider);
-        }
+        ref.invalidate(positionsFutureProvider);
       } else {
         ref.invalidate(ordersFutureProvider);
       }
@@ -92,27 +78,20 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
   }
 
   Future<void> _refreshCurrentRead() async {
-    final tradeSession = ref.read(tradeSessionProvider);
-    if (tradeSession.session != null && !tradeSession.isAuthenticated) {
-      ref.read(tradeSessionProvider.notifier).expire();
-      return;
-    }
-    if (tradeSession.isLoading || !tradeSession.isAuthenticated) return;
-
     final currentTab = ref.read(orderTabProvider);
     final currentFilter = ref.read(orderFilterProvider);
     if (currentTab == OrderTab.positions && currentFilter == 'SPOT') return;
 
     final currentRead = currentTab == OrderTab.positions
-        ? ref.read(tradePositionsProvider)
+        ? ref.read(positionsFutureProvider)
         : ref.read(ordersFutureProvider);
     if (currentRead.isLoading || _manualRefreshInFlight) return;
 
     setState(() => _manualRefreshInFlight = true);
     try {
       if (currentTab == OrderTab.positions) {
-        ref.invalidate(tradePositionsProvider);
-        await ref.read(tradePositionsProvider.future);
+        ref.invalidate(positionsFutureProvider);
+        await ref.read(positionsFutureProvider.future);
       } else {
         ref.invalidate(ordersFutureProvider);
         await ref.read(ordersFutureProvider.future);
@@ -139,9 +118,6 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     final isTradeAuthenticated = tradeSessionState.isAuthenticated;
     final isCurrentReadLoading = switch (currentTab) {
       OrderTab.positions when currentFilter == 'SPOT' => false,
-      OrderTab.positions when tradeSessionState.isLoading => false,
-      OrderTab.positions when isTradeAuthenticated =>
-        ref.watch(tradePositionsProvider).isLoading,
       OrderTab.positions => ref.watch(positionsFutureProvider).isLoading,
       _ => ref.watch(ordersFutureProvider).isLoading,
     };
@@ -207,16 +183,10 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
           ManualRefreshButton(
             buttonKey: const Key('orders-manual-refresh'),
             onRefresh:
-                isTradeAuthenticated &&
-                    !tradeSessionState.isLoading &&
-                    !(currentTab == OrderTab.positions &&
-                        currentFilter == 'SPOT')
-                ? _refreshCurrentRead
-                : null,
-            isBusy:
-                _manualRefreshInFlight ||
-                tradeSessionState.isLoading ||
-                isCurrentReadLoading,
+                currentTab == OrderTab.positions && currentFilter == 'SPOT'
+                ? null
+                : _refreshCurrentRead,
+            isBusy: _manualRefreshInFlight || isCurrentReadLoading,
           ),
         ],
       ),
@@ -264,7 +234,6 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
   ) {
     final palette = AppPalette.forBrightness(isDark);
     if (currentTab == OrderTab.positions) {
-      final tradeState = ref.watch(tradeSessionProvider);
       if (filter == 'SPOT') {
         return Column(
           children: [
@@ -273,67 +242,6 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                 child: Text(
                   'Giao dịch SPOT không hỗ trợ Vị thế mở.',
                   style: TextStyle(fontSize: 12, color: palette.muted),
-                ),
-              ),
-            ),
-          ],
-        );
-      }
-
-      if (tradeState.isLoading) {
-        return Center(child: CircularProgressIndicator(color: palette.ink));
-      }
-
-      if (tradeState.isAuthenticated) {
-        final positionsAsyncValue = ref.watch(tradePositionsProvider);
-        return Column(
-          children: [
-            Expanded(
-              child: RefreshIndicator(
-                color: palette.ink,
-                backgroundColor: palette.raised,
-                onRefresh: _refreshCurrentRead,
-                child: positionsAsyncValue.when(
-                  skipLoadingOnReload: false,
-                  loading: () => Center(
-                    child: CircularProgressIndicator(color: palette.ink),
-                  ),
-                  error: (error, stack) => Center(
-                    child: Text(
-                      'Lỗi: $error',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 12, color: palette.negative),
-                    ),
-                  ),
-                  data: (snapshot) {
-                    final positions = filter == 'ALL'
-                        ? snapshot.positions
-                        : snapshot.positions
-                              .where(
-                                (position) =>
-                                    position.instType.toUpperCase() == filter,
-                              )
-                              .toList(growable: false);
-                    if (positions.isEmpty) {
-                      return _buildEmptyState(
-                        'Không có vị thế nào đang mở.',
-                        isDark,
-                      );
-                    }
-                    return ResponsiveOrderGrid(
-                      children: positions
-                          .map(
-                            (position) => _buildPositionCard(
-                              position,
-                              isDark,
-                              currency,
-                              exchangeRate,
-                              isBalanceHidden,
-                            ),
-                          )
-                          .toList(growable: false),
-                    );
-                  },
                 ),
               ),
             ),
@@ -388,9 +296,6 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
         ],
       );
     } else {
-      if (ref.watch(tradeSessionProvider).isLoading) {
-        return Center(child: CircularProgressIndicator(color: palette.ink));
-      }
       final ordersAsyncValue = ref.watch(ordersFutureProvider);
       final orderList = RefreshIndicator(
         color: palette.ink,
@@ -641,7 +546,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     final iconBgColor = palette.surface;
 
     return Card(
-      key: ValueKey(positionActionIdentityKey(position.identity)),
+      key: ValueKey(_nativePositionDisplayKey(position)),
       elevation: 0,
       color: cardColor,
       margin: EdgeInsets.zero,
@@ -884,11 +789,24 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                 ),
               ],
             ),
-            PositionActionControls(position: position),
           ],
         ),
       ),
     );
+  }
+
+  String _nativePositionDisplayKey(OkxPosition position) {
+    if (position.positionId.isNotEmpty) {
+      return 'native-pos:${position.positionId}';
+    }
+    return jsonEncode([
+      position.instId,
+      position.instType,
+      position.posSide,
+      position.mgnMode,
+      position.marginCurrency,
+      position.positionCurrency,
+    ]);
   }
 
   Widget _buildPendingOrderRow({

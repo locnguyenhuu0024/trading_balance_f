@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:dio/dio.dart';
@@ -9,7 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:trading_balance_f/core/network/backend_data_client.dart';
+import 'package:trading_balance_f/core/network/okx_data_client.dart';
 import 'package:trading_balance_f/core/currency/currency_display_mode.dart';
 import 'package:trading_balance_f/features/orders/data/okx_order_model.dart';
 import 'package:trading_balance_f/features/orders/data/okx_position_model.dart';
@@ -18,7 +17,6 @@ import 'package:trading_balance_f/features/orders/presentation/orders_screen.dar
 import 'package:trading_balance_f/features/orders/presentation/providers/order_provider.dart';
 import 'package:trading_balance_f/features/orders/presentation/providers/trade_session_provider.dart';
 import 'package:trading_balance_f/features/orders/presentation/widgets/trade_account_controls.dart';
-import 'package:trading_balance_f/features/portfolio/presentation/portfolio_screen.dart';
 import 'package:trading_balance_f/features/settings/presentation/settings_screen.dart';
 
 void main() {
@@ -147,7 +145,8 @@ void main() {
       await tester.pumpWidget(
         _positionsOrdersScreen(textScale: scenario.textScale),
       );
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
 
       expect(find.byType(TradeAccountControls), findsOneWidget);
       expect(find.byTooltip('Đóng tất cả vị thế'), findsOneWidget);
@@ -229,7 +228,7 @@ void main() {
     }
   });
 
-  testWidgets('RED-102 signed-out orders keeps refresh visible and disabled', (
+  testWidgets('signed-out orders keeps direct refresh visible and enabled', (
     tester,
   ) async {
     final api = TradeApiClient(baseUrl: 'https://trade.example');
@@ -254,7 +253,8 @@ void main() {
         child: const MaterialApp(home: OrdersScreen()),
       ),
     );
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
 
     final refresh = find.byTooltip('Làm mới dữ liệu');
     expect(refresh, findsOneWidget);
@@ -262,12 +262,12 @@ void main() {
       tester
           .widget<IconButton>(find.byKey(const Key('orders-manual-refresh')))
           .onPressed,
-      isNull,
+      isNotNull,
     );
-    final readsBeforeTap = reads;
     await tester.tap(refresh);
     await tester.pump();
-    expect(reads, readsBeforeTap);
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(reads, 2);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
@@ -286,12 +286,9 @@ void main() {
           tradeSessionProvider.overrideWith(
             (ref) => _AuthenticatedTradeSessionController(api),
           ),
-          tradePositionsProvider.overrideWith((ref) async {
+          positionsFutureProvider.overrideWith((ref) async {
             positionLoads++;
-            return const TradePositionsSnapshot(
-              accountIdentifier: 'test-account',
-              positions: [],
-            );
+            return const [];
           }),
           ordersFutureProvider.overrideWith((ref) async {
             orderLoads++;
@@ -316,7 +313,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('automatic polling stops after a terminal configuration error', (
+  testWidgets('automatic polling stops after terminal credential error', (
     tester,
   ) async {
     final api = TradeApiClient(baseUrl: 'https://trade.example');
@@ -333,9 +330,9 @@ void main() {
           ),
           ordersFutureProvider.overrideWith((ref) async {
             loadCalls++;
-            throw const BackendDataException(
-              code: 'api_not_configured',
-              message: 'Not configured.',
+            throw const OkxDataException(
+              code: 'okx_credentials_required',
+              message: 'Add OKX API credentials.',
             );
           }),
           themeModeProvider.overrideWith((ref) => ThemeMode.light),
@@ -354,11 +351,13 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('old positions are hidden while a replacement session loads', (
+  testWidgets('direct positions remain visible during backend restoration', (
     tester,
   ) async {
     final api = _PendingTradePositionsApi();
-    final session = _AuthenticatedTradeSessionController(api);
+    final session = _RestoringTradeSessionController(api);
+    var directReads = 0;
+    var backendTargetReads = 0;
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
@@ -366,6 +365,24 @@ void main() {
           orderTabProvider.overrideWith((ref) => OrderTab.positions),
           tradeApiProvider.overrideWithValue(api),
           tradeSessionProvider.overrideWith((ref) => session),
+          positionsFutureProvider.overrideWith((ref) async {
+            directReads++;
+            return const [
+              OkxPosition(
+                instId: 'BTC-USDT-SWAP',
+                instType: 'SWAP',
+                posSide: 'long',
+                pos: '1',
+              ),
+            ];
+          }),
+          tradePositionsProvider.overrideWith((ref) async {
+            backendTargetReads++;
+            return const TradePositionsSnapshot(
+              accountIdentifier: 'test-account',
+              positions: [],
+            );
+          }),
           themeModeProvider.overrideWith((ref) => ThemeMode.light),
           currencyProvider.overrideWith((ref) => CurrencyDisplayMode.usd),
           vndExchangeRateProvider.overrideWith((ref) async => 25400),
@@ -375,33 +392,19 @@ void main() {
     );
 
     await tester.pump();
-    expect(api.requests, hasLength(1));
-    api.requests.first.complete(
-      const TradePositionsSnapshot(
-        accountIdentifier: 'test-account',
-        positions: [],
-      ),
-    );
-    await tester.pump();
-    await tester.pump();
-    expect(find.text('Không có vị thế nào đang mở.'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(find.text('BTCUSDT'), findsOneWidget);
+    expect(directReads, 1);
+    expect(backendTargetReads, 0);
+    expect(api.requests, isEmpty);
 
     session.replace(accountIdentifier: 'replacement-account');
     await tester.pump();
-    await tester.pump();
-    expect(api.requests, hasLength(2));
-    expect(find.text('Không có vị thế nào đang mở.'), findsNothing);
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
-
-    api.requests.last.complete(
-      const TradePositionsSnapshot(
-        accountIdentifier: 'replacement-account',
-        positions: [],
-      ),
-    );
-    await tester.pump();
-    await tester.pump();
-    expect(find.text('Không có vị thế nào đang mở.'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(find.text('BTCUSDT'), findsOneWidget);
+    expect(directReads, 1);
+    expect(backendTargetReads, 0);
+    expect(api.requests, isEmpty);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 }
@@ -427,6 +430,7 @@ Widget _ordersScreen({
         return request.future;
       }),
       themeModeProvider.overrideWith((ref) => ThemeMode.light),
+      positionsFutureProvider.overrideWith((ref) async => const []),
       currencyProvider.overrideWith((ref) => CurrencyDisplayMode.usd),
       vndExchangeRateProvider.overrideWith((ref) async => 25400),
     ],
@@ -451,6 +455,7 @@ Widget _positionsOrdersScreen({double textScale = 1.0}) {
         ),
       ),
       themeModeProvider.overrideWith((ref) => ThemeMode.light),
+      positionsFutureProvider.overrideWith((ref) async => const []),
       currencyProvider.overrideWith((ref) => CurrencyDisplayMode.usd),
       vndExchangeRateProvider.overrideWith((ref) async => 25400),
     ],
@@ -532,6 +537,22 @@ class _AuthenticatedTradeSessionController extends TradeSessionController {
   }
 
   void replace({String accountIdentifier = 'test-account'}) {
+    state = TradeSessionState(
+      session: TradeSession(
+        bearerToken: 'test-token-$accountIdentifier',
+        accountIdentifier: accountIdentifier,
+        expiresAt: DateTime.now().add(const Duration(hours: 1)),
+      ),
+    );
+  }
+}
+
+class _RestoringTradeSessionController extends TradeSessionController {
+  _RestoringTradeSessionController(super.api) {
+    state = const TradeSessionState(isLoading: true);
+  }
+
+  void replace({required String accountIdentifier}) {
     state = TradeSessionState(
       session: TradeSession(
         bearerToken: 'test-token-$accountIdentifier',

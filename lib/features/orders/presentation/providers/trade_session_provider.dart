@@ -54,77 +54,82 @@ final backendDataClientProvider = Provider<BackendDataClient>((ref) {
   return client;
 });
 
-final tradePositionsProvider =
-    FutureProvider.autoDispose<TradePositionsSnapshot>((ref) async {
-      final isSessionLoading = ref.watch(
-        tradeSessionProvider.select((state) => state.isLoading),
+final tradePositionsProvider = FutureProvider.autoDispose<TradePositionsSnapshot>((
+  ref,
+) async {
+  final isSessionLoading = ref.watch(
+    tradeSessionProvider.select((state) => state.isLoading),
+  );
+  final sessionGeneration = ref.watch(
+    backendDataSessionProvider.select((session) => session.generation),
+  );
+  final backendSession = ref.read(backendDataSessionProvider);
+  final session = backendSession.current;
+  if (isSessionLoading) {
+    throw const TradeApiException(
+      code: 'session_loading',
+      message: 'Đang kiểm tra phiên giao dịch. Vui lòng đợi một chút.',
+    );
+  }
+  if (session == null) {
+    throw const TradeApiException(
+      code: 'authentication_required',
+      message: 'Vui lòng đăng nhập để xem vị thế giao dịch.',
+    );
+  }
+  final generation = sessionGeneration;
+  final api = ref.read(tradeApiProvider);
+  final gate = ref.read(foregroundReadGateProvider);
+  var callerActive = true;
+  final lease = gate.acquire<TradePositionsSnapshot>(
+    sessionIdentity: backendSession,
+    generation: generation,
+    requestKey: 'orders/positions/authenticated',
+    canStart: () =>
+        callerActive &&
+        !ref.read(tradeSessionProvider).isLoading &&
+        backendSession.matches(generation, session),
+    load: (cancelToken) => api is CancellableTradePositionsApi
+        ? (api as CancellableTradePositionsApi).getPositionsCancellable(
+            session.bearerToken,
+            cancelToken: cancelToken,
+          )
+        : api.getPositions(session.bearerToken),
+    isTransientFailure: isTransientForegroundReadFailure,
+    isCancellationFailure: isForegroundReadCancellation,
+    retryAfter: foregroundReadRetryAfter,
+  );
+  ref.onDispose(() {
+    callerActive = false;
+    lease.release();
+  });
+  try {
+    final snapshot = await lease.future;
+    if (!backendSession.matches(generation, session)) {
+      throw const BackendDataException(
+        code: 'session_changed',
+        message: 'Phiên giao dịch đã thay đổi. Hãy tải lại dữ liệu.',
+        statusCode: 401,
       );
-      final sessionGeneration = ref.watch(
-        backendDataSessionProvider.select((session) => session.generation),
+    }
+    if (snapshot.accountIdentifier != session.accountIdentifier) {
+      throw const TradeApiException(
+        code: 'account_mismatch',
+        message:
+            'Mục tiêu vị thế thuộc tài khoản backend khác. Đóng hộp thoại rồi mở lại.',
       );
-      final backendSession = ref.read(backendDataSessionProvider);
-      final session = backendSession.current;
-      if (isSessionLoading) {
-        throw const TradeApiException(
-          code: 'session_loading',
-          message: 'Đang kiểm tra phiên giao dịch. Vui lòng đợi một chút.',
-        );
-      }
-      if (session == null) {
-        throw const TradeApiException(
-          code: 'authentication_required',
-          message: 'Vui lòng đăng nhập để xem vị thế giao dịch.',
-        );
-      }
-      final generation = sessionGeneration;
-      final api = ref.read(tradeApiProvider);
-      final gate = ref.read(foregroundReadGateProvider);
-      var callerActive = true;
-      final lease = gate.acquire<TradePositionsSnapshot>(
-        sessionIdentity: backendSession,
-        generation: generation,
-        requestKey: 'orders/positions/authenticated',
-        canStart: () =>
-            callerActive &&
-            !ref.read(tradeSessionProvider).isLoading &&
-            backendSession.matches(generation, session),
-        load: (cancelToken) => api is CancellableTradePositionsApi
-            ? (api as CancellableTradePositionsApi).getPositionsCancellable(
-                session.bearerToken,
-                cancelToken: cancelToken,
-              )
-            : api.getPositions(session.bearerToken),
-        isTransientFailure: isTransientForegroundReadFailure,
-        isCancellationFailure: isForegroundReadCancellation,
-        retryAfter: foregroundReadRetryAfter,
-      );
-      ref.onDispose(() {
-        callerActive = false;
-        lease.release();
-      });
-      try {
-        final snapshot = await lease.future;
-        if (!backendSession.matches(generation, session)) {
-          throw const BackendDataException(
-            code: 'session_changed',
-            message: 'Phiên giao dịch đã thay đổi. Hãy tải lại dữ liệu.',
-            statusCode: 401,
-          );
-        }
-        return snapshot;
-      } on TradeApiException catch (error) {
-        if (callerActive &&
-            error.isUnauthorized &&
-            backendSession.matches(generation, session) &&
-            _sameTradeSession(
-              ref.read(tradeSessionProvider).session,
-              session,
-            )) {
-          ref.read(tradeSessionProvider.notifier).expire();
-        }
-        rethrow;
-      }
-    });
+    }
+    return snapshot;
+  } on TradeApiException catch (error) {
+    if (callerActive &&
+        error.isUnauthorized &&
+        backendSession.matches(generation, session) &&
+        _sameTradeSession(ref.read(tradeSessionProvider).session, session)) {
+      ref.read(tradeSessionProvider.notifier).expire();
+    }
+    rethrow;
+  }
+});
 
 bool isTransientForegroundReadFailure(Object error) {
   final statusCode = switch (error) {

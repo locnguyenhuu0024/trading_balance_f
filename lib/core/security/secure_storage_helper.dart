@@ -5,6 +5,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../navigation/navigation_preferences.dart';
@@ -17,14 +18,86 @@ final secureStorageProvider = Provider<SecureStorageHelper>((ref) {
     aOptions: AndroidOptions(encryptedSharedPreferences: true),
     iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock),
   );
-  return SecureStorageHelper(storage);
+  final helper = SecureStorageHelper(storage);
+  ref.onDispose(helper.dispose);
+  return helper;
 });
+
+/// Secret-free identity for one OKX credential generation.
+@immutable
+class OkxCredentialSnapshot {
+  const OkxCredentialSnapshot({
+    required this.generation,
+    required this.rotating,
+  });
+
+  final int generation;
+  final bool rotating;
+
+  @override
+  bool operator ==(Object other) =>
+      other is OkxCredentialSnapshot &&
+      other.generation == generation &&
+      other.rotating == rotating;
+
+  @override
+  int get hashCode => Object.hash(generation, rotating);
+}
 
 /// Lớp hỗ trợ quản lý việc lưu trữ các dữ liệu nhạy cảm và cài đặt
 class SecureStorageHelper {
   final FlutterSecureStorage _storage;
 
-  SecureStorageHelper(this._storage);
+  SecureStorageHelper(this._storage)
+    : _okxCredentialState = ValueNotifier(
+        const OkxCredentialSnapshot(generation: 0, rotating: false),
+      );
+
+  final ValueNotifier<OkxCredentialSnapshot> _okxCredentialState;
+  int _activeOkxCredentialMutations = 0;
+  bool _disposed = false;
+
+  /// Safe generation/rotation changes for private read clients and providers.
+  /// This value contains no stored credentials.
+  ValueListenable<OkxCredentialSnapshot> get okxCredentialState =>
+      _okxCredentialState;
+
+  /// Fences in-flight private reads around any OKX credential save or clear.
+  /// Concurrent mutations keep [rotating] true until the final write finishes.
+  Future<T> trackOkxCredentialMutation<T>(Future<T> Function() mutation) async {
+    if (_disposed) throw StateError('SecureStorageHelper is disposed.');
+    _beginOkxCredentialMutation();
+    try {
+      return await mutation();
+    } finally {
+      _finishOkxCredentialMutation();
+    }
+  }
+
+  void _beginOkxCredentialMutation() {
+    _activeOkxCredentialMutations++;
+    final current = _okxCredentialState.value;
+    _okxCredentialState.value = OkxCredentialSnapshot(
+      generation: current.generation + 1,
+      rotating: true,
+    );
+  }
+
+  void _finishOkxCredentialMutation() {
+    _activeOkxCredentialMutations--;
+    if (_disposed) return;
+    final current = _okxCredentialState.value;
+    _okxCredentialState.value = OkxCredentialSnapshot(
+      generation: current.generation + 1,
+      rotating: _activeOkxCredentialMutations > 0,
+    );
+  }
+
+  void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    _okxCredentialState.dispose();
+  }
 
   // Define keys
   static const String _okxApiKey = 'OKX_API_KEY';
@@ -152,11 +225,13 @@ class SecureStorageHelper {
     required String secretKey,
     required String passphrase,
   }) async {
-    await Future.wait([
-      _storage.write(key: _okxApiKey, value: apiKey),
-      _storage.write(key: _okxSecretKey, value: secretKey),
-      _storage.write(key: _okxPassphrase, value: passphrase),
-    ]);
+    await trackOkxCredentialMutation(() async {
+      await Future.wait([
+        _storage.write(key: _okxApiKey, value: apiKey),
+        _storage.write(key: _okxSecretKey, value: secretKey),
+        _storage.write(key: _okxPassphrase, value: passphrase),
+      ]);
+    });
   }
 
   /// Lấy cấu hình Ẩn số dư mặc định
@@ -242,10 +317,12 @@ class SecureStorageHelper {
 
   /// Xoá toàn bộ thông tin
   Future<void> clearOkxCredentials() async {
-    await Future.wait([
-      _storage.delete(key: _okxApiKey),
-      _storage.delete(key: _okxSecretKey),
-      _storage.delete(key: _okxPassphrase),
-    ]);
+    await trackOkxCredentialMutation(() async {
+      await Future.wait([
+        _storage.delete(key: _okxApiKey),
+        _storage.delete(key: _okxSecretKey),
+        _storage.delete(key: _okxPassphrase),
+      ]);
+    });
   }
 }
