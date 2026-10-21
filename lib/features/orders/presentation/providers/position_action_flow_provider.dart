@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/okx_position_model.dart';
 import '../../data/trade_api_client.dart';
+import 'order_provider.dart';
 import 'trade_session_provider.dart';
 
 typedef PositionActionInputCollector = Future<String?> Function();
@@ -22,7 +23,11 @@ final positionActionFlowsProvider =
         readApi: () => ref.read(tradeApiProvider),
         readSession: () => ref.read(tradeSessionProvider),
         readSessionController: () => ref.read(tradeSessionProvider.notifier),
-        invalidatePositions: () => ref.invalidate(tradePositionsProvider),
+        invalidatePositions: () {
+          ref.invalidate(tradePositionsProvider);
+          ref.invalidate(positionsFutureProvider);
+          ref.invalidate(ordersFutureProvider);
+        },
       );
     });
 

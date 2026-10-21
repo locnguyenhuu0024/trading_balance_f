@@ -383,11 +383,13 @@ class WebStorageHelper extends SecureStorageHelper {
     required String secretKey,
     required String passphrase,
   }) async {
-    await Future.wait([
-      _prefs.setString('OKX_API_KEY', apiKey),
-      _prefs.setString('OKX_SECRET_KEY', secretKey),
-      _prefs.setString('OKX_PASSPHRASE', passphrase),
-    ]);
+    await trackOkxCredentialMutation(() async {
+      await Future.wait([
+        _prefs.setString('OKX_API_KEY', apiKey),
+        _prefs.setString('OKX_SECRET_KEY', secretKey),
+        _prefs.setString('OKX_PASSPHRASE', passphrase),
+      ]);
+    });
   }
 
   @override
@@ -482,10 +484,12 @@ class WebStorageHelper extends SecureStorageHelper {
 
   @override
   Future<void> clearOkxCredentials() async {
-    await Future.wait([
-      _prefs.remove('OKX_API_KEY'),
-      _prefs.remove('OKX_SECRET_KEY'),
-      _prefs.remove('OKX_PASSPHRASE'),
-    ]);
+    await trackOkxCredentialMutation(() async {
+      await Future.wait([
+        _prefs.remove('OKX_API_KEY'),
+        _prefs.remove('OKX_SECRET_KEY'),
+        _prefs.remove('OKX_PASSPHRASE'),
+      ]);
+    });
   }
 }

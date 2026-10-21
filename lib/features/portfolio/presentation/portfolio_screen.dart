@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../../core/currency/currency_display_mode.dart';
+import '../../../core/network/okx_read_scope.dart';
 import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/platform_brightness_provider.dart';
@@ -13,7 +14,6 @@ import '../../../core/theme/pnl_color.dart';
 import '../../../core/widgets/crypto_icon.dart';
 import '../../../core/widgets/manual_refresh_button.dart';
 import 'providers/portfolio_provider.dart';
-import '../../orders/presentation/providers/trade_session_provider.dart';
 import '../../settings/presentation/settings_screen.dart';
 import '../../market/presentation/providers/market_provider.dart';
 import '../../../core/network/okx_websocket_service.dart';
@@ -56,15 +56,11 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
   }
 
   Future<void> _refreshPortfolio({bool automatic = false}) async {
-    final tradeState = ref.read(tradeSessionProvider);
     final currentRead = ref.read(portfolioFutureProvider);
     if (!mounted ||
-        tradeState.isLoading ||
-        !tradeState.isAuthenticated ||
         _portfolioRefreshInFlight ||
         currentRead.isLoading ||
-        (automatic &&
-            isTerminalForegroundReadFailure(currentRead.asError?.error))) {
+        (automatic && isTerminalOkxReadFailure(currentRead.asError?.error))) {
       return;
     }
     _portfolioRefreshInFlight = true;
@@ -79,10 +75,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
   }
 
   Future<void> _refreshPortfolioAndRate() async {
-    final tradeState = ref.read(tradeSessionProvider);
     if (!mounted ||
-        tradeState.isLoading ||
-        !tradeState.isAuthenticated ||
         _portfolioRefreshInFlight ||
         _pageRefreshInFlight ||
         ref.read(portfolioFutureProvider).isLoading) {
@@ -118,8 +111,9 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
   void _syncTickerSubscription(List<String> coins) {
     final nextCoins = List<String>.unmodifiable(coins);
     if (_pendingCoins != null && _sameCoins(_pendingCoins!, nextCoins)) return;
-    if (_pendingCoins == null && _sameCoins(_subscribedCoins, nextCoins))
+    if (_pendingCoins == null && _sameCoins(_subscribedCoins, nextCoins)) {
       return;
+    }
     _pendingCoins = nextCoins;
     if (_tickerSubscriptionScheduled) return;
     _tickerSubscriptionScheduled = true;
@@ -151,12 +145,6 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
   @override
   Widget build(BuildContext context) {
     final portfolioAsyncValue = ref.watch(portfolioFutureProvider);
-    final isSessionLoading = ref.watch(
-      tradeSessionProvider.select((state) => state.isLoading),
-    );
-    final isSessionAuthenticated = ref.watch(
-      tradeSessionProvider.select((state) => state.isAuthenticated),
-    );
     final livePrices = ref.watch(livePriceProvider);
 
     final isBalanceHidden = ref.watch(hideBalanceProvider);
@@ -180,9 +168,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
         actions: [
           ManualRefreshButton(
             buttonKey: const Key('portfolio-manual-refresh'),
-            onRefresh: isSessionAuthenticated && !isSessionLoading
-                ? _refreshPortfolioAndRate
-                : null,
+            onRefresh: _refreshPortfolioAndRate,
             isBusy:
                 _pageRefreshInFlight ||
                 _portfolioRefreshInFlight ||
@@ -206,9 +192,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
           color: palette.ink,
           backgroundColor: palette.raised,
           onRefresh: _refreshPortfolioAndRate,
-          child:
-              !portfolioAsyncValue.hasValue &&
-                  (isSessionLoading || portfolioAsyncValue.isLoading)
+          child: !portfolioAsyncValue.hasValue && portfolioAsyncValue.isLoading
               ? Center(child: CircularProgressIndicator(color: textColor))
               : portfolioAsyncValue.when(
                   skipLoadingOnReload: false,

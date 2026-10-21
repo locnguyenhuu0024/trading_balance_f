@@ -9,7 +9,6 @@ import '../../../core/theme/pnl_color.dart';
 import '../../../core/widgets/crypto_icon.dart';
 import '../../../core/widgets/manual_refresh_button.dart';
 import '../../market/presentation/providers/market_provider.dart';
-import '../../orders/presentation/providers/trade_session_provider.dart';
 import '../../settings/presentation/settings_screen.dart';
 import '../data/okx_balance_model.dart';
 import '../presentation/widgets/portfolio_currency_amount.dart';
@@ -33,10 +32,7 @@ class _PortfolioDetailsScreenState
   bool _isRefreshInFlight = false;
 
   Future<void> _refreshPortfolio() async {
-    final session = ref.read(tradeSessionProvider);
     if (!mounted ||
-        session.isLoading ||
-        !session.isAuthenticated ||
         _isRefreshInFlight ||
         ref.read(portfolioFutureProvider).isLoading) {
       return;
@@ -56,7 +52,6 @@ class _PortfolioDetailsScreenState
   Widget build(BuildContext context) {
     final async = ref.watch(portfolioFutureProvider);
     final hidden = ref.watch(hideBalanceProvider);
-    final session = ref.watch(tradeSessionProvider);
     final currency = ref.watch(currencyProvider);
     final rate = ref.watch(vndExchangeRateProvider).value ?? 25400.0;
     final palette = AppPalette.of(context);
@@ -72,9 +67,7 @@ class _PortfolioDetailsScreenState
         actions: [
           ManualRefreshButton(
             buttonKey: const Key('portfolio-details-manual-refresh'),
-            onRefresh: session.isAuthenticated && !session.isLoading
-                ? _refreshPortfolio
-                : null,
+            onRefresh: _refreshPortfolio,
             isBusy: _isRefreshInFlight || async.isLoading,
           ),
           IconButton(

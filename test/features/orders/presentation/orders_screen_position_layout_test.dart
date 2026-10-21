@@ -10,6 +10,7 @@ import 'package:trading_balance_f/features/orders/data/trade_api_client.dart';
 import 'package:trading_balance_f/features/orders/presentation/orders_screen.dart';
 import 'package:trading_balance_f/features/orders/presentation/providers/order_provider.dart';
 import 'package:trading_balance_f/features/orders/presentation/providers/trade_session_provider.dart';
+import 'package:trading_balance_f/features/orders/presentation/widgets/position_action_controls.dart';
 import 'package:trading_balance_f/features/settings/presentation/settings_screen.dart';
 import 'package:trading_balance_f/main.dart';
 
@@ -49,6 +50,10 @@ OkxPosition _position({
   String posSide = 'long',
   String instType = '',
   String lever = '5',
+  String positionId = '',
+  String mgnMode = '',
+  String marginCurrency = '',
+  String positionCurrency = '',
 }) {
   return OkxPosition(
     instId: instId,
@@ -61,6 +66,10 @@ OkxPosition _position({
     uplRatio: uplRatio,
     notionalUsd: notionalUsd,
     instType: instType,
+    positionId: positionId,
+    mgnMode: mgnMode,
+    marginCurrency: marginCurrency,
+    positionCurrency: positionCurrency,
   );
 }
 
@@ -309,7 +318,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('position cards follow their content at every viewport width', (
+  testWidgets('native position cards do not expose backend actions', (
     tester,
   ) async {
     addTearDown(tester.view.resetPhysicalSize);
@@ -328,23 +337,61 @@ void main() {
       expect(liquidation, findsOneWidget);
       final card = _cardContainingPrice('1,234,567.89');
       final cardRect = tester.getRect(card);
-      final liquidationRect = tester.getRect(liquidation);
-
       expect(cardRect.height, lessThan(500));
-      final actionReason = find.text(
-        'Chưa cấu hình TRADE_API_BASE_URL; chỉ xem vị thế.',
-      );
-      final actionReasonRect = tester.getRect(actionReason);
-      expect(cardRect.bottom - actionReasonRect.bottom, closeTo(12, 0.5));
+      expect(find.byType(PositionActionControls), findsNothing);
       expect(
-        cardRect.contains(tester.getRect(find.byTooltip('Đóng 100%')).center),
-        isTrue,
+        find.byKey(const Key('backend-position-actions-entry')),
+        findsOneWidget,
       );
-      expect(actionReasonRect.top, greaterThan(liquidationRect.bottom));
       expect(tester.takeException(), isNull);
 
       await tester.pumpWidget(const SizedBox.shrink());
     }
+  });
+
+  testWidgets('native position ids keep same-instrument rows distinct', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _ordersApp(
+        positions: [
+          _position(
+            liqPx: '1000',
+            instId: 'BTC-USDT',
+            instType: 'MARGIN',
+            posSide: 'net',
+            positionId: 'native-position-1',
+            mgnMode: 'cross',
+            marginCurrency: 'USDT',
+            positionCurrency: 'BTC',
+          ),
+          _position(
+            liqPx: '2000',
+            instId: 'BTC-USDT',
+            instType: 'MARGIN',
+            posSide: 'net',
+            positionId: 'native-position-2',
+            mgnMode: 'isolated',
+            marginCurrency: 'USDT',
+            positionCurrency: 'BTC',
+          ),
+        ],
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    final keys = find
+        .byType(Card)
+        .evaluate()
+        .map((element) => element.widget.key)
+        .toSet();
+    expect(keys, contains(const ValueKey('native-pos:native-position-1')));
+    expect(keys, contains(const ValueKey('native-pos:native-position-2')));
+    expect(keys.length, 2);
+    expect(find.byType(PositionActionControls), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 
   testWidgets('advances a variable-height position row by its tallest card', (
@@ -424,19 +471,13 @@ void main() {
             _cardContainingPrice(liquidationPrice),
           );
           final liquidationRect = tester.getRect(liquidation);
-          final actionReason = tester.getRect(
-            find.text('Chưa cấu hình TRADE_API_BASE_URL; chỉ xem vị thế.'),
-          );
-          // Dual-currency rows may grow with larger text; every value and action
-          // must remain inside the card instead of being clipped to a fixed cap.
+          // Dual-currency rows may grow with larger text; every value remains
+          // inside the native display card instead of a fixed height cap.
           expect(cardRect.contains(liquidationRect.center), isTrue);
-          expect(cardRect.contains(actionReason.center), isTrue);
-          expect(cardRect.bottom - actionReason.bottom, closeTo(12, 0.5));
+          expect(find.byType(PositionActionControls), findsNothing);
           expect(
-            cardRect.contains(
-              tester.getRect(find.byTooltip('Đóng 100%')).center,
-            ),
-            isTrue,
+            find.byKey(const Key('backend-position-actions-entry')),
+            findsOneWidget,
           );
           expect(tester.takeException(), isNull);
 

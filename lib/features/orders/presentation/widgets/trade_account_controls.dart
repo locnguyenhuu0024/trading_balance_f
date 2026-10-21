@@ -11,6 +11,7 @@ import '../providers/order_provider.dart';
 import '../providers/position_action_flow_provider.dart';
 import '../providers/trade_session_provider.dart';
 import 'trade_action_confirmation_dialog.dart';
+import 'backend_position_actions_dialog.dart';
 
 class TradeAccountControls extends ConsumerStatefulWidget {
   const TradeAccountControls({
@@ -107,6 +108,18 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
             )
           else if (canShowCloseAll)
             Align(alignment: Alignment.centerLeft, child: closeAllButton),
+          if (widget.showCloseAll) ...[
+            const SizedBox(height: AppTokens.space1),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                key: const Key('backend-position-actions-entry'),
+                onPressed: _showBackendPositionTargets,
+                icon: const Icon(Icons.account_balance_outlined),
+                label: const Text('Chọn vị thế tài khoản backend'),
+              ),
+            ),
+          ],
           if (!api.isConfigured)
             Text(
               widget.showCloseAll
@@ -262,10 +275,11 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
       final prepared = await ref
           .read(tradeApiProvider)
           .prepare(session.bearerToken, action: 'close_all');
-      if (!_isCurrentSession(session)) return;
+      if (!mounted || !_isCurrentSession(session)) return;
       final targetCount = prepared.summary['targetCount'];
       if (targetCount is! int || targetCount != prepared.targets.length) {
         ref.invalidate(tradePositionsProvider);
+        _invalidateDirectReads();
         _setStatus(
           'Danh sách đóng tất cả không đầy đủ; không có lệnh nào được gửi.',
           sessionOwner: session,
@@ -289,7 +303,7 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
         accountWide: true,
         sessionOwner: session,
       );
-      if (!confirmed || !_isCurrentSession(session)) return;
+      if (!mounted || !confirmed || !_isCurrentSession(session)) return;
 
       final api = ref.read(tradeApiProvider);
       final sessionController = ref.read(tradeSessionProvider.notifier);
@@ -351,8 +365,9 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
           );
         } on TradeApiException catch (error) {
           lookupError ??= error.message;
-          if (error.isUnauthorized && _isCurrentSession(session))
+          if (error.isUnauthorized && _isCurrentSession(session)) {
             ref.read(tradeSessionProvider.notifier).expire();
+          }
         }
       }
       if (!_isCurrentSession(session)) return;
@@ -369,6 +384,7 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
         sessionController.resolveOperation(prepared.operationId);
       }
       ref.invalidate(tradePositionsProvider);
+      _invalidateDirectReads();
       _setStatus(
         _headline(
           finalResult.status,
@@ -383,10 +399,12 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
         lookupError: lookupError,
       );
     } on TradeApiException catch (error) {
-      if (error.isUnauthorized && _isCurrentSession(session))
+      if (error.isUnauthorized && _isCurrentSession(session)) {
         ref.read(tradeSessionProvider.notifier).expire();
+      }
       if (error.isStale || error.statusCode == 409) {
         ref.invalidate(tradePositionsProvider);
+        _invalidateDirectReads();
       }
       _setStatus(_formatError(error), sessionOwner: session);
     } catch (_) {
@@ -471,6 +489,7 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
       }
       ref.invalidate(tradePositionsProvider);
       ref.invalidate(ordersFutureProvider);
+      ref.invalidate(positionsFutureProvider);
       await _showResult(result, sessionOwner: session);
       _setStatus(
         _headline(result.status, result.operationId, action: result.action),
@@ -497,6 +516,24 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
         });
       }
     }
+  }
+
+  Future<void> _showBackendPositionTargets() async {
+    final session = ref.read(tradeSessionProvider).session;
+    final sharedSession = ref.read(backendDataSessionProvider);
+    final generationAtEntry = sharedSession.generation;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => BackendPositionActionsDialog(
+        expectedSession: session,
+        expectedGeneration: generationAtEntry,
+      ),
+    );
+  }
+
+  void _invalidateDirectReads() {
+    ref.invalidate(positionsFutureProvider);
+    ref.invalidate(ordersFutureProvider);
   }
 
   String _actionLabel(String action) => switch (action) {

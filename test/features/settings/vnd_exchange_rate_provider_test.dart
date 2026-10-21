@@ -6,9 +6,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:trading_balance_f/core/network/backend_data_client.dart';
+import 'package:trading_balance_f/core/currency/coingecko_vnd_rate_client.dart';
 import 'package:trading_balance_f/core/security/secure_storage_helper.dart';
-import 'package:trading_balance_f/features/orders/presentation/providers/trade_session_provider.dart';
 import 'package:trading_balance_f/features/settings/presentation/settings_screen.dart';
 
 class _SettingsPreferencesStorage extends SecureStorageHelper {
@@ -79,57 +78,75 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  test(
-    'loads the public USDT-VND rate without login or auth headers',
-    () async {
-      final adapter = _CurrencyAdapter({
-        'code': '0',
-        'data': [
-          {'instId': 'USDT-VND', 'rate': '25431.25', 'source': 'CoinGecko'},
-        ],
-      });
-      final container = ProviderContainer(
-        overrides: [
-          backendDataClientProvider.overrideWithValue(_client(adapter)),
-        ],
-      );
-      addTearDown(container.dispose);
+  test('loads the credential-free CoinGecko tether VND quote', () async {
+    final adapter = _CurrencyAdapter(const {
+      'tether': {'vnd': 25431.25},
+    });
+    final client = _client(adapter);
+    final container = ProviderContainer(
+      overrides: [coinGeckoVndRateClientProvider.overrideWithValue(client)],
+    );
+    addTearDown(() {
+      container.dispose();
+      client.dispose();
+    });
 
-      expect(await container.read(vndExchangeRateProvider.future), 25431.25);
-      expect(adapter.requests, hasLength(1));
-      expect(adapter.requests.single.uri.path, '/v1/data/currency/usdt-vnd');
-      expect(adapter.requests.single.headers['Authorization'], isNull);
-    },
-  );
+    expect(await container.read(vndExchangeRateProvider.future), 25431.25);
+    expect(adapter.requests, hasLength(1));
+    final request = adapter.requests.single;
+    expect(request.uri.origin, CoinGeckoVndRateClient.origin);
+    expect(request.uri.path, '/api/v3/simple/price');
+    expect(request.uri.queryParameters, {
+      'ids': 'tether',
+      'vs_currencies': 'vnd',
+    });
+    expect(request.headers['Authorization'], isNull);
+    expect(request.headers.keys, isNot(contains('OK-ACCESS-KEY')));
+    expect(request.followRedirects, isFalse);
+    expect(request.maxRedirects, 0);
+  });
 
   test('malformed or non-positive rate keeps the local fallback', () async {
-    for (final rawRate in ['NaN', '0', '-1', 12345]) {
+    for (final rawRate in <Object?>['NaN', 0, -1, null]) {
       final adapter = _CurrencyAdapter({
-        'code': '0',
-        'data': [
-          {'instId': 'USDT-VND', 'rate': rawRate, 'source': 'CoinGecko'},
-        ],
+        'tether': {'vnd': rawRate},
       });
+      final client = _client(adapter);
       final container = ProviderContainer(
-        overrides: [
-          backendDataClientProvider.overrideWithValue(_client(adapter)),
-        ],
+        overrides: [coinGeckoVndRateClientProvider.overrideWithValue(client)],
       );
 
       expect(await container.read(vndExchangeRateProvider.future), 25400.0);
       container.dispose();
+      client.dispose();
+    }
+  });
+
+  test('network and rate-limit failures keep the local fallback', () async {
+    for (final statusCode in [429, null]) {
+      final adapter = _CurrencyAdapter(const {}, failureStatusCode: statusCode);
+      final client = _client(adapter);
+      final container = ProviderContainer(
+        overrides: [coinGeckoVndRateClientProvider.overrideWithValue(client)],
+      );
+
+      expect(await container.read(vndExchangeRateProvider.future), 25400.0);
+      container.dispose();
+      client.dispose();
     }
   });
 }
 
-BackendDataClient _client(HttpClientAdapter adapter) => BackendDataClient(
-  dio: Dio()..httpClientAdapter = adapter,
-  baseUrl: 'https://data.example',
-);
+CoinGeckoVndRateClient _client(HttpClientAdapter adapter) {
+  final dio = Dio(BaseOptions(baseUrl: CoinGeckoVndRateClient.origin))
+    ..httpClientAdapter = adapter;
+  return CoinGeckoVndRateClient(dio: dio);
+}
 
 class _CurrencyAdapter implements HttpClientAdapter {
-  _CurrencyAdapter(this.body);
+  _CurrencyAdapter(this.body, {this.failureStatusCode});
   final Object body;
+  final int? failureStatusCode;
   final List<RequestOptions> requests = <RequestOptions>[];
 
   @override
@@ -139,6 +156,23 @@ class _CurrencyAdapter implements HttpClientAdapter {
     Future<void>? cancelFuture,
   ) async {
     requests.add(options);
+    if (failureStatusCode != null) {
+      return ResponseBody.fromString(
+        jsonEncode(body),
+        failureStatusCode!,
+        headers: {
+          Headers.contentTypeHeader: [Headers.jsonContentType],
+        },
+      );
+    }
+    if (failureStatusCode == null &&
+        body is Map<dynamic, dynamic> &&
+        (body as Map).isEmpty) {
+      throw DioException(
+        requestOptions: options,
+        type: DioExceptionType.connectionError,
+      );
+    }
     return ResponseBody.fromString(
       jsonEncode(body),
       200,

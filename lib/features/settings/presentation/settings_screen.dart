@@ -4,8 +4,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
-import 'package:trading_balance_f/core/network/backend_data_client.dart';
-import 'package:trading_balance_f/features/orders/presentation/providers/trade_session_provider.dart';
+import '../../../core/currency/coingecko_vnd_rate_client.dart';
 import '../../../core/currency/currency_display_mode.dart';
 import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/navigation/navigation_destination_data.dart';
@@ -30,31 +29,8 @@ final biometricAuthProvider = StateProvider<bool>((ref) => true);
 // --- Provider lấy tỷ giá ---
 final vndExchangeRateProvider = FutureProvider<double>((ref) async {
   try {
-    final response = await ref
-        .watch(backendDataClientProvider)
-        .get(BackendDataClient.usdtVndRoute);
-    final body = response.data;
-    if (body is! Map || body['code'] != '0' || body['data'] is! List) {
-      throw const FormatException('Invalid exchange-rate response.');
-    }
-    final rows = body['data'] as List;
-    if (rows.isEmpty || rows.first is! Map) {
-      throw const FormatException('Missing exchange-rate row.');
-    }
-    final row = rows.first as Map;
-    if (row['instId'] != 'USDT-VND' || row['source'] != 'CoinGecko') {
-      throw const FormatException('Unexpected exchange-rate row.');
-    }
-    final rawRate = row['rate'];
-    if (rawRate is! String) {
-      throw const FormatException('Invalid exchange-rate value.');
-    }
-    final rate = double.tryParse(rawRate);
-    if (rate == null || !rate.isFinite || rate <= 0) {
-      throw const FormatException('Invalid exchange-rate value.');
-    }
-    return rate;
-  } catch (e) {
+    return await ref.watch(coinGeckoVndRateClientProvider).fetchVndRate();
+  } on Object {
     return 25400.0;
   }
 });
@@ -156,7 +132,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ref.read(appTimeZoneProvider.notifier).state = previousTimeZoneId;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Không lưu được múi giờ. Vui lòng thử lại.'),
+            content: const Text('Không lưu được múi giờ. Vui lòng thử lại.'),
             backgroundColor: AppPalette.of(context).negative,
           ),
         );
@@ -184,7 +160,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ref.read(appTextScaleProvider.notifier).state = previousScale;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Không lưu được cỡ chữ ứng dụng. Vui lòng thử lại.'),
+            content: const Text(
+              'Không lưu được cỡ chữ ứng dụng. Vui lòng thử lại.',
+            ),
             backgroundColor: AppPalette.of(context).negative,
           ),
         );

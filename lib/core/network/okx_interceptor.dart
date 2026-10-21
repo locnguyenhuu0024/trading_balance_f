@@ -18,7 +18,10 @@ class OkxInterceptor extends Interceptor {
   OkxInterceptor(this._secureStorage);
 
   @override
-  Future<void> onRequest(RequestOptions options, RequestInterceptorHandler handler) async {
+  Future<void> onRequest(
+    RequestOptions options,
+    RequestInterceptorHandler handler,
+  ) async {
     // Kiểm tra xem request này có cần xác thực không (public API thì không cần)
     final requiresAuth = options.extra['requiresAuth'] ?? false;
 
@@ -28,18 +31,23 @@ class OkxInterceptor extends Interceptor {
       final passphrase = await _secureStorage.getOkxPassphrase();
 
       if (apiKey == null || secretKey == null || passphrase == null) {
-        return handler.reject(DioException(
-          requestOptions: options,
-          error: 'Thiếu thông tin OKX API Credentials. Vui lòng cập nhật API Key.',
-        ));
+        return handler.reject(
+          DioException(
+            requestOptions: options,
+            error:
+                'Thiếu thông tin OKX API Credentials. Vui lòng cập nhật API Key.',
+          ),
+        );
       }
 
       // 1. Tạo Timestamp chuẩn OKX (Bắt buộc phải có 3 chữ số phần nghìn giây - millisecond)
-      final timestamp = _getOkxTimestamp(DateTime.now().toUtc());
+      final timestamp = OkxRequestSigner.timestamp(DateTime.now().toUtc());
 
       // 2. Định dạng request path (bao gồm cả query parameters nếu có)
       final method = options.method.toUpperCase();
-      final requestPath = options.uri.path + (options.uri.hasQuery ? '?${options.uri.query}' : '');
+      final requestPath =
+          options.uri.path +
+          (options.uri.hasQuery ? '?${options.uri.query}' : '');
 
       // 3. Chuẩn bị Body (nếu là GET thì body rỗng)
       String bodyStr = '';
@@ -48,7 +56,13 @@ class OkxInterceptor extends Interceptor {
       }
 
       // 4. Tạo Signature
-      final sign = _generateSignature(timestamp, method, requestPath, bodyStr, secretKey);
+      final sign = OkxRequestSigner.signature(
+        timestamp: timestamp,
+        method: method,
+        requestPath: requestPath,
+        body: bodyStr,
+        secretKey: secretKey,
+      );
 
       // 5. Gắn vào Headers
       options.headers.addAll({
@@ -61,37 +75,34 @@ class OkxInterceptor extends Interceptor {
 
     super.onRequest(options, handler);
   }
+}
 
-  /// Hàm format thời gian theo đúng chuẩn OKX yêu cầu: YYYY-MM-DDTHH:mm:ss.SSSZ
-  String _getOkxTimestamp(DateTime dateTime) {
-    String isoStr = dateTime.toIso8601String();
-    if (isoStr.contains('.')) {
-      List<String> parts = isoStr.split('.');
-      String ms = parts[1].replaceAll('Z', '');
-      // Đảm bảo luôn có 3 chữ số thập phân
-      ms = ms.padRight(3, '0').substring(0, 3);
-      return '${parts[0]}.$ms\Z';
-    } else {
-      return '${isoStr.replaceAll('Z', '')}.000Z';
-    }
+/// Shared OKX signing primitives for the legacy interceptor and the native
+/// GET transport. Callers pass the exact encoded request target they send.
+class OkxRequestSigner {
+  const OkxRequestSigner._();
+
+  /// Formats the UTC timestamp required by OKX: yyyy-MM-ddTHH:mm:ss.SSSZ.
+  static String timestamp(DateTime dateTime) {
+    final utc = dateTime.toUtc();
+    final base = utc.toIso8601String().split('.').first;
+    final milliseconds = utc.millisecond.toString().padLeft(3, '0');
+    return '$base.${milliseconds}Z';
   }
 
-  /// Hàm mã hoá HMAC-SHA256 theo tài liệu của OKX
-  /// message = timestamp + method + requestPath + body
-  String _generateSignature(
-      String timestamp,
-      String method,
-      String requestPath,
-      String body,
-      String secretKey
-      ) {
-    final message = '$timestamp$method$requestPath$body';
-    final keyBytes = utf8.encode(secretKey);
-    final messageBytes = utf8.encode(message);
-
-    final hmac = Hmac(sha256, keyBytes);
-    final digest = hmac.convert(messageBytes);
-
+  /// Signs timestamp + uppercase method + exact encoded path/query + body.
+  static String signature({
+    required String timestamp,
+    required String method,
+    required String requestPath,
+    required String body,
+    required String secretKey,
+  }) {
+    final message = '$timestamp${method.toUpperCase()}$requestPath$body';
+    final digest = Hmac(
+      sha256,
+      utf8.encode(secretKey),
+    ).convert(utf8.encode(message));
     return base64Encode(digest.bytes);
   }
 }

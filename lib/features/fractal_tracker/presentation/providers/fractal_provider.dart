@@ -3,8 +3,7 @@
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:trading_balance_f/core/network/backend_data_client.dart';
-import 'package:trading_balance_f/features/orders/presentation/providers/trade_session_provider.dart';
+import 'package:trading_balance_f/core/network/okx_data_client.dart';
 import '../../../../core/timezone/app_time_zone.dart';
 import '../../data/fractal_model.dart';
 
@@ -132,7 +131,7 @@ int _yearMonthlyCandleMidpointMs(int candleTimestampMs) {
 final fractalDataProvider = FutureProvider.autoDispose<List<FractalData>>((
   ref,
 ) async {
-  final client = ref.watch(backendDataClientProvider);
+  final client = ref.watch(okxDataClientProvider);
 
   final targetMonth = ref.watch(selectedMonthProvider);
   final targetYear = ref.watch(selectedYearProvider);
@@ -182,7 +181,7 @@ final fractalDataProvider = FutureProvider.autoDispose<List<FractalData>>((
 });
 
 Future<FractalData?> _fetchAndProcess(
-  BackendDataClient client,
+  OkxDataClient client,
   String timeframe,
   String barId,
   int limit,

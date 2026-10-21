@@ -4,9 +4,8 @@ import 'dart:collection';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../features/orders/presentation/providers/trade_session_provider.dart';
+import 'okx_data_client.dart';
 import 'request_coordinator.dart';
-import 'backend_data_client.dart';
 
 /// A cancellable owner of a set of public ticker subscriptions.
 class TickerPollingSubscription {
@@ -24,12 +23,14 @@ class TickerPollingSubscription {
   }
 }
 
-/// Polls the backend market quote route for the union of active consumers.
+/// Polls native public OKX tickers for the union of active consumers.
 /// The historical class name remains for compatibility; this service opens no
 /// exchange socket and sends no exchange credentials.
 class OkxWebsocketService {
+  static int _nextOwnerId = 0;
+
   OkxWebsocketService({
-    BackendDataClient? client,
+    OkxDataClient? client,
     RequestCoordinator? requestCoordinator,
     Duration pollInterval = const Duration(seconds: 1),
     Duration maximumQuoteAge = OkxWebsocketService.maximumQuoteAge,
@@ -38,7 +39,8 @@ class OkxWebsocketService {
        _requestCoordinator = requestCoordinator ?? RequestCoordinator(),
        _pollInterval = pollInterval,
        _maximumQuoteAge = maximumQuoteAge,
-       _clock = clock ?? DateTime.now {
+       _clock = clock ?? DateTime.now,
+       _ownerId = ++_nextOwnerId {
     if (pollInterval <= Duration.zero) {
       throw ArgumentError.value(
         pollInterval,
@@ -58,11 +60,12 @@ class OkxWebsocketService {
 
   static const Duration maximumQuoteAge = Duration(seconds: 15);
 
-  final BackendDataClient? _client;
+  final OkxDataClient? _client;
   final RequestCoordinator _requestCoordinator;
   final Duration _pollInterval;
   final Duration _maximumQuoteAge;
   final DateTime Function() _clock;
+  final int _ownerId;
   final StreamController<dynamic> _stream = StreamController<dynamic>.broadcast(
     sync: true,
   );
@@ -149,7 +152,7 @@ class OkxWebsocketService {
   }
 
   List<String> get _activeInstrumentIds {
-    final ids = LinkedHashSet<String>();
+    final ids = <String>{};
     for (final ownerIds in _subscriptions.values) {
       ids.addAll(ownerIds);
     }
@@ -180,44 +183,44 @@ class OkxWebsocketService {
       if (client == null) {
         hadFailure = true;
       } else {
-        for (var offset = 0; offset < instrumentIds.length; offset += 100) {
-          if (generation != _generation ||
-              _disposed ||
-              _activeInstrumentIds.isEmpty) {
-            return;
-          }
-          final batch = instrumentIds.skip(offset).take(100).toList();
-          try {
-            final response = await _requestCoordinator.run<Response<dynamic>>(
-              lane: RequestLane.public,
-              key: '/v1/data/market/quotes?instIds=${batch.join(',')}',
-              request: () => client.get(
-                '/api/v5/market/quotes',
-                queryParameters: {'instIds': batch.join(',')},
-                cancelToken: cancelToken,
-              ),
-            );
-            if (generation != _generation || _disposed) return;
-            for (final row in _tickerRows(response.data)) {
-              final instrumentId = _canonicalInstrumentId(row['instId']);
-              if (instrumentId == null || !batch.contains(instrumentId)) {
-                continue;
-              }
-              final quoteTimestamp = _validQuoteTimestamp(
-                row['ts'],
-                now: _clock().toUtc(),
-                maxAge: _maximumQuoteAge,
-              );
-              final last = _positiveFiniteNumber(row['last']);
-              if (quoteTimestamp != null && last != null) {
-                nextPrices[instrumentId] = last;
-                nextTimestamps[instrumentId] = quoteTimestamp;
-              }
+        if (generation != _generation ||
+            _disposed ||
+            _activeInstrumentIds.isEmpty) {
+          return;
+        }
+        try {
+          final response = await _requestCoordinator.run<Response<dynamic>>(
+            lane: RequestLane.public,
+            key:
+                'quote-poll/$_ownerId/$generation/market/tickers?instType=SPOT',
+            request: () => client.get(
+              '/api/v5/market/tickers',
+              queryParameters: const {'instType': 'SPOT'},
+              cancelToken: cancelToken,
+            ),
+          );
+          if (generation != _generation || _disposed) return;
+          final activeInstruments = instrumentIds.toSet();
+          for (final row in _tickerRows(response.data)) {
+            final instrumentId = _canonicalInstrumentId(row['instId']);
+            if (instrumentId == null ||
+                !activeInstruments.contains(instrumentId)) {
+              continue;
             }
-          } on Object {
-            if (generation != _generation || _disposed) return;
-            hadFailure = true;
+            final quoteTimestamp = _validQuoteTimestamp(
+              row['ts'],
+              now: _clock().toUtc(),
+              maxAge: _maximumQuoteAge,
+            );
+            final last = _positiveFiniteNumber(row['last']);
+            if (quoteTimestamp != null && last != null) {
+              nextPrices[instrumentId] = last;
+              nextTimestamps[instrumentId] = quoteTimestamp;
+            }
           }
+        } on Object {
+          if (generation != _generation || _disposed) return;
+          hadFailure = true;
         }
       }
       if (generation != _generation || _disposed) return;
@@ -245,11 +248,11 @@ class OkxWebsocketService {
 
   List<Map<String, dynamic>> _tickerRows(dynamic envelope) {
     if (envelope is! Map || envelope['code']?.toString() != '0') {
-      throw const FormatException('Backend quote response was invalid.');
+      throw const FormatException('OKX ticker response was invalid.');
     }
     final data = envelope['data'];
     if (data is! List) {
-      throw const FormatException('Backend quote rows were invalid.');
+      throw const FormatException('OKX ticker rows were invalid.');
     }
     return data
         .whereType<Map>()
@@ -358,7 +361,7 @@ class OkxWebsocketService {
 
 final okxWebsocketProvider = Provider.autoDispose<OkxWebsocketService>((ref) {
   final service = OkxWebsocketService(
-    client: ref.watch(backendDataClientProvider),
+    client: ref.watch(okxDataClientProvider),
     requestCoordinator: ref.watch(requestCoordinatorProvider),
   );
   ref.onDispose(service.disconnect);
