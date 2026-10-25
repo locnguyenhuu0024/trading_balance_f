@@ -352,6 +352,7 @@ class OkxDataClient {
       if (normalized == 'authorization' ||
           normalized == 'cookie' ||
           normalized == 'x-simulated-trading' ||
+          normalized == 'x-mbx-apikey' ||
           normalized.startsWith('ok-access-')) {
         return _requestForbidden();
       }
@@ -366,7 +367,8 @@ class OkxDataClient {
       final normalized = name.toLowerCase();
       if (normalized == 'authorization' ||
           normalized == 'cookie' ||
-          normalized == 'x-simulated-trading') {
+          normalized == 'x-simulated-trading' ||
+          normalized == 'x-mbx-apikey') {
         return _requestForbidden();
       }
     }

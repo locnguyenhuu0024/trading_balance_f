@@ -23,6 +23,7 @@ import 'core/widgets/app_page_transition.dart';
 import 'core/widgets/app_startup.dart';
 import 'features/portfolio/presentation/portfolio_screen.dart'
     show hideBalanceProvider;
+import 'features/settings/domain/binance_credential_bundle.dart';
 import 'features/settings/presentation/settings_screen.dart';
 
 @immutable
@@ -376,6 +377,51 @@ class WebStorageHelper extends SecureStorageHelper {
   final SharedPreferences _prefs;
 
   WebStorageHelper(this._prefs) : super(const FlutterSecureStorage());
+
+  @override
+  Future<void> saveBinanceCredentials({
+    required String apiKey,
+    required String secretKey,
+  }) async {
+    final bundle = BinanceCredentialBundle.tryCreate(
+      apiKey: apiKey,
+      secretKey: secretKey,
+    );
+    if (bundle == null) throw const BinanceCredentialStorageException();
+    await trackBinanceCredentialMutation(() async {
+      final didSave = await writeWebBinanceCredentialBundle(bundle.encode());
+      if (!didSave) throw const BinanceCredentialStorageException();
+    });
+  }
+
+  @override
+  Future<String?> getBinanceCredentialBundle() async {
+    try {
+      return readWebBinanceCredentialBundle();
+    } catch (_) {
+      throw const BinanceCredentialStorageException();
+    }
+  }
+
+  @override
+  Future<void> clearBinanceCredentials() async {
+    await trackBinanceCredentialMutation(() async {
+      final didClear = await deleteWebBinanceCredentialBundle();
+      if (!didClear) throw const BinanceCredentialStorageException();
+    });
+  }
+
+  @protected
+  Future<bool> writeWebBinanceCredentialBundle(String value) =>
+      _prefs.setString(BinanceCredentialBundle.storageKey, value);
+
+  @protected
+  String? readWebBinanceCredentialBundle() =>
+      _prefs.getString(BinanceCredentialBundle.storageKey);
+
+  @protected
+  Future<bool> deleteWebBinanceCredentialBundle() =>
+      _prefs.remove(BinanceCredentialBundle.storageKey);
 
   @override
   Future<void> saveOkxCredentials({

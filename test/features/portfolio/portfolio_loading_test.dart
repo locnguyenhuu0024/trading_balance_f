@@ -8,6 +8,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/currency/currency_display_mode.dart';
+import 'package:trading_balance_f/core/exchange/exchange_account_providers.dart';
+import 'package:trading_balance_f/core/exchange/exchange_models.dart';
 import 'package:trading_balance_f/core/network/foreground_read_gate.dart';
 import 'package:trading_balance_f/core/network/okx_data_client.dart';
 import 'package:trading_balance_f/core/network/okx_read_scope.dart';
@@ -60,6 +62,10 @@ void main() {
       adapter.reply(0, 200, _balancePayload('100'));
       await _pumpPortfolioUntil(
         tester,
+        () => container.read(okxPortfolioSourceProvider).hasValue,
+      );
+      await _pumpPortfolioUntil(
+        tester,
         () => find
             .byKey(const Key('portfolio-asset-summary'))
             .evaluate()
@@ -74,9 +80,22 @@ void main() {
       adapter.reply(1, 200, _balancePayload('200'));
       await _pumpPortfolioUntil(
         tester,
-        () => container.read(portfolioFutureProvider).value?.totalEq == '200',
+        () =>
+            container
+                .read(combinedExchangePortfolioProvider)
+                .totalEquity
+                .value
+                ?.text ==
+            '200',
       );
-      expect(container.read(portfolioFutureProvider).value?.totalEq, '200');
+      expect(
+        container
+            .read(combinedExchangePortfolioProvider)
+            .totalEquity
+            .value
+            ?.text,
+        '200',
+      );
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
@@ -229,14 +248,17 @@ void main() {
           tradeSessionProvider.overrideWith(
             (ref) => _PortfolioSessionController(api),
           ),
-          portfolioFutureProvider.overrideWith((ref) async {
+          ..._binancePortfolioOverrides(),
+          okxPortfolioSourceProvider.overrideWith((ref) async {
             loadCalls++;
-            throw const OkxDataException(
-              code: 'okx_credentials_required',
-              message: 'Add OKX API credentials.',
-              statusCode: 401,
+            return _failedOkxPortfolioSource(
+              'Add OKX API credentials.',
+              terminal: true,
             );
           }),
+          okxPortfolioValuationProvider.overrideWith(
+            (ref) => ref.watch(okxPortfolioSourceProvider.future),
+          ),
           livePriceProvider.overrideWith((ref) => LivePriceNotifier()),
           okxWebsocketProvider.overrideWithValue(_FakeOkxWebsocketService()),
           currencyProvider.overrideWith((ref) => CurrencyDisplayMode.usd),
@@ -265,7 +287,7 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
 
     final api = TradeApiClient(baseUrl: 'https://trade.example');
-    final retry = Completer<OkxAccountData>();
+    final retry = Completer<ExchangePortfolioSourceData>();
     var loadCalls = 0;
 
     await tester.pumpWidget(
@@ -275,13 +297,19 @@ void main() {
           tradeSessionProvider.overrideWith(
             (ref) => _PortfolioSessionController(api),
           ),
-          portfolioFutureProvider.overrideWith((ref) {
+          ..._binancePortfolioOverrides(),
+          okxPortfolioSourceProvider.overrideWith((ref) {
             loadCalls++;
             if (loadCalls == 1) {
-              return Future.error(Exception('balance failed'));
+              return Future<ExchangePortfolioSourceData>.value(
+                _failedOkxPortfolioSource('balance failed'),
+              );
             }
             return retry.future;
           }),
+          okxPortfolioValuationProvider.overrideWith(
+            (ref) => ref.watch(okxPortfolioSourceProvider.future),
+          ),
           livePriceProvider.overrideWith((ref) => LivePriceNotifier()),
           okxWebsocketProvider.overrideWithValue(_FakeOkxWebsocketService()),
           currencyProvider.overrideWith((ref) => CurrencyDisplayMode.usd),
@@ -303,7 +331,7 @@ void main() {
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
     expect(find.textContaining('balance failed'), findsNothing);
 
-    retry.completeError(Exception('retry failed'));
+    retry.complete(_failedOkxPortfolioSource('retry failed'));
     await tester.pump();
     await tester.pump();
     expect(find.textContaining('retry failed'), findsOneWidget);
@@ -339,7 +367,68 @@ List<Override> _directClientOverrides(
     ref.onDispose(client.dispose);
     return client;
   }),
+  ..._binancePortfolioOverrides(),
 ];
+
+List<Override> _binancePortfolioOverrides() => <Override>[
+  binanceSpotPortfolioSourceProvider.overrideWith(
+    (ref) async => _failedBinancePortfolioSource(ExchangeProduct.spot),
+  ),
+  binanceSpotPortfolioValuationProvider.overrideWith(
+    (ref) => ref.watch(binanceSpotPortfolioSourceProvider.future),
+  ),
+  binanceFuturesPortfolioSourceProvider.overrideWith(
+    (ref) async => _failedBinancePortfolioSource(ExchangeProduct.swap),
+  ),
+  binanceFuturesPortfolioValuationProvider.overrideWith(
+    (ref) => ref.watch(binanceFuturesPortfolioSourceProvider.future),
+  ),
+];
+
+ExchangePortfolioSourceData _failedOkxPortfolioSource(
+  String message, {
+  bool terminal = false,
+}) {
+  final result = ExchangeAccountResult(
+    source: ExchangeSource.okx,
+    product: null,
+    account: null,
+    error: message,
+    isTerminalFailure: terminal,
+  );
+  return ExchangePortfolioSourceData(
+    source: ExchangeSource.okx,
+    product: null,
+    result: result,
+    equityContribution: const ExchangeValue<ExchangeAmount>.unavailable(
+      'OKX account is unavailable in this fixture.',
+    ),
+    valuationComplete: false,
+    warnings: <String>[message],
+  );
+}
+
+ExchangePortfolioSourceData _failedBinancePortfolioSource(
+  ExchangeProduct product,
+) {
+  final result = ExchangeAccountResult(
+    source: ExchangeSource.binance,
+    product: product,
+    account: null,
+    error: 'Binance source is unavailable in this fixture.',
+    isTerminalFailure: true,
+  );
+  return ExchangePortfolioSourceData(
+    source: ExchangeSource.binance,
+    product: product,
+    result: result,
+    equityContribution: const ExchangeValue<ExchangeAmount>.unavailable(
+      'Binance account is unavailable in this fixture.',
+    ),
+    valuationComplete: false,
+    warnings: <String>[result.error!],
+  );
+}
 
 ProviderContainer _portfolioContainer(
   _PortfolioSessionController controller,

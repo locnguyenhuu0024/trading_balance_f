@@ -1,14 +1,18 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import '../../../core/currency/currency_display_mode.dart';
+import '../../../core/exchange/exchange_account_providers.dart';
+import '../../../core/exchange/exchange_models.dart';
 import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/pnl_color.dart';
 import '../../../core/widgets/crypto_icon.dart';
+import '../../../core/widgets/exchange_icon.dart';
 import '../../../core/widgets/manual_refresh_button.dart';
-import '../../market/presentation/providers/market_provider.dart';
 import '../../settings/presentation/settings_screen.dart';
 import '../data/okx_balance_model.dart';
 import '../presentation/widgets/portfolio_currency_amount.dart';
@@ -30,27 +34,33 @@ class _PortfolioDetailsScreenState
     extends ConsumerState<PortfolioDetailsScreen> {
   bool _pnlRevealed = false;
   bool _isRefreshInFlight = false;
+  Timer? _refreshTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (!mounted) return;
+      invalidateCombinedPortfolioSources(ref);
+    });
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
+  }
 
   Future<void> _refreshPortfolio() async {
-    if (!mounted ||
-        _isRefreshInFlight ||
-        ref.read(portfolioFutureProvider).isLoading) {
-      return;
-    }
+    if (!mounted || _isRefreshInFlight) return;
     setState(() => _isRefreshInFlight = true);
-    try {
-      ref.invalidate(portfolioFutureProvider);
-      await ref.read(portfolioFutureProvider.future);
-    } catch (_) {
-      // The watched provider displays the read error.
-    } finally {
-      if (mounted) setState(() => _isRefreshInFlight = false);
-    }
+    invalidateCombinedPortfolioSources(ref, force: true);
+    if (mounted) setState(() => _isRefreshInFlight = false);
   }
 
   @override
   Widget build(BuildContext context) {
-    final async = ref.watch(portfolioFutureProvider);
+    final portfolio = ref.watch(combinedExchangePortfolioProvider);
     final hidden = ref.watch(hideBalanceProvider);
     final currency = ref.watch(currencyProvider);
     final rate = ref.watch(vndExchangeRateProvider).value ?? 25400.0;
@@ -68,7 +78,7 @@ class _PortfolioDetailsScreenState
           ManualRefreshButton(
             buttonKey: const Key('portfolio-details-manual-refresh'),
             onRefresh: _refreshPortfolio,
-            isBusy: _isRefreshInFlight || async.isLoading,
+            isBusy: _isRefreshInFlight,
           ),
           IconButton(
             tooltip: hidden ? 'Show amounts' : 'Hide amounts',
@@ -79,25 +89,399 @@ class _PortfolioDetailsScreenState
         ],
       ),
       body: NavigationContentFrame(
-        child: async.when(
-          loading: () =>
-              Center(child: CircularProgressIndicator(color: foreground)),
-          error: (error, _) => _DetailsState(
-            message: 'Unable to load portfolio details: $error',
-          ),
-          data: (account) => _DetailsContent(
-            account: account,
-            livePrices: ref.watch(livePriceProvider),
-            currency: currency,
-            exchangeRate: rate,
-            hidden: hidden,
-            pnlRevealed: _pnlRevealed,
-            onRevealPnl: () => setState(() => _pnlRevealed = true),
-            onRefresh: _refreshPortfolio,
-          ),
+        child: _CombinedDetailsContent(
+          portfolio: portfolio,
+          currency: currency,
+          exchangeRate: rate,
+          hidden: hidden,
+          pnlRevealed: _pnlRevealed,
+          onRevealPnl: () => setState(() => _pnlRevealed = true),
+          onRefresh: _refreshPortfolio,
         ),
       ),
     );
+  }
+}
+
+class _CombinedDetailsContent extends StatelessWidget {
+  const _CombinedDetailsContent({
+    required this.portfolio,
+    required this.currency,
+    required this.exchangeRate,
+    required this.hidden,
+    required this.pnlRevealed,
+    required this.onRevealPnl,
+    required this.onRefresh,
+  });
+
+  final CombinedExchangePortfolio portfolio;
+  final String currency;
+  final double exchangeRate;
+  final bool hidden;
+  final bool pnlRevealed;
+  final VoidCallback onRevealPnl;
+  final Future<void> Function() onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = AppPalette.of(context);
+    final total = portfolio.totalEquity.value?.finiteDouble;
+    return RefreshIndicator(
+      color: palette.ink,
+      backgroundColor: palette.raised,
+      onRefresh: onRefresh,
+      child: CustomScrollView(
+        key: const Key('combined-portfolio-details-scroll'),
+        slivers: [
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
+            sliver: SliverToBoxAdapter(
+              child: Card(
+                key: const Key('portfolio-details-summary'),
+                elevation: 0,
+                margin: EdgeInsets.zero,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(AppTokens.radiusMedium),
+                  side: BorderSide(color: palette.border),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Balances · OKX + Binance',
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w700),
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        'Total assets (${CurrencyDisplayMode.labelFor(currency)})',
+                        style: TextStyle(
+                          color: palette.muted,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      if (total == null)
+                        Text(
+                          hidden
+                              ? '******'
+                              : (portfolio.isLoading ? 'Loading…' : '--'),
+                          style: TextStyle(
+                            color: palette.ink,
+                            fontSize: 26,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        )
+                      else
+                        PortfolioCurrencyAmount(
+                          usdtAmount: total,
+                          currencyMode: currency,
+                          vndRate: exchangeRate,
+                          hidden: hidden,
+                          primaryStyle: TextStyle(
+                            color: palette.ink,
+                            fontSize: 26,
+                            fontWeight: FontWeight.w800,
+                          ),
+                          secondaryStyle: TextStyle(
+                            color: palette.muted,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      if (portfolio.isPartial) ...[
+                        const SizedBox(height: 8),
+                        Semantics(
+                          liveRegion: true,
+                          child: Text(
+                            'This total is incomplete because some account data or source-specific valuation is unavailable.',
+                            key: const Key('portfolio-details-partial-warning'),
+                            style: TextStyle(
+                              color: palette.warning,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                      ],
+                      if (portfolio.isLoading) ...[
+                        const SizedBox(height: 8),
+                        const LinearProgressIndicator(
+                          key: Key('portfolio-details-source-loading'),
+                          minHeight: 2,
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          SliverPadding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            sliver: SliverToBoxAdapter(
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Account PnL by source',
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  TextButton(
+                    key: const Key('portfolio-details-reveal-pnl'),
+                    onPressed: pnlRevealed ? null : onRevealPnl,
+                    child: Text(pnlRevealed ? 'PnL shown' : 'Show PnL'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            sliver: SliverList.builder(
+              itemCount: portfolio.sources.length,
+              itemBuilder: (context, index) {
+                final source = portfolio.sources[index];
+                final pnl = source.account?.unrealizedPnl.value;
+                final pnlAmount = pnl?.amount.finiteDouble;
+                final accountEquity =
+                    source.account?.reportedEquity.value?.amount.finiteDouble;
+                final pnlRatio = pnlAmount == null || accountEquity == null
+                    ? null
+                    : accountEquity - pnlAmount == 0
+                    ? null
+                    : pnlAmount / (accountEquity - pnlAmount) * 100;
+                final pnlColor = resolvePnlColor(pnlAmount, palette);
+                final label = _detailsSourceLabel(source);
+                return Card(
+                  elevation: 0,
+                  margin: const EdgeInsets.only(bottom: 6),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(AppTokens.radiusMedium),
+                    side: BorderSide(color: palette.border),
+                  ),
+                  child: ListTile(
+                    leading: ExchangeIcon(source: source.source, size: 20),
+                    title: Text(label),
+                    subtitle: Text(
+                      source.error ??
+                          (source.isLoading
+                              ? 'Loading this account source…'
+                              : source.account == null
+                              ? 'Account data unavailable.'
+                              : source.account!.issues.isEmpty
+                              ? 'Account data loaded.'
+                              : 'Some account fields are unavailable.'),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    trailing: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          !pnlRevealed
+                              ? 'Hidden'
+                              : pnlAmount == null
+                              ? '—'
+                              : hidden
+                              ? '******'
+                              : '${pnlAmount > 0 ? '+' : ''}${pnlAmount.toStringAsFixed(2)} ${pnl!.currency}',
+                          textAlign: TextAlign.right,
+                          style: TextStyle(
+                            color: pnlRevealed ? pnlColor : palette.muted,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        if (pnlRevealed && pnlRatio != null)
+                          Text(
+                            hidden
+                                ? '******'
+                                : '(${pnlRatio > 0 ? '+' : ''}${pnlRatio.toStringAsFixed(2)}%)',
+                            textAlign: TextAlign.right,
+                            style: TextStyle(
+                              color: hidden
+                                  ? palette.muted
+                                  : resolvePnlColor(pnlRatio, palette),
+                              fontSize: 11,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
+            sliver: SliverToBoxAdapter(
+              child: Text(
+                'Asset details',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+              ),
+            ),
+          ),
+          if (portfolio.rows.isEmpty)
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: Center(
+                child: Text(
+                  portfolio.isLoading
+                      ? 'Account data is still loading.'
+                      : portfolio.isPartial
+                      ? 'Some account sources are unavailable; an empty asset list is not complete.'
+                      : 'No account assets are available.',
+                  style: TextStyle(color: palette.muted),
+                ),
+              ),
+            )
+          else
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+              sliver: SliverList.builder(
+                itemCount: portfolio.rows.length,
+                itemBuilder: (context, index) {
+                  final row = portfolio.rows[index];
+                  final balance = row.balance;
+                  final amount = row.totalAmount.value;
+                  final value = row.valuation.value;
+                  final sourceLabel = _detailsBalanceLabel(balance);
+                  return Card(
+                    key: ValueKey(
+                      'details:${balance.source.name}:${balance.product?.name}:${balance.wallet}:${balance.asset}',
+                    ),
+                    elevation: 0,
+                    margin: const EdgeInsets.only(bottom: 6),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(
+                        AppTokens.radiusMedium,
+                      ),
+                      side: BorderSide(color: palette.border),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Row(
+                        children: [
+                          CryptoIcon(
+                            symbol: balance.asset,
+                            size: 30,
+                            backgroundColor: palette.surface,
+                            textColor: palette.ink,
+                            textSize: 12,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  balance.asset,
+                                  style: TextStyle(
+                                    color: palette.ink,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                Row(
+                                  children: [
+                                    ExchangeIcon(
+                                      source: balance.source,
+                                      size: 14,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Expanded(
+                                      child: Text(
+                                        sourceLabel,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          color: palette.muted,
+                                          fontSize: 11,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                Text(
+                                  _detailsAmountLabel(
+                                    row.totalAmount,
+                                    balance.asset,
+                                  ),
+                                  style: TextStyle(
+                                    color: palette.muted,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          SizedBox(
+                            width: 120,
+                            child: value?.amount.finiteDouble == null
+                                ? Text(
+                                    hidden ? '******' : '--',
+                                    textAlign: TextAlign.right,
+                                    style: TextStyle(color: palette.muted),
+                                  )
+                                : PortfolioCurrencyAmount(
+                                    usdtAmount: value!.amount.finiteDouble!,
+                                    currencyMode: currency,
+                                    vndRate: exchangeRate,
+                                    hidden: hidden,
+                                    crossAxisAlignment: CrossAxisAlignment.end,
+                                    textAlign: TextAlign.right,
+                                    primaryStyle: TextStyle(
+                                      color: palette.ink,
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 12,
+                                    ),
+                                    secondaryStyle: TextStyle(
+                                      color: palette.muted,
+                                      fontSize: 10,
+                                    ),
+                                  ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  String _detailsSourceLabel(ExchangeAccountResult source) {
+    if (source.source == ExchangeSource.okx) return 'OKX Unified';
+    return source.product == ExchangeProduct.spot
+        ? 'Binance Spot'
+        : 'Binance Futures';
+  }
+
+  String _detailsBalanceLabel(ExchangeBalance balance) {
+    if (balance.source == ExchangeSource.okx) return 'OKX · ${balance.wallet}';
+    final product = balance.product == ExchangeProduct.spot
+        ? 'Spot'
+        : 'USDT-M Futures';
+    return 'Binance · $product · ${balance.wallet}';
+  }
+
+  String _detailsAmountLabel(
+    ExchangeValue<ExchangeAmount>? amount,
+    String asset,
+  ) {
+    if (amount?.value == null) return 'Balance unavailable';
+    return hidden ? '******' : '${amount!.value!.text} $asset';
   }
 }
 

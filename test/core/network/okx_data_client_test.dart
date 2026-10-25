@@ -249,6 +249,75 @@ void main() {
     );
   });
 
+  group('RED-116', () {
+    test(
+      'rejects Binance API-key headers before an OKX adapter send',
+      () async {
+        final configuredAdapter = _RecordingAdapter(
+          (_) => _WireResponse(200, _success),
+        );
+        final configuredDio = Dio()
+          ..options.headers['x-mbx-apikey'] = 'fixture-binance-key'
+          ..httpClientAdapter = configuredAdapter;
+        final configuredClient = OkxDataClient(dio: configuredDio);
+
+        await expectLater(
+          configuredClient.get('/api/v5/market/ticker'),
+          throwsA(
+            isA<OkxDataException>().having(
+              (error) => error.code,
+              'code',
+              'okx_request_forbidden',
+            ),
+          ),
+        );
+        expect(configuredAdapter.requests, isEmpty);
+        configuredClient.dispose();
+
+        final lateAdapter = _RecordingAdapter(
+          (_) => _WireResponse(200, _success),
+        );
+        final lateDio = Dio()..httpClientAdapter = lateAdapter;
+        lateDio.interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              options.headers['X-MBX-APIKEY'] = 'fixture-late-binance-key';
+              handler.next(options);
+            },
+          ),
+        );
+        final lateClient = OkxDataClient(dio: lateDio);
+
+        await expectLater(
+          lateClient.get('/api/v5/market/ticker'),
+          throwsA(isA<OkxDataException>()),
+        );
+        expect(lateAdapter.requests, isEmpty);
+        lateClient.dispose();
+      },
+    );
+  });
+
+  group('GREEN-116', () {
+    test(
+      'public OKX reads remain independent of Binance headers and storage',
+      () async {
+        final adapter = _RecordingAdapter((_) => _WireResponse(200, _success));
+        final storage = _FixtureStorage.withCredentials();
+        final client = _client(adapter, storage: storage);
+
+        final response = await client.get('/api/v5/market/ticker');
+
+        expect(response.statusCode, 200);
+        expect(adapter.requests, hasLength(1));
+        expect(adapter.requests.single.headers['X-MBX-APIKEY'], isNull);
+        expect(storage.readCount, 0);
+        client.dispose();
+        storage.dispose();
+      },
+    );
+  });
+
   group('RED-001', () {
     test('rejects missing private credentials before sending', () async {
       final adapter = _RecordingAdapter((_) => _WireResponse(200, _success));

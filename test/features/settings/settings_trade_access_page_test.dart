@@ -45,6 +45,9 @@ class _FakeStorage extends SecureStorageHelper {
   Future<String?> getOkxPassphrase() => _read(passphrase);
 
   @override
+  Future<String?> getBinanceCredentialBundle() async => null;
+
+  @override
   Future<void> saveOkxCredentials({
     required String apiKey,
     required String secretKey,
@@ -258,6 +261,10 @@ void main() {
   testWidgets(
     'rejects malformed, duplicate, and missing bundles without writes',
     (tester) async {
+      tester.view.physicalSize = const Size(800, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
       final storage = _FakeStorage();
       var clipboardText = '';
       _mockClipboard(() async => {'text': clipboardText});

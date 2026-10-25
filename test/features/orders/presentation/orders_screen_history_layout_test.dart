@@ -9,13 +9,14 @@ import 'package:trading_balance_f/features/orders/presentation/orders_screen.dar
 import 'package:trading_balance_f/features/orders/presentation/providers/order_provider.dart';
 import 'package:trading_balance_f/features/portfolio/presentation/portfolio_screen.dart';
 import 'package:trading_balance_f/features/settings/presentation/settings_screen.dart';
+import '../combined_exchange_test_fixtures.dart';
 
 Widget _historyApp(OkxOrder order, double textScale) {
   return ProviderScope(
     overrides: [
       orderFilterProvider.overrideWith((ref) => 'SWAP'),
       orderTabProvider.overrideWith((ref) => OrderTab.history),
-      ordersFutureProvider.overrideWith((ref) async => [order]),
+      ...combinedExchangeOrdersTestOverrides(historyOrders: <OkxOrder>[order]),
       currencyProvider.overrideWith((ref) => CurrencyDisplayMode.usd),
       vndExchangeRateProvider.overrideWith((ref) async => 25400),
       appTimeZoneProvider.overrideWith((ref) => 'Asia/Ho_Chi_Minh'),

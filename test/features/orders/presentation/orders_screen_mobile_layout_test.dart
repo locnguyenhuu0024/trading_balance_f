@@ -10,6 +10,7 @@ import 'package:trading_balance_f/features/orders/presentation/providers/order_p
 import 'package:trading_balance_f/features/portfolio/presentation/portfolio_screen.dart';
 import 'package:trading_balance_f/features/portfolio/presentation/widgets/portfolio_currency_amount.dart';
 import 'package:trading_balance_f/features/settings/presentation/settings_screen.dart';
+import '../combined_exchange_test_fixtures.dart';
 
 const _timeZoneId = 'Asia/Ho_Chi_Minh';
 
@@ -47,7 +48,7 @@ ProviderContainer _container({
     overrides: [
       orderFilterProvider.overrideWith((ref) => 'SWAP'),
       orderTabProvider.overrideWith((ref) => OrderTab.pending),
-      ordersFutureProvider.overrideWith((ref) async => [order]),
+      ...combinedExchangeOrdersTestOverrides(pendingOrders: <OkxOrder>[order]),
       currencyProvider.overrideWith((ref) => currency),
       vndExchangeRateProvider.overrideWith((ref) async => 25400),
       appTimeZoneProvider.overrideWith((ref) => _timeZoneId),
@@ -312,9 +313,7 @@ void main() {
         closeTo(tester.getRect(desktopHeader).left, 1),
       );
       expect(
-        tester
-            .getRect(find.byKey(const Key('pending-order-leverage')))
-            .right,
+        tester.getRect(find.byKey(const Key('pending-order-leverage'))).right,
         closeTo(tester.getRect(desktopHeader).right, 1),
       );
       expect(tester.takeException(), isNull);

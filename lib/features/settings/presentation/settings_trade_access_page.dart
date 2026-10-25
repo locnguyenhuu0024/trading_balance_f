@@ -10,6 +10,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/manual_refresh_button.dart';
 import '../../../core/widgets/responsive_form_content.dart';
 import '../../orders/presentation/widgets/trade_account_controls.dart';
+import '../domain/binance_credential_bundle.dart';
 import '../domain/okx_credential_bundle.dart';
 
 class SettingsTradeAccessPage extends ConsumerStatefulWidget {
@@ -335,6 +336,8 @@ class _SettingsTradeAccessPageState
                     _savedSummaryCard()
                   else
                     _credentialEditorCard(mutedColor),
+                  const SizedBox(height: 16),
+                  const _BinanceCredentialEditor(),
                   const SizedBox(height: 24),
                   const TradeSessionControls(),
                 ],
@@ -542,4 +545,474 @@ class _SettingsTradeAccessPageState
           value == null || value.trim().isEmpty ? 'Không được để trống' : null,
     );
   }
+}
+
+class _BinanceCredentialEditor extends ConsumerStatefulWidget {
+  const _BinanceCredentialEditor();
+
+  @override
+  ConsumerState<_BinanceCredentialEditor> createState() =>
+      _BinanceCredentialEditorState();
+}
+
+class _BinanceCredentialEditorState
+    extends ConsumerState<_BinanceCredentialEditor> {
+  final _formKey = GlobalKey<FormState>();
+  final _bundleController = TextEditingController();
+  final _apiKeyController = TextEditingController();
+  final _secretKeyController = TextEditingController();
+
+  bool _isLoading = true;
+  bool _isSaving = false;
+  bool _isPasting = false;
+  bool _hasSavedCredentials = false;
+  bool _isEditing = true;
+  bool _isManualEntry = false;
+  int _operationGeneration = 0;
+  String? _loadError;
+  String? _saveError;
+
+  bool get _inputsEnabled => !_isLoading && !_isSaving && !_isPasting;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadSavedBundle());
+  }
+
+  @override
+  void dispose() {
+    _bundleController.dispose();
+    _apiKeyController.dispose();
+    _secretKeyController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadSavedBundle() async {
+    final request = ++_operationGeneration;
+    try {
+      final encoded = await ref
+          .read(secureStorageProvider)
+          .getBinanceCredentialBundle();
+      if (!mounted || request != _operationGeneration) return;
+      final isComplete = BinanceCredentialBundle.tryDecode(encoded) != null;
+      setState(() {
+        _isLoading = false;
+        _loadError = null;
+        _hasSavedCredentials = isComplete;
+        _isEditing = !isComplete;
+      });
+    } catch (_) {
+      if (!mounted || request != _operationGeneration) return;
+      setState(() {
+        _isLoading = false;
+        _hasSavedCredentials = false;
+        _isEditing = true;
+        _loadError =
+            'Không thể tải trạng thái API Binance đã lưu. Hãy thử lại.';
+      });
+    }
+  }
+
+  void _retryLoad() {
+    if (_isLoading || _isSaving) return;
+    setState(() {
+      _isLoading = true;
+      _loadError = null;
+      _saveError = null;
+    });
+    unawaited(_loadSavedBundle());
+  }
+
+  void _beginReplacement() {
+    if (!_hasSavedCredentials || _isSaving) return;
+    _operationGeneration++;
+    setState(() {
+      _isEditing = true;
+      _isManualEntry = false;
+      _saveError = null;
+      _clearDrafts();
+    });
+  }
+
+  void _cancelReplacement() {
+    if (!_hasSavedCredentials || _isSaving) return;
+    _operationGeneration++;
+    setState(() {
+      _isEditing = false;
+      _isManualEntry = false;
+      _saveError = null;
+      _clearDrafts();
+    });
+  }
+
+  void _toggleEntryMode() {
+    if (!_inputsEnabled) return;
+    setState(() {
+      _isManualEntry = !_isManualEntry;
+      _saveError = null;
+      _clearDrafts();
+    });
+  }
+
+  void _clearDrafts() {
+    _bundleController.clear();
+    _apiKeyController.clear();
+    _secretKeyController.clear();
+  }
+
+  Future<void> _pasteBundle() async {
+    if (!_inputsEnabled || _isManualEntry) return;
+    final request = ++_operationGeneration;
+    setState(() {
+      _isPasting = true;
+      _saveError = null;
+    });
+    try {
+      final clipboard = await Clipboard.getData(Clipboard.kTextPlain);
+      if (!mounted || request != _operationGeneration || _isSaving) return;
+      final text = clipboard?.text;
+      if (text == null || text.isEmpty) {
+        setState(
+          () => _saveError = 'Clipboard trống. Hãy sao chép lại rồi thử.',
+        );
+      } else {
+        setState(() => _bundleController.text = text);
+      }
+    } catch (_) {
+      if (mounted && request == _operationGeneration) {
+        setState(() => _saveError = 'Không thể đọc clipboard. Hãy thử lại.');
+      }
+    } finally {
+      if (mounted && request == _operationGeneration) {
+        setState(() => _isPasting = false);
+      }
+    }
+  }
+
+  BinanceCredentialBundle? _parseBundle(String text) {
+    final encoded = BinanceCredentialBundle.tryDecode(text.trim());
+    if (encoded != null) return encoded;
+    String? apiKey;
+    String? secretKey;
+    for (final line in text.split(RegExp(r'\r?\n'))) {
+      final separator = line.indexOf(':');
+      if (separator <= 0) continue;
+      final label = line.substring(0, separator).trim().toLowerCase();
+      final value = line.substring(separator + 1).trim();
+      if (label == 'api key' || label == 'api_key' || label == 'apikey') {
+        apiKey = value;
+      } else if (label == 'secret key' ||
+          label == 'secret_key' ||
+          label == 'secretkey') {
+        secretKey = value;
+      }
+    }
+    if (apiKey == null || secretKey == null) return null;
+    return BinanceCredentialBundle.tryCreate(
+      apiKey: apiKey,
+      secretKey: secretKey,
+    );
+  }
+
+  Future<void> _saveCredentials() async {
+    if (!_inputsEnabled || _isSaving) return;
+    late final BinanceCredentialBundle credentials;
+    if (_isManualEntry) {
+      if (!_formKey.currentState!.validate()) return;
+      final parsed = BinanceCredentialBundle.tryCreate(
+        apiKey: _apiKeyController.text.trim(),
+        secretKey: _secretKeyController.text.trim(),
+      );
+      if (parsed == null) {
+        setState(() => _saveError = 'Nhập cả API Key và Secret Key.');
+        return;
+      }
+      credentials = parsed;
+    } else {
+      final parsed = _parseBundle(_bundleController.text);
+      if (parsed == null) {
+        setState(() {
+          _saveError = 'Dán API Key và Secret Key hoặc nhập thủ công.';
+        });
+        return;
+      }
+      credentials = parsed;
+    }
+
+    _operationGeneration++;
+    setState(() {
+      _isSaving = true;
+      _saveError = null;
+    });
+    try {
+      await ref
+          .read(secureStorageProvider)
+          .saveBinanceCredentials(
+            apiKey: credentials.apiKey,
+            secretKey: credentials.secretKey,
+          );
+      if (!mounted) return;
+      setState(() {
+        _isSaving = false;
+        _hasSavedCredentials = true;
+        _isEditing = false;
+        _isManualEntry = false;
+        _clearDrafts();
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _saveError = 'Không thể lưu API Binance. Hãy thử lại.';
+        });
+      }
+    } finally {
+      if (mounted && _isSaving) setState(() => _isSaving = false);
+    }
+  }
+
+  Future<void> _clearCredentials() async {
+    if (!_hasSavedCredentials || _isSaving) return;
+    final shouldClear = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Xóa khóa Binance?'),
+        content: const Text(
+          'Khóa Binance đã lưu trên thiết bị này sẽ bị xóa. Khóa OKX không bị ảnh hưởng.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Hủy'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Xóa khóa'),
+          ),
+        ],
+      ),
+    );
+    if (shouldClear != true || !mounted) return;
+    setState(() {
+      _isSaving = true;
+      _saveError = null;
+    });
+    try {
+      await ref.read(secureStorageProvider).clearBinanceCredentials();
+      if (!mounted) return;
+      setState(() {
+        _isSaving = false;
+        _hasSavedCredentials = false;
+        _isEditing = true;
+        _isManualEntry = false;
+        _clearDrafts();
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() => _saveError = 'Không thể xóa API Binance. Hãy thử lại.');
+      }
+    } finally {
+      if (mounted && _isSaving) setState(() => _isSaving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = AppPalette.of(context);
+    return Card(
+      key: const Key('settings-binance-credentials-card'),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'BINANCE API (CHỈ ĐỌC)',
+              style: TextStyle(
+                color: palette.muted,
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Binance API Key và Secret Key được lưu riêng trên thiết bị này. Chúng chỉ dùng để đọc tài khoản và không thay đổi cấu hình OKX.',
+            ),
+            const SizedBox(height: 12),
+            if (_isLoading)
+              const FormPendingStatus(label: 'Đang tải trạng thái Binance…')
+            else if (_loadError != null) ...[
+              Semantics(
+                liveRegion: true,
+                child: Text(
+                  _loadError!,
+                  key: const Key('settings-binance-load-error'),
+                  style: TextStyle(color: palette.negative),
+                ),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton(
+                key: const Key('settings-retry-load-binance-credentials'),
+                onPressed: _isSaving ? null : _retryLoad,
+                child: const Text('Thử tải lại Binance'),
+              ),
+            ] else if (_hasSavedCredentials && !_isEditing)
+              _savedSummary(palette)
+            else
+              _credentialEditor(palette),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _savedSummary(AppPalette palette) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Text(
+        'Đã lưu API Key và Secret Key trên thiết bị',
+        key: const Key('settings-binance-saved-summary'),
+        style: const TextStyle(fontWeight: FontWeight.w700),
+      ),
+      const SizedBox(height: 10),
+      const Text('••••••••  ·  ••••••••', semanticsLabel: 'Credentials masked'),
+      const SizedBox(height: 12),
+      Wrap(
+        spacing: 8,
+        runSpacing: 4,
+        children: [
+          OutlinedButton(
+            key: const Key('settings-change-binance-credentials'),
+            onPressed: _isSaving ? null : _beginReplacement,
+            child: const Text('Thay đổi khóa'),
+          ),
+          OutlinedButton(
+            key: const Key('settings-clear-binance-credentials'),
+            onPressed: _isSaving ? null : _clearCredentials,
+            child: const Text('Xóa khóa'),
+          ),
+        ],
+      ),
+      if (_saveError != null) ...[
+        const SizedBox(height: 8),
+        Semantics(
+          liveRegion: true,
+          child: Text(
+            _saveError!,
+            key: const Key('settings-binance-input-error'),
+            style: TextStyle(color: palette.negative),
+          ),
+        ),
+      ],
+    ],
+  );
+
+  Widget _credentialEditor(AppPalette palette) => Form(
+    key: _formKey,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (_isManualEntry) ...[
+          TextFormField(
+            key: const Key('settings-binance-api-key'),
+            controller: _apiKeyController,
+            enabled: _inputsEnabled,
+            autocorrect: false,
+            enableSuggestions: false,
+            textCapitalization: TextCapitalization.none,
+            decoration: const InputDecoration(
+              labelText: 'Binance API Key',
+              border: OutlineInputBorder(),
+              prefixIcon: Icon(Icons.key),
+            ),
+            validator: (value) => value == null || value.trim().isEmpty
+                ? 'Nhập Binance API Key'
+                : null,
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            key: const Key('settings-binance-secret-key'),
+            controller: _secretKeyController,
+            enabled: _inputsEnabled,
+            obscureText: true,
+            autocorrect: false,
+            enableSuggestions: false,
+            textCapitalization: TextCapitalization.none,
+            decoration: const InputDecoration(
+              labelText: 'Binance Secret Key',
+              border: OutlineInputBorder(),
+              prefixIcon: Icon(Icons.security),
+            ),
+            validator: (value) => value == null || value.trim().isEmpty
+                ? 'Nhập Binance Secret Key'
+                : null,
+          ),
+        ] else ...[
+          TextFormField(
+            key: const Key('settings-binance-credential-bundle'),
+            controller: _bundleController,
+            enabled: _inputsEnabled,
+            maxLines: 1,
+            obscureText: true,
+            autocorrect: false,
+            enableSuggestions: false,
+            textCapitalization: TextCapitalization.none,
+            smartDashesType: SmartDashesType.disabled,
+            smartQuotesType: SmartQuotesType.disabled,
+            decoration: const InputDecoration(
+              labelText: 'Dán Binance API Key và Secret Key',
+              helperText: 'API Key: …\nSecret Key: …',
+              border: OutlineInputBorder(),
+              prefixIcon: Icon(Icons.key),
+            ),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            key: const Key('settings-paste-binance-clipboard'),
+            onPressed: _inputsEnabled ? _pasteBundle : null,
+            icon: _isPasting
+                ? const FormProgressMark(size: 18)
+                : const Icon(Icons.content_paste),
+            label: Text(
+              _isPasting ? 'Đang đọc clipboard…' : 'Dán từ clipboard',
+            ),
+          ),
+        ],
+        if (_saveError != null) ...[
+          const SizedBox(height: 8),
+          Semantics(
+            liveRegion: true,
+            child: Text(
+              _saveError!,
+              key: const Key('settings-binance-input-error'),
+              style: TextStyle(color: palette.negative),
+            ),
+          ),
+        ],
+        TextButton(
+          key: const Key('settings-toggle-binance-entry-mode'),
+          onPressed: _inputsEnabled ? _toggleEntryMode : null,
+          child: Text(
+            _isManualEntry ? 'Dán cả hai khóa một lần' : 'Nhập thủ công',
+          ),
+        ),
+        if (_hasSavedCredentials) ...[
+          OutlinedButton(
+            key: const Key('settings-cancel-binance-replacement'),
+            onPressed: _inputsEnabled ? _cancelReplacement : null,
+            child: const Text('Hủy thay đổi'),
+          ),
+          const SizedBox(height: 8),
+        ],
+        const SizedBox(height: 8),
+        AsyncFormButton(
+          key: const Key('settings-save-binance-credentials'),
+          onPressed: _inputsEnabled ? _saveCredentials : null,
+          isBusy: _isSaving,
+          label: 'Lưu Binance API',
+          busyLabel: 'Đang lưu Binance API…',
+        ),
+      ],
+    ),
+  );
 }

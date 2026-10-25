@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:trading_balance_f/core/navigation/navigation_preferences.dart';
 import 'package:trading_balance_f/core/navigation/navigation_preferences_provider.dart';
 import 'package:trading_balance_f/core/security/secure_storage_helper.dart';
@@ -11,6 +12,7 @@ import 'package:trading_balance_f/core/theme/app_theme.dart';
 import 'package:trading_balance_f/core/timezone/app_time_zone.dart';
 import 'package:trading_balance_f/core/typography/app_text_scale.dart';
 import 'package:trading_balance_f/core/widgets/app_startup.dart';
+import 'package:trading_balance_f/features/settings/domain/binance_credential_bundle.dart';
 import 'package:trading_balance_f/main.dart' as app;
 import 'package:trading_balance_f/features/portfolio/presentation/portfolio_screen.dart'
     show hideBalanceProvider;
@@ -87,6 +89,57 @@ class _StartupStorage extends SecureStorageHelper {
 }
 
 void main() {
+  group('RED-116', () {
+    test('web startup never combines legacy Binance key fields', () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'BINANCE_API_KEY': 'fixture-legacy-key',
+        'BINANCE_SECRET_KEY': 'fixture-legacy-secret',
+      });
+
+      final startup = await app.initializeAppStartup(
+        isWeb: true,
+        loadWebPreferences: SharedPreferences.getInstance,
+        initializeTimeZone: () {},
+      );
+
+      final rawBundle = await startup.secureStorage
+          .getBinanceCredentialBundle();
+      expect(rawBundle, isNull);
+      expect(BinanceCredentialBundle.tryDecode(rawBundle), isNull);
+      startup.secureStorage.dispose();
+    });
+  });
+
+  group('GREEN-116', () {
+    test(
+      'web startup restores only the complete Binance bundle value',
+      () async {
+        final bundle = BinanceCredentialBundle.tryCreate(
+          apiKey: 'fixture-startup-key',
+          secretKey: 'fixture-startup-secret',
+        )!;
+        SharedPreferences.setMockInitialValues(<String, Object>{
+          BinanceCredentialBundle.storageKey: bundle.encode(),
+          'BINANCE_API_KEY': 'fixture-stale-key',
+          'BINANCE_SECRET_KEY': 'fixture-stale-secret',
+        });
+
+        final startup = await app.initializeAppStartup(
+          isWeb: true,
+          loadWebPreferences: SharedPreferences.getInstance,
+          initializeTimeZone: () {},
+        );
+
+        final persisted = BinanceCredentialBundle.tryDecode(
+          await startup.secureStorage.getBinanceCredentialBundle(),
+        );
+        expect(persisted?.apiKey, 'fixture-startup-key');
+        expect(persisted?.secretKey, 'fixture-startup-secret');
+        startup.secureStorage.dispose();
+      },
+    );
+  });
+
   testWidgets(
     'failed initialization keeps account UI hidden and retry waits for success',
     (tester) async {

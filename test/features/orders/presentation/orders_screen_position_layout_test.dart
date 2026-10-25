@@ -13,6 +13,7 @@ import 'package:trading_balance_f/features/orders/presentation/providers/trade_s
 import 'package:trading_balance_f/features/orders/presentation/widgets/position_action_controls.dart';
 import 'package:trading_balance_f/features/settings/presentation/settings_screen.dart';
 import 'package:trading_balance_f/main.dart';
+import '../combined_exchange_test_fixtures.dart';
 
 class _LayoutTradeApi implements TradeApi {
   const _LayoutTradeApi({required this.isConfigured});
@@ -102,8 +103,11 @@ Widget _ordersApp({
       ),
       orderFilterProvider.overrideWith((ref) => 'SWAP'),
       orderTabProvider.overrideWith((ref) => selectedTab),
-      ordersFutureProvider.overrideWith((ref) async => orders),
-      positionsFutureProvider.overrideWith((ref) async => positions),
+      ...combinedExchangeOrdersTestOverrides(
+        positions: positions,
+        pendingOrders: selectedTab == OrderTab.pending ? orders : const [],
+        historyOrders: selectedTab == OrderTab.history ? orders : const [],
+      ),
       themeModeProvider.overrideWith((ref) => ThemeMode.light),
       currencyProvider.overrideWith((ref) => currency),
       vndExchangeRateProvider.overrideWith((ref) async => 25400),

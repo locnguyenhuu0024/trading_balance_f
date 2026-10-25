@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:trading_balance_f/core/exchange/exchange_models.dart';
 import 'package:trading_balance_f/features/orders/data/okx_order_model.dart';
 import 'package:trading_balance_f/features/orders/data/okx_position_model.dart';
 import 'package:trading_balance_f/features/orders/data/trade_api_client.dart';
@@ -239,12 +240,50 @@ class _TestHarness extends ConsumerWidget {
     return Scaffold(
       body: ListView(
         children: [
-          OrderCancellationControl(order: order),
+          OrderCancellationControl(order: _exchangeOrder(order)),
           const TradeAccountControls(showCloseAll: false),
         ],
       ),
     );
   }
+}
+
+ExchangeOrder _exchangeOrder(OkxOrder order) {
+  ExchangeValue<ExchangeAmount> amount(String value, String label) {
+    final parsed = ExchangeAmount.tryParse(value);
+    return parsed == null
+        ? ExchangeValue<ExchangeAmount>.unavailable('$label unavailable')
+        : ExchangeValue<ExchangeAmount>.available(parsed);
+  }
+
+  final price = ExchangeMoney.tryParse(order.px, 'USDT');
+  final fill = ExchangeMoney.tryParse(order.fillNotionalUsd, 'USD');
+  return ExchangeOrder(
+    source: ExchangeSource.okx,
+    product: switch (order.instType.toUpperCase()) {
+      'SPOT' => ExchangeProduct.spot,
+      'MARGIN' => ExchangeProduct.margin,
+      'SWAP' => ExchangeProduct.swap,
+      'FUTURES' => ExchangeProduct.futures,
+      _ => null,
+    },
+    kind: ExchangeOrderKind.ordinary,
+    symbol: order.instId,
+    nativeId: order.ordId,
+    side: order.side,
+    status: order.state,
+    quantity: amount(order.sz, 'quantity'),
+    executedQuantity: amount(order.accFillSz, 'executed quantity'),
+    quoteAmount: fill == null
+        ? const ExchangeValue<ExchangeMoney>.unavailable('not filled')
+        : ExchangeValue<ExchangeMoney>.available(fill),
+    createdAtMilliseconds: int.tryParse(order.cTime),
+    price: price == null
+        ? const ExchangeValue<ExchangeMoney>.unavailable('price unavailable')
+        : ExchangeValue<ExchangeMoney>.available(price),
+    okxActionDto: order,
+    nativeRecord: order,
+  );
 }
 
 Finder _cancelButton(String orderId) =>

@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/exchange/exchange_models.dart';
+import '../../../../core/exchange/exchange_account_providers.dart';
 import '../../data/okx_order_model.dart';
 import '../../data/trade_api_client.dart';
 import '../widgets/trade_action_confirmation_dialog.dart';
@@ -21,7 +23,17 @@ final orderCancellationFlowProvider =
         readSessionController: () => ref.read(tradeSessionProvider.notifier),
         readAccountActions: () =>
             ref.read(positionActionFlowsProvider.notifier),
-        invalidateOrders: () => ref.invalidate(ordersFutureProvider),
+        invalidateOrders: () {
+          ref.invalidate(ordersFutureProvider);
+          ref.invalidate(
+            okxExchangeOrdersSourceProvider(
+              CombinedOrderReadRequest(
+                type: CombinedOrderReadType.pending,
+                filter: ref.read(orderFilterProvider),
+              ),
+            ),
+          );
+        },
       );
     });
 
@@ -44,6 +56,14 @@ class OrderCancellationFlowState {
 bool isActiveLimitOrder(OkxOrder order) =>
     order.ordType.toLowerCase() == 'limit' &&
     const {'live', 'partially_filled'}.contains(order.state.toLowerCase());
+
+/// Action authority requires both explicit source provenance and the original
+/// OKX DTO produced by the OKX adapter. Symbols and numeric IDs never grant it.
+OkxOrder? okxActionOrderFor(ExchangeOrder exchangeOrder) {
+  if (exchangeOrder.source != ExchangeSource.okx) return null;
+  final native = exchangeOrder.okxActionDto;
+  return native is OkxOrder ? native : null;
+}
 
 Map<String, dynamic> orderCancellationTargetIdentity(OkxOrder order) => {
   'instType': order.instType,
@@ -114,7 +134,21 @@ class OrderCancellationFlowsController
     _operationSessions[operationId] = session;
   }
 
-  Future<void> cancelOrder({
+  Future<void> cancelExchangeOrder({
+    required ExchangeOrder exchangeOrder,
+    required NavigatorState navigator,
+    required Route<dynamic>? ownerRoute,
+  }) async {
+    final order = okxActionOrderFor(exchangeOrder);
+    if (order == null) return;
+    await _cancelOkxOrder(
+      order: order,
+      navigator: navigator,
+      ownerRoute: ownerRoute,
+    );
+  }
+
+  Future<void> _cancelOkxOrder({
     required OkxOrder order,
     required NavigatorState navigator,
     required Route<dynamic>? ownerRoute,

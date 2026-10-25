@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/exchange/exchange_account_providers.dart';
 import '../../data/okx_position_model.dart';
 import '../../data/trade_api_client.dart';
 import 'order_provider.dart';
@@ -27,6 +28,16 @@ final positionActionFlowsProvider =
           ref.invalidate(tradePositionsProvider);
           ref.invalidate(positionsFutureProvider);
           ref.invalidate(ordersFutureProvider);
+          final filter = ref.read(orderFilterProvider);
+          ref.invalidate(okxExchangePositionsSourceProvider(filter));
+          ref.invalidate(
+            okxExchangeOrdersSourceProvider(
+              CombinedOrderReadRequest(
+                type: CombinedOrderReadType.pending,
+                filter: filter,
+              ),
+            ),
+          );
         },
       );
     });

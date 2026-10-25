@@ -66,6 +66,9 @@ class _SettingsStorage extends SecureStorageHelper {
   Future<String?> getOkxPassphrase() async => null;
 
   @override
+  Future<String?> getBinanceCredentialBundle() async => null;
+
+  @override
   Future<bool> getHideBalanceDefault() async => false;
 
   @override

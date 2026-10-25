@@ -5,6 +5,7 @@ import 'package:trading_balance_f/features/orders/data/okx_position_model.dart';
 import 'package:trading_balance_f/features/orders/presentation/orders_screen.dart';
 import 'package:trading_balance_f/features/orders/presentation/providers/order_provider.dart';
 import 'package:trading_balance_f/features/settings/presentation/settings_screen.dart';
+import '../combined_exchange_test_fixtures.dart';
 
 void main() {
   testWidgets('keeps adaptive entry, mark and liquidation prices in Orders', (
@@ -15,8 +16,8 @@ void main() {
         overrides: [
           orderFilterProvider.overrideWith((ref) => 'SWAP'),
           orderTabProvider.overrideWith((ref) => OrderTab.positions),
-          positionsFutureProvider.overrideWith(
-            (ref) async => const [
+          ...combinedExchangeOrdersTestOverrides(
+            positions: const [
               OkxPosition(
                 instId: 'BTC-USDT-SWAP',
                 posSide: 'long',

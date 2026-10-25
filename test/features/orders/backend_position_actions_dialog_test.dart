@@ -11,6 +11,7 @@ import 'package:trading_balance_f/features/orders/presentation/providers/order_p
 import 'package:trading_balance_f/features/orders/presentation/providers/trade_session_provider.dart';
 import 'package:trading_balance_f/features/orders/presentation/widgets/position_action_controls.dart';
 import 'package:trading_balance_f/features/settings/presentation/settings_screen.dart';
+import 'combined_exchange_test_fixtures.dart';
 
 class _ActionApi implements TradeApi {
   @override
@@ -348,9 +349,7 @@ Widget _app({
     tradeApiProvider.overrideWithValue(api),
     tradeSessionProvider.overrideWith((ref) => sessionController),
     tradePositionsProvider.overrideWith((ref) => targets()),
-    positionsFutureProvider.overrideWith(
-      (ref) async => const [_visiblePosition],
-    ),
+    ...combinedExchangeOrdersTestOverrides(positions: const [_visiblePosition]),
     orderFilterProvider.overrideWith((ref) => 'ALL'),
     orderTabProvider.overrideWith((ref) => OrderTab.positions),
     themeModeProvider.overrideWith((ref) => ThemeMode.light),

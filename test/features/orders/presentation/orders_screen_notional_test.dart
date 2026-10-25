@@ -8,6 +8,7 @@ import 'package:trading_balance_f/features/orders/presentation/orders_screen.dar
 import 'package:trading_balance_f/features/orders/presentation/providers/order_provider.dart';
 import 'package:trading_balance_f/features/portfolio/presentation/portfolio_screen.dart';
 import 'package:trading_balance_f/features/settings/presentation/settings_screen.dart';
+import '../combined_exchange_test_fixtures.dart';
 
 void main() {
   testWidgets('renders position notional in dual currency and masks it', (
@@ -17,8 +18,8 @@ void main() {
       overrides: [
         orderFilterProvider.overrideWith((ref) => 'SWAP'),
         orderTabProvider.overrideWith((ref) => OrderTab.positions),
-        positionsFutureProvider.overrideWith(
-          (ref) async => const [
+        ...combinedExchangeOrdersTestOverrides(
+          positions: const [
             OkxPosition(
               instId: 'BTC-USDT-SWAP',
               posSide: 'long',
@@ -59,8 +60,8 @@ void main() {
         overrides: [
           orderFilterProvider.overrideWith((ref) => 'SWAP'),
           orderTabProvider.overrideWith((ref) => OrderTab.history),
-          ordersFutureProvider.overrideWith(
-            (ref) async => const [
+          ...combinedExchangeOrdersTestOverrides(
+            historyOrders: const [
               OkxOrder(
                 instId: 'ETH-USDT-SWAP',
                 instType: 'SWAP',

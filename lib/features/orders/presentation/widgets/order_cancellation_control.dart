@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../data/okx_order_model.dart';
+import '../../../../core/exchange/exchange_models.dart';
 import '../providers/order_cancellation_flow_provider.dart';
 import '../providers/position_action_flow_provider.dart';
 import '../providers/trade_session_provider.dart';
@@ -9,11 +9,14 @@ import '../providers/trade_session_provider.dart';
 class OrderCancellationControl extends ConsumerWidget {
   const OrderCancellationControl({super.key, required this.order});
 
-  final OkxOrder order;
+  final ExchangeOrder order;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    if (!isActiveLimitOrder(order)) return const SizedBox.shrink();
+    final nativeOrder = okxActionOrderFor(order);
+    if (nativeOrder == null || !isActiveLimitOrder(nativeOrder)) {
+      return const SizedBox.shrink();
+    }
 
     final api = ref.watch(tradeApiProvider);
     final sessionState = ref.watch(tradeSessionProvider);
@@ -23,7 +26,7 @@ class OrderCancellationControl extends ConsumerWidget {
     final accountIdentifier =
         session?.accountIdentifier ?? sessionState.operationAccountIdentifier;
     final flowKey = orderCancellationFlowKey(
-      orderCancellationTargetIdentity(order),
+      orderCancellationTargetIdentity(nativeOrder),
       accountIdentifier,
     );
     final flow = flowStates[flowKey];
@@ -43,7 +46,7 @@ class OrderCancellationControl extends ConsumerWidget {
         sessionState.isAuthenticated &&
         session != null &&
         session.isActive &&
-        hasCompleteOrderCancellationIdentity(order) &&
+        hasCompleteOrderCancellationIdentity(nativeOrder) &&
         sessionState.pendingOperations.isEmpty &&
         !accountLockActive &&
         !positionFlowActive &&
@@ -55,13 +58,13 @@ class OrderCancellationControl extends ConsumerWidget {
         Align(
           alignment: Alignment.centerRight,
           child: IconButton(
-            key: Key('order-cancel-${order.ordId}'),
+            key: Key('order-cancel-${order.nativeId}'),
             tooltip: 'Hủy lệnh limit',
             onPressed: canCancel
                 ? () => ref
                       .read(orderCancellationFlowProvider.notifier)
-                      .cancelOrder(
-                        order: order,
+                      .cancelExchangeOrder(
+                        exchangeOrder: order,
                         navigator: Navigator.of(context),
                         ownerRoute: ModalRoute.of(context),
                       )

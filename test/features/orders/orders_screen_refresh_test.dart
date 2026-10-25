@@ -10,6 +10,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/network/okx_data_client.dart';
 import 'package:trading_balance_f/core/currency/currency_display_mode.dart';
+import 'package:trading_balance_f/core/exchange/exchange_account_providers.dart';
+import 'package:trading_balance_f/core/exchange/exchange_models.dart';
 import 'package:trading_balance_f/features/orders/data/okx_order_model.dart';
 import 'package:trading_balance_f/features/orders/data/okx_position_model.dart';
 import 'package:trading_balance_f/features/orders/data/trade_api_client.dart';
@@ -18,6 +20,7 @@ import 'package:trading_balance_f/features/orders/presentation/providers/order_p
 import 'package:trading_balance_f/features/orders/presentation/providers/trade_session_provider.dart';
 import 'package:trading_balance_f/features/orders/presentation/widgets/trade_account_controls.dart';
 import 'package:trading_balance_f/features/settings/presentation/settings_screen.dart';
+import 'combined_exchange_test_fixtures.dart';
 
 void main() {
   testWidgets('pending tab keeps its trade control in the body', (
@@ -65,7 +68,12 @@ void main() {
     await tester.pump(const Duration(seconds: 10));
     await tester.pump();
     expect(loadCount, 2);
-    expect(find.text('Không có lệnh nào đang chờ khớp.'), findsOneWidget);
+    expect(
+      find.text(
+        'Some exchange data is still loading or unavailable; an empty result is not confirmed.',
+      ),
+      findsOneWidget,
+    );
 
     await tester.pumpWidget(const SizedBox.shrink());
   });
@@ -242,10 +250,12 @@ void main() {
           tradeSessionProvider.overrideWith(
             (ref) => TradeSessionController(api),
           ),
-          positionsFutureProvider.overrideWith((ref) async {
-            reads++;
-            return [];
-          }),
+          ...combinedExchangeOrdersTestOverrides(
+            loadNativePositions: (filter) async {
+              reads++;
+              return const <OkxPosition>[];
+            },
+          ),
           themeModeProvider.overrideWith((ref) => ThemeMode.light),
           currencyProvider.overrideWith((ref) => CurrencyDisplayMode.usd),
           vndExchangeRateProvider.overrideWith((ref) async => 25400),
@@ -286,14 +296,16 @@ void main() {
           tradeSessionProvider.overrideWith(
             (ref) => _AuthenticatedTradeSessionController(api),
           ),
-          positionsFutureProvider.overrideWith((ref) async {
-            positionLoads++;
-            return const [];
-          }),
-          ordersFutureProvider.overrideWith((ref) async {
-            orderLoads++;
-            return const [];
-          }),
+          ...combinedExchangeOrdersTestOverrides(
+            loadNativePositions: (filter) async {
+              positionLoads++;
+              return const <OkxPosition>[];
+            },
+            loadNativeOrders: (request) async {
+              orderLoads++;
+              return const <OkxOrder>[];
+            },
+          ),
           themeModeProvider.overrideWith((ref) => ThemeMode.light),
           currencyProvider.overrideWith((ref) => CurrencyDisplayMode.usd),
           vndExchangeRateProvider.overrideWith((ref) async => 25400),
@@ -328,13 +340,17 @@ void main() {
           tradeSessionProvider.overrideWith(
             (ref) => _AuthenticatedTradeSessionController(api),
           ),
-          ordersFutureProvider.overrideWith((ref) async {
-            loadCalls++;
-            throw const OkxDataException(
-              code: 'okx_credentials_required',
-              message: 'Add OKX API credentials.',
-            );
-          }),
+          ...combinedExchangeOrdersTestOverrides(
+            loadOrders: (request) async {
+              loadCalls++;
+              return const ExchangeRowsResult<ExchangeOrder>.failure(
+                source: ExchangeSource.okx,
+                product: null,
+                error: 'Add OKX API credentials.',
+                isTerminalFailure: true,
+              );
+            },
+          ),
           themeModeProvider.overrideWith((ref) => ThemeMode.light),
           currencyProvider.overrideWith((ref) => CurrencyDisplayMode.usd),
           vndExchangeRateProvider.overrideWith((ref) async => 25400),
@@ -365,17 +381,19 @@ void main() {
           orderTabProvider.overrideWith((ref) => OrderTab.positions),
           tradeApiProvider.overrideWithValue(api),
           tradeSessionProvider.overrideWith((ref) => session),
-          positionsFutureProvider.overrideWith((ref) async {
-            directReads++;
-            return const [
-              OkxPosition(
-                instId: 'BTC-USDT-SWAP',
-                instType: 'SWAP',
-                posSide: 'long',
-                pos: '1',
-              ),
-            ];
-          }),
+          ...combinedExchangeOrdersTestOverrides(
+            loadNativePositions: (filter) async {
+              directReads++;
+              return const [
+                OkxPosition(
+                  instId: 'BTC-USDT-SWAP',
+                  instType: 'SWAP',
+                  posSide: 'long',
+                  pos: '1',
+                ),
+              ];
+            },
+          ),
           tradePositionsProvider.overrideWith((ref) async {
             backendTargetReads++;
             return const TradePositionsSnapshot(
@@ -423,14 +441,15 @@ Widget _ordersScreen({
       tradeSessionProvider.overrideWith(
         (ref) => _AuthenticatedTradeSessionController(api),
       ),
-      ordersFutureProvider.overrideWith((ref) {
-        onLoad();
-        final request = Completer<List<OkxOrder>>();
-        requests.add(request);
-        return request.future;
-      }),
+      ...combinedExchangeOrdersTestOverrides(
+        loadNativeOrders: (combinedRequest) {
+          onLoad();
+          final request = Completer<List<OkxOrder>>();
+          requests.add(request);
+          return request.future;
+        },
+      ),
       themeModeProvider.overrideWith((ref) => ThemeMode.light),
-      positionsFutureProvider.overrideWith((ref) async => const []),
       currencyProvider.overrideWith((ref) => CurrencyDisplayMode.usd),
       vndExchangeRateProvider.overrideWith((ref) async => 25400),
     ],
@@ -455,7 +474,7 @@ Widget _positionsOrdersScreen({double textScale = 1.0}) {
         ),
       ),
       themeModeProvider.overrideWith((ref) => ThemeMode.light),
-      positionsFutureProvider.overrideWith((ref) async => const []),
+      ...combinedExchangeOrdersTestOverrides(),
       currencyProvider.overrideWith((ref) => CurrencyDisplayMode.usd),
       vndExchangeRateProvider.overrideWith((ref) async => 25400),
     ],

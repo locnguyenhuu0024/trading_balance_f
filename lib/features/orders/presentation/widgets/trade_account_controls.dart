@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/exchange/exchange_account_providers.dart';
 import '../../../../core/security/secure_storage_helper.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/widgets/responsive_form_content.dart';
@@ -490,6 +491,7 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
       ref.invalidate(tradePositionsProvider);
       ref.invalidate(ordersFutureProvider);
       ref.invalidate(positionsFutureProvider);
+      _invalidateCombinedDirectReads();
       await _showResult(result, sessionOwner: session);
       _setStatus(
         _headline(result.status, result.operationId, action: result.action),
@@ -534,6 +536,20 @@ class _TradeAccountControlsState extends ConsumerState<TradeAccountControls> {
   void _invalidateDirectReads() {
     ref.invalidate(positionsFutureProvider);
     ref.invalidate(ordersFutureProvider);
+    _invalidateCombinedDirectReads();
+  }
+
+  void _invalidateCombinedDirectReads() {
+    final filter = ref.read(orderFilterProvider);
+    ref.invalidate(okxExchangePositionsSourceProvider(filter));
+    ref.invalidate(
+      okxExchangeOrdersSourceProvider(
+        CombinedOrderReadRequest(
+          type: CombinedOrderReadType.pending,
+          filter: filter,
+        ),
+      ),
+    );
   }
 
   String _actionLabel(String action) => switch (action) {

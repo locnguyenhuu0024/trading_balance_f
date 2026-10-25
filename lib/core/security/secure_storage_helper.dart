@@ -11,6 +11,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../navigation/navigation_preferences.dart';
 import '../timezone/app_time_zone.dart';
 import '../typography/app_text_scale.dart';
+import '../../features/settings/domain/binance_credential_bundle.dart';
 
 /// Provider cung cấp instance của SecureStorageHelper
 final secureStorageProvider = Provider<SecureStorageHelper>((ref) {
@@ -44,6 +45,40 @@ class OkxCredentialSnapshot {
   int get hashCode => Object.hash(generation, rotating);
 }
 
+/// Secret-free identity and usability state for one Binance key generation.
+@immutable
+class BinanceCredentialSnapshot {
+  const BinanceCredentialSnapshot({
+    required this.generation,
+    required this.rotating,
+    required this.privateReadsEnabled,
+  });
+
+  final int generation;
+  final bool rotating;
+  final bool privateReadsEnabled;
+
+  bool get canUsePrivateReads => !rotating && privateReadsEnabled;
+
+  @override
+  bool operator ==(Object other) =>
+      other is BinanceCredentialSnapshot &&
+      other.generation == generation &&
+      other.rotating == rotating &&
+      other.privateReadsEnabled == privateReadsEnabled;
+
+  @override
+  int get hashCode => Object.hash(generation, rotating, privateReadsEnabled);
+}
+
+/// Sanitized failure for Binance credential persistence or loading.
+class BinanceCredentialStorageException implements Exception {
+  const BinanceCredentialStorageException();
+
+  @override
+  String toString() => 'Binance credentials could not be stored or loaded.';
+}
+
 /// Lớp hỗ trợ quản lý việc lưu trữ các dữ liệu nhạy cảm và cài đặt
 class SecureStorageHelper {
   final FlutterSecureStorage _storage;
@@ -51,16 +86,31 @@ class SecureStorageHelper {
   SecureStorageHelper(this._storage)
     : _okxCredentialState = ValueNotifier(
         const OkxCredentialSnapshot(generation: 0, rotating: false),
+      ),
+      _binanceCredentialState = ValueNotifier(
+        const BinanceCredentialSnapshot(
+          generation: 0,
+          rotating: false,
+          privateReadsEnabled: true,
+        ),
       );
 
   final ValueNotifier<OkxCredentialSnapshot> _okxCredentialState;
+  final ValueNotifier<BinanceCredentialSnapshot> _binanceCredentialState;
   int _activeOkxCredentialMutations = 0;
+  int _activeBinanceCredentialMutations = 0;
+  Future<void>? _binanceCredentialTail;
   bool _disposed = false;
 
   /// Safe generation/rotation changes for private read clients and providers.
   /// This value contains no stored credentials.
   ValueListenable<OkxCredentialSnapshot> get okxCredentialState =>
       _okxCredentialState;
+
+  /// Safe generation fence for Binance private reads. This state never
+  /// contains credential values.
+  ValueListenable<BinanceCredentialSnapshot> get binanceCredentialState =>
+      _binanceCredentialState;
 
   /// Fences in-flight private reads around any OKX credential save or clear.
   /// Concurrent mutations keep [rotating] true until the final write finishes.
@@ -71,6 +121,34 @@ class SecureStorageHelper {
       return await mutation();
     } finally {
       _finishOkxCredentialMutation();
+    }
+  }
+
+  /// Serializes Binance bundle mutations and disables private reads on any
+  /// failed write until a later save or clear succeeds.
+  Future<T> trackBinanceCredentialMutation<T>(
+    Future<T> Function() mutation,
+  ) async {
+    if (_disposed) throw const BinanceCredentialStorageException();
+    final previous = _binanceCredentialTail;
+    final completion = Completer<void>();
+    final tail = completion.future;
+    _binanceCredentialTail = tail;
+    _beginBinanceCredentialMutation();
+    var succeeded = false;
+    try {
+      if (previous != null) await previous;
+      final result = await mutation();
+      succeeded = true;
+      return result;
+    } catch (_) {
+      throw const BinanceCredentialStorageException();
+    } finally {
+      _finishBinanceCredentialMutation(succeeded: succeeded);
+      completion.complete();
+      if (identical(_binanceCredentialTail, tail)) {
+        _binanceCredentialTail = null;
+      }
     }
   }
 
@@ -93,16 +171,41 @@ class SecureStorageHelper {
     );
   }
 
+  void _beginBinanceCredentialMutation() {
+    _activeBinanceCredentialMutations++;
+    final current = _binanceCredentialState.value;
+    _binanceCredentialState.value = BinanceCredentialSnapshot(
+      generation: current.generation + 1,
+      rotating: true,
+      privateReadsEnabled: false,
+    );
+  }
+
+  void _finishBinanceCredentialMutation({required bool succeeded}) {
+    _activeBinanceCredentialMutations--;
+    if (_disposed) return;
+    final current = _binanceCredentialState.value;
+    final isFinalMutation = _activeBinanceCredentialMutations == 0;
+    _binanceCredentialState.value = BinanceCredentialSnapshot(
+      generation: current.generation + 1,
+      rotating: !isFinalMutation,
+      privateReadsEnabled: isFinalMutation && succeeded,
+    );
+  }
+
   void dispose() {
     if (_disposed) return;
     _disposed = true;
     _okxCredentialState.dispose();
+    _binanceCredentialState.dispose();
   }
 
   // Define keys
   static const String _okxApiKey = 'OKX_API_KEY';
   static const String _okxSecretKey = 'OKX_SECRET_KEY';
   static const String _okxPassphrase = 'OKX_PASSPHRASE';
+  static const String binanceCredentialBundleStorageKey =
+      BinanceCredentialBundle.storageKey;
   static const String _hideBalance = 'HIDE_BALANCE';
   static const String _bioAuth = 'BIO_AUTH';
   // THÊM MỚI: Keys cho Theme và Tiền tệ
@@ -233,6 +336,49 @@ class SecureStorageHelper {
       ]);
     });
   }
+
+  /// Persists the Binance API key and secret as one versioned storage value.
+  Future<void> saveBinanceCredentials({
+    required String apiKey,
+    required String secretKey,
+  }) async {
+    final bundle = BinanceCredentialBundle.tryCreate(
+      apiKey: apiKey,
+      secretKey: secretKey,
+    );
+    if (bundle == null) throw const BinanceCredentialStorageException();
+    await trackBinanceCredentialMutation(
+      () => writeBinanceCredentialBundle(bundle.encode()),
+    );
+  }
+
+  /// Reads only the single Binance bundle key. Callers must validate its
+  /// version and fields before creating a private-read generation.
+  Future<String?> getBinanceCredentialBundle() async {
+    if (_disposed) throw const BinanceCredentialStorageException();
+    try {
+      return await readBinanceCredentialBundle();
+    } catch (_) {
+      throw const BinanceCredentialStorageException();
+    }
+  }
+
+  /// Deletes the single Binance bundle value without touching OKX storage.
+  Future<void> clearBinanceCredentials() async {
+    await trackBinanceCredentialMutation(deleteBinanceCredentialBundle);
+  }
+
+  @protected
+  Future<void> writeBinanceCredentialBundle(String value) =>
+      _storage.write(key: binanceCredentialBundleStorageKey, value: value);
+
+  @protected
+  Future<String?> readBinanceCredentialBundle() =>
+      _storage.read(key: binanceCredentialBundleStorageKey);
+
+  @protected
+  Future<void> deleteBinanceCredentialBundle() =>
+      _storage.delete(key: binanceCredentialBundleStorageKey);
 
   /// Lấy cấu hình Ẩn số dư mặc định
   Future<bool> getHideBalanceDefault() async {

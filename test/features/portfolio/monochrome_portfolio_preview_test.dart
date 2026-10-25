@@ -8,12 +8,12 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/currency/currency_display_mode.dart';
+import 'package:trading_balance_f/core/exchange/exchange_account_providers.dart';
+import 'package:trading_balance_f/core/exchange/exchange_models.dart';
 import 'package:trading_balance_f/core/navigation/main_navigation_shell.dart';
 import 'package:trading_balance_f/core/network/okx_websocket_service.dart';
 import 'package:trading_balance_f/core/typography/app_text_scale.dart';
 import 'package:trading_balance_f/features/market/presentation/providers/market_provider.dart';
-import 'package:trading_balance_f/features/portfolio/data/okx_balance_model.dart';
-import 'package:trading_balance_f/features/portfolio/presentation/providers/portfolio_provider.dart';
 import 'package:trading_balance_f/features/settings/presentation/settings_screen.dart';
 import 'package:trading_balance_f/main.dart';
 
@@ -67,21 +67,55 @@ Future<void> _loadPreviewFonts() async {
 }
 
 Widget _previewApp(ThemeMode mode, {double appTextScale = 1.0}) {
-  const account = OkxAccountData(
-    details: [
-      OkxCoinDetail(ccy: 'BTC', eq: '0.125', eqUsd: '12500', upl: '0.00025'),
-      OkxCoinDetail(
-        ccy: 'ETH',
-        eq: '2.5',
-        eqUsd: '7000',
-        upl: '-0.017857142857',
+  final balances = <ExchangeBalance>[
+    for (final row in const <(String, String, String)>[
+      ('BTC', '0.125', '12500'),
+      ('ETH', '2.5', '7000'),
+    ])
+      ExchangeBalance(
+        source: ExchangeSource.okx,
+        product: null,
+        wallet: 'unified',
+        asset: row.$1,
+        free: ExchangeValue<ExchangeAmount>.available(
+          ExchangeAmount.tryParse(row.$2)!,
+        ),
+        locked: ExchangeValue<ExchangeAmount>.available(
+          ExchangeAmount.tryParse('0')!,
+        ),
+        reportedTotal: ExchangeValue<ExchangeAmount>.available(
+          ExchangeAmount.tryParse(row.$2)!,
+        ),
+        reportedUsdValue: ExchangeValue<ExchangeMoney>.available(
+          ExchangeMoney.tryParse(row.$3, 'USDT')!,
+        ),
+      ),
+  ];
+  final total = ExchangeAmount.tryParse('19500')!;
+  final portfolio = CombinedExchangePortfolio(
+    sources: <ExchangeAccountResult>[
+      const ExchangeAccountResult(
+        source: ExchangeSource.okx,
+        product: null,
+        account: null,
       ),
     ],
+    rows: <PortfolioBalanceRow>[
+      for (final balance in balances)
+        PortfolioBalanceRow(
+          balance: balance,
+          totalAmount: balance.reportedTotal!,
+          valuation: balance.reportedUsdValue!,
+        ),
+    ],
+    totalEquity: ExchangeValue<ExchangeAmount>.available(total),
+    isPartial: false,
+    warnings: const <String>[],
   );
 
   return ProviderScope(
     overrides: [
-      portfolioFutureProvider.overrideWith((ref) async => account),
+      combinedExchangePortfolioProvider.overrideWith((ref) => portfolio),
       livePriceProvider.overrideWith((ref) => LivePriceNotifier()),
       okxWebsocketProvider.overrideWithValue(_PreviewWebsocketService()),
       currencyProvider.overrideWith((ref) => CurrencyDisplayMode.usdtVnd),

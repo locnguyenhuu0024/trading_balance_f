@@ -746,7 +746,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       ),
                     ),
                     subtitle: Text(
-                      'Cấu hình khóa OKX và quản lý phiên giao dịch',
+                      'Cấu hình khóa OKX/Binance và quản lý phiên giao dịch',
                       style: TextStyle(color: sectionTitleColor, fontSize: 12),
                     ),
                     trailing: Icon(
