@@ -53,7 +53,7 @@ For every implementation/remediation task, dispatch using the executor class rec
 - `E1` -> `gpt-6-luna` / `xhigh` (**default**);
 - `E2` -> `gpt-6-luna` / `max`.
 
-The mapping above is a **runtime dispatch requirement**, not documentation only. Before each executor spawn, the coordinator must validate the task contains:
+The mapping above is the **default runtime dispatch requirement**; the only exception is the explicit user-approved Terra E1/E2 trial below. Before each executor spawn, the coordinator must validate the task contains:
 - `Agent Role: implementation_executor`;
 - `Executor Class: E0|E1|E2`;
 - exact `Target Model`;
@@ -69,7 +69,14 @@ Then perform this dispatch state machine:
 5. `ROUTE_MISMATCH`: if effective role/model/effort differs from the task contract, stop further mutation, terminate/recover the child safely when supported, audit any existing writes, and redispatch with the exact configured route. A stronger model is still a mismatch.
 6. `BLOCKED_ROUTE`: if the runtime cannot explicitly express the required child model/effort, do **not** spawn an inherited/default writer. Obtain a task-specific user decision for an alternate explicitly identified route/runtime.
 
-If no class is recorded, the coordinator must classify implementation entropy before dispatch rather than silently defaulting to Max. Escalate only after evidence that the selected route is insufficient. An executor failure caused by unresolved requirement/design/architecture ambiguity returns to coordinator reasoning/replanning; it is not solved by blindly increasing executor effort. Legacy GPT-5.6 Terra is not a default writer route; GPT-6 has no Terra tier.
+
+### Approved Terra trial for bounded implementation (OptCodex v1.2.0)
+
+Luna defaults remain E0 = `gpt-6-luna/high`, E1 = `gpt-6-luna/xhigh`, E2 = `gpt-6-luna/max`. Opt-in experiment routes: **E1 = `gpt-6.1-terra/high`** or **E2 = `gpt-6.1-terra/xhigh`** only. E0 cannot use Terra. The plan/task must record a distinct `experiment_id`, controlled reason `UI_VISUAL|HARD_DEBUG|LUNA_REWORK|E2_COMPLEX`, exact model/effort and affirmative, specific user approval of that trial on that task. The `terra_trial` manifest must include `user_approved: true` but the coordinator MUST independently check real authorization (this JSON flag is not proof). No implicit route escalation, model inheritance, or fallback when Terra is unavailable: BLOCKED_ROUTE.
+
+For fair A/B compare separate clean checkouts of the same base commit with the same approved SPEC/AC/tests; never run two writers on the same checkout. Keep RED/GREEN, Task Buildability, final build, protected file exclusions, independent audit and QA/explicit Git authorizations unchanged. Count unique logical task IDs separately from executor attempts/retries; record requested and only observed effective route, runtime duration and quota/tokens (unknown = null). Do not treat executor terminal output as audited PASS.
+
+If no class is recorded, the coordinator must classify implementation entropy before dispatch rather than silently defaulting to Max. Escalate only after evidence that the selected route is insufficient. An executor failure caused by unresolved requirement/design/architecture ambiguity returns to coordinator reasoning/replanning; it is not solved by blindly increasing executor effort. GPT-6.1 Terra E1/E2 is an explicit user-approved trial route, not a default or silent replacement.
 
 ### Mandatory executor route-compliance gate
 

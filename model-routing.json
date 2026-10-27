@@ -1,0 +1,194 @@
+{
+  "schema_version": 1,
+  "verified_on": "2026-10-27",
+  "openai_sources": [
+    "https://developers.openai.com/api/docs/models",
+    "https://developers.openai.com/api/docs/guides/model-selection",
+    "https://openai.com/index/introducing-gpt-6-1-terra/"
+  ],
+  "policy_authority": "OptCodexRules 1.2.0: Luna defaults, separately user-approved Terra E1/E2 trials only",
+  "models": {
+    "gpt-6-luna": {
+      "type": "executor",
+      "best_for": [
+        "mechanical",
+        "bounded low-entropy code"
+      ],
+      "api_usd_per_million": {
+        "input": 0.1,
+        "output": 0.5
+      }
+    },
+    "gpt-6.1-terra": {
+      "type": "candidate",
+      "best_for": [
+        "frontend visual assessment",
+        "UI interaction",
+        "scoped code reviews",
+        "computer use"
+      ],
+      "api_usd_per_million": {
+        "input": 1,
+        "output": 5
+      }
+    },
+    "gpt-6.1-sol": {
+      "type": "candidate",
+      "best_for": [
+        "complex backend architecture analysis",
+        "cross-domain reasoning",
+        "challenging debugging"
+      ],
+      "api_usd_per_million": {
+        "input": 2,
+        "output": 10
+      }
+    },
+    "gpt-6-astra": {
+      "type": "exception",
+      "best_for": [
+        "highest complexity",
+        "exceptional deep analysis"
+      ],
+      "api_usd_per_million": {
+        "input": 10,
+        "output": 50
+      }
+    }
+  },
+  "profiles": {
+    "backend": {
+      "optcodex": "company|personal",
+      "executor": {
+        "E0": {
+          "model": "gpt-6-luna",
+          "effort": "high"
+        },
+        "E1": {
+          "model": "gpt-6-luna",
+          "effort": "xhigh"
+        },
+        "E2": {
+          "model": "gpt-6-luna",
+          "effort": "max"
+        }
+      },
+      "advisory_candidates": [
+        "gpt-6.1-sol",
+        "gpt-6-astra"
+      ],
+      "terra_trial_routes": {
+        "E1": {
+          "model": "gpt-6.1-terra",
+          "effort": "high",
+          "separate_approval": true
+        },
+        "E2": {
+          "model": "gpt-6.1-terra",
+          "effort": "xhigh",
+          "separate_approval": true
+        }
+      }
+    },
+    "web": {
+      "optcodex": "frontend-company|frontend-personal",
+      "executor": {
+        "E0": {
+          "model": "gpt-6-luna",
+          "effort": "high"
+        },
+        "E1": {
+          "model": "gpt-6-luna",
+          "effort": "xhigh"
+        },
+        "E2": {
+          "model": "gpt-6-luna",
+          "effort": "max"
+        }
+      },
+      "advisory_candidates": [
+        "gpt-6.1-terra",
+        "gpt-6.1-sol"
+      ],
+      "terra_trial_routes": {
+        "E1": {
+          "model": "gpt-6.1-terra",
+          "effort": "high",
+          "separate_approval": true
+        },
+        "E2": {
+          "model": "gpt-6.1-terra",
+          "effort": "xhigh",
+          "separate_approval": true
+        }
+      }
+    },
+    "mobile": {
+      "optcodex": "company|personal plus CCB mobile overlay",
+      "executor": {
+        "E0": {
+          "model": "gpt-6-luna",
+          "effort": "high"
+        },
+        "E1": {
+          "model": "gpt-6-luna",
+          "effort": "xhigh"
+        },
+        "E2": {
+          "model": "gpt-6-luna",
+          "effort": "max"
+        }
+      },
+      "advisory_candidates": [
+        "gpt-6.1-terra",
+        "gpt-6.1-sol"
+      ],
+      "terra_trial_routes": {
+        "E1": {
+          "model": "gpt-6.1-terra",
+          "effort": "high",
+          "separate_approval": true
+        },
+        "E2": {
+          "model": "gpt-6.1-terra",
+          "effort": "xhigh",
+          "separate_approval": true
+        }
+      }
+    }
+  },
+  "selection_rules": [
+    "E0 only gpt-6-luna/high; E1 defaults luna/xhigh, E2 defaults luna/max.",
+    "Terra/high E1 or Terra/xhigh E2 require bounded experiment ID, controlled reason and explicit task-specific authorization; CLI --approved-experiment-id mandatory.",
+    "Terra is NOT auto selected by Claude and cannot override requirements, protected files or audit.",
+    "Claude coordinator/subagents use Claude models, not OpenAI Codex executor routes.",
+    "Record distinct task IDs, attempt IDs and independent audit outcomes, not fabricated quota."
+  ],
+  "planning_pilot": {
+    "orchestrator": {
+      "provider": "anthropic",
+      "model": "claude-sonnet-5.5",
+      "effort": "high",
+      "selected_in": "Claude Code Desktop",
+      "runtime_binding": "USER_SELECTED_NOT_ENFORCED"
+    },
+    "advisor": {
+      "provider": "openai",
+      "model": "gpt-6.1-sol",
+      "effort": "medium",
+      "transport": "codex exec isolated read-only",
+      "workstreams": [
+        "backend",
+        "web",
+        "mobile",
+        "cross_layer"
+      ],
+      "output": "non-canonical structured planning proposal",
+      "data_sharing": "only explicitly approved non-protected packets"
+    },
+    "spec_plan_tasks_owner": "Claude Sonnet 5.5 High",
+    "auditor": "Claude Sonnet 5.5 High",
+    "default_executor": "GPT-6 Luna",
+    "optional_executor": "GPT-6.1 Terra E1/E2 with per-task approval"
+  }
+}

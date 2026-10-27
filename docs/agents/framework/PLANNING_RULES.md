@@ -137,12 +137,18 @@ Before finalizing each task, classify its **implementation entropy** separately 
 
 Planning rules:
 - Record a complete executor dispatch contract in each task artifact; do not record only a human-readable route label. Required fields are `Agent Role: implementation_executor`, `Executor Class`, `Target Model`, `Target Effort`, `Route Binding: EXPLICIT`, and `Parent Route Inheritance: FORBIDDEN`.
-- Derive `Target Model`/`Target Effort` from the selected `E0`/`E1`/`E2` class and keep them canonical for dispatch. Do not derive executor class mechanically from Tier S/M/L.
+- Choose default E0/E1/E2 target model/effort unless a task-specific user-approved Terra E1/E2 experiment with explicit consent and model/effort is documented. Keep the resulting target canonical for dispatch. Do not derive executor class mechanically from Tier S/M/L.
 - A task is not dispatch-ready if model/effort would be omitted from the child spawn call or inherited from the coordinator.
 - Lower executor cost by reducing **decision entropy**: resolve requirements, architecture, edge cases, write surfaces, invariants, and RED/GREEN expectations before dispatch.
 - Prefer `E0`/`E1` when the task has been made mechanical enough; do not use `E2` as a blanket safety default.
 - If the task still requires product/architecture invention, it is not ready for any executor class; return to clarification/planning.
-- Legacy GPT-5.6 Terra is not part of the default implementation ladder. GPT-6 has no Terra tier; use legacy Terra only when explicit compatibility/runtime evidence justifies an exception.
+
+### Approved Terra trial for bounded implementation (OptCodex v1.2.0)
+
+Luna defaults remain E0 = `gpt-6-luna/high`, E1 = `gpt-6-luna/xhigh`, E2 = `gpt-6-luna/max`. Opt-in experiment routes: **E1 = `gpt-6.1-terra/high`** or **E2 = `gpt-6.1-terra/xhigh`** only. E0 cannot use Terra. The plan/task must record a distinct `experiment_id`, controlled reason `UI_VISUAL|HARD_DEBUG|LUNA_REWORK|E2_COMPLEX`, exact model/effort and affirmative, specific user approval of that trial on that task. The `terra_trial` manifest must include `user_approved: true` but the coordinator MUST independently check real authorization (this JSON flag is not proof). No implicit route escalation, model inheritance, or fallback when Terra is unavailable: BLOCKED_ROUTE.
+
+For fair A/B compare separate clean checkouts of the same base commit with the same approved SPEC/AC/tests; never run two writers on the same checkout. Keep RED/GREEN, Task Buildability, final build, protected file exclusions, independent audit and QA/explicit Git authorizations unchanged. Count unique logical task IDs separately from executor attempts/retries; record requested and only observed effective route, runtime duration and quota/tokens (unknown = null). Do not treat executor terminal output as audited PASS.
+
 
 ### Protected configuration/environment planning boundary
 

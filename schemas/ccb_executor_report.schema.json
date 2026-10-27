@@ -1,0 +1,112 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CCB OptCodex v0.2 bounded executor report",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "task_id": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "COMPLETED",
+        "BLOCKED",
+        "FAILED"
+      ]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "files_changed": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "red": {
+      "$ref": "#/definitions/check"
+    },
+    "green": {
+      "$ref": "#/definitions/check"
+    },
+    "buildability": {
+      "$ref": "#/definitions/buildability"
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/check"
+      }
+    },
+    "blockers": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "task_id",
+    "status",
+    "summary",
+    "files_changed",
+    "red",
+    "green",
+    "buildability",
+    "checks",
+    "blockers"
+  ],
+  "definitions": {
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "result": {
+          "type": "string",
+          "enum": [
+            "PASS",
+            "FAIL",
+            "NOT_RUN"
+          ]
+        },
+        "evidence": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "result",
+        "evidence"
+      ]
+    },
+    "buildability": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "result": {
+          "type": "string",
+          "enum": [
+            "PASS",
+            "BLOCKED",
+            "N/A"
+          ]
+        },
+        "evidence": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "result",
+        "evidence"
+      ]
+    }
+  }
+}
