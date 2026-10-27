@@ -70,3 +70,15 @@ Decision: Remove Binance expansion for Market, Fractal and support/resistance. T
 Supersedes: analytical portions of D-003/D-006 and P04/T119; narrows REQ-005/AC-005; removes REQ-006/AC-006.
 Retains: D-001/D-002/D-004/D-005 and combined portfolio/order/position views, source icons and independent credentials.
 Impacts: revision 2 of specification/plan and active T116..T118; T119 marked REMOVED. No implementation authorization inferred from this scope correction.
+
+## Remediation Decisions (APPROVED 2026-10-27 by user: "rồi, bắt đầu làm T120 như kế hoạch")
+Source: re-audit `docs/agents/audits/2026-10-27-binance-direct-reads-reaudit.md`; plan `docs/agents/plans/2026-10-27-binance-direct-reads-remediation.md`. Approved by the user in chat on 2026-10-27 together with the remediation plan.
+
+### D-008 — Hide zero-balance Binance asset rows
+Proposal: omit Binance Spot and Futures rows whose total is available and exactly zero; keep rows with unavailable amounts; OKX unchanged; totals and completeness unchanged. Impacts: AUD-003 / T120.
+
+### D-009 — Unpriced Spot order price is unavailable
+Proposal: a Binance Spot order price that is absent or not positive is unavailable; no average price is derived. Impacts: AUD-002 / T120.
+
+### D-010 — Spot catalog reuse lifetime
+Proposal: reuse per credential generation for 60 minutes on the reader clock; credential change, disposal or expiry forces a fresh read; history scans keep a fresh read. Impacts: AUD-001 / T120.
