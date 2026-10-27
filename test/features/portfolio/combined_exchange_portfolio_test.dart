@@ -45,6 +45,28 @@ class _Storage extends SecureStorageHelper {
   Future<String?> getBinanceCredentialBundle() async => binanceBundle;
 }
 
+class _PortfolioBinanceClient extends BinanceDataClient {
+  _PortfolioBinanceClient(this.handler) : super();
+
+  final Future<Object?> Function(String path) handler;
+  final List<String> calls = <String>[];
+
+  @override
+  Future<Response<dynamic>> get(
+    String path, {
+    Map<String, dynamic>? queryParameters,
+    CancelToken? cancelToken,
+    BinanceRequestPriority priority = BinanceRequestPriority.interactive,
+  }) async {
+    calls.add(path);
+    return Response<dynamic>(
+      requestOptions: RequestOptions(path: path),
+      data: await handler(path),
+      statusCode: 200,
+    );
+  }
+}
+
 class _OkxReader extends OkxExchangeReader {
   _OkxReader({
     required this.account,
@@ -152,6 +174,7 @@ class _BinanceReader extends BinanceExchangeReader {
     CancelToken? cancelToken,
     BinanceCredentialSnapshot? expectedGeneration,
     Iterable<String> knownSymbols = const <String>[],
+    bool reuseForPortfolio = false,
   }) async {
     if (!_usable(expectedGeneration))
       throw const ExchangeReadException(
@@ -350,6 +373,43 @@ ExchangeAccountSnapshot _account({
   issues: issues,
 );
 
+ExchangeBalance _portfolioBalance({
+  required ExchangeSource source,
+  required ExchangeProduct? product,
+  required String wallet,
+  required String asset,
+  required ExchangeValue<ExchangeAmount> free,
+  required ExchangeValue<ExchangeAmount> locked,
+  ExchangeValue<ExchangeAmount>? reportedTotal,
+}) => ExchangeBalance(
+  source: source,
+  product: product,
+  wallet: wallet,
+  asset: asset,
+  free: free,
+  locked: locked,
+  reportedTotal: reportedTotal,
+);
+
+ExchangeAccountSnapshot _accountWithBalances({
+  required ExchangeSource source,
+  required ExchangeProduct? product,
+  required Iterable<ExchangeBalance> balances,
+  required String? equity,
+  Iterable<ExchangeReadIssue> issues = const <ExchangeReadIssue>[],
+}) => ExchangeAccountSnapshot(
+  source: source,
+  product: product,
+  generation: 0,
+  balances: balances,
+  reportedEquity: equity == null
+      ? const ExchangeValue<ExchangeMoney>.unavailable('not reported')
+      : _money(equity, 'USDT'),
+  unrealizedPnl: const ExchangeValue<ExchangeMoney>.unavailable('not reported'),
+  equityIncludesUnrealizedPnl: product == ExchangeProduct.futures,
+  issues: issues,
+);
+
 _Storage _storage() {
   final storage = _Storage();
   storage.binanceBundle =
@@ -390,6 +450,253 @@ Future<void> _drainAsync() async {
 }
 
 void main() {
+  group('RED-120 Binance Spot catalog refresh', () {
+    test(
+      'two Spot portfolio-source refreshes reuse one production catalog read',
+      () async {
+        final storage = _storage();
+        final client = _PortfolioBinanceClient((path) async {
+          switch (path) {
+            case '/api/v3/exchangeInfo':
+              return <String, Object?>{'symbols': <Object?>[]};
+            case '/api/v3/account':
+              return <String, Object?>{
+                'balances': <Object?>[
+                  <String, Object?>{
+                    'asset': 'USDT',
+                    'free': '1',
+                    'locked': '0',
+                  },
+                ],
+              };
+            default:
+              throw StateError('Unexpected endpoint: $path');
+          }
+        });
+        final requestCoordinator = BinanceRequestCoordinator(
+          minimumSpacing: Duration.zero,
+          delay: (_) async {},
+        );
+        final container = ProviderContainer(
+          overrides: <Override>[
+            secureStorageProvider.overrideWithValue(storage),
+            binanceDataClientProvider.overrideWithValue(client),
+            binanceRequestCoordinatorProvider.overrideWithValue(
+              requestCoordinator,
+            ),
+          ],
+        );
+        final subscription = container.listen(
+          binanceSpotPortfolioSourceProvider,
+          (_, _) {},
+          fireImmediately: true,
+        );
+        addTearDown(() {
+          subscription.close();
+          container.dispose();
+          client.dispose();
+          storage.dispose();
+        });
+
+        await container.read(binanceSpotPortfolioSourceProvider.future);
+        container.invalidate(binanceSpotPortfolioSourceProvider);
+        await container.read(binanceSpotPortfolioSourceProvider.future);
+
+        expect(
+          client.calls.where((path) => path == '/api/v3/exchangeInfo'),
+          hasLength(1),
+        );
+        expect(
+          client.calls.where((path) => path == '/api/v3/account'),
+          hasLength(2),
+        );
+      },
+    );
+  });
+
+  group('RED-120 GREEN-120 Binance zero-balance rows', () {
+    test(
+      'hides zero Binance Spot and Futures rows while retaining zero OKX rows',
+      () async {
+        final storage = _storage();
+        final quotes = _QuoteFixture();
+        final zero = _amount('0');
+        final okx = _OkxReader(
+          account: _accountWithBalances(
+            source: ExchangeSource.okx,
+            product: null,
+            balances: <ExchangeBalance>[
+              _portfolioBalance(
+                source: ExchangeSource.okx,
+                product: null,
+                wallet: 'unified',
+                asset: 'ZERO_OKX',
+                free: zero,
+                locked: zero,
+                reportedTotal: zero,
+              ),
+            ],
+            equity: '100',
+          ),
+        );
+        final binance = _BinanceReader(
+          credentialState: storage.binanceCredentialState,
+          spot: _accountWithBalances(
+            source: ExchangeSource.binance,
+            product: ExchangeProduct.spot,
+            balances: <ExchangeBalance>[
+              _portfolioBalance(
+                source: ExchangeSource.binance,
+                product: ExchangeProduct.spot,
+                wallet: 'spot',
+                asset: 'USDT',
+                free: _amount('18'),
+                locked: _amount('2'),
+                reportedTotal: _amount('20'),
+              ),
+              _portfolioBalance(
+                source: ExchangeSource.binance,
+                product: ExchangeProduct.spot,
+                wallet: 'spot',
+                asset: 'ZERO_SPOT',
+                free: zero,
+                locked: zero,
+                reportedTotal: zero,
+              ),
+            ],
+            equity: null,
+          ),
+          futures: _accountWithBalances(
+            source: ExchangeSource.binance,
+            product: ExchangeProduct.futures,
+            balances: <ExchangeBalance>[
+              _portfolioBalance(
+                source: ExchangeSource.binance,
+                product: ExchangeProduct.futures,
+                wallet: 'futures',
+                asset: 'ZERO_FUTURES',
+                free: zero,
+                locked: const ExchangeValue<ExchangeAmount>.unavailable(
+                  'Locked amount not reported.',
+                ),
+                reportedTotal: zero,
+              ),
+            ],
+            equity: '75',
+          ),
+        );
+        final container = _container(
+          storage: storage,
+          okx: okx,
+          binance: binance,
+          quotes: quotes,
+        );
+        addTearDown(() {
+          container.dispose();
+          storage.dispose();
+          binance.dispose();
+          quotes.dispose();
+        });
+        final subscription = container.listen(
+          combinedExchangePortfolioProvider,
+          (_, _) {},
+          fireImmediately: true,
+        );
+        addTearDown(subscription.close);
+        await _drainAsync();
+
+        final portfolio = container.read(combinedExchangePortfolioProvider);
+
+        expect(
+          portfolio.rows.any((row) => row.balance.asset == 'ZERO_SPOT'),
+          isFalse,
+        );
+        expect(
+          portfolio.rows.any((row) => row.balance.asset == 'ZERO_FUTURES'),
+          isFalse,
+        );
+        final zeroOkx = portfolio.rows.singleWhere(
+          (row) =>
+              row.balance.source == ExchangeSource.okx &&
+              row.balance.asset == 'ZERO_OKX',
+        );
+        expect(zeroOkx.totalAmount.value?.isZero, isTrue);
+        expect(portfolio.totalEquity.value?.text, '195');
+        expect(portfolio.isPartial, isFalse);
+      },
+    );
+
+    test('keeps a Binance row when its total amount is unavailable', () async {
+      final storage = _storage();
+      final quotes = _QuoteFixture();
+      final okx = _OkxReader(
+        account: _account(
+          source: ExchangeSource.okx,
+          product: null,
+          asset: 'USDT',
+          free: '0',
+          locked: '0',
+          reportedTotal: '0',
+          equity: '0',
+        ),
+      );
+      final binance = _BinanceReader(
+        credentialState: storage.binanceCredentialState,
+        spot: _accountWithBalances(
+          source: ExchangeSource.binance,
+          product: ExchangeProduct.spot,
+          balances: <ExchangeBalance>[
+            _portfolioBalance(
+              source: ExchangeSource.binance,
+              product: ExchangeProduct.spot,
+              wallet: 'spot',
+              asset: 'UNKNOWN',
+              free: const ExchangeValue<ExchangeAmount>.unavailable(
+                'Amount unavailable.',
+              ),
+              locked: _amount('0'),
+            ),
+          ],
+          equity: null,
+        ),
+        futures: _account(
+          source: ExchangeSource.binance,
+          product: ExchangeProduct.futures,
+          asset: 'USDT',
+          free: '0',
+          locked: null,
+          reportedTotal: '0',
+          equity: '0',
+        ),
+      );
+      final container = _container(
+        storage: storage,
+        okx: okx,
+        binance: binance,
+        quotes: quotes,
+      );
+      addTearDown(() {
+        container.dispose();
+        storage.dispose();
+        binance.dispose();
+        quotes.dispose();
+      });
+      final subscription = container.listen(
+        combinedExchangePortfolioProvider,
+        (_, _) {},
+        fireImmediately: true,
+      );
+      addTearDown(subscription.close);
+      await _drainAsync();
+
+      final unknown = container
+          .read(combinedExchangePortfolioProvider)
+          .rows
+          .singleWhere((row) => row.balance.asset == 'UNKNOWN');
+      expect(unknown.totalAmount.isAvailable, isFalse);
+    });
+  });
+
   group('GREEN-118 combined exchange portfolio', () {
     test(
       'keeps same-coin source rows separate and includes Futures margin equity once',

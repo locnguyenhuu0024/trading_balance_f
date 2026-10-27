@@ -25,6 +25,8 @@ final binanceExchangeReaderProvider = Provider<BinanceExchangeReader>((ref) {
 /// Source-native Binance account and order reader. All private reads remain
 /// generation checked by both this adapter and the guarded transport.
 class BinanceExchangeReader implements ExchangeReader {
+  static const Duration _spotPortfolioCatalogLifetime = Duration(minutes: 60);
+
   BinanceExchangeReader({
     required BinanceDataClient client,
     required ValueListenable<BinanceCredentialSnapshot> credentialState,
@@ -48,6 +50,9 @@ class BinanceExchangeReader implements ExchangeReader {
   Future<ExchangeValue<String>>? _multiAssetMode;
   int? _spotCatalogGeneration;
   int? _futuresCatalogGeneration;
+  ExchangeCatalog? _storedSpotCatalog;
+  int? _storedSpotCatalogGeneration;
+  DateTime? _storedSpotCatalogFetchedAt;
   bool _disposed = false;
 
   @override
@@ -61,6 +66,7 @@ class BinanceExchangeReader implements ExchangeReader {
     credentialState.removeListener(_onCredentialStateChanged);
     _knownInstruments.clear();
     _multiAssetMode = null;
+    _clearStoredSpotCatalog();
   }
 
   void rememberSpotSymbols(
@@ -77,8 +83,25 @@ class BinanceExchangeReader implements ExchangeReader {
     CancelToken? cancelToken,
     BinanceCredentialSnapshot? expectedGeneration,
     Iterable<String> knownSymbols = const <String>[],
+    bool reuseForPortfolio = false,
   }) async {
     final snapshot = _captureSnapshot(expectedGeneration);
+    final symbols = reuseForPortfolio
+        ? knownSymbols.toList(growable: false)
+        : knownSymbols;
+    if (reuseForPortfolio && symbols.isEmpty) {
+      final catalog = _storedSpotCatalog;
+      final fetchedAt = _storedSpotCatalogFetchedAt;
+      if (catalog != null &&
+          fetchedAt != null &&
+          _storedSpotCatalogGeneration == snapshot.generation) {
+        final age = now().difference(fetchedAt);
+        if (!age.isNegative && age < _spotPortfolioCatalogLifetime) {
+          _assertCurrent(snapshot);
+          return catalog;
+        }
+      }
+    }
     final response = await _get(
       '/api/v3/exchangeInfo',
       cancelToken: cancelToken,
@@ -156,7 +179,7 @@ class BinanceExchangeReader implements ExchangeReader {
       () => <String, ExchangeInstrument>{},
     );
     remembered.addAll(instruments);
-    _rememberSymbols(ExchangeProduct.spot, knownSymbols, snapshot);
+    _rememberSymbols(ExchangeProduct.spot, symbols, snapshot);
     for (final symbol in remembered.keys) {
       instruments.putIfAbsent(symbol, () => remembered[symbol]!);
     }
@@ -170,6 +193,9 @@ class BinanceExchangeReader implements ExchangeReader {
       issues: issues,
     );
     _spotCatalogGeneration = snapshot.generation;
+    _storedSpotCatalog = catalog;
+    _storedSpotCatalogGeneration = snapshot.generation;
+    _storedSpotCatalogFetchedAt = now();
     return catalog;
   }
 
@@ -1023,6 +1049,13 @@ class BinanceExchangeReader implements ExchangeReader {
     _multiAssetMode = null;
     _spotCatalogGeneration = null;
     _futuresCatalogGeneration = null;
+    _clearStoredSpotCatalog();
+  }
+
+  void _clearStoredSpotCatalog() {
+    _storedSpotCatalog = null;
+    _storedSpotCatalogGeneration = null;
+    _storedSpotCatalogFetchedAt = null;
   }
 
   ExchangeOrder _spotOrder(Object? value, {required ExchangeOrderKind kind}) {
@@ -1033,6 +1066,14 @@ class BinanceExchangeReader implements ExchangeReader {
     if (symbol == null || id == null) throw _invalidRows('Spot order identity');
     final instrument = _knownInstruments[ExchangeProduct.spot]?[symbol];
     final quoteCurrency = instrument?.quoteAsset.value;
+    final nativePrice = ExchangeAmount.tryParse(row['price']);
+    final price = quoteCurrency != null && nativePrice?.isPositive == true
+        ? ExchangeValue<ExchangeMoney>.available(
+            ExchangeMoney(amount: nativePrice!, currency: quoteCurrency),
+          )
+        : const ExchangeValue<ExchangeMoney>.unavailable(
+            'Spot order price is unavailable or not positive.',
+          );
     return ExchangeOrder(
       source: ExchangeSource.binance,
       product: ExchangeProduct.spot,
@@ -1050,7 +1091,7 @@ class BinanceExchangeReader implements ExchangeReader {
       ),
       createdAtMilliseconds: _intValue(row['time']),
       updatedAtMilliseconds: _intValue(row['updateTime']),
-      price: _moneyValue(row['price'], quoteCurrency, 'order price'),
+      price: price,
       countsTowardExecution: kind == ExchangeOrderKind.ordinary,
       nativeRecord: row,
     );

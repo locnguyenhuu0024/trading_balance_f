@@ -168,6 +168,7 @@ Future<_CatalogReadResult> _readBinanceSpotCatalog(
     final catalog = await reader.getSpotCatalog(
       cancelToken: cancelToken,
       expectedGeneration: generation,
+      reuseForPortfolio: true,
     );
     return _CatalogReadResult(catalog: catalog);
   } catch (error) {
@@ -896,6 +897,11 @@ List<PortfolioBalanceRow> _portfolioRows({
 }) => accounts
     .where((source) => source.account != null)
     .expand((source) => source.account!.balances)
+    .where((balance) {
+      if (balance.source != ExchangeSource.binance) return true;
+      final total = _balanceTotal(balance);
+      return !total.isAvailable || !total.value!.isZero;
+    })
     .map((balance) {
       final amount = _balanceTotal(balance);
       final valuation = _balanceValuation(

@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/exchange/binance_exchange_reader.dart';
+import 'package:trading_balance_f/core/exchange/binance_history_scan.dart';
 import 'package:trading_balance_f/core/exchange/binance_read_routes.dart';
 import 'package:trading_balance_f/core/exchange/exchange_models.dart';
 import 'package:trading_balance_f/core/exchange/exchange_readers.dart';
@@ -18,6 +19,57 @@ import 'package:trading_balance_f/features/orders/data/order_repository.dart';
 import 'package:trading_balance_f/features/portfolio/data/portfolio_repository.dart';
 
 void main() {
+  group('RED-120 Spot order price validation', () {
+    test('a zero Spot MARKET price is unavailable', () async {
+      final data = _newBinance((call) async {
+        switch (call.path) {
+          case '/api/v3/exchangeInfo':
+            return <String, Object?>{
+              'symbols': <Object?>[_spotCatalogRow('BTCUSDT', 'BTC', 'USDT')],
+            };
+          case '/api/v3/openOrders':
+            return <Object?>[
+              <String, Object?>{
+                'symbol': 'BTCUSDT',
+                'orderId': 1,
+                'side': 'buy',
+                'type': 'MARKET',
+                'status': 'NEW',
+                'origQty': '1',
+                'executedQty': '0',
+                'cummulativeQuoteQty': '0',
+                'price': '0.00000000',
+                'time': 10,
+              },
+              <String, Object?>{
+                'symbol': 'BTCUSDT',
+                'orderId': 2,
+                'side': 'buy',
+                'type': 'LIMIT',
+                'status': 'NEW',
+                'origQty': '1',
+                'executedQty': '0',
+                'cummulativeQuoteQty': '0',
+                'price': '100.25',
+                'time': 11,
+              },
+            ];
+          default:
+            throw StateError('Unexpected endpoint: ${call.path}');
+        }
+      });
+      addTearDown(data.dispose);
+
+      final orders = await data.reader.getSpotOpenOrders();
+      final market = orders.singleWhere((order) => order.nativeId == '1');
+      final limit = orders.singleWhere((order) => order.nativeId == '2');
+
+      expect(market.price?.isAvailable, isFalse);
+      expect(limit.price?.value?.amount.text, '100.25');
+      expect(limit.price?.value?.currency, 'USDT');
+    });
+  });
+
   group('RED-117', () {
     test(
       'Spot catalog captures non-USDT pairs and unions in-generation symbols',
@@ -702,7 +754,172 @@ void main() {
       },
     );
   });
+
+  group('GREEN-120 Binance Spot catalog and order behavior', () {
+    test(
+      'portfolio catalog reuse expires after 60 minutes and fences generations',
+      () async {
+        var now = DateTime.utc(2026, 10, 27);
+        final data = _newBinance((call) async {
+          if (call.path == '/api/v3/exchangeInfo') {
+            return <String, Object?>{
+              'symbols': <Object?>[_spotCatalogRow('BTCUSDT', 'BTC', 'USDT')],
+            };
+          }
+          throw StateError('Unexpected endpoint: ${call.path}');
+        }, clock: () => now);
+        addTearDown(data.dispose);
+        final generationOne = data.credentialState.value;
+
+        await data.reader.getSpotCatalog(
+          expectedGeneration: generationOne,
+          reuseForPortfolio: true,
+        );
+        await data.reader.getSpotCatalog(
+          expectedGeneration: generationOne,
+          reuseForPortfolio: true,
+        );
+        expect(
+          data.client.calls.where(
+            (call) => call.path == '/api/v3/exchangeInfo',
+          ),
+          hasLength(1),
+        );
+
+        await data.reader.getSpotCatalog(expectedGeneration: generationOne);
+        await data.reader.getSpotCatalog(
+          expectedGeneration: generationOne,
+          knownSymbols: const <String>['DELISTEDBTC'],
+          reuseForPortfolio: true,
+        );
+        expect(
+          data.client.calls.where(
+            (call) => call.path == '/api/v3/exchangeInfo',
+          ),
+          hasLength(3),
+        );
+
+        now = now.add(const Duration(minutes: 61));
+        await data.reader.getSpotCatalog(
+          expectedGeneration: generationOne,
+          reuseForPortfolio: true,
+        );
+        expect(
+          data.client.calls.where(
+            (call) => call.path == '/api/v3/exchangeInfo',
+          ),
+          hasLength(4),
+        );
+
+        final generationTwo = BinanceCredentialSnapshot(
+          generation: generationOne.generation + 1,
+          rotating: false,
+          privateReadsEnabled: true,
+        );
+        data.credentialState.value = generationTwo;
+        await data.reader.getSpotCatalog(
+          expectedGeneration: generationTwo,
+          reuseForPortfolio: true,
+        );
+        expect(
+          data.client.calls.where(
+            (call) => call.path == '/api/v3/exchangeInfo',
+          ),
+          hasLength(5),
+        );
+      },
+    );
+
+    test('a Spot history scan still fetches its own fresh catalog', () async {
+      final data = _newBinance((call) async {
+        switch (call.path) {
+          case '/api/v3/exchangeInfo':
+            return <String, Object?>{
+              'symbols': <Object?>[_spotCatalogRow('BTCUSDT', 'BTC', 'USDT')],
+            };
+          case '/api/v3/allOrders':
+            return <Object?>[];
+          default:
+            throw StateError('Unexpected endpoint: ${call.path}');
+        }
+      });
+      addTearDown(data.dispose);
+      final history = BinanceHistoryScanService(
+        reader: data.reader,
+        requestCoordinator: data.requestCoordinator,
+      );
+      addTearDown(history.dispose);
+
+      await data.reader.getSpotCatalog(reuseForPortfolio: true);
+      final progress = await history.startSpotScan().run();
+
+      expect(progress.state, BinanceHistoryScanState.complete);
+      expect(
+        data.client.calls.where((call) => call.path == '/api/v3/exchangeInfo'),
+        hasLength(2),
+      );
+      expect(
+        data.client.calls.where((call) => call.path == '/api/v3/allOrders'),
+        hasLength(1),
+      );
+    });
+
+    test(
+      'Spot prices require a positive native amount and a known quote asset',
+      () async {
+        final data = _newBinance((call) async {
+          switch (call.path) {
+            case '/api/v3/exchangeInfo':
+              return <String, Object?>{
+                'symbols': <Object?>[_spotCatalogRow('BTCUSDT', 'BTC', 'USDT')],
+              };
+            case '/api/v3/openOrders':
+              return <Object?>[
+                _spotOrderRow('1', 'BTCUSDT', 'MARKET', '0.00000000'),
+                _spotOrderRow('2', 'BTCUSDT', 'LIMIT', '100.25'),
+                _spotOrderRow('3', 'UNKNOWNPAIR', 'LIMIT', '100.25'),
+              ];
+            default:
+              throw StateError('Unexpected endpoint: ${call.path}');
+          }
+        });
+        addTearDown(data.dispose);
+
+        final orders = await data.reader.getSpotOpenOrders();
+        final market = orders.singleWhere((order) => order.nativeId == '1');
+        final limit = orders.singleWhere((order) => order.nativeId == '2');
+        final unknownQuote = orders.singleWhere(
+          (order) => order.nativeId == '3',
+        );
+
+        expect(market.price?.isAvailable, isFalse);
+        expect(market.price?.reason, isNotEmpty);
+        expect(limit.price?.value?.amount.text, '100.25');
+        expect(limit.price?.value?.currency, 'USDT');
+        expect(unknownQuote.price?.isAvailable, isFalse);
+        expect(unknownQuote.price?.reason, isNotEmpty);
+      },
+    );
+  });
 }
+
+Map<String, Object?> _spotOrderRow(
+  String id,
+  String symbol,
+  String type,
+  String price,
+) => <String, Object?>{
+  'symbol': symbol,
+  'orderId': id,
+  'side': 'buy',
+  'type': type,
+  'status': 'NEW',
+  'origQty': '1',
+  'executedQty': '0',
+  'cummulativeQuoteQty': '0',
+  'price': price,
+  'time': 10,
+};
 
 class _BinanceCall {
   const _BinanceCall({
@@ -753,11 +970,17 @@ class _FakeBinanceDataClient extends BinanceDataClient {
 }
 
 class _BinanceFixture {
-  _BinanceFixture(this.client, this.reader, this.credentialState);
+  _BinanceFixture(
+    this.client,
+    this.reader,
+    this.credentialState,
+    this.requestCoordinator,
+  );
 
   final _FakeBinanceDataClient client;
   final BinanceExchangeReader reader;
   final ValueNotifier<BinanceCredentialSnapshot> credentialState;
+  final BinanceRequestCoordinator requestCoordinator;
 
   void dispose() {
     reader.dispose();
@@ -766,7 +989,10 @@ class _BinanceFixture {
   }
 }
 
-_BinanceFixture _newBinance(_BinanceHandler handler) {
+_BinanceFixture _newBinance(
+  _BinanceHandler handler, {
+  BinanceExchangeReaderClock? clock,
+}) {
   final credentialState = ValueNotifier(
     const BinanceCredentialSnapshot(
       generation: 1,
@@ -775,15 +1001,17 @@ _BinanceFixture _newBinance(_BinanceHandler handler) {
     ),
   );
   final client = _FakeBinanceDataClient(handler);
+  final requestCoordinator = BinanceRequestCoordinator(
+    minimumSpacing: Duration.zero,
+    delay: (_) async {},
+  );
   final reader = BinanceExchangeReader(
     client: client,
     credentialState: credentialState,
-    requestCoordinator: BinanceRequestCoordinator(
-      minimumSpacing: Duration.zero,
-      delay: (_) async {},
-    ),
+    requestCoordinator: requestCoordinator,
+    clock: clock,
   );
-  return _BinanceFixture(client, reader, credentialState);
+  return _BinanceFixture(client, reader, credentialState, requestCoordinator);
 }
 
 class _FakeOkxDataClient extends OkxDataClient {

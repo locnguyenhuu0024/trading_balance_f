@@ -1,6 +1,6 @@
 # Task 120 — Binance catalog reuse, Spot unpriced orders, zero-balance rows
 
-Status: APPROVED (plan and D-008..D-010 approved by user 2026-10-27); dispatch needs a clean writer checkout
+Status: PASS (independent audit 2026-10-27)
 Agent Role: implementation_executor
 Executor Class: E1
 Target Model: gpt-6-luna
@@ -16,9 +16,9 @@ Acceptance Criteria: RAC-001 (AUD-001), RAC-002 (AUD-002), RAC-003 (AUD-003)
 
 ## 1. Dispatch Compliance
 Spawn an `implementation_executor` with both model `gpt-6-luna` and effort `xhigh` supplied explicitly. No inherited route. No Terra.
-Dispatch Route Status: PENDING
-Requested Model: PENDING
-Requested Effort: PENDING
+Dispatch Route Status: DISPATCHED via scripts/ccb/dispatch.py, attempt fcf9416a607043e9b03ef627a5ec1ee2
+Requested Model: gpt-6-luna
+Requested Effort: xhigh
 Observed Effective Model: unavailable
 Observed Effective Effort: unavailable
 
@@ -104,5 +104,10 @@ Return `BLOCKED` if: repository evidence contradicts this contract; reuse requir
 - [ ] no protected content read or modified; External Configuration actions reported as none
 
 ## 12. Coordinator Audit
-Scope / RAC-001..003 / test quality / RED-before-GREEN / buildability / route compliance: PENDING
-Verdict: PENDING (PASS | REWORK | BLOCKED)
+Scope: only the 4 allowed files changed, none staged, no protected path touched.
+RAC-001: reader stores Spot catalog with generation and time; reuse only with empty knownSymbols, same generation, age < 60 min; cleared on generation change and dispose; provider passes reuse flag. Test counts exchangeInfo requests (1 across two refreshes, refetch at 61 min and after generation change, history scan fetches its own).
+RAC-002: `_spotOrder` price available only for positive native price with known quote. Independently re-run RED with only the price line reverted: expected false, actual true; GREEN passes.
+RAC-003: `_portfolioRows` skips Binance rows with available exactly-zero total; unavailable-amount rows and OKX rows kept; equity/completeness logic untouched.
+Independent runs: RED-120 on pre-change lib failed for the intended reasons (2 exchangeInfo requests; zero row listed; reader test file failed to compile on old code, so the price case was isolated as above). GREEN-120 5 passed; V3 211 passed; `rtk flutter build web --no-pub` exit 0; analyzer on the two lib files adds no new warning (remaining unused import is T121 scope).
+Limitations: effective executor route UNVERIFIABLE; AUD-002/003 rest on documented Binance behavior, no live account check; the price RED case shares a file with tests that need the new parameter, so on old code it fails at load unless isolated.
+Verdict: PASS
