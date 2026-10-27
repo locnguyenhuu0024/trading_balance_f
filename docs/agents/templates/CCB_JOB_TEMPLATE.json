@@ -1,0 +1,30 @@
+{
+  "task_id": "T01",
+  "approved_plan_id": "YYYY-MM-DD-feature-v1",
+  "task_file": "tasks/task_01_feature.md",
+  "optcodex_variant": "company",
+  "optcodex_version": "1.2.0",
+  "baseline_version": "2.2.2",
+  "optcodex_source_revision": "7ce5bb67cabfee4e89733455ee2519f5ca8dcbd0",
+  "agent_role": "implementation_executor",
+  "route_class": "E0",
+  "route_binding": "EXPLICIT",
+  "parent_route_inheritance": "FORBIDDEN",
+  "model": "gpt-6-luna",
+  "effort": "high",
+  "planning_fanout": {
+    "required": false,
+    "status": "EXCEPTION",
+    "required_workstreams": 1,
+    "collected_workstreams": 0,
+    "reason": "SINGLE_MATERIAL_WORKSTREAM"
+  },
+  "allowed_writes": [
+    "src/example.py",
+    "tests/test_example.py"
+  ],
+  "dependencies": [],
+  "timeout_seconds": 900,
+  "domain": "backend",
+  "terra_trial": null
+}

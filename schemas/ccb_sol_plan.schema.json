@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "work_id": {
+      "type": "string"
+    },
+    "workstream": {
+      "type": "string",
+      "enum": [
+        "backend",
+        "web",
+        "mobile",
+        "cross_layer"
+      ]
+    },
+    "proposal": {
+      "type": "string"
+    },
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "risks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "open_questions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "handoff_contracts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "suggested_tasks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "work_id",
+    "workstream",
+    "proposal",
+    "assumptions",
+    "risks",
+    "open_questions",
+    "handoff_contracts",
+    "suggested_tasks",
+    "evidence_refs"
+  ]
+}

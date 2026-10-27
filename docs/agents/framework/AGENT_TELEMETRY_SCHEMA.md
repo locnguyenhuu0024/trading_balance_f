@@ -88,7 +88,6 @@ Use the smallest useful set:
 - `environment_blocker`
 - `orchestration_transport_error`
 - `telemetry_degraded`
-- `frontend_design_classified`, `frontend_design_brief_ready`, `frontend_guidelines_audited`, `frontend_visual_review_completed`
 
 Do not create a telemetry event for every shell command, file read, or internal thought.
 
@@ -180,6 +179,9 @@ At minimum compute:
 - external-verification rate;
 - unresolved-design leakage to executors (contract/ambiguity blockers);
 - duration and runtime-reported token/cost per accepted task/workflow when available.
-- frontend F0/F1/F2/F3 distribution; design-brief compliance; web-guidelines finding rate; visual-review PASS/REWORK/UNAVAILABLE distribution when applicable.
 
 Interpret cost/performance only after separating model failures from environment, transport, security-boundary, and contract/design failures.
+
+## CCB comparative task ledger (v1.2.0)
+
+CCB may maintain a separate append-only local JSONL task ledger in addition to coordinator-owned canonical events. Logical task identity is `(project_id, approved_plan_id, task_id)`; retries/alternate model executions increment attempts, not tasks. Planner must record task created, dispatcher records attempts, coordinator records independent audit outcome. A Terra trial includes explicit consent/experiment ID. Model/effort are requested values unless independently observed effective values; unknown token, cost and quota data remain null. Do not store raw prompts, source, secrets, protected config or conversation/session IDs.

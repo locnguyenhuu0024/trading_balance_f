@@ -16,9 +16,6 @@ Data quality: COMPLETE | PARTIAL — <missing fields/events>
 - JEV fallback reasons: <top reason codes; no raw state or probabilities>
 - environment/toolchain/transport incidents: <count>
 - runtime-reported cost/tokens coverage: <...% of runs>
-- frontend F0/F1/F2/F3 distribution: <...>
-- frontend design-brief compliance: <...%>
-- frontend visual-review PASS / REWORK / UNAVAILABLE: <...>
 
 ## 2. Routing Effectiveness
 
@@ -62,16 +59,7 @@ Data quality: COMPLETE | PARTIAL — <missing fields/events>
 - orchestration transport errors: <...>
 - SSPI constraint activations / self-clears: <...>
 
-## 6. Frontend Quality
-
-- F2/F3 tasks with approved design brief before execution: <...%>
-- applicable UI changes with pinned web-guidelines audit: <...%>
-- visual-review evidence available when required: <...%>
-- blocking accessibility/interaction findings discovered only after execution: <count>
-- out-of-scope redesign/dependency expansion incidents: <count>
-- third-party skill loads by identifier and adoption usefulness: <...>
-
-## 7. P/P Findings
+## 6. P/P Findings
 
 Keep / increase usage:
 - <route + evidence>
@@ -85,7 +73,7 @@ Escalation threshold changes:
 Decomposition / fan-out changes:
 - <proposal + evidence>
 
-## 8. Next Optimization Decisions
+## 7. Next Optimization Decisions
 
 | Decision | Evidence | Expected benefit | Risk | Action |
 |---|---|---|---|---|

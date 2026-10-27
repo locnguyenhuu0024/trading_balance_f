@@ -1,12 +1,12 @@
-# AGENTS.md — OptCodex + Ponytail v1.1.0
+# AGENTS.md — OptCodex + Ponytail v1.2.0
 
-> Thin bootstrap for personal OptCodex frontend. GitHub is the only maintained source of truth.
+> Thin bootstrap for personal OptCodex. GitHub is the only maintained source of truth.
 
 ## 0. Binding baseline
 
-Before repository work, read `BASELINE_AGENTS_OptCodex-Personal-v1.2.1.md` in full. It is the binding source of truth for roles, planning, approval, source-of-truth precedence, protected configuration, external services, task scope, mandatory explicit child model/effort binding, verification, audit, and telemetry. This overlay does not weaken or replace any baseline rule.
+Before repository work, read `BASELINE_AGENTS_OptCodex-Personal-v1.2.2.md` in full. It is the binding source of truth for roles, planning, approval, source-of-truth precedence, protected configuration, external services, task scope, mandatory explicit child model/effort binding, verification, audit, and telemetry. This overlay does not weaken or replace any baseline rule.
 
-Model routing is inherited from the **current baseline**: `gpt-6.1-sol` for Sol routes; `gpt-6-luna` for executor routes; `gpt-6-astra` for exceptional capability. Do not silently substitute another model or effort.
+Model routing follows the **current baseline**: Sol reasoning, Luna E0/E1/E2 executor defaults, and separately user-approved experimental GPT-6.1 Terra E1/E2 routes only. Astra remains exceptional; never silently substitute model or effort.
 
 ## 1. Progressive Ponytail integration
 
@@ -25,7 +25,3 @@ Use the baseline's local coordinator for task classification (S/M/L), reasoning 
 ## 3. Personal context optimization
 
 Preserve RTK-first for eligible shell output and Headroom-first for eligible large non-shell output. Before applicable inspection or verification, load `docs/agents/framework/profiles/CONTEXT_OPTIMIZATION.md`. Never let optimization tools access protected content or override exact evidence.
-
-## 4. Frontend design/engineering
-
-For any user-facing web UI or frontend behavior change, read `docs/agents/framework/frontend/FRONTEND_DESIGN_RULES.md` before planning. Preserve F0–F3 classification, design briefs and visual-review gates, progressive loading of pinned Anthropic/Vercel skills, repo-native design-system priority, accessibility, and design review. For personal frontend, preserve RTK/Headroom and do **not** import company-only QA tooling.
