@@ -1,6 +1,6 @@
 # Remediation Plan: Binance direct reads re-audit findings
 
-Status: APPROVED (user, 2026-10-27)
+Status: COMPLETE (T120 PASS, T121 PASS, final integration audit PASS, 2026-10-27)
 Date: 2026-10-27
 Tier: M (client-only corrections; no new architecture or contracts)
 Parent specification: `docs/agents/specs/2026-10-25-binance-direct-reads-design.md` (revision 2, unchanged)

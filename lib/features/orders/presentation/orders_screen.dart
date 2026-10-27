@@ -1042,20 +1042,6 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     );
   }
 
-  Widget _buildEmptyState(String message, bool isDark) {
-    final palette = AppPalette.forBrightness(isDark);
-    return ListView(
-      children: [
-        const SizedBox(height: 100),
-        Center(
-          child: Text(
-            message,
-            style: TextStyle(color: palette.muted, fontSize: 12),
-          ),
-        ),
-      ],
-    );
-  }
 
   Widget _buildNotionalRow({
     required String label,

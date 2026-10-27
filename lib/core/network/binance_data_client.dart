@@ -342,7 +342,7 @@ class BinanceDataClient {
   }
 
   Future<void> _performTimeSync(BinanceReadRoute route) async {
-    final response = await _sendRoute(
+    await _sendRoute(
       route,
       const <String, String>{},
       null,

@@ -1,6 +1,6 @@
 # Task 121 — Remove dead code left by the Binance migration
 
-Status: PENDING (needs T120 = PASS and user approval of the plan)
+Status: PASS (independent audit 2026-10-27)
 Agent Role: implementation_executor
 Executor Class: E0
 Target Model: gpt-6-luna
@@ -16,9 +16,9 @@ Acceptance Criteria: RAC-004 (AUD-004)
 
 ## 1. Dispatch Compliance
 Spawn an `implementation_executor` with both model `gpt-6-luna` and effort `high` supplied explicitly. No inherited route.
-Dispatch Route Status: PENDING
-Requested Model: PENDING
-Requested Effort: PENDING
+Dispatch Route Status: DISPATCHED via scripts/ccb/dispatch.py, attempt fd75e6fc75d742a9bc0afba5c87b8d57
+Requested Model: gpt-6-luna
+Requested Effort: high
 Observed Effective Model: unavailable
 Observed Effective Effort: unavailable
 
@@ -94,5 +94,8 @@ Return `BLOCKED` if a removal target is still referenced, if removal needs edits
 - [ ] no protected content read or modified
 
 ## 12. Coordinator Audit
-Scope / RAC-004 / minimality / buildability / route compliance: PENDING
-Verdict: PENDING (PASS | REWORK | BLOCKED)
+Scope: only the 6 allowed files changed, none staged, no test or protected file touched; deletions only (1 insertion-free line edit in binance_data_client.dart).
+RAC-004: the 10 listed warnings are gone; the executor also removed items orphaned by those removals (`_PnlBlock`, `_BalanceTile`, `_DetailsState`, `_buildAssetSummary`, imports `intl`, `okx_balance_model`) in the allowed files only. No remaining reference to any removed symbol (grep over lib). `flutter analyze lib`: 49 -> 39 issues; the remaining warnings are the 3 pre-existing out-of-scope ones.
+Independent runs: regression group 237 passed; full `rtk flutter test --no-pub` 671 passed (664 baseline + 7 from T120); `rtk flutter build web --no-pub` exit 0 after the last change.
+Limitations: `git diff --check` reports a trailing blank line at EOF in `portfolio_details_screen.dart` (cosmetic, not fixed by the coordinator); effective executor route UNVERIFIABLE.
+Verdict: PASS

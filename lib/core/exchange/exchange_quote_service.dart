@@ -6,7 +6,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../network/binance_data_client.dart';
 import '../network/binance_request_coordinator.dart';
 import '../network/okx_data_client.dart';
-import 'binance_read_routes.dart';
 import 'exchange_models.dart';
 
 final exchangeQuoteServiceProvider = Provider<ExchangeQuoteService>((ref) {
