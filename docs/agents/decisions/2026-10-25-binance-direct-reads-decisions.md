@@ -94,3 +94,18 @@ Proposal: classify Dio connect, send and receive timeouts as `binance_timeout`; 
 
 ### D-013 — Never assert CORS on web
 Proposal: an ambiguous no-response failure on web shows a neutral browser-reachability message; a retry time is shown only for a future `retryAt`. Impacts: T123.
+
+## Spot WebSocket Reads Decisions (APPROVED 2026-10-28 by user: "Duyệt")
+Source: plan `docs/agents/plans/2026-10-28-binance-spot-websocket-reads.md`; evidence: curl CORS probes and WebSocket probes with dummy keys, 2026-10-28.
+
+### D-014 — Web Spot private reads over the WebSocket API
+Proposal: on web only, `/api/v3/account`, `/api/v3/openOrders` and `/api/v3/allOrders` use `account.status`, `openOrders.status` and `allOrders`. Native builds, Futures, OKX and public reads keep REST. Reader and screens unchanged. Impacts: T124, T125.
+
+### D-015 — Connection lifecycle
+Proposal: one shared lazily opened connection, closed after 60 s idle, on dispose and on credential generation change; 15 s request timeout; only the existing single `-1021` retry; the 2-weight connection cost counts against the Spot host budget. Impacts: T124, T125.
+
+### D-016 — Security fence
+Proposal: fixed endpoint, allowlisted methods and parameters matching the REST route policy, apiKey and signature only inside the request frame, no frame, key, secret or signature in logs, errors or state, same generation, dispose and cancel checks as REST. Impacts: T124, T125.
+
+### D-017 — No new user-visible copy
+Proposal: the web build keeps the T123 copy for any remaining no-response failure. Impacts: none.
