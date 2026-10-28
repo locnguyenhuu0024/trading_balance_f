@@ -82,3 +82,15 @@ Proposal: a Binance Spot order price that is absent or not positive is unavailab
 
 ### D-010 — Spot catalog reuse lifetime
 Proposal: reuse per credential generation for 60 minutes on the reader clock; credential change, disposal or expiry forces a fresh read; history scans keep a fresh read. Impacts: AUD-001 / T120.
+
+## Failure Visibility Decisions (APPROVED 2026-10-28 by user: "Duyệt")
+Source: plan `docs/agents/plans/2026-10-28-binance-failure-visibility.md`; Sol Medium advisory proposal reconciled by the coordinator.
+
+### D-011 — Curated failure copy inside `_safeReadError`
+Proposal: map `ExchangeReadException.code` to curated safe copy; keep `ExchangeAccountResult` unchanged; unknown codes use safe generic copy. Structured `errorCode`/`retryAt` fields and widget actions are deferred. Impacts: T123.
+
+### D-012 — Distinct `binance_timeout` code
+Proposal: classify Dio connect, send and receive timeouts as `binance_timeout`; no change to synchronization, coordination, signing or credential storage. Impacts: T122.
+
+### D-013 — Never assert CORS on web
+Proposal: an ambiguous no-response failure on web shows a neutral browser-reachability message; a retry time is shown only for a future `retryAt`. Impacts: T123.
