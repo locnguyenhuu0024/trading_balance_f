@@ -345,6 +345,7 @@ scp -r build/web/* deploy@217.60.248.123:/var/www/tradingbalancef/app/
 ```
 
 ```sh
+npx wrangler pages deploy ./build/web --project-name tradingbalancef-app
 ```
 
 This URL is public. It is not a credential.
