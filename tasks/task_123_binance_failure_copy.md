@@ -1,6 +1,6 @@
 # Task 123 — Curated Binance failure messages
 
-Status: READY (dispatch pending; T122 must be PASS first)
+Status: READY (T122 = PASS, committed in 3ed75c5; first dispatch attempt c6dba1b3d7ca42c090284b3ac80aaddc was a false BLOCKED)
 Agent Role: implementation_executor
 Executor Class: E1
 Target Model: gpt-6-luna
@@ -36,7 +36,7 @@ Copy (exact text is the contract; codes that are not listed use the safe generic
 OKX errors and `DioException` text are unchanged.
 
 ## 3. Preconditions
-Predecessors: T122 = PASS (needs the `binance_timeout` code). Decisions D-011 and D-013 approved.
+Predecessors: T122 = PASS and already committed. The code `binance_timeout` exists in `lib/core/network/binance_data_client.dart` (`_timeoutError`, read-only for this task; it is outside the allowed write scope on purpose) and is tested in `test/core/network/binance_data_client_test.dart`. Do not treat its absence from the allowed files as a missing predecessor. Decisions D-011 and D-013 approved.
 
 ## 4. Allowed Scope
 Source: `lib/core/exchange/exchange_account_providers.dart`.
