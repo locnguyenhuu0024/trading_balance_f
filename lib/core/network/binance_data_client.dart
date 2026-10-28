@@ -125,6 +125,7 @@ class BinanceDataClient {
     } on DioException catch (error) {
       if (_disposed) throw _clientClosed();
       if (error.type == DioExceptionType.cancel) throw _cancelled();
+      if (_isTimeout(error)) throw _timeoutError();
       throw _networkError();
     } on BinanceCredentialStorageException {
       if (_disposed) throw _clientClosed();
@@ -294,6 +295,7 @@ class BinanceDataClient {
     } on DioException catch (error) {
       if (_disposed) throw _clientClosed();
       if (error.type == DioExceptionType.cancel) throw _cancelled();
+      if (_isTimeout(error)) throw _timeoutError();
       throw _networkError();
     } catch (_) {
       if (_disposed) throw _clientClosed();
@@ -495,7 +497,9 @@ class BinanceDataClient {
       return error.error as BinanceDataException;
     }
     final response = error.response;
-    if (response == null) return _networkError();
+    if (response == null) {
+      return _isTimeout(error) ? _timeoutError() : _networkError();
+    }
     final statusCode = response.statusCode;
     final retryAfter = response.headers.value('retry-after');
     if (statusCode == 418) {
@@ -675,6 +679,16 @@ class BinanceDataClient {
     code: 'binance_network_error',
     message: 'The Binance read request failed because of a network error.',
   );
+
+  BinanceDataException _timeoutError() => const BinanceDataException(
+    code: 'binance_timeout',
+    message: 'The Binance read request timed out.',
+  );
+
+  bool _isTimeout(DioException error) =>
+      error.type == DioExceptionType.connectionTimeout ||
+      error.type == DioExceptionType.sendTimeout ||
+      error.type == DioExceptionType.receiveTimeout;
 
   BinanceDataException _cancelled() => const BinanceDataException(
     code: 'request_cancelled',

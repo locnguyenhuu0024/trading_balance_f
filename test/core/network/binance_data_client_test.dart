@@ -1129,6 +1129,97 @@ void main() {
   });
 
   group('GREEN-116', () {
+    test('classifies Dio timeouts on public and signed routes safely', () async {
+      for (final type in <DioExceptionType>[
+        DioExceptionType.connectionTimeout,
+        DioExceptionType.sendTimeout,
+        DioExceptionType.receiveTimeout,
+      ]) {
+        for (final signed in <bool>[false, true]) {
+          final clock = _MutableClock(DateTime.utc(2026, 10, 25, 8));
+          final adapter = _RecordingAdapter((options) {
+            if (options.uri.path == '/api/v3/time') {
+              return _WireResponse(200, <String, Object>{
+                'serverTime': clock.now.millisecondsSinceEpoch,
+              });
+            }
+            throw DioException(
+              requestOptions: options,
+              type: type,
+              message:
+                  'fixture-api-key fixture-signature ${options.uri.toString()}',
+            );
+          });
+          final storage = signed ? _FixtureStorage.withCredentials() : null;
+          final client = _client(
+            adapter,
+            storage: storage,
+            coordinator: _coordinator(clock),
+            clock: clock,
+          );
+          final route = signed ? '/api/v3/account' : '/api/v3/ticker/24hr';
+
+          await expectLater(
+            client.get(
+              route,
+              queryParameters: signed ? null : const {'symbol': 'BTCUSDT'},
+            ),
+            throwsA(
+              isA<BinanceDataException>()
+                  .having((error) => error.code, 'code', 'binance_timeout')
+                  .having(
+                    (error) => error.message,
+                    'safe message',
+                    allOf(
+                      isNot(contains('fixture-binance-api-key')),
+                      isNot(contains('fixture-signature')),
+                      isNot(contains('symbol=BTCUSDT')),
+                      isNot(contains('https://')),
+                    ),
+                  )
+                  .having(
+                    (error) => error.toString(),
+                    'safe string',
+                    allOf(
+                      isNot(contains('fixture-binance-api-key')),
+                      isNot(contains('fixture-signature')),
+                      isNot(contains('symbol=BTCUSDT')),
+                      isNot(contains('https://')),
+                    ),
+                  ),
+            ),
+          );
+          client.dispose();
+          storage?.dispose();
+        }
+      }
+    });
+
+    test('response-less connection errors remain network errors', () async {
+      final adapter = _RecordingAdapter((options) {
+        throw DioException(
+          requestOptions: options,
+          type: DioExceptionType.connectionError,
+        );
+      });
+      final client = _client(adapter);
+
+      await expectLater(
+        client.get(
+          '/api/v3/ticker/24hr',
+          queryParameters: const {'symbol': 'BTCUSDT'},
+        ),
+        throwsA(
+          isA<BinanceDataException>().having(
+            (error) => error.code,
+            'code',
+            'binance_network_error',
+          ),
+        ),
+      );
+      client.dispose();
+    });
+
     test(
       'exchangeInfo installs budgets and charges serialized bootstrap calls',
       () async {
