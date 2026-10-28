@@ -1,6 +1,6 @@
 # Task 123 — Curated Binance failure messages
 
-Status: READY (T122 = PASS, committed in 3ed75c5; first dispatch attempt c6dba1b3d7ca42c090284b3ac80aaddc was a false BLOCKED)
+Status: PASS (independent audit 2026-10-28; attempt ce5ed93e21344e3e8510b6fdde9b1357, after a false BLOCKED first attempt c6dba1b3d7ca42c090284b3ac80aaddc caused by stale status text)
 Agent Role: implementation_executor
 Executor Class: E1
 Target Model: gpt-6-luna
@@ -14,7 +14,7 @@ Acceptance Criteria: each Binance failure code shows the section 4 copy of the p
 
 ## 1. Dispatch Compliance
 Spawn an `implementation_executor` with both model `gpt-6-luna` and effort `xhigh` supplied explicitly. No inherited route.
-Dispatch Route Status: PENDING
+Dispatch Route Status: DISPATCHED via scripts/ccb/dispatch.py, attempt ce5ed93e21344e3e8510b6fdde9b1357
 Requested Model: gpt-6-luna
 Requested Effort: xhigh
 Observed Effective Model: unavailable
@@ -61,13 +61,13 @@ Drive failures through the provider path with a fake reader throwing `ExchangeRe
 ### RED — RED-123
 Command: `rtk flutter test --no-pub test/features/portfolio/combined_exchange_portfolio_test.dart`
 Expected before the change: the new copy and sentinel cases fail; existing cases pass.
-Actual: PENDING
-Status: PENDING
+Actual: independent run on the old providers file: 5 tests failed (4 new T123 cases and the updated RED-118 expectation), the rest passed
+Status: PASS
 
 ### GREEN — GREEN-123
 Same command. Expected: all pass.
-Actual: PENDING
-Status: PENDING
+Actual: 17 passed
+Status: PASS
 
 Regression (V3): `rtk flutter test --no-pub test/core/exchange test/core/network test/features/portfolio test/features/orders`
 
@@ -75,8 +75,8 @@ Regression (V3): `rtk flutter test --no-pub test/core/exchange test/core/network
 Required: YES
 Affected canonical build unit: full Flutter application
 Exact secret-free build command: `rtk flutter build web --no-pub`
-Executed after the last task-local change: PENDING
-Result: PENDING
+Executed after the last task-local change: YES
+Result: PASS (exit 0)
 
 ### External Verification
 Required: NO
@@ -85,13 +85,18 @@ Required: NO
 Return `BLOCKED` if scope must grow past section 4, if T122's code is absent, or the copy cannot reach the UI as a string.
 
 ## 11. Execution Ledger
-- [ ] dispatch role, class, model and effort match; no inherited route
-- [ ] RED observed before the change
-- [ ] GREEN observed
-- [ ] V3 regression run
-- [ ] task build after last change
-- [ ] compact executor report returned
-- [ ] no protected content read or modified
+- [x] dispatch role, class, model and effort match; no inherited route
+- [x] RED observed before the change
+- [x] GREEN observed
+- [x] V3 regression run
+- [x] task build after last change
+- [x] compact executor report returned
+- [x] no protected content read or modified
 
 ## 12. Coordinator Audit
-PENDING
+Scope: only `exchange_account_providers.dart` and `combined_exchange_portfolio_test.dart` changed, none staged, no protected file touched. Only `_safeReadError` changed; `ExchangeAccountResult`, `_isTerminalReadFailure`, OKX and Dio paths are unchanged.
+AC: every code in the task copy table maps to the exact text; `binance_host_paused` and `binance_budget_metadata_unavailable` show a local HH:mm only for a future `retryAt`; credential and cancel codes keep their message; unknown codes and hostile messages fall back to the safe generic text in both `error` and the warning; a failed Binance Spot source keeps OKX and Futures and `isPartial` is true.
+Behavior notes: (1) the existing RED-118 test used an unmapped code and its expectation changed from the raw message to the generic fallback, which follows D-011. (2) Control-flow codes such as `binance_credential_generation_changed`, `binance_reader_disposed` and `binance_request_cancelled` now show the generic fallback instead of an English developer message; `binance_credential_generation_changed` stays terminal.
+Independent runs: RED on the old file (5 failures as expected), GREEN 17 passed, V3 305 passed, full suite 679 passed (673 + 6), analyzer on the file clean, `git diff --check` clean, `rtk flutter build web --no-pub --release` exit 0.
+Limitations: the `kIsWeb` copy was exercised by the executor in a Chrome run; I ran the VM suite only. The retry-time test mirrors the implementation's formatting. Copy is English only and no widget exposes retry or settings actions (deferred, section 7 of the plan). Effective executor route UNVERIFIABLE. Live Binance and browser CORS behavior remain unverified.
+Verdict: PASS

@@ -396,7 +396,45 @@ String _sourceLabel(ExchangeSource source, ExchangeProduct? product) {
 }
 
 String _safeReadError(Object error) {
-  if (error is ExchangeReadException) return error.message;
+  if (error is ExchangeReadException) {
+    switch (error.code) {
+      case 'binance_network_error':
+        return kIsWeb
+            ? 'Cannot reach Binance from this browser. Check your connection; browser or network restrictions may also block requests.'
+            : 'Cannot reach Binance. Check your connection and retry.';
+      case 'binance_timeout':
+        return 'Binance did not respond in time. Retry in a moment.';
+      case 'binance_rate_limited':
+        return 'Binance rate limit reached. Retry shortly.';
+      case 'binance_ip_banned':
+        return 'Binance temporarily blocked reads from this network. Retry later.';
+      case 'binance_host_paused':
+      case 'binance_budget_metadata_unavailable':
+        final retryAt = error.retryAt;
+        if (retryAt != null && retryAt.isAfter(DateTime.now())) {
+          final localRetryAt = retryAt.toLocal();
+          final hour = localRetryAt.hour.toString().padLeft(2, '0');
+          final minute = localRetryAt.minute.toString().padLeft(2, '0');
+          return 'Binance reads are paused. Retry after $hour:$minute.';
+        }
+        return 'Binance reads are paused. Retry later.';
+      case 'binance_authentication_failed':
+        return 'Binance rejected the API key. Check the key, secret and permissions.';
+      case 'binance_timestamp_invalid':
+        return 'Binance rejected the request time. Check your device clock and retry.';
+      case 'binance_http_error':
+      case 'binance_api_error':
+      case 'binance_invalid_response':
+        return 'Binance could not complete the request. Retry later.';
+      case 'binance_credentials_required':
+      case 'binance_credentials_unavailable':
+      case 'request_cancelled':
+      case 'credentials_changed':
+        return error.message;
+      default:
+        return 'The exchange account data is unavailable. Retry the account read.';
+    }
+  }
   if (error is OkxDataException) return error.message;
   if (error is BinanceCredentialStorageException) {
     return 'Binance credentials could not be loaded. Save the key and secret again.';

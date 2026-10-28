@@ -159,7 +159,7 @@ class _BinanceReader extends BinanceExchangeReader {
   final List<ExchangeOrder> futuresOrders;
   final List<ExchangeReadIssue> positionIssues;
   final List<ExchangeInstrument> spotCatalogInstruments;
-  final ExchangeReadException? spotFailure;
+  final Object? spotFailure;
   final Completer<void>? spotGate;
   final Completer<void>? futuresGate;
   final Completer<void>? positionGate;
@@ -443,10 +443,78 @@ ProviderContainer _container({
   ),
 );
 
+Future<CombinedExchangePortfolio> _portfolioWithSpotFailure(
+  Object spotFailure,
+) async {
+  final storage = _storage();
+  final quotes = _QuoteFixture();
+  final okx = _OkxReader(
+    account: _account(
+      source: ExchangeSource.okx,
+      product: null,
+      asset: 'USDT',
+      free: '100',
+      locked: '0',
+      reportedTotal: '100',
+      equity: '100',
+    ),
+  );
+  final binance = _BinanceReader(
+    credentialState: storage.binanceCredentialState,
+    spot: _account(
+      source: ExchangeSource.binance,
+      product: ExchangeProduct.spot,
+      asset: 'USDT',
+      free: '20',
+      locked: '0',
+      reportedTotal: '20',
+      equity: null,
+    ),
+    futures: _account(
+      source: ExchangeSource.binance,
+      product: ExchangeProduct.futures,
+      asset: 'USDT',
+      free: '75',
+      locked: '0',
+      reportedTotal: '75',
+      equity: '75',
+    ),
+    spotFailure: spotFailure,
+  );
+  final container = _container(
+    storage: storage,
+    okx: okx,
+    binance: binance,
+    quotes: quotes,
+  );
+  final subscription = container.listen(
+    combinedExchangePortfolioProvider,
+    (_, _) {},
+    fireImmediately: true,
+  );
+  try {
+    await _drainAsync();
+    return container.read(combinedExchangePortfolioProvider);
+  } finally {
+    subscription.close();
+    container.dispose();
+    storage.dispose();
+    binance.dispose();
+    quotes.dispose();
+  }
+}
+
 Future<void> _drainAsync() async {
   for (var index = 0; index < 10; index++) {
     await Future<void>.delayed(Duration.zero);
   }
+}
+
+String _formatLocalTime(DateTime value) {
+  final local = value.toLocal();
+  final hour = local.hour.toString().padLeft(2, '0');
+  final minute = local.minute.toString().padLeft(2, '0');
+  return '$hour:$minute';
 }
 
 void main() {
@@ -887,6 +955,299 @@ void main() {
     );
   });
 
+  group('T123 Binance read error copy', () {
+    test('maps known Binance read codes to safe copy', () async {
+      final cases = <({String code, String message, String expected, bool isTerminalFailure})>[
+        (
+          code: 'binance_network_error',
+          message: 'raw network detail',
+          expected: kIsWeb
+              ? 'Cannot reach Binance from this browser. Check your connection; browser or network restrictions may also block requests.'
+              : 'Cannot reach Binance. Check your connection and retry.',
+          isTerminalFailure: false,
+        ),
+        (
+          code: 'binance_timeout',
+          message: 'raw timeout detail',
+          expected: 'Binance did not respond in time. Retry in a moment.',
+          isTerminalFailure: false,
+        ),
+        (
+          code: 'binance_rate_limited',
+          message: 'raw rate limit detail',
+          expected: 'Binance rate limit reached. Retry shortly.',
+          isTerminalFailure: false,
+        ),
+        (
+          code: 'binance_ip_banned',
+          message: 'raw IP restriction detail',
+          expected:
+              'Binance temporarily blocked reads from this network. Retry later.',
+          isTerminalFailure: false,
+        ),
+        (
+          code: 'binance_authentication_failed',
+          message: 'raw authentication detail',
+          expected:
+              'Binance rejected the API key. Check the key, secret and permissions.',
+          isTerminalFailure: true,
+        ),
+        (
+          code: 'binance_timestamp_invalid',
+          message: 'raw timestamp detail',
+          expected:
+              'Binance rejected the request time. Check your device clock and retry.',
+          isTerminalFailure: false,
+        ),
+        (
+          code: 'binance_http_error',
+          message: 'raw HTTP detail',
+          expected: 'Binance could not complete the request. Retry later.',
+          isTerminalFailure: false,
+        ),
+        (
+          code: 'binance_api_error',
+          message: 'raw API detail',
+          expected: 'Binance could not complete the request. Retry later.',
+          isTerminalFailure: false,
+        ),
+        (
+          code: 'binance_invalid_response',
+          message: 'raw response detail',
+          expected: 'Binance could not complete the request. Retry later.',
+          isTerminalFailure: false,
+        ),
+      ];
+
+      for (final item in cases) {
+        final portfolio = await _portfolioWithSpotFailure(
+          ExchangeReadException(code: item.code, message: item.message),
+        );
+        final spot = portfolio.sources.singleWhere(
+          (source) => source.product == ExchangeProduct.spot,
+        );
+        expect(spot.error, item.expected, reason: item.code);
+        expect(
+          spot.isTerminalFailure,
+          item.isTerminalFailure,
+          reason: item.code,
+        );
+        expect(
+          portfolio.warnings,
+          contains('Binance Spot: ${item.expected}'),
+          reason: item.code,
+        );
+      }
+    });
+
+    test('uses a local 24-hour retry time only while retryAt is future', () async {
+      final futureRetryAt = DateTime.utc(2100, 1, 2, 3, 4);
+      final expectedFutureRetry =
+          'Binance reads are paused. Retry after ${_formatLocalTime(futureRetryAt)}.';
+      final retryCases = <({String code, DateTime? retryAt, String expected})>[
+        (
+          code: 'binance_host_paused',
+          retryAt: futureRetryAt,
+          expected: expectedFutureRetry,
+        ),
+        (
+          code: 'binance_host_paused',
+          retryAt: null,
+          expected: 'Binance reads are paused. Retry later.',
+        ),
+        (
+          code: 'binance_host_paused',
+          retryAt: DateTime.utc(2000, 1, 2, 3, 4),
+          expected: 'Binance reads are paused. Retry later.',
+        ),
+        (
+          code: 'binance_budget_metadata_unavailable',
+          retryAt: futureRetryAt,
+          expected: expectedFutureRetry,
+        ),
+        (
+          code: 'binance_budget_metadata_unavailable',
+          retryAt: null,
+          expected: 'Binance reads are paused. Retry later.',
+        ),
+        (
+          code: 'binance_budget_metadata_unavailable',
+          retryAt: DateTime.utc(2000, 1, 2, 3, 4),
+          expected: 'Binance reads are paused. Retry later.',
+        ),
+      ];
+
+      for (final item in retryCases) {
+        final expected = item.retryAt?.isAfter(DateTime.now()) == true
+            ? 'Binance reads are paused. Retry after ${_formatLocalTime(item.retryAt!)}.'
+            : item.expected;
+        final portfolio = await _portfolioWithSpotFailure(
+          ExchangeReadException(
+            code: item.code,
+            message: 'raw retry detail',
+            retryAt: item.retryAt,
+          ),
+        );
+        final spot = portfolio.sources.singleWhere(
+          (source) => source.product == ExchangeProduct.spot,
+        );
+        expect(spot.error, expected, reason: '${item.code} ${item.retryAt}');
+        expect(
+          portfolio.warnings,
+          contains('Binance Spot: $expected'),
+          reason: '${item.code} ${item.retryAt}',
+        );
+      }
+    });
+
+    test('keeps existing copy for credential and cancellation codes', () async {
+      const existingMessage = 'existing message for this code';
+      const safeFallback =
+          'The exchange account data is unavailable. Retry the account read.';
+      final cases = <({String code, String expected, bool isTerminalFailure})>[
+        (
+          code: 'binance_credentials_required',
+          expected: existingMessage,
+          isTerminalFailure: true,
+        ),
+        (
+          code: 'binance_credentials_unavailable',
+          expected: existingMessage,
+          isTerminalFailure: true,
+        ),
+        (
+          code: 'request_cancelled',
+          expected: existingMessage,
+          isTerminalFailure: false,
+        ),
+        (
+          code: 'credentials_changed',
+          expected: existingMessage,
+          isTerminalFailure: false,
+        ),
+        (
+          code: 'binance_credential_generation_changed',
+          expected: safeFallback,
+          isTerminalFailure: true,
+        ),
+      ];
+
+      for (final item in cases) {
+        final portfolio = await _portfolioWithSpotFailure(
+          ExchangeReadException(code: item.code, message: existingMessage),
+        );
+        final spot = portfolio.sources.singleWhere(
+          (source) => source.product == ExchangeProduct.spot,
+        );
+        expect(spot.error, item.expected, reason: item.code);
+        expect(
+          spot.isTerminalFailure,
+          item.isTerminalFailure,
+          reason: item.code,
+        );
+      }
+    });
+
+    test(
+      'does not expose unknown hostile error text in errors or warnings',
+      () async {
+        const hostileMessage =
+            'key=sentinel-key signature=sentinel-signature '
+            'url=https://attacker.invalid/path body=sentinel-body';
+        const safeMessage =
+            'The exchange account data is unavailable. Retry the account read.';
+        final portfolio = await _portfolioWithSpotFailure(
+          const ExchangeReadException(
+            code: 'unknown_binance_failure',
+            message: hostileMessage,
+          ),
+        );
+        final spot = portfolio.sources.singleWhere(
+          (source) => source.product == ExchangeProduct.spot,
+        );
+        final warningText = portfolio.warnings.join(' ');
+
+        expect(spot.error, safeMessage);
+        expect(warningText, contains('Binance Spot: $safeMessage'));
+        for (final sentinel in <String>[
+          'sentinel-key',
+          'sentinel-signature',
+          'https://attacker.invalid/path',
+          'sentinel-body',
+        ]) {
+          expect(spot.error, isNot(contains(sentinel)));
+          expect(warningText, isNot(contains(sentinel)));
+        }
+      },
+    );
+
+    test(
+      'uses safe copy for Dio failures in source errors and warnings',
+      () async {
+        const hostileMessage =
+            'key=sentinel-key signature=sentinel-signature '
+            'url=https://attacker.invalid/path body=sentinel-body';
+        const safeMessage =
+            'The exchange request could not be completed. Check the connection and retry.';
+        final portfolio = await _portfolioWithSpotFailure(
+          DioException(
+            requestOptions: RequestOptions(path: '/account'),
+            message: hostileMessage,
+          ),
+        );
+        final spot = portfolio.sources.singleWhere(
+          (source) => source.product == ExchangeProduct.spot,
+        );
+        final warningText = portfolio.warnings.join(' ');
+
+        expect(spot.error, safeMessage);
+        expect(warningText, contains('Binance Spot: $safeMessage'));
+        expect(spot.error, isNot(contains('sentinel')));
+        expect(warningText, isNot(contains('sentinel')));
+      },
+    );
+
+    test(
+      'keeps successful OKX and Binance Futures sources when Spot fails',
+      () async {
+        final portfolio = await _portfolioWithSpotFailure(
+          const ExchangeReadException(
+            code: 'binance_network_error',
+            message: 'raw network detail',
+          ),
+        );
+
+        expect(portfolio.isPartial, isTrue);
+        expect(
+          portfolio.sources.any(
+            (source) =>
+                source.source == ExchangeSource.okx && source.isAvailable,
+          ),
+          isTrue,
+        );
+        expect(
+          portfolio.sources.any(
+            (source) =>
+                source.source == ExchangeSource.binance &&
+                source.product == ExchangeProduct.swap &&
+                source.isAvailable,
+          ),
+          isTrue,
+        );
+        expect(
+          portfolio.rows.any((row) => row.balance.source == ExchangeSource.okx),
+          isTrue,
+        );
+        expect(
+          portfolio.rows.any(
+            (row) => row.balance.product == ExchangeProduct.futures,
+          ),
+          isTrue,
+        );
+      },
+    );
+  });
+
   group('RED-118 Binance source read failure', () {
     test(
       'failed Binance Spot account read keeps other sources and marks the result partial',
@@ -971,7 +1332,7 @@ void main() {
           portfolio.sources
               .singleWhere((source) => source.product == ExchangeProduct.spot)
               .error,
-          contains('Binance Spot account read failed'),
+          'The exchange account data is unavailable. Retry the account read.',
         );
         expect(
           portfolio.rows.any(

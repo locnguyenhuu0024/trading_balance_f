@@ -1,6 +1,6 @@
 # Plan: Binance read failure visibility
 
-Status: APPROVED (user, chat, 2026-10-28: "Duyệt"); T122 PASS (commit 3ed75c5); T123 pending
+Status: APPROVED (user, chat, 2026-10-28: "Duyệt"); T122 PASS (commit 3ed75c5); T123 PASS (independent audit 2026-10-28, uncommitted); final integration audit PASS
 Date: 2026-10-28
 Tier: M (client-only; no new architecture, dependency or contract)
 Parent plan: `docs/agents/plans/2026-10-27-binance-direct-reads-remediation.md` (COMPLETE)
