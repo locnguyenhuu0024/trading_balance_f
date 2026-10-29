@@ -9,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/exchange/binance_read_routes.dart';
 import 'package:trading_balance_f/core/network/binance_data_client.dart';
 import 'package:trading_balance_f/core/network/binance_request_coordinator.dart';
+import 'package:trading_balance_f/core/network/binance_spot_ws_transport.dart';
 import 'package:trading_balance_f/core/security/secure_storage_helper.dart';
 import 'package:trading_balance_f/features/settings/domain/binance_credential_bundle.dart';
 
@@ -1509,6 +1510,491 @@ void main() {
         storage.dispose();
       },
     );
+
+    group('RED-125 Spot private WebSocket reads', () {
+      test('routes the three signed Spot reads with exact signed params', () async {
+        final clock = _MutableClock(DateTime.utc(2026, 10, 25, 8));
+        final adapter = _RecordingAdapter(
+          (_) => _WireResponse(200, <String, Object>{
+            'serverTime': clock.now.millisecondsSinceEpoch,
+          }),
+        );
+        final storage = _FixtureStorage.withCredentials();
+        final transport = _RecordingSpotTransport(
+          (method, _, _) => BinanceWsReply(
+            status: 200,
+            result: <String, Object>{'method': method},
+          ),
+        );
+        final client = BinanceDataClient(
+          secureStorage: storage,
+          requestCoordinator: _coordinator(clock),
+          dio: Dio()..httpClientAdapter = adapter,
+          clock: () => clock.now,
+          spotPrivateTransport: transport,
+        );
+
+        final account = await client.get('/api/v3/account');
+        final openOrders = await client.get(
+          '/api/v3/openOrders',
+          queryParameters: const <String, Object>{'symbol': 'BTCUSDT'},
+        );
+        final allOrders = await client.get(
+          '/api/v3/allOrders',
+          queryParameters: const <String, Object>{
+            'symbol': 'BTCUSDT',
+            'limit': 500,
+          },
+        );
+
+        expect(transport.calls.map((call) => call.method), <String>[
+          'account.status',
+          'openOrders.status',
+          'allOrders',
+        ]);
+        expect(account.data, <String, Object>{'method': 'account.status'});
+        expect(openOrders.data, <String, Object>{
+          'method': 'openOrders.status',
+        });
+        expect(allOrders.data, <String, Object>{'method': 'allOrders'});
+        expect(account.statusCode, 200);
+        expect(adapter.requests.map((request) => request.uri.path), <String>[
+          '/api/v3/time',
+        ]);
+
+        final expectedPayloads = <String>[
+          'apiKey=fixture-binance-api-key&recvWindow=5000&timestamp=1792915200000',
+          'apiKey=fixture-binance-api-key&recvWindow=5000&symbol=BTCUSDT&timestamp=1792915200000',
+          'apiKey=fixture-binance-api-key&limit=500&recvWindow=5000&symbol=BTCUSDT&timestamp=1792915200000',
+        ];
+        final expectedUnsignedParams = <Map<String, Object>>[
+          <String, Object>{
+            'apiKey': 'fixture-binance-api-key',
+            'recvWindow': '5000',
+            'timestamp': '1792915200000',
+          },
+          <String, Object>{
+            'apiKey': 'fixture-binance-api-key',
+            'recvWindow': '5000',
+            'symbol': 'BTCUSDT',
+            'timestamp': '1792915200000',
+          },
+          <String, Object>{
+            'apiKey': 'fixture-binance-api-key',
+            'limit': '500',
+            'recvWindow': '5000',
+            'symbol': 'BTCUSDT',
+            'timestamp': '1792915200000',
+          },
+        ];
+        for (var index = 0; index < transport.calls.length; index++) {
+          final params = transport.calls[index].params;
+          final unsignedParams = Map<String, Object>.from(params)
+            ..remove('signature');
+          expect(unsignedParams, expectedUnsignedParams[index]);
+          expect(params.keys, contains('signature'));
+          final independentlyComputedSignature = Hmac(
+            sha256,
+            utf8.encode('fixture-binance-secret'),
+          ).convert(utf8.encode(expectedPayloads[index])).toString();
+          expect(params['signature'], independentlyComputedSignature);
+          expect(params['signature'], matches(RegExp(r'^[0-9a-f]{64}$')));
+        }
+        client.dispose();
+        storage.dispose();
+      });
+
+      test('public and Futures routes keep using Dio', () async {
+        final clock = _MutableClock(DateTime.utc(2026, 10, 25, 8));
+        final adapter = _RecordingAdapter((options) {
+          if (options.uri.path.endsWith('/time')) {
+            return _WireResponse(200, <String, Object>{
+              'serverTime': clock.now.millisecondsSinceEpoch,
+            });
+          }
+          return _WireResponse(200, <String, Object>{'ok': true});
+        });
+        final storage = _FixtureStorage.withCredentials();
+        final transport = _RecordingSpotTransport(
+          (_, __, ___) => const BinanceWsReply(
+            status: 200,
+            result: <String, Object>{'unexpected': true},
+          ),
+        );
+        final client = BinanceDataClient(
+          secureStorage: storage,
+          requestCoordinator: _coordinator(clock),
+          dio: Dio()..httpClientAdapter = adapter,
+          clock: () => clock.now,
+          spotPrivateTransport: transport,
+        );
+
+        await client.get(
+          '/api/v3/ticker/24hr',
+          queryParameters: const <String, Object>{'symbol': 'BTCUSDT'},
+        );
+        await client.get('/fapi/v3/account');
+
+        expect(transport.calls, isEmpty);
+        final publicRequest = adapter.requests.singleWhere(
+          (request) => request.uri.path == '/api/v3/ticker/24hr',
+        );
+        final futuresRequest = adapter.requests.singleWhere(
+          (request) => request.uri.path == '/fapi/v3/account',
+        );
+        expect(publicRequest.headers['X-MBX-APIKEY'], isNull);
+        expect(
+          futuresRequest.headers['X-MBX-APIKEY'],
+          'fixture-binance-api-key',
+        );
+        client.dispose();
+        storage.dispose();
+      });
+
+      test(
+        'synthetic Spot weight header reaches the request coordinator',
+        () async {
+          final clock = _MutableClock(DateTime.utc(2026, 10, 25, 8));
+          final coordinator = BinanceRequestCoordinator(
+            clock: () => clock.now,
+            minimumSpacing: Duration.zero,
+            delay: (_) async {},
+          );
+          coordinator.installLimits(BinanceHost.spot, const [
+            BinanceRateLimitWindow(
+              rateLimitType: 'REQUEST_WEIGHT',
+              interval: 'MINUTE',
+              intervalNum: 1,
+              limit: 60,
+            ),
+            BinanceRateLimitWindow(
+              rateLimitType: 'RAW_REQUEST',
+              interval: 'SECOND',
+              intervalNum: 10,
+              limit: 100,
+            ),
+          ]);
+          final adapter = _RecordingAdapter(
+            (_) => _WireResponse(200, <String, Object>{
+              'serverTime': clock.now.millisecondsSinceEpoch,
+            }),
+          );
+          final storage = _FixtureStorage.withCredentials();
+          final transport = _RecordingSpotTransport(
+            (_, __, ___) => const BinanceWsReply(
+              status: 200,
+              result: <String, Object>{'ok': true},
+              rateLimits: <Map<String, Object?>>[
+                <String, Object?>{
+                  'rateLimitType': 'REQUEST_WEIGHT',
+                  'interval': 'SECOND',
+                  'intervalNum': 1,
+                  'count': 1,
+                },
+                <String, Object?>{
+                  'rateLimitType': 'REQUEST_WEIGHT',
+                  'interval': 'MINUTE',
+                  'intervalNum': 1,
+                  'count': 50,
+                },
+              ],
+            ),
+          );
+          final client = BinanceDataClient(
+            secureStorage: storage,
+            requestCoordinator: coordinator,
+            dio: Dio()..httpClientAdapter = adapter,
+            clock: () => clock.now,
+            spotPrivateTransport: transport,
+          );
+
+          await client.get('/api/v3/account');
+          await expectLater(
+            client.get('/api/v3/account'),
+            throwsA(
+              isA<BinanceDataException>().having(
+                (error) => error.code,
+                'code',
+                'binance_host_paused',
+              ),
+            ),
+          );
+          expect(transport.calls, hasLength(1));
+          client.dispose();
+          storage.dispose();
+        },
+      );
+
+      test(
+        '429 and 418 replies preserve status and retry-after mappings',
+        () async {
+          for (final (status, code) in <(int, String)>[
+            (429, 'binance_rate_limited'),
+            (418, 'binance_ip_banned'),
+          ]) {
+            final clock = _MutableClock(DateTime.utc(2026, 10, 25, 8));
+            final adapter = _RecordingAdapter(
+              (_) => _WireResponse(200, <String, Object>{
+                'serverTime': clock.now.millisecondsSinceEpoch,
+              }),
+            );
+            final storage = _FixtureStorage.withCredentials();
+            final transport = _RecordingSpotTransport(
+              (_, __, ___) => BinanceWsReply(
+                status: status,
+                errorCode: -1000,
+                errorMessage: 'private transport error detail',
+                retryAfter: '75',
+              ),
+            );
+            final client = BinanceDataClient(
+              secureStorage: storage,
+              requestCoordinator: _coordinator(clock),
+              dio: Dio()..httpClientAdapter = adapter,
+              clock: () => clock.now,
+              spotPrivateTransport: transport,
+            );
+
+            final error = await _captureBinanceError(
+              () => client.get('/api/v3/account'),
+            );
+            expect(error.code, code);
+            expect(error.statusCode, status);
+            expect(error.retryAfter, '75');
+            client.dispose();
+            storage.dispose();
+          }
+        },
+      );
+
+      test(
+        'timestamp errors resync and retry the transport exactly once',
+        () async {
+          final clock = _MutableClock(DateTime.utc(2026, 10, 25, 8));
+          var timeReads = 0;
+          final adapter = _RecordingAdapter((options) {
+            if (options.uri.path == '/api/v3/time') {
+              timeReads++;
+              return _WireResponse(200, <String, Object>{
+                'serverTime':
+                    clock.now.millisecondsSinceEpoch + timeReads * 5000,
+              });
+            }
+            return _WireResponse(200, <String, Object>{});
+          });
+          final storage = _FixtureStorage.withCredentials();
+          var sends = 0;
+          final transport = _RecordingSpotTransport((_, __, ___) {
+            sends++;
+            if (sends == 1) {
+              return const BinanceWsReply(
+                status: 400,
+                errorCode: -1021,
+                errorMessage: 'timestamp rejected',
+              );
+            }
+            return const BinanceWsReply(
+              status: 200,
+              result: <String, Object>{'balances': []},
+            );
+          });
+          final client = BinanceDataClient(
+            secureStorage: storage,
+            requestCoordinator: _coordinator(clock),
+            dio: Dio()..httpClientAdapter = adapter,
+            clock: () => clock.now,
+            spotPrivateTransport: transport,
+          );
+
+          final response = await client.get('/api/v3/account');
+
+          expect(response.statusCode, 200);
+          expect(response.data, <String, Object>{'balances': []});
+          expect(timeReads, 2);
+          expect(transport.calls, hasLength(2));
+          expect(
+            transport.calls.map((call) => call.params['timestamp']).toSet(),
+            hasLength(2),
+          );
+          client.dispose();
+          storage.dispose();
+        },
+      );
+
+      test('authentication errors are sanitized and do not retry', () async {
+        const apiKey = 'sentinel-api-key-task-125';
+        const secretKey = 'sentinel-secret-task-125';
+        for (final errorCode in <int>[-2014, -2015]) {
+          final clock = _MutableClock(DateTime.utc(2026, 10, 25, 8));
+          var timeReads = 0;
+          final adapter = _RecordingAdapter((options) {
+            if (options.uri.path == '/api/v3/time') {
+              timeReads++;
+              return _WireResponse(200, <String, Object>{
+                'serverTime': clock.now.millisecondsSinceEpoch,
+              });
+            }
+            return _WireResponse(200, <String, Object>{});
+          });
+          final storage = _FixtureStorage.withCredentials(
+            apiKey: apiKey,
+            secretKey: secretKey,
+          );
+          final transport = _RecordingSpotTransport((_, params, _) {
+            return BinanceWsReply(
+              status: 400,
+              errorCode: errorCode,
+              errorMessage: '$apiKey $secretKey ${params['signature']}',
+            );
+          });
+          final client = BinanceDataClient(
+            secureStorage: storage,
+            requestCoordinator: _coordinator(clock),
+            dio: Dio()..httpClientAdapter = adapter,
+            clock: () => clock.now,
+            spotPrivateTransport: transport,
+          );
+
+          final error = await _captureBinanceError(
+            () => client.get('/api/v3/account'),
+          );
+          expect(error.code, 'binance_authentication_failed');
+          expect(error.toString(), isNot(contains(apiKey)));
+          expect(error.toString(), isNot(contains(secretKey)));
+          expect(
+            error.toString(),
+            isNot(contains(transport.calls.single.params['signature'])),
+          );
+          expect(timeReads, 1);
+          expect(transport.calls, hasLength(1));
+          client.dispose();
+          storage.dispose();
+        }
+      });
+
+      test(
+        'maps each typed transport failure to the safe client code',
+        () async {
+          for (final (failure, code) in <(BinanceSpotTransportFailure, String)>[
+            (BinanceSpotTransportFailure.timeout, 'binance_timeout'),
+            (BinanceSpotTransportFailure.network, 'binance_network_error'),
+            (BinanceSpotTransportFailure.cancelled, 'request_cancelled'),
+            (BinanceSpotTransportFailure.closed, 'request_cancelled'),
+          ]) {
+            final clock = _MutableClock(DateTime.utc(2026, 10, 25, 8));
+            final adapter = _RecordingAdapter(
+              (_) => _WireResponse(200, <String, Object>{
+                'serverTime': clock.now.millisecondsSinceEpoch,
+              }),
+            );
+            final storage = _FixtureStorage.withCredentials();
+            final transport = _RecordingSpotTransport(
+              (_, __, ___) => throw BinanceSpotTransportException(failure),
+            );
+            final client = BinanceDataClient(
+              secureStorage: storage,
+              requestCoordinator: _coordinator(clock),
+              dio: Dio()..httpClientAdapter = adapter,
+              clock: () => clock.now,
+              spotPrivateTransport: transport,
+            );
+
+            final error = await _captureBinanceError(
+              () => client.get('/api/v3/account'),
+            );
+            expect(error.code, code);
+            client.dispose();
+            storage.dispose();
+          }
+        },
+      );
+
+      test(
+        'credential changes fence requests and close the transport',
+        () async {
+          final readStarted = Completer<void>();
+          final releaseRead = Completer<void>();
+          final clock = _MutableClock(DateTime.utc(2026, 10, 25, 8));
+          final adapter = _RecordingAdapter(
+            (_) => _WireResponse(200, <String, Object>{
+              'serverTime': clock.now.millisecondsSinceEpoch,
+            }),
+          );
+          final storage = _FixtureStorage.withCredentials()
+            ..readStarted = readStarted
+            ..readGate = releaseRead.future;
+          final transport = _RecordingSpotTransport(
+            (_, __, ___) => const BinanceWsReply(
+              status: 200,
+              result: <String, Object>{'ok': true},
+            ),
+          );
+          final client = BinanceDataClient(
+            secureStorage: storage,
+            requestCoordinator: _coordinator(clock),
+            dio: Dio()..httpClientAdapter = adapter,
+            clock: () => clock.now,
+            spotPrivateTransport: transport,
+          );
+
+          final request = client.get('/api/v3/account');
+          await readStarted.future;
+          await storage.rotate();
+          expect(transport.closeCount, greaterThan(0));
+          releaseRead.complete();
+
+          final error = await _captureBinanceError(() => request);
+          expect(error.code, 'credentials_changed');
+          expect(transport.calls, isEmpty);
+          client.dispose();
+          expect(transport.disposeCount, 1);
+          storage.dispose();
+        },
+      );
+
+      test(
+        'rotation during transport rejects the stale result and dispose closes it',
+        () async {
+          final clock = _MutableClock(DateTime.utc(2026, 10, 25, 8));
+          final transportStarted = Completer<void>();
+          final releaseTransport = Completer<BinanceWsReply>();
+          final adapter = _RecordingAdapter(
+            (_) => _WireResponse(200, <String, Object>{
+              'serverTime': clock.now.millisecondsSinceEpoch,
+            }),
+          );
+          final storage = _FixtureStorage.withCredentials();
+          final transport = _RecordingSpotTransport((_, __, ___) {
+            transportStarted.complete();
+            return releaseTransport.future;
+          });
+          final client = BinanceDataClient(
+            secureStorage: storage,
+            requestCoordinator: _coordinator(clock),
+            dio: Dio()..httpClientAdapter = adapter,
+            clock: () => clock.now,
+            spotPrivateTransport: transport,
+          );
+
+          final request = client.get('/api/v3/account');
+          await transportStarted.future;
+          await storage.rotate();
+          expect(transport.closeCount, greaterThan(0));
+          releaseTransport.complete(
+            const BinanceWsReply(
+              status: 200,
+              result: <String, Object>{'ok': true},
+            ),
+          );
+
+          final error = await _captureBinanceError(() => request);
+          expect(error.code, 'credentials_changed');
+          client.dispose();
+          expect(transport.disposeCount, 1);
+          storage.dispose();
+        },
+      );
+    });
   });
 }
 
@@ -1566,10 +2052,13 @@ class _FixtureStorage extends SecureStorageHelper {
   Completer<void>? readStarted;
   Future<void>? readGate;
 
-  factory _FixtureStorage.withCredentials() {
+  factory _FixtureStorage.withCredentials({
+    String apiKey = 'fixture-binance-api-key',
+    String secretKey = 'fixture-binance-secret',
+  }) {
     final bundle = BinanceCredentialBundle.tryCreate(
-      apiKey: 'fixture-binance-api-key',
-      secretKey: 'fixture-binance-secret',
+      apiKey: apiKey,
+      secretKey: secretKey,
     )!;
     return _FixtureStorage(encodedBundle: bundle.encode());
   }
@@ -1590,6 +2079,58 @@ class _FixtureStorage extends SecureStorageHelper {
     )!;
     _encodedBundle = bundle.encode();
   });
+}
+
+Future<BinanceDataException> _captureBinanceError(
+  Future<Object?> Function() action,
+) async {
+  try {
+    await action();
+  } on BinanceDataException catch (error) {
+    return error;
+  }
+  throw StateError('Expected a BinanceDataException.');
+}
+
+typedef _SpotTransportHandler =
+    FutureOr<BinanceWsReply> Function(
+      String method,
+      Map<String, Object> params,
+      CancelToken? cancelToken,
+    );
+
+class _RecordingSpotTransport implements BinanceSpotPrivateTransport {
+  _RecordingSpotTransport(this.handler);
+
+  final _SpotTransportHandler handler;
+  final List<_SpotCall> calls = <_SpotCall>[];
+  int closeCount = 0;
+  int disposeCount = 0;
+
+  @override
+  Future<BinanceWsReply> send({
+    required String method,
+    required Map<String, Object> params,
+    CancelToken? cancelToken,
+  }) async {
+    final safeParams = Map<String, Object>.unmodifiable(params);
+    calls.add(_SpotCall(method, safeParams, cancelToken));
+    return await handler(method, safeParams, cancelToken);
+  }
+
+  @override
+  void close() => closeCount++;
+
+  @override
+  void dispose() => disposeCount++;
+}
+
+class _SpotCall {
+  const _SpotCall(this.method, this.params, this.cancelToken);
+
+  final String method;
+  final Map<String, Object> params;
+  final CancelToken? cancelToken;
 }
 
 class _CapturingCoordinator extends BinanceRequestCoordinator {

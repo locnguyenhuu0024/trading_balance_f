@@ -1,6 +1,6 @@
 # Task 125 — Route Binance Spot private reads through the WebSocket transport on web
 
-Status: READY (T124 must be PASS and committed first)
+Status: PASS (independent audit 2026-10-29; attempt 357ec01f49fb41ea807811725d670f17)
 Agent Role: implementation_executor
 Executor Class: E2
 Target Model: gpt-6-luna
@@ -14,7 +14,7 @@ Acceptance Criteria: Spot signed reads use the transport when one is configured,
 
 ## 1. Dispatch Compliance
 Spawn an `implementation_executor` with both model `gpt-6-luna` and effort `max` supplied explicitly. No inherited route.
-Dispatch Route Status: PENDING
+Dispatch Route Status: EXPLICIT (requested gpt-6-luna/max; effective route UNVERIFIABLE)
 Requested Model: gpt-6-luna
 Requested Effort: max
 Observed Effective Model: unavailable
@@ -58,13 +58,13 @@ Cover: the three routes call the transport with the exact method and params; sig
 ### RED — RED-125
 Command: `rtk flutter test --no-pub test/core/network/binance_data_client_test.dart`
 Expected before the change: the new transport cases fail because the client does not accept or use a transport (compile failure or the transport is never called); existing cases pass or are unaffected.
-Actual: PENDING
-Status: PENDING
+Actual: against the pre-change client the new test file does not compile (spotPrivateTransport parameter missing); client restored, sha256 verified.
+Status: PASS
 
 ### GREEN — GREEN-125
 Same command. Expected: all pass.
-Actual: PENDING
-Status: PENDING
+Actual: 37 tests passed in binance_data_client_test.dart; V3 regression 327 passed (coordinator rerun).
+Status: PASS
 
 Regression (V3): `rtk flutter test --no-pub test/core/exchange test/core/network test/features/portfolio test/features/orders`
 
@@ -72,8 +72,8 @@ Regression (V3): `rtk flutter test --no-pub test/core/exchange test/core/network
 Required: YES
 Affected canonical build unit: full Flutter application
 Exact secret-free build command: `rtk flutter build web --no-pub`
-Executed after the last task-local change: PENDING
-Result: PENDING
+Executed after the last task-local change: YES (coordinator, 2026-10-29)
+Result: PASS (exit 0, built build/web)
 
 ### External Verification
 Required: NO
@@ -82,13 +82,18 @@ Required: NO
 Return `BLOCKED` if T124's interface is missing, if the change needs files outside section 4, or if REST behavior with no transport cannot be kept identical.
 
 ## 11. Execution Ledger
-- [ ] dispatch role, class, model and effort match; no inherited route
-- [ ] RED observed before the change
-- [ ] GREEN observed
-- [ ] V3 regression run
-- [ ] task build after last change
-- [ ] compact executor report returned
-- [ ] no protected content read or modified
+- [x] dispatch role, class, model and effort match; no inherited route
+- [x] RED observed before the change
+- [x] GREEN observed
+- [x] V3 regression run
+- [x] task build after last change
+- [x] compact executor report returned
+- [x] no protected content read or modified
 
 ## 12. Coordinator Audit
-PENDING
+Verdict: PASS (Claude coordinator, independent; executor report not used as evidence).
+- Scope: only binance_data_client.dart and its test changed; nothing staged.
+- RED re-observed, GREEN 37/37, V3 327/327, web build exit 0, dart format clean, no analyzer warnings or errors in the two files (info count in the test file rose from 21 to 26, all lint-level prefer_const style).
+- Diff reviewed: transport used only when injected, host is Spot, route is signed and path is one of the three; Futures and public reads stay on Dio. Params sorted, apiKey inside the signed payload, signature checked in tests against an independently computed HMAC. Reply shaped into a REST-like Response, then observeResponse and _validateResponse reused, so 429/418, -1021 single retry and -2014/-2015 map to existing codes. Credential generation change, rotation mid-request and dispose close the transport and reject stale results. Provider wires the transport only when kIsWeb.
+- Coordinator probe (public depth method and signed methods with a dummy key, no credentials): the WebSocket API accepted numeric params sent as strings (depth limit "5" gave 200; signed methods reached the API-key check, -2015). This does not prove timestamp as a string passes full validation; it is unverified until a live read with a real key.
+- Still unverified (user-owned): result-body parity with REST for account, openOrders and allOrders; real Binance behavior; iOS Safari. Effective executor route UNVERIFIABLE.

@@ -4,17 +4,20 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../features/settings/domain/binance_credential_bundle.dart';
 import '../exchange/binance_read_routes.dart';
 import '../security/secure_storage_helper.dart';
 import 'binance_request_coordinator.dart';
+import 'binance_spot_ws_transport.dart';
 
 final binanceDataClientProvider = Provider<BinanceDataClient>((ref) {
   final client = BinanceDataClient(
     secureStorage: ref.watch(secureStorageProvider),
     requestCoordinator: ref.watch(binanceRequestCoordinatorProvider),
+    spotPrivateTransport: kIsWeb ? BinanceSpotWebSocketTransport() : null,
   );
   ref.onDispose(client.dispose);
   return client;
@@ -29,6 +32,7 @@ class BinanceDataClient {
     BinanceRequestCoordinator? requestCoordinator,
     Dio? dio,
     BinanceClientClock? clock,
+    this.spotPrivateTransport,
   }) : _secureStorage = secureStorage,
        _requestCoordinator = requestCoordinator ?? BinanceRequestCoordinator(),
        _clock = clock ?? DateTime.now,
@@ -41,6 +45,13 @@ class BinanceDataClient {
     _dio.httpClientAdapter = _guardedAdapter;
     _requestInterceptor = InterceptorsWrapper(onRequest: _signRequest);
     _dio.interceptors.insert(0, _requestInterceptor);
+    _spotCredentialListener = _onSpotCredentialStateChanged;
+    final credentialState = _secureStorage?.binanceCredentialState;
+    _spotCredentialState = credentialState;
+    _observedSpotCredentialSnapshot = credentialState?.value;
+    if (spotPrivateTransport != null && credentialState != null) {
+      credentialState.addListener(_spotCredentialListener);
+    }
   }
 
   static const String spotOrigin = 'https://api.binance.com';
@@ -50,6 +61,7 @@ class BinanceDataClient {
   final SecureStorageHelper? _secureStorage;
   final BinanceRequestCoordinator _requestCoordinator;
   final BinanceClientClock _clock;
+  final BinanceSpotPrivateTransport? spotPrivateTransport;
   final bool _ownsDio;
   final Dio _dio;
   final Expando<_BinanceRequestAuthorization> _authorizations =
@@ -59,6 +71,9 @@ class BinanceDataClient {
       <BinanceHost, Future<void>>{};
   late final _BinanceGuardedHttpClientAdapter _guardedAdapter;
   late final Interceptor _requestInterceptor;
+  late final VoidCallback _spotCredentialListener;
+  ValueListenable<BinanceCredentialSnapshot>? _spotCredentialState;
+  BinanceCredentialSnapshot? _observedSpotCredentialSnapshot;
   int _activeManagedGets = 0;
   bool _disposed = false;
   bool _injectedDioRestored = false;
@@ -220,6 +235,14 @@ class BinanceDataClient {
         request: () async {
           _throwIfDisposed();
           if (cancelToken?.isCancelled ?? false) throw _cancelled();
+          if (_usesSpotPrivateTransport(route)) {
+            return _sendSpotPrivateRoute(
+              route,
+              query,
+              credentials!,
+              cancelToken: cancelToken,
+            );
+          }
           final target = route.signed
               ? _signedUri(route, query, credentials!)
               : _unsignedUri(route, query);
@@ -303,11 +326,173 @@ class BinanceDataClient {
     }
   }
 
+  Future<Response<dynamic>> _sendSpotPrivateRoute(
+    BinanceReadRoute route,
+    Map<String, String> query,
+    _BinanceCredentials credentials, {
+    CancelToken? cancelToken,
+  }) async {
+    final transport = spotPrivateTransport!;
+    _assertCredentialsCurrent(credentials.snapshot);
+    final timestamp = _clock()
+        .toUtc()
+        .add(_serverOffsets[route.host] ?? Duration.zero)
+        .millisecondsSinceEpoch;
+    final unsignedParams = <String, String>{
+      ...query,
+      'apiKey': credentials.apiKey,
+      'recvWindow': '$recvWindowMilliseconds',
+      'timestamp': '$timestamp',
+    };
+    final sortedParams = _sortQuery(unsignedParams);
+    final payload = sortedParams.entries
+        .map((entry) => '${entry.key}=${entry.value}')
+        .join('&');
+    final signature = Hmac(
+      sha256,
+      utf8.encode(credentials.secretKey),
+    ).convert(utf8.encode(payload)).toString();
+    final params = <String, Object>{...sortedParams, 'signature': signature};
+
+    late final BinanceWsReply reply;
+    try {
+      reply = await transport.send(
+        method: _spotPrivateMethod(route.path)!,
+        params: params,
+        cancelToken: cancelToken,
+      );
+    } on BinanceSpotTransportException catch (error) {
+      _throwIfDisposed();
+      if (!_credentialsAreCurrent(credentials.snapshot)) {
+        _closeSpotPrivateTransport();
+        throw _credentialsChanged();
+      }
+      throw _spotTransportFailure(error);
+    } catch (_) {
+      _throwIfDisposed();
+      if (!_credentialsAreCurrent(credentials.snapshot)) {
+        _closeSpotPrivateTransport();
+        throw _credentialsChanged();
+      }
+      throw _networkError();
+    }
+
+    _throwIfDisposed();
+    if (cancelToken?.isCancelled ?? false) throw _cancelled();
+    if (!_credentialsAreCurrent(credentials.snapshot)) {
+      _closeSpotPrivateTransport();
+      throw _credentialsChanged();
+    }
+
+    final headers = <String, List<String>>{};
+    final usedWeight = _spotUsedWeight(reply.rateLimits);
+    if (usedWeight != null) {
+      headers['x-mbx-used-weight-1m'] = <String>[usedWeight];
+    }
+    if (reply.retryAfter != null) {
+      headers['retry-after'] = <String>[reply.retryAfter!];
+    }
+    final response = Response<dynamic>(
+      requestOptions: _safeRequestOptions(),
+      data: reply.status >= 200 && reply.status < 300
+          ? reply.result
+          : <String, Object?>{
+              'code': reply.errorCode,
+              'msg': reply.errorMessage,
+            },
+      headers: Headers.fromMap(headers),
+      statusCode: reply.status,
+      isRedirect: reply.status >= 300 && reply.status < 400,
+      redirects: const <RedirectRecord>[],
+      extra: const <String, dynamic>{},
+    );
+    _requestCoordinator.observeResponse(
+      route.host,
+      statusCode: response.statusCode,
+      headers: _headersMap(response.headers),
+    );
+    _validateResponse(response);
+    return Response<dynamic>(
+      requestOptions: _safeRequestOptions(),
+      data: response.data,
+      headers: _safeResponseHeaders(response.headers),
+      statusCode: response.statusCode,
+      statusMessage: response.statusMessage,
+      isRedirect: response.isRedirect,
+      redirects: const <RedirectRecord>[],
+      extra: const <String, dynamic>{},
+    );
+  }
+
+  bool _usesSpotPrivateTransport(BinanceReadRoute route) =>
+      spotPrivateTransport != null &&
+      route.host == BinanceHost.spot &&
+      route.signed &&
+      _spotPrivateMethod(route.path) != null;
+
+  String? _spotPrivateMethod(String path) => switch (path) {
+    '/api/v3/account' => 'account.status',
+    '/api/v3/openOrders' => 'openOrders.status',
+    '/api/v3/allOrders' => 'allOrders',
+    _ => null,
+  };
+
+  String? _spotUsedWeight(List<Map<String, Object?>> rateLimits) {
+    for (final limit in rateLimits) {
+      if (limit['rateLimitType'] == 'REQUEST_WEIGHT' &&
+          limit['interval'] == 'MINUTE' &&
+          limit['intervalNum'] == 1) {
+        final count = limit['count'];
+        if (count is num && count >= 0) return count.toInt().toString();
+      }
+    }
+    return null;
+  }
+
+  BinanceDataException _spotTransportFailure(
+    BinanceSpotTransportException error,
+  ) => switch (error.kind) {
+    BinanceSpotTransportFailure.timeout => _timeoutError(),
+    BinanceSpotTransportFailure.network => _networkError(),
+    BinanceSpotTransportFailure.cancelled => _cancelled(),
+    BinanceSpotTransportFailure.closed => _cancelled(),
+  };
+
+  void _onSpotCredentialStateChanged() {
+    final current = _spotCredentialState?.value;
+    final previous = _observedSpotCredentialSnapshot;
+    _observedSpotCredentialSnapshot = current;
+    if (previous != null &&
+        current != null &&
+        current.generation != previous.generation) {
+      _closeSpotPrivateTransport();
+    }
+  }
+
+  void _closeSpotPrivateTransport() {
+    final transport = spotPrivateTransport;
+    if (transport == null) return;
+    try {
+      transport.close();
+    } catch (_) {}
+  }
+
+  void _disposeSpotPrivateTransport() {
+    final transport = spotPrivateTransport;
+    if (transport == null) return;
+    try {
+      transport.dispose();
+    } catch (_) {}
+  }
+
   Future<_BinanceCredentials> _loadCredentials() async {
     final storage = _secureStorage;
     if (storage == null) throw _credentialsRequired();
     final snapshot = storage.binanceCredentialState.value;
-    if (!snapshot.canUsePrivateReads) throw _credentialsChanged();
+    if (!snapshot.canUsePrivateReads) {
+      _closeSpotPrivateTransport();
+      throw _credentialsChanged();
+    }
     final encoded = await storage.getBinanceCredentialBundle();
     final bundle = BinanceCredentialBundle.tryDecode(encoded);
     if (bundle == null) throw _credentialsRequired();
@@ -750,6 +935,11 @@ class BinanceDataClient {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    final credentialState = _spotCredentialState;
+    if (spotPrivateTransport != null && credentialState != null) {
+      credentialState.removeListener(_spotCredentialListener);
+    }
+    _disposeSpotPrivateTransport();
     if (_ownsDio) {
       _dio.close(force: true);
       return;
@@ -785,7 +975,10 @@ class BinanceDataClient {
   }
 
   void _assertCredentialsCurrent(BinanceCredentialSnapshot expected) {
-    if (!_credentialsAreCurrent(expected)) throw _credentialsChanged();
+    if (!_credentialsAreCurrent(expected)) {
+      _closeSpotPrivateTransport();
+      throw _credentialsChanged();
+    }
   }
 }
 

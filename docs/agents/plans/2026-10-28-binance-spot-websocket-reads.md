@@ -1,6 +1,6 @@
 # Plan: Binance Spot private reads over the WebSocket API (web)
 
-Status: APPROVED (user, chat, 2026-10-28: "Duyệt"); T124 and T125 not yet executed
+Status: APPROVED (user, chat, 2026-10-28: "Duyệt"); T124 PASS (commit 5026c40); T125 PASS (independent audit 2026-10-29, uncommitted); external live verification pending (user)
 Date: 2026-10-28
 Tier: L (new network transport on a credential-bearing path; security-sensitive)
 Parent plan: `docs/agents/plans/2026-10-25-binance-direct-reads.md` (COMPLETE)
