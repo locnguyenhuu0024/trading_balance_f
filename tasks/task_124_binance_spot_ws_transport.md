@@ -1,6 +1,6 @@
 # Task 124 — Binance Spot WebSocket transport
 
-Status: READY (dispatch pending; worktree must be clean)
+Status: PASS (independent audit 2026-10-29; attempt 87b277beefac44c0b34802073c6fbcf9)
 Agent Role: implementation_executor
 Executor Class: E1
 Target Model: gpt-6-luna
@@ -14,7 +14,7 @@ Acceptance Criteria: a standalone, injectable transport that sends one request f
 
 ## 1. Dispatch Compliance
 Spawn an `implementation_executor` with both model `gpt-6-luna` and effort `xhigh` supplied explicitly. No inherited route.
-Dispatch Route Status: PENDING
+Dispatch Route Status: EXPLICIT (requested gpt-6-luna/xhigh; effective route UNVERIFIABLE)
 Requested Model: gpt-6-luna
 Requested Effort: xhigh
 Observed Effective Model: unavailable
@@ -57,22 +57,22 @@ Cover: reply parsing for success, error (`code`, `msg`) and `rateLimits`; `retry
 ### RED — RED-124
 Command: `rtk flutter test --no-pub test/core/network/binance_spot_ws_transport_test.dart`
 Expected before the change: compile failure because `binance_spot_ws_transport.dart` does not exist.
-Actual: PENDING
-Status: PENDING
+Actual: with the source file moved aside, the test fails to compile (type BinanceSpotWebSocketTransport and others missing); file restored, sha256 verified.
+Status: PASS
 
 ### GREEN — GREEN-124
 Same command. Expected: all pass.
-Actual: PENDING
-Status: PENDING
+Actual: 13 tests passed.
+Status: PASS
 
-Regression (V3): `rtk flutter test --no-pub test/core/exchange test/core/network test/features/portfolio test/features/orders`
+Regression (V3): `rtk flutter test --no-pub test/core/exchange test/core/network test/features/portfolio test/features/orders` -> 318 passed (coordinator rerun). `flutter analyze` on both files: no issues; `dart format`: no changes.
 
 ### Task Buildability Gate
 Required: YES
 Affected canonical build unit: full Flutter application
 Exact secret-free build command: `rtk flutter build web --no-pub`
-Executed after the last task-local change: PENDING
-Result: PENDING
+Executed after the last task-local change: YES (coordinator, 2026-10-29)
+Result: PASS (exit 0, built build/web; non-fatal Wasm dry-run and icon-font warnings)
 
 ### External Verification
 Required: NO
@@ -81,13 +81,17 @@ Required: NO
 Return `BLOCKED` if the surface above cannot be implemented with `web_socket_channel` alone, or if files outside section 4 must change.
 
 ## 11. Execution Ledger
-- [ ] dispatch role, class, model and effort match; no inherited route
-- [ ] RED observed before the change
-- [ ] GREEN observed
-- [ ] V3 regression run
-- [ ] task build after last change
-- [ ] compact executor report returned
-- [ ] no protected content read or modified
+- [x] dispatch role, class, model and effort match; no inherited route
+- [x] RED observed before the change
+- [x] GREEN observed
+- [x] V3 regression run
+- [x] task build after last change
+- [x] compact executor report returned
+- [x] no protected content read or modified
 
 ## 12. Coordinator Audit
-PENDING
+Verdict: PASS (Claude coordinator, independent; executor report not used as evidence).
+- Scope: only the two allowed new files changed; nothing staged.
+- RED re-observed, GREEN 13/13, V3 318/318, analyzer and format clean, web build exit 0.
+- Contract: public surface matches section 2; lazy shared connection, unique ids, out-of-order replies, timeout, idle close and reconnect, serverShutdown, peer close, connect failure, cancel (before and after reply), close then reuse, dispose, malformed and unknown-id frames ignored; exceptions carry only the failure kind.
+- Observations, not blocking: serverShutdown is detected only when `method`, `event` or `type` equals the string; if Binance nests it (for example `event.e`), the later socket close still fails requests with `network`. `retryAfter` is read from the top level or the error map. Real Binance frame shape stays unverified until the user-owned live check. Effective executor route UNVERIFIABLE.
