@@ -378,7 +378,9 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: PartialAccountNotice(
               account: accountData,
-              isWeb: ref.watch(binanceIsWebProvider),
+              spotMarginAvailable: ref.watch(
+                binanceSpotMarginAvailableProvider,
+              ),
             ),
           ),
         Divider(height: 1, indent: 24, endIndent: 24, color: palette.border),

@@ -120,55 +120,60 @@ void main() {
   });
 
   for (final details in [false, true]) {
-    testWidgets(
-      'partial wallet results are translated on ${details ? 'details' : 'home'}',
-      (tester) async {
-        final adapter = _Adapter(
-          account: const AccountSnapshot(
-            total: '10',
-            balances: [],
-            isPartial: true,
-            walletResults: [
-              WalletResult(wallet: 'Cross Margin', available: false),
-            ],
-            issues: ['secret English issue'],
-          ),
-        );
-        final container = ProviderContainer(
-          overrides: [
-            selectedConnectionIdProvider.overrideWith((ref) => 'fake'),
-            exchangeRegistryProvider.overrideWith(
-              (ref) => [
-                ExchangeRegistration(profile: profile, adapter: adapter),
+    for (final proxy in [false, true]) {
+      testWidgets(
+        'partial wallet results on ${details ? 'details' : 'home'} proxy=$proxy',
+        (tester) async {
+          final adapter = _Adapter(
+            account: const AccountSnapshot(
+              total: '10',
+              balances: [],
+              isPartial: true,
+              walletResults: [
+                WalletResult(wallet: 'Cross Margin', available: false),
               ],
+              issues: ['secret English issue'],
             ),
-            binanceIsWebProvider.overrideWith((ref) => true),
-            vndExchangeRateProvider.overrideWith((ref) async => 25400),
-          ],
-        );
-        addTearDown(container.dispose);
-        await tester.pumpWidget(
-          UncontrolledProviderScope(
-            container: container,
-            child: MaterialApp(
-              home: details
-                  ? const PortfolioDetailsScreen()
-                  : const PortfolioScreen(),
+          );
+          final container = ProviderContainer(
+            overrides: [
+              selectedConnectionIdProvider.overrideWith((ref) => 'fake'),
+              exchangeRegistryProvider.overrideWith(
+                (ref) => [
+                  ExchangeRegistration(profile: profile, adapter: adapter),
+                ],
+              ),
+              binanceIsWebProvider.overrideWith((ref) => true),
+              binanceProxyBaseUrlProvider.overrideWithValue(
+                proxy ? 'https://proxy.example' : '',
+              ),
+              vndExchangeRateProvider.overrideWith((ref) async => 25400),
+            ],
+          );
+          addTearDown(container.dispose);
+          await tester.pumpWidget(
+            UncontrolledProviderScope(
+              container: container,
+              child: MaterialApp(
+                home: details
+                    ? const PortfolioDetailsScreen()
+                    : const PortfolioScreen(),
+              ),
             ),
-          ),
-        );
-        await tester.pump();
-        await tester.pump();
-        expect(find.text('Chưa đầy đủ'), findsOneWidget);
-        expect(find.text('Không thể tải ví Margin chéo'), findsOneWidget);
-        expect(
-          find.text('Spot và Margin chỉ có trên ứng dụng'),
-          findsOneWidget,
-        );
-        expect(find.textContaining('secret'), findsNothing);
-        await tester.pumpWidget(const SizedBox.shrink());
-      },
-    );
+          );
+          await tester.pump();
+          await tester.pump();
+          expect(find.text('Chưa đầy đủ'), findsOneWidget);
+          expect(find.text('Không thể tải ví Margin chéo'), findsOneWidget);
+          expect(
+            find.text('Spot và Margin chỉ có trên ứng dụng'),
+            proxy ? findsNothing : findsOneWidget,
+          );
+          expect(find.textContaining('secret'), findsNothing);
+          await tester.pumpWidget(const SizedBox.shrink());
+        },
+      );
+    }
   }
   testWidgets('Binance history displays covered symbols', (tester) async {
     final adapter = _Adapter(account: const AccountSnapshot());

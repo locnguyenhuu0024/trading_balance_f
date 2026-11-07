@@ -187,7 +187,8 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                 .readableProducts
                 .where(
                   (product) =>
-                      !ref.watch(binanceIsWebProvider) || product == 'SWAP',
+                      ref.watch(binanceSpotMarginAvailableProvider) ||
+                      product == 'SWAP',
                 )
                 .toList()
           : null,

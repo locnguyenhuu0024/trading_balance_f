@@ -1,3 +1,4 @@
+import '../../exchanges/binance/binance_adapter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -55,7 +56,7 @@ class ConnectionsScreen extends ConsumerWidget {
                   child: ListTile(
                     title: Text('${entry.profile.label} / Chính'),
                     subtitle: Text(
-                      '${scopeProductLine(entry.profile.exchange)}\nĐã kết nối',
+                      '${scopeProductLine(entry.profile.exchange, ref.watch(binanceSpotMarginAvailableProvider))}\nĐã kết nối',
                     ),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () => Navigator.of(context).push(

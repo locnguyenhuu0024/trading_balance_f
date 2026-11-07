@@ -138,7 +138,12 @@ class BinanceAdapter implements ExchangeAdapter {
   Future<List<ExchangePosition>> readPositions(
     Ref ref,
     ExchangeScope scope,
-  ) async => (await _reader(ref, scope)).readPositions();
+  ) async {
+    final filter = ref.watch(orderFilterProvider);
+    if (filter == 'MARGIN' || filter == 'SPOT') return const [];
+    return (await _reader(ref, scope)).readPositions();
+  }
+
   @override
   Future<List<ExchangeOrder>> readOrders(Ref ref, ExchangeScope scope) async {
     final tab = ref.watch(orderTabProvider);

@@ -1,3 +1,4 @@
+import '../../exchanges/binance/binance_adapter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/exchange/exchange_scope.dart';
@@ -67,7 +68,12 @@ class ScopePicker extends ConsumerWidget {
                         subtitle: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(scopeProductLine(entry.profile.exchange)),
+                            Text(
+                              scopeProductLine(
+                                entry.profile.exchange,
+                                ref.watch(binanceSpotMarginAvailableProvider),
+                              ),
+                            ),
                             Text(
                               active ? 'Đang xem' : 'Chuyển sang tài khoản này',
                             ),

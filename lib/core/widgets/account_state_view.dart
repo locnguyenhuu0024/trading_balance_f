@@ -78,10 +78,10 @@ class PartialAccountNotice extends StatelessWidget {
   const PartialAccountNotice({
     super.key,
     required this.account,
-    required this.isWeb,
+    required this.spotMarginAvailable,
   });
   final AccountSnapshot account;
-  final bool isWeb;
+  final bool spotMarginAvailable;
 
   @override
   Widget build(BuildContext context) => Column(
@@ -100,7 +100,8 @@ class PartialAccountNotice extends StatelessWidget {
             _ => result.wallet,
           }}',
         ),
-      if (isWeb) const Text('Spot và Margin chỉ có trên ứng dụng'),
+      if (!spotMarginAvailable)
+        const Text('Spot và Margin chỉ có trên ứng dụng'),
     ],
   );
 }

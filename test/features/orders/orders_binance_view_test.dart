@@ -6,6 +6,7 @@ import 'package:trading_balance_f/core/exchange/exchange_registry.dart';
 import 'package:trading_balance_f/core/exchange/exchange_scope.dart';
 import 'package:trading_balance_f/exchanges/binance/binance_adapter.dart';
 import 'package:trading_balance_f/features/orders/presentation/orders_screen.dart';
+import 'package:trading_balance_f/features/orders/presentation/providers/order_provider.dart';
 import 'package:trading_balance_f/features/orders/presentation/widgets/order_cancellation_control.dart';
 import 'package:trading_balance_f/features/portfolio/presentation/portfolio_screen.dart';
 import 'package:trading_balance_f/features/settings/presentation/settings_screen.dart';
@@ -19,18 +20,20 @@ class _Fake extends FakeExchangeAdapter {
   Future<List<ExchangePosition>> readPositions(
     Ref ref,
     ExchangeScope scope,
-  ) async => [
-    const ExchangePosition(
-      key: InstrumentKey(
-        exchange: ExchangeId.binance,
-        product: 'SWAP',
-        nativeId: 'BTCUSDT',
-        base: 'BTC',
-        quote: 'USDT',
-      ),
-      productLabel: 'SWAP',
-    ),
-  ];
+  ) async => ref.watch(orderFilterProvider) == 'MARGIN'
+      ? []
+      : [
+          const ExchangePosition(
+            key: InstrumentKey(
+              exchange: ExchangeId.binance,
+              product: 'SWAP',
+              nativeId: 'BTCUSDT',
+              base: 'BTC',
+              quote: 'USDT',
+            ),
+            productLabel: 'SWAP',
+          ),
+        ];
   @override
   Future<AccountSnapshot> readAccount(Ref ref, ExchangeScope scope) async =>
       const AccountSnapshot(
@@ -53,8 +56,10 @@ class _Fake extends FakeExchangeAdapter {
 }
 
 void main() {
-  for (final web in [false, true]) {
-    testWidgets('Binance positions and filters web=$web', (tester) async {
+  for (final proxy in [false, true]) {
+    testWidgets('Binance positions and filters on web proxy=$proxy', (
+      tester,
+    ) async {
       final container = ProviderContainer(
         overrides: [
           selectedConnectionIdProvider.overrideWith((ref) => 'fake'),
@@ -70,7 +75,10 @@ void main() {
               ),
             ],
           ),
-          binanceIsWebProvider.overrideWithValue(web),
+          binanceIsWebProvider.overrideWithValue(true),
+          binanceProxyBaseUrlProvider.overrideWithValue(
+            proxy ? 'https://proxy.example' : '',
+          ),
           vndExchangeRateProvider.overrideWith((ref) async => 25400),
         ],
       );
@@ -86,12 +94,31 @@ void main() {
       expect(find.text('BTCUSDT'), findsNothing);
       expect(find.text('Tất cả'), findsOneWidget);
       expect(find.text('USDⓈ-M'), findsWidgets);
-      expect(find.text('Spot'), web ? findsNothing : findsOneWidget);
-      expect(find.text('Margin'), web ? findsNothing : findsOneWidget);
+      expect(find.text('Spot'), proxy ? findsOneWidget : findsNothing);
+      expect(find.text('Margin'), proxy ? findsOneWidget : findsNothing);
       expect(find.textContaining('Cross Margin'), findsOneWidget);
       expect(find.textContaining('Isolated Margin'), findsOneWidget);
       expect(find.textContaining('—'), findsWidgets);
       expect(find.byType(OrderCancellationControl), findsNothing);
+      if (proxy) {
+        await tester.tap(find.text('Margin'));
+        await tester.pump();
+        await tester.pump();
+        expect(find.textContaining('Cross Margin'), findsOneWidget);
+        expect(find.textContaining('Isolated Margin'), findsOneWidget);
+        expect(find.text('BTC/USDT'), findsNothing);
+        await tester.tap(find.text('USDⓈ-M').first);
+        await tester.pump();
+        await tester.pump();
+        expect(find.text('BTC/USDT'), findsWidgets);
+        expect(find.textContaining('Cross Margin'), findsNothing);
+        expect(find.textContaining('Isolated Margin'), findsNothing);
+        await tester.tap(find.text('Tất cả'));
+        await tester.pump();
+        await tester.pump();
+        expect(find.text('BTC/USDT'), findsWidgets);
+        expect(find.textContaining('Cross Margin'), findsOneWidget);
+      }
       await tester.pumpWidget(const SizedBox());
       container.dispose();
     });

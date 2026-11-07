@@ -109,7 +109,7 @@ class _PortfolioDetailsScreenState
           data: (account) => _DetailsContent(
             account: account,
             isOkx: isOkx,
-            isWeb: !isOkx && ref.watch(binanceIsWebProvider),
+            spotMarginAvailable: ref.watch(binanceSpotMarginAvailableProvider),
             livePrices: isOkx ? ref.watch(livePriceProvider) : const {},
             currency: currency,
             exchangeRate: rate,
@@ -128,7 +128,7 @@ class _DetailsContent extends StatelessWidget {
   const _DetailsContent({
     required this.account,
     required this.isOkx,
-    required this.isWeb,
+    required this.spotMarginAvailable,
     required this.livePrices,
     required this.currency,
     required this.exchangeRate,
@@ -140,7 +140,7 @@ class _DetailsContent extends StatelessWidget {
 
   final AccountSnapshot account;
   final bool isOkx;
-  final bool isWeb;
+  final bool spotMarginAvailable;
   final Map<String, String> livePrices;
   final String currency;
   final double exchangeRate;
@@ -235,7 +235,10 @@ class _DetailsContent extends StatelessWidget {
                       ),
                     ),
                   if (!isOkx)
-                    PartialAccountNotice(account: account, isWeb: isWeb),
+                    PartialAccountNotice(
+                      account: account,
+                      spotMarginAvailable: spotMarginAvailable,
+                    ),
                   const SizedBox(height: 10),
                   Text(
                     'Principal / base capital',

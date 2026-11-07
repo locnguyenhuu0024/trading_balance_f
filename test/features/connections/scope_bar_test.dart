@@ -4,6 +4,11 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/security/secure_storage_helper.dart';
 import 'package:trading_balance_f/core/widgets/scope_bar.dart';
+import 'package:trading_balance_f/core/exchange/exchange_models.dart';
+import 'package:trading_balance_f/core/exchange/exchange_registry.dart';
+import 'package:trading_balance_f/core/exchange/exchange_scope.dart';
+import 'package:trading_balance_f/exchanges/binance/binance_adapter.dart';
+import '../../support/fake_exchange_adapter.dart';
 
 class Keys extends SecureStorageHelper {
   Keys() : super(const FlutterSecureStorage());
@@ -20,6 +25,41 @@ class Keys extends SecureStorageHelper {
 }
 
 void main() {
+  for (final proxy in [false, true]) {
+    testWidgets('bar and picker follow web proxy=$proxy', (tester) async {
+      final entries = [
+        ExchangeRegistration(
+          profile: const ConnectionProfile(
+            connectionId: 'fake',
+            exchange: ExchangeId.binance,
+            label: 'Binance',
+          ),
+          adapter: FakeExchangeAdapter(),
+        ),
+      ];
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            selectedConnectionIdProvider.overrideWith((ref) => 'fake'),
+            exchangeRegistryProvider.overrideWith((ref) => entries),
+            configuredConnectionsProvider.overrideWith((ref) async => entries),
+            binanceIsWebProvider.overrideWithValue(true),
+            binanceProxyBaseUrlProvider.overrideWithValue(
+              proxy ? 'https://proxy.example' : '',
+            ),
+          ],
+          child: const MaterialApp(home: Scaffold(body: ScopeBar())),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final line = proxy ? 'USDⓈ-M · Spot · Margin' : 'USDⓈ-M';
+      expect(find.text(line), findsOneWidget);
+      await tester.tap(find.byType(ScopeBar));
+      await tester.pumpAndSettle();
+      expect(find.text(line), findsWidgets);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+  }
   testWidgets(
     'bar has accessible target and picker lists configured connections',
     (tester) async {

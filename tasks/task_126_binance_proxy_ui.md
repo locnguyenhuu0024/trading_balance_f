@@ -12,6 +12,35 @@ Parent Route Inheritance: FORBIDDEN
 Specification: `docs/agents/specs/2026-11-07-binance-web-proxy-design.md`
 Plan: `docs/agents/plans/2026-11-07-binance-web-proxy.md`
 
+## Remediation R01 (current instruction)
+
+The first pass is committed. Items 1 and 2 of the contract in section 6 are done; do not redo them. Coordinator audit found these defects. Fix only these, writing only:
+
+- `lib/features/orders/presentation/orders_screen.dart`
+- `test/features/orders/orders_binance_view_test.dart`
+- `test/exchanges/binance/binance_adapter_test.dart`
+
+AUD-126-01, false empty state. On the Vị thế tab for Binance with filter `ALL` or `MARGIN`, margin rows come from `scopedAccountProvider`, read with `.value`. When there are no positions and no rows, the screen shows `Chưa có vị thế trên ...` even if that account read is still loading, failed, or lost a margin wallet. The Margin chip always has no positions, so a proxy failure there reads as "no positions". Required rule, for Binance with filter `ALL` or `MARGIN` when positions are empty and rows are empty:
+
+- Account read loading with no value: the same progress indicator the tab uses.
+- Account read failed: `AccountStateView.fromError` as the positions branch does, with `onRetry: _refreshCurrentRead`.
+- Account data where `walletResults` marks `Cross Margin` or `Isolated Margin` unavailable: `PartialAccountNotice`, not the empty state.
+- Otherwise: the existing empty state.
+
+AUD-126-02, silent omission. For Binance with filter `ALL` or `MARGIN`, when rows or positions exist and a margin wallet is unavailable, also show `PartialAccountNotice` on this tab. Pull to refresh must keep working in every state above. OKX, `SWAP` and `SPOT` output is unchanged.
+
+AUD-126-03, unreliable test. `Binance positions and filters on web proxy=true` fails on the host. The screen is correct: a temporary probe with timed pumps showed the cards under Margin. Returning to `Tất cả` re-reads the account. Replace the bare double `pump()` after each chip tap with a small helper that pumps a few times with a short duration. Keep every expectation.
+
+AUD-126-04, lost coverage. The first pass replaced the `web=false` case. Restore a native case with no proxy: Spot and Margin chips present. Cover three states: native, web without proxy, web with proxy.
+
+AUD-126-05, adapter coverage. `_Fake` reimplements the filter, so the real adapter is covered only for `MARGIN`. In `binance_adapter_test.dart`, override `binanceReaderProvider` to throw a sentinel and prove `ALL` and `SWAP` reach the reader, while `MARGIN` and `SPOT` return empty without it.
+
+New tests in `orders_binance_view_test.dart`, all on the Margin chip with no positions:
+- account never completes: progress indicator, no empty-state text;
+- account fails: no empty-state text, error view present;
+- `Cross Margin` unavailable: `Không thể tải ví Margin chéo`, no empty-state text;
+- all wallets available and no rows: the empty-state text.
+
 ## 1. Dispatch Compliance
 
 The dispatcher passes `--model` and `model_reasoning_effort` on your command line, and your prompt states the route. `UNVERIFIABLE` is a valid state; do not stop for it.

@@ -1,16 +1,17 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../features/connections/scope_picker.dart';
+import '../../exchanges/binance/binance_adapter.dart';
 import '../exchange/exchange_models.dart';
 import '../exchange/exchange_registry.dart';
 import '../exchange/exchange_scope.dart';
 import '../theme/app_theme.dart';
 
-String scopeProductLine(ExchangeId exchange) => exchange == ExchangeId.okx
+String scopeProductLine(ExchangeId exchange, bool spotMarginAvailable) =>
+    exchange == ExchangeId.okx
     ? 'Tài khoản giao dịch'
-    : (kIsWeb ? 'USDⓈ-M' : 'USDⓈ-M · Spot · Margin');
+    : (spotMarginAvailable ? 'USDⓈ-M · Spot · Margin' : 'USDⓈ-M');
 
 class ScopeBar extends ConsumerWidget {
   const ScopeBar({super.key});
@@ -80,7 +81,10 @@ class ScopeBar extends ConsumerWidget {
                             style: const TextStyle(fontWeight: FontWeight.bold),
                           ),
                           Text(
-                            scopeProductLine(profile.exchange),
+                            scopeProductLine(
+                              profile.exchange,
+                              ref.watch(binanceSpotMarginAvailableProvider),
+                            ),
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             style: Theme.of(context).textTheme.bodySmall
