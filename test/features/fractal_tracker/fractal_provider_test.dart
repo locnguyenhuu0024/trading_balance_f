@@ -1,7 +1,20 @@
+import 'package:dio/dio.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:trading_balance_f/core/network/okx_data_client.dart';
 import 'package:trading_balance_f/features/fractal_tracker/presentation/providers/fractal_provider.dart';
 
 void main() {
+  test('candle transport failure surfaces as a provider error', () async {
+    final container = ProviderContainer(
+      overrides: [okxDataClientProvider.overrideWithValue(_FailingClient())],
+    );
+    addTearDown(container.dispose);
+    await expectLater(
+      container.read(fractalDataProvider.future),
+      throwsStateError,
+    );
+  });
   group('fractal tracker OKX candle alignment', () {
     test('uses UTC-aligned OKX bars for month and year sub-candles', () {
       expect(fractalBarForTimeframe('M1'), '1Dutc');
@@ -101,4 +114,13 @@ void main() {
       },
     );
   });
+}
+
+class _FailingClient extends OkxDataClient {
+  @override
+  Future<Response<dynamic>> get(
+    String path, {
+    Map<String, dynamic>? queryParameters,
+    CancelToken? cancelToken,
+  }) async => throw StateError('transport failure');
 }

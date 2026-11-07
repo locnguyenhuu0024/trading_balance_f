@@ -26,6 +26,12 @@ Requested Effort: high
 Observed Effective Model: unavailable
 Observed Effective Effort: unavailable
 
+## Stage instruction (current)
+
+This task runs in stages because long runs have ended early. Attempt 1 is committed: fractal transport errors surface, and the selected coin resets on selection.
+
+**Current stage 2 of 4, do only this:** steps 1 to 4 and 9 of section 6: `market_source.dart`, adapter members, OKX `MarketSource` wiring with no behavior change, `binance_client.dart`, `binance_market.dart`, and tests in `test/exchanges/binance/`. No screen changes. Stage 3 wires Market and BMAG; stage 4 wires Support/Resistance and watchlists. Stage tests for this stage: fixtures for Spot and USD-M mapping, candle index mapping, Top 50 filter and sort, no `X-MBX-APIKEY` on any request, a 429 backing off the Binance public lane while the OKX lane stays open.
+
 ## 2. Objective
 
 Market, BMAG and Support/Resistance read the selected exchange with Binance public data and per-exchange watchlists.

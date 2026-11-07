@@ -4,6 +4,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:trading_balance_f/core/network/okx_data_client.dart';
+import '../../../../core/exchange/exchange_scope.dart';
 import '../../../../core/timezone/app_time_zone.dart';
 import '../../data/fractal_model.dart';
 
@@ -19,7 +20,10 @@ final selectedYearProvider = StateProvider<int>((ref) {
 });
 
 // THÊM MỚI: Provider quản lý Coin đang chọn, mặc định là BTC
-final selectedCoinProvider = StateProvider<String>((ref) => 'BTC');
+final selectedCoinProvider = StateProvider<String>((ref) {
+  ref.watch(selectedConnectionIdProvider);
+  return 'BTC';
+});
 
 String fractalBarForTimeframe(String timeframe) {
   return switch (timeframe) {
@@ -189,7 +193,7 @@ Future<FractalData?> _fetchAndProcess(
   String coin,
   String timeZoneId,
 ) async {
-  try {
+  {
     final period = fractalPeriodBounds(
       timeframe: timeframe,
       timeZoneId: timeZoneId,
@@ -213,18 +217,16 @@ Future<FractalData?> _fetchAndProcess(
 
     // Hàm gọi API
     Future<void> fetchApi(String endpoint) async {
-      try {
-        final response = await client.get(
-          endpoint,
-          queryParameters: {
-            'instId': '$coin-USDT',
-            'bar': barId,
-            'limit': limit,
-            'after': afterTs,
-          },
-        );
-        if (response.data['code'] == '0') rawCandles = response.data['data'];
-      } catch (_) {}
+      final response = await client.get(
+        endpoint,
+        queryParameters: {
+          'instId': '$coin-USDT',
+          'bar': barId,
+          'limit': limit,
+          'after': afterTs,
+        },
+      );
+      if (response.data['code'] == '0') rawCandles = response.data['data'];
     }
 
     // THAY ĐỔI QUAN TRỌNG:
@@ -341,7 +343,5 @@ Future<FractalData?> _fetchAndProcess(
       currentPrice: currentPrice,
       subCandles: subCandles,
     );
-  } catch (e) {
-    return null;
   }
 }
