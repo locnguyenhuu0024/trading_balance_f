@@ -95,6 +95,14 @@ Status: PENDING
 Run RED before GREEN. Verification ceiling: V3: presentation tests; final V4 runs in the final integration audit, not here.
 Escalate only if: a shared provider or fixture used outside this set changes.
 
+### Verification environment
+
+The sandbox cannot write to the default Flutter SDK cache or home directory, so `flutter` fails there. Always run Flutter through this prepared SDK clone, including for RED, GREEN and buildability:
+
+`env HOME=/private/tmp/claude-501/-Users-locnguyen--claude-spares-spare-1YiVQu/74faedd6-f84d-41fb-aa01-a0288d74204a/scratchpad/flutter-home PUB_CACHE=/Users/locnguyen/.pub-cache /private/tmp/claude-501/-Users-locnguyen--claude-spares-spare-1YiVQu/74faedd6-f84d-41fb-aa01-a0288d74204a/scratchpad/flutter-sdk/bin/flutter <subcommand>`
+
+Example: `env HOME=/private/tmp/claude-501/-Users-locnguyen--claude-spares-spare-1YiVQu/74faedd6-f84d-41fb-aa01-a0288d74204a/scratchpad/flutter-home PUB_CACHE=/Users/locnguyen/.pub-cache /private/tmp/claude-501/-Users-locnguyen--claude-spares-spare-1YiVQu/74faedd6-f84d-41fb-aa01-a0288d74204a/scratchpad/flutter-sdk/bin/flutter test --no-pub <file> --plain-name '<name>'`. It adds no repository changes. In the commands of this task, read `rtk flutter` and `flutter` as this prefix. If it still fails, report the exact error.
+
 ### Task Buildability Gate
 
 Required: YES

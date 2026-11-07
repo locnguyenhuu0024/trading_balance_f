@@ -129,10 +129,10 @@ Neutral types are plain Dart in new files. All numeric fields are the exchange's
 | `ExchangeCapabilities` | readable products, unavailable-on-this-platform products |
 | `InstrumentKey` | `exchange`, `product`, `nativeId`; base and quote from exchange metadata; never parsed from a display label |
 | `AccountSnapshot` | total, total currency, `isPartial`, balances, wallet results, issues |
-| `AssetBalance` | wallet, asset, total, available, frozen, borrowed, interest, net, value in USDT |
-| `ExchangePosition` | key, side, size, entry, mark, liquidation, leverage, margin mode, unrealized PnL, notional |
+| `AssetBalance` | wallet, asset, total, available, frozen, borrowed, interest, net, unrealized PnL, value in USDT |
+| `ExchangePosition` | key, product label, side, direction, size, entry, mark, liquidation, leverage, margin mode, unrealized PnL and ratio, notional, position id, position and margin currency, native record |
 | `MarginAccountRow` | cross per asset, or isolated per pair: borrowed, interest, net, margin level, liquidation, index price |
-| `ExchangeOrder` | id, key, type, side, price, quantity, filled, average, state, created time |
+| `ExchangeOrder` | id, key, product label, type, side, price, quantity, filled, average, notional and filled notional, leverage, state, created time, native record |
 | `Ticker`, `Candle` | key, last, 24h change; open time, OHLCV |
 
 Binance grain: one connection, three wallets. Margin is not forced into `ExchangePosition`; it has no entry price per OBS-012, and has its own card with `—` for nothing invented.

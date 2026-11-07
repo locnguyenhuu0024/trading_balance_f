@@ -102,7 +102,11 @@ If required work exceeds Allowed Scope, return `BLOCKED`.
 
 Design is fixed; follow it.
 
-1. `exchange_models.dart`: plain Dart types from spec section 6. Numerics are `String?` verbatim. `ExchangePosition` and `ExchangeOrder` carry `Object? native` for the exchange's own record.
+1. `exchange_models.dart`: plain Dart types from spec section 6, with numerics as verbatim `String?`. Required fields so existing OKX screens keep rendering:
+   - `AssetBalance`: wallet, asset, total, available, frozen, borrowed, interest, net, unrealizedPnl, valueUsdt (`coin.ccy`, `eq`, `upl`, `eqUsd`).
+   - `ExchangePosition`: key, productLabel, side, direction, size, entry, mark, liquidation, leverage, marginMode, unrealizedPnl, unrealizedPnlRatio, notional, positionId, positionCurrency, marginCurrency, `Object? native`.
+   - `ExchangeOrder`: id, key, productLabel, type, side, price, quantity, filled, average, notional, filledNotional, leverage, state, createdAtMs, `Object? native`.
+   If a screen needs one more existing display value, add it as a nullable text field by the same rule and list it in your report. That is not a design decision; do not stop for it.
 2. `exchange_adapter.dart`: `ExchangeAdapter` with `id`, `capabilities`, `readAccount(Ref, ExchangeScope)`, `readPositions(Ref, ExchangeScope)`, `readOrders(Ref, ExchangeScope)`, plus `invalidateAccount`, `invalidatePositions`, `invalidateOrders`, each taking `void Function(ProviderOrFamily) invalidate`, and `classify(Object error)`.
 3. `exchange_registry.dart`: `exchangeRegistryProvider`, a `Provider<List<ExchangeRegistration>>` holding profile and adapter, defaulting to OKX only. Tests override it with a fake exchange.
 4. `exchange_scope.dart`: `selectedConnectionIdProvider` (`StateProvider<String>`, overridden at startup, unknown value falls back to `okx-default`), `exchangeScopeProvider`, `exchangeRequestCoordinatorProvider` and `exchangeReadGateProvider` as `Provider.family` on `ExchangeId`. For OKX these return the existing `requestCoordinatorProvider` and `okxDirectReadGateProvider`; other exchanges get their own instance. Do not change `RequestCoordinator` or `ForegroundReadGate`.
@@ -148,6 +152,14 @@ Status: PENDING
 
 Run RED before GREEN. Verification ceiling: V3: `test/core/network`, `test/core/exchange`, `test/features/portfolio`, `test/features/orders`.
 Escalate only if: a shared provider or fixture used outside this set changes.
+
+### Verification environment
+
+The sandbox cannot write to the default Flutter SDK cache or home directory, so `flutter` fails there. Always run Flutter through this prepared SDK clone, including for RED, GREEN and buildability:
+
+`env HOME=/private/tmp/claude-501/-Users-locnguyen--claude-spares-spare-1YiVQu/74faedd6-f84d-41fb-aa01-a0288d74204a/scratchpad/flutter-home PUB_CACHE=/Users/locnguyen/.pub-cache /private/tmp/claude-501/-Users-locnguyen--claude-spares-spare-1YiVQu/74faedd6-f84d-41fb-aa01-a0288d74204a/scratchpad/flutter-sdk/bin/flutter <subcommand>`
+
+Example: `env HOME=/private/tmp/claude-501/-Users-locnguyen--claude-spares-spare-1YiVQu/74faedd6-f84d-41fb-aa01-a0288d74204a/scratchpad/flutter-home PUB_CACHE=/Users/locnguyen/.pub-cache /private/tmp/claude-501/-Users-locnguyen--claude-spares-spare-1YiVQu/74faedd6-f84d-41fb-aa01-a0288d74204a/scratchpad/flutter-sdk/bin/flutter test --no-pub <file> --plain-name '<name>'`. It adds no repository changes. In the commands of this task, read `rtk flutter` and `flutter` as this prefix. If it still fails, report the exact error.
 
 ### Task Buildability Gate
 

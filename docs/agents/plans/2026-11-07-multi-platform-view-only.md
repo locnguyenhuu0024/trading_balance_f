@@ -201,3 +201,4 @@ Routing follows `docs/agents/framework/EXECUTOR_ROUTING_POLICY.json` v2. Classes
 |---|---|---|
 | 2 | T117..T121 reclassified to E0-E5 routes; T122 added as T116 remediation; analyzer gate no longer fails on pre-existing infos | User request after upgrade to OptCodex v1.4.0 and CCB v0.7; rules require re-approval of pre-v1.4 task routes; T116 audit |
 | 2.1 | VAL-001: INV-003 scoped so OKX freezed defaults stay as they are | T117 executor reported that `OkxAccountData` converts missing values to "0" before the adapter sees them, conflicting with INV-003 as written; REQ-012 takes precedence, no behavior change |
+| 2.2 | VAL-002: neutral field lists completed from fields the OKX screens use. VAL-003: executors run Flutter through an SDK clone and isolated HOME in the scratchpad | T117 executor found missing fields; sandbox denies writes to the Flutter SDK cache and home directory, reproduced by the coordinator with `codex sandbox` |
