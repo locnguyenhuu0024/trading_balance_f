@@ -231,7 +231,7 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    await tester.tap(find.text('BMAG Tracker (BTC)'));
+    await tester.tap(find.widgetWithText(TextButton, 'BTC'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
@@ -251,7 +251,7 @@ void main() {
 
     await tester.tap(ethText);
     await tester.pumpAndSettle();
-    expect(find.text('BMAG Tracker (ETH)'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, 'ETH'), findsOneWidget);
     expect(find.text('Chọn Coin'), findsNothing);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());

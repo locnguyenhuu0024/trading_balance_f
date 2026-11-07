@@ -4,6 +4,8 @@ import '../../../core/widgets/account_state_view.dart';
 // File Path: lib/features/market/presentation/market_screen.dart
 // Note: Màn hình hiển thị Top 50 các đồng coin giao dịch SPOT có Volume lớn nhất
 
+import 'dart:ui' show FontFeature;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -129,237 +131,253 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
 
     return Scaffold(
       backgroundColor: bgColor,
-      appBar: AppBar(
-        backgroundColor: bgColor,
-        foregroundColor: textColor,
-        elevation: 0,
-        centerTitle: true,
-        title: const Text(
-          'Thị trường (Top 50)',
-          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
-        ),
-        actions: [
-          ManualRefreshButton(
-            buttonKey: const Key('market-manual-refresh'),
-            onRefresh: _refreshMarket,
-            isBusy: _refreshInFlight || marketAsync.isLoading,
-          ),
-        ],
-      ),
-      body: NavigationContentFrame(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(16, 12, 16, 0),
-              child: ScopeBar(),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: AppTokens.space4,
-                vertical: AppTokens.space2,
-              ),
-              child: Text(
-                'Nguồn giá: ${registration.profile.label}',
-                style: TextStyle(color: palette.muted, fontSize: 12),
-              ),
-            ),
-            if (scope.exchange == ExchangeId.binance)
+      body: SafeArea(
+        child: NavigationContentFrame(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
               Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: AppTokens.space4,
-                ),
-                child: Wrap(
-                  spacing: AppTokens.space2,
+                padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+                child: Row(
                   children: [
-                    for (final item in registration.adapter.marketProducts)
-                      ChoiceChip(
-                        label: Text(item),
-                        selected: item == product,
-                        onSelected: (_) =>
-                            ref.read(marketProductProvider.notifier).state =
-                                item,
+                    const Expanded(
+                      child: Text(
+                        'Thị trường',
+                        style: TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
+                    ),
+                    ManualRefreshButton(
+                      buttonKey: const Key('market-manual-refresh'),
+                      onRefresh: _refreshMarket,
+                      isBusy: _refreshInFlight || marketAsync.isLoading,
+                    ),
                   ],
                 ),
               ),
-            Expanded(
-              child: RefreshIndicator(
-                color: palette.ink,
-                backgroundColor: palette.raised,
-                onRefresh: _refreshMarket,
-                child: marketAsync.when(
-                  loading: () => Center(
-                    child: CircularProgressIndicator(color: textColor),
+              const Padding(
+                padding: EdgeInsets.fromLTRB(24, 12, 24, 0),
+                child: ScopeBar(),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: AppTokens.space2,
+                ),
+                child: Text(
+                  'Nguồn giá: ${registration.profile.label}',
+                  style: TextStyle(color: palette.muted, fontSize: 12),
+                ),
+              ),
+              if (scope.exchange == ExchangeId.binance)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Wrap(
+                    spacing: AppTokens.space2,
+                    children: [
+                      for (final item in registration.adapter.marketProducts)
+                        ChoiceChip(
+                          label: Text(item),
+                          selected: item == product,
+                          onSelected: (_) =>
+                              ref.read(marketProductProvider.notifier).state =
+                                  item,
+                        ),
+                    ],
                   ),
-                  error: (err, stack) => AccountStateView.fromError(
-                    error: err,
-                    registration: registration,
-                    onRetry: _refreshMarket,
-                  ),
-                  data: (tickers) {
-                    return ListView.builder(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: AppTokens.space4,
-                        vertical: AppTokens.space2,
-                      ),
-                      itemCount: tickers.length,
-                      itemBuilder: (context, index) {
-                        final t = tickers[index];
-                        final currentPrice = t.last;
+                ),
+              Expanded(
+                child: RefreshIndicator(
+                  color: palette.ink,
+                  backgroundColor: palette.raised,
+                  onRefresh: _refreshMarket,
+                  child: marketAsync.when(
+                    loading: () => Center(
+                      child: CircularProgressIndicator(color: textColor),
+                    ),
+                    error: (err, stack) => AccountStateView.fromError(
+                      error: err,
+                      registration: registration,
+                      onRetry: _refreshMarket,
+                    ),
+                    data: (tickers) {
+                      return ListView.builder(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 24,
+                          vertical: AppTokens.space2,
+                        ),
+                        itemCount: tickers.length,
+                        itemBuilder: (context, index) {
+                          final t = tickers[index];
+                          final currentPrice = t.last;
 
-                        // Tính toán lại % biến động dựa trên giá Live mới nhất
-                        final double currentChangePercent = t.open24h > 0
-                            ? ((currentPrice - t.open24h) / t.open24h) * 100
-                            : 0.0;
+                          // Tính toán lại % biến động dựa trên giá Live mới nhất
+                          final double currentChangePercent = t.open24h > 0
+                              ? ((currentPrice - t.open24h) / t.open24h) * 100
+                              : 0.0;
 
-                        final isPositive = currentChangePercent >= 0;
-                        final changeColor = isPositive
-                            ? palette.positive
-                            : palette.negative;
-                        final changeSign = isPositive ? '+' : '';
-                        final volFormatted =
-                            '\$${(t.vol24h / 1000000).toStringAsFixed(2)}M';
+                          final isPositive = currentChangePercent >= 0;
+                          final changeColor = isPositive
+                              ? palette.positive
+                              : palette.negative;
+                          final changeSign = isPositive ? '+' : '';
+                          final volFormatted =
+                              '\$${(t.vol24h / 1000000).toStringAsFixed(2)}M';
 
-                        // Thông minh hiển thị giá: Nếu coin rác (< $1) thì hiện nhiều số thập phân
-                        String priceFormatted;
-                        if (currentPrice < 1) {
-                          priceFormatted = NumberFormat(
-                            "#,##0.00####",
-                            "en_US",
-                          ).format(currentPrice);
-                        } else {
-                          priceFormatted = NumberFormat(
-                            "#,##0.00",
-                            "en_US",
-                          ).format(currentPrice);
-                        }
+                          // Thông minh hiển thị giá: Nếu coin rác (< $1) thì hiện nhiều số thập phân
+                          String priceFormatted;
+                          if (currentPrice < 1) {
+                            priceFormatted = NumberFormat(
+                              "#,##0.00####",
+                              "en_US",
+                            ).format(currentPrice);
+                          } else {
+                            priceFormatted = NumberFormat(
+                              "#,##0.00",
+                              "en_US",
+                            ).format(currentPrice);
+                          }
 
-                        return Card(
-                          elevation: 0,
-                          color: cardColor,
-                          margin: const EdgeInsets.only(
-                            bottom: AppTokens.space2,
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(
-                              AppTokens.radiusMedium,
+                          return Card(
+                            elevation: 0,
+                            color: cardColor,
+                            margin: const EdgeInsets.only(
+                              bottom: AppTokens.space2,
                             ),
-                            side: BorderSide(color: borderColor),
-                          ),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: AppTokens.space3,
-                              vertical: AppTokens.space3,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(
+                                AppTokens.radiusMedium,
+                              ),
+                              side: BorderSide(color: borderColor),
                             ),
-                            child: LayoutBuilder(
-                              builder: (context, constraints) {
-                                final coinIdentity = Row(
-                                  children: [
-                                    CryptoIcon(
-                                      symbol: t.coinSymbol,
-                                      size: 36,
-                                      backgroundColor: iconBgColor,
-                                      textColor: textColor,
-                                      textSize: 14,
-                                    ),
-                                    const SizedBox(width: AppTokens.space3),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            t.coinSymbol,
-                                            style: TextStyle(
-                                              fontWeight: FontWeight.bold,
-                                              fontSize: 15,
-                                              color: textColor,
-                                            ),
-                                          ),
-                                          const SizedBox(
-                                            height: AppTokens.space1,
-                                          ),
-                                          Text(
-                                            'Vol 24h: $volFormatted',
-                                            style: TextStyle(
-                                              color: palette.muted,
-                                              fontSize: 12,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                );
-                                final quote = Column(
-                                  crossAxisAlignment: CrossAxisAlignment.end,
-                                  children: [
-                                    Text(
-                                      '\$$priceFormatted',
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 15,
-                                        color: textColor,
-                                      ),
-                                    ),
-                                    const SizedBox(height: AppTokens.space2),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: AppTokens.space2,
-                                        vertical: AppTokens.space1,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: changeColor,
-                                        borderRadius: BorderRadius.circular(
-                                          AppTokens.radiusSmall,
-                                        ),
-                                      ),
-                                      child: Text(
-                                        '$changeSign${currentChangePercent.toStringAsFixed(2)}%',
-                                        style: TextStyle(
-                                          color: palette.onStrong,
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 12,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                );
-
-                                if (constraints.maxWidth < 400) {
-                                  return Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.stretch,
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: AppTokens.space3,
+                                vertical: AppTokens.space3,
+                              ),
+                              child: LayoutBuilder(
+                                builder: (context, constraints) {
+                                  final coinIdentity = Row(
                                     children: [
-                                      coinIdentity,
-                                      const SizedBox(height: AppTokens.space2),
-                                      Align(
-                                        alignment: Alignment.centerRight,
-                                        child: quote,
+                                      CryptoIcon(
+                                        symbol: t.coinSymbol,
+                                        size: 36,
+                                        backgroundColor: iconBgColor,
+                                        textColor: textColor,
+                                        textSize: 14,
+                                      ),
+                                      const SizedBox(width: AppTokens.space3),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              t.coinSymbol,
+                                              style: TextStyle(
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 15,
+                                                color: textColor,
+                                              ),
+                                            ),
+                                            Text(
+                                              t.instId,
+                                              style: TextStyle(
+                                                color: palette.muted,
+                                                fontSize: 12,
+                                              ),
+                                            ),
+                                            const SizedBox(
+                                              height: AppTokens.space1,
+                                            ),
+                                            Text(
+                                              'Vol 24h: $volFormatted',
+                                              style: TextStyle(
+                                                color: palette.muted,
+                                                fontSize: 12,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
                                       ),
                                     ],
                                   );
-                                }
+                                  final quote = Column(
+                                    crossAxisAlignment: CrossAxisAlignment.end,
+                                    children: [
+                                      Text(
+                                        '\$$priceFormatted',
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 15,
+                                          color: textColor,
+                                          fontFeatures: const [
+                                            FontFeature.tabularFigures(),
+                                          ],
+                                        ),
+                                      ),
+                                      const SizedBox(height: AppTokens.space2),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: AppTokens.space2,
+                                          vertical: AppTokens.space1,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: changeColor,
+                                          borderRadius: BorderRadius.circular(
+                                            AppTokens.radiusSmall,
+                                          ),
+                                        ),
+                                        child: Text(
+                                          '$changeSign${currentChangePercent.toStringAsFixed(2)}%',
+                                          style: TextStyle(
+                                            color: palette.onStrong,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  );
 
-                                return Row(
-                                  children: [
-                                    Expanded(child: coinIdentity),
-                                    const SizedBox(width: AppTokens.space3),
-                                    quote,
-                                  ],
-                                );
-                              },
+                                  if (constraints.maxWidth < 400) {
+                                    return Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        coinIdentity,
+                                        const SizedBox(
+                                          height: AppTokens.space2,
+                                        ),
+                                        Align(
+                                          alignment: Alignment.centerRight,
+                                          child: quote,
+                                        ),
+                                      ],
+                                    );
+                                  }
+
+                                  return Row(
+                                    children: [
+                                      Expanded(child: coinIdentity),
+                                      const SizedBox(width: AppTokens.space3),
+                                      quote,
+                                    ],
+                                  );
+                                },
+                              ),
                             ),
-                          ),
-                        );
-                      },
-                    );
-                  },
+                          );
+                        },
+                      );
+                    },
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

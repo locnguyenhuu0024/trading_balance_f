@@ -34,12 +34,7 @@ void main() {
       ),
     );
     final selected = tester
-        .getSemantics(
-          find.ancestor(
-            of: find.text('Vị thế'),
-            matching: find.byType(Semantics),
-          ).first,
-        )
+        .getSemantics(find.bySemanticsLabel('Vị thế'))
         .getSemanticsData();
     expect(selected.hasFlag(SemanticsFlag.isSelected), isTrue);
     expect(selected.hasFlag(SemanticsFlag.isButton), isTrue);

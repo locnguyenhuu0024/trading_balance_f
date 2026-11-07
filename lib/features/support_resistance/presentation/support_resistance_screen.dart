@@ -80,7 +80,7 @@ class _SupportResistanceScreenState
         backgroundColor: theme.colorScheme.surface,
         body: SafeArea(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+            padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
             child: ResponsiveFormContent(
               maxWidth: 960,
               padding: EdgeInsets.zero,
@@ -91,9 +91,10 @@ class _SupportResistanceScreenState
                   const SizedBox(height: 12),
                   Row(
                     children: [
+                      if (Navigator.of(context).canPop()) const BackButton(),
                       Expanded(
                         child: Text(
-                          'Hỗ trợ và kháng cự',
+                          'Hỗ trợ / kháng cự',
                           style: theme.textTheme.headlineSmall?.copyWith(
                             fontWeight: FontWeight.w700,
                           ),
@@ -118,28 +119,31 @@ class _SupportResistanceScreenState
                   const SizedBox(height: 12),
                   Semantics(
                     label: 'Thị trường',
-                    child: SegmentedButton<SupportResistanceMarketMode>(
-                      segments:
-                          const <ButtonSegment<SupportResistanceMarketMode>>[
-                            ButtonSegment(
-                              value: SupportResistanceMarketMode.spot,
-                              label: Text('Spot'),
-                              icon: Icon(Icons.currency_exchange),
-                            ),
-                            ButtonSegment(
-                              value: SupportResistanceMarketMode.perpetual,
-                              label: Text('Perpetual'),
-                              icon: Icon(Icons.swap_vert),
-                            ),
-                          ],
-                      selected: <SupportResistanceMarketMode>{
-                        selection.marketMode,
-                      },
-                      onSelectionChanged: (selected) {
-                        if (selected.isNotEmpty) {
-                          unawaited(watchlist.setMarketMode(selected.first));
-                        }
-                      },
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: SegmentedButton<SupportResistanceMarketMode>(
+                        segments:
+                            const <ButtonSegment<SupportResistanceMarketMode>>[
+                              ButtonSegment(
+                                value: SupportResistanceMarketMode.spot,
+                                label: Text('Spot'),
+                                icon: Icon(Icons.currency_exchange),
+                              ),
+                              ButtonSegment(
+                                value: SupportResistanceMarketMode.perpetual,
+                                label: Text('Perpetual'),
+                                icon: Icon(Icons.swap_vert),
+                              ),
+                            ],
+                        selected: <SupportResistanceMarketMode>{
+                          selection.marketMode,
+                        },
+                        onSelectionChanged: (selected) {
+                          if (selected.isNotEmpty) {
+                            unawaited(watchlist.setMarketMode(selected.first));
+                          }
+                        },
+                      ),
                     ),
                   ),
                   const SizedBox(height: 12),

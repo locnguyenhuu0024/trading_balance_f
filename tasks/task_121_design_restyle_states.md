@@ -28,14 +28,12 @@ Observed Effective Effort: unavailable
 
 ## Stage instruction (current)
 
-This task runs in stages. Stages 1 and 2 are committed and were reviewed from rendered screenshots.
+Stage 3 is committed as work in progress and reviewed from rendered screenshots. **Current stage 3b, last fixes:**
 
-**Current stage 3 of 3, do exactly this:**
+1. `order_filter_controls_test: tabs and OKX chips remain accessible at narrow width` fails with an assertion because semantics are not enabled. Add `final semantics = tester.ensureSemantics();` at the start and `semantics.dispose();` at the end of the test body.
+2. AUD-121-01: Binance Market chips show raw `SPOT` and `SWAP` and default to Spot; the contract says labels `Spot` and `USDⓈ-M` with USD-M as default. Fix in `market_screen.dart`, keeping values `SPOT` and `SWAP`. Add a test in `market_screen_test.dart` that a Binance selection starts on USD-M and shows both labels.
 
-1. Fix the one failing test, `order_filter_controls_test: tabs and OKX chips remain accessible at narrow width`: the selected tab has no selected flag at the semantics node found. Ensure the tab widget in `order_filter_controls.dart` has `Semantics(container: true, button: true, selected: isSelected, ...)` as its outermost wrapper, excluding child semantics if needed, and find it in the test with `find.bySemanticsLabel('Vị thế')`.
-2. Apply the common rules to the remaining screens, with no logic change: `market_screen.dart` (title `Thị trường`, source row, rows with instrument, price, signed 24h change); `fractal_screen.dart` (title `BMAG` with 48 back control when pushed, source row, existing content); `support_resistance_screen.dart` (title `Hỗ trợ / kháng cự`, source row, existing content); `settings_screen.dart` (title `Cài đặt`, cards with thin borders); `connections_screen.dart`, `connection_catalog_screen.dart`, `binance_connection_form.dart` (left-aligned Bold 24 title with 48 back control, primary 48 button in `ink` with `onStrong`); `account_state_view.dart` and `margin_account_card.dart` (common card rules).
-
-Tests: no overflow at 320 wide at the largest text scale on each of those screens, added to `test/features/connections/design_layout_test.dart`; existing behavior assertions stay, and title-text assertions may change only to the new title. Finish by returning the structured report.
+Finish by returning the structured report.
 
 ## 2. Objective
 

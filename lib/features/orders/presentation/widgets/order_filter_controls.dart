@@ -55,23 +55,28 @@ class OrderFilterControls extends StatelessWidget {
               const SizedBox(key: Key('order-tab-select-icon')),
               for (final option in tabs)
                 Semantics(
+                  container: true,
+                  label: option.$2,
+                  onTap: () => onTabChanged(option.$1),
                   button: true,
                   selected: currentTab == option.$1,
-                  child: TextButton(
-                    onPressed: () => onTabChanged(option.$1),
-                    style: TextButton.styleFrom(
-                      minimumSize: const Size(48, 48),
-                      foregroundColor: textColor,
-                    ),
-                    child: Text(
-                      option.$2,
-                      style: TextStyle(
-                        fontWeight: currentTab == option.$1
-                            ? FontWeight.bold
-                            : FontWeight.normal,
-                        decoration: currentTab == option.$1
-                            ? TextDecoration.underline
-                            : TextDecoration.none,
+                  child: ExcludeSemantics(
+                    child: TextButton(
+                      onPressed: () => onTabChanged(option.$1),
+                      style: TextButton.styleFrom(
+                        minimumSize: const Size(48, 48),
+                        foregroundColor: textColor,
+                      ),
+                      child: Text(
+                        option.$2,
+                        style: TextStyle(
+                          fontWeight: currentTab == option.$1
+                              ? FontWeight.bold
+                              : FontWeight.normal,
+                          decoration: currentTab == option.$1
+                              ? TextDecoration.underline
+                              : TextDecoration.none,
+                        ),
                       ),
                     ),
                   ),

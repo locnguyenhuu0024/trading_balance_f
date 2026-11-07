@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import '../../core/theme/app_theme.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/exchange/exchange_models.dart';
@@ -182,44 +183,71 @@ class _BinanceConnectionFormState extends ConsumerState<BinanceConnectionForm> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Binance')),
-    body: ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        const Text('Tên tài khoản'),
-        const Text('Chính'),
-        const SizedBox(height: 16),
-        if (_hasKeys && !_editing) ...[
-          const Text('Đã lưu khóa'),
+    body: SafeArea(
+      child: ListView(
+        padding: const EdgeInsets.all(24),
+        children: [
+          const Row(
+            children: [
+              BackButton(),
+              Expanded(
+                child: Text(
+                  'Binance',
+                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+          const Text('Tên tài khoản'),
+          const Text('Chính'),
+          const SizedBox(height: 16),
+          if (_hasKeys && !_editing) ...[
+            const Text('Đã lưu khóa'),
+            TextButton(
+              onPressed: _busy ? null : () => setState(() => _editing = true),
+              child: const Text('Thay khóa'),
+            ),
+          ],
+          if (!_hasKeys || _editing)
+            TextField(
+              controller: _key,
+              decoration: const InputDecoration(labelText: 'API key'),
+            ),
+          if (!_hasKeys || _editing)
+            TextField(
+              controller: _secret,
+              obscureText: true,
+              decoration: const InputDecoration(labelText: 'Khóa bí mật'),
+            ),
+          const SizedBox(height: 12),
+          const Text('Dùng khóa chỉ đọc'),
+          if (_message != null) Text(_message!),
           TextButton(
-            onPressed: _busy ? null : () => setState(() => _editing = true),
-            child: const Text('Thay khóa'),
+            onPressed: _busy ? null : _test,
+            child: const Text('Kiểm tra kết nối'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              minimumSize: const Size.fromHeight(48),
+              backgroundColor: AppPalette.forBrightness(
+                Theme.of(context).brightness == Brightness.dark,
+              ).ink,
+              foregroundColor: AppPalette.forBrightness(
+                Theme.of(context).brightness == Brightness.dark,
+              ).onStrong,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            onPressed: _busy ? null : _save,
+            child: const Text('Lưu'),
+          ),
+          TextButton(
+            onPressed: _busy ? null : _delete,
+            child: const Text('Xóa kết nối'),
           ),
         ],
-        if (!_hasKeys || _editing)
-          TextField(
-            controller: _key,
-            decoration: const InputDecoration(labelText: 'API key'),
-          ),
-        if (!_hasKeys || _editing)
-          TextField(
-            controller: _secret,
-            obscureText: true,
-            decoration: const InputDecoration(labelText: 'Khóa bí mật'),
-          ),
-        const SizedBox(height: 12),
-        const Text('Dùng khóa chỉ đọc'),
-        if (_message != null) Text(_message!),
-        TextButton(
-          onPressed: _busy ? null : _test,
-          child: const Text('Kiểm tra kết nối'),
-        ),
-        FilledButton(onPressed: _busy ? null : _save, child: const Text('Lưu')),
-        TextButton(
-          onPressed: _busy ? null : _delete,
-          child: const Text('Xóa kết nối'),
-        ),
-      ],
+      ),
     ),
   );
 }

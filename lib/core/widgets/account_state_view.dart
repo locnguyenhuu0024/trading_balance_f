@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../theme/app_theme.dart';
+
 import '../../features/connections/connections_screen.dart';
 import '../exchange/exchange_models.dart';
 import '../exchange/exchange_registry.dart';
@@ -33,6 +35,15 @@ class AccountStateView extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Center(
     child: Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(
+          color: AppPalette.forBrightness(
+            Theme.of(context).brightness == Brightness.dark,
+          ).border,
+        ),
+      ),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(

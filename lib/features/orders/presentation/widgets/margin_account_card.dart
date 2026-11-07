@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../../core/theme/app_theme.dart';
+
 import '../../../../core/exchange/exchange_models.dart';
 
 class MarginAccountCard extends StatelessWidget {
@@ -12,6 +14,15 @@ class MarginAccountCard extends StatelessWidget {
     final isolated = key != null;
     String value(String? text) => text == null || text.isEmpty ? '—' : text;
     return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(
+          color: AppPalette.forBrightness(
+            Theme.of(context).brightness == Brightness.dark,
+          ).border,
+        ),
+      ),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
