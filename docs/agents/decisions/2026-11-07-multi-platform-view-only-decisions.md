@@ -62,7 +62,18 @@ Decision: "Ngoại trừ task đang chạy, hãy lập lại task theo bộ rule
 Consequence: T116 keeps its dispatched route. Later tasks use `EXECUTOR_ROUTING_POLICY.json` v2. Route changes need fresh approval, per the v1.4.0 rule.
 Impacts: T117..T121, T122.
 
+### D-013 — Web Spot and Margin through a proxy
+Decision: "Làm proxy cho web", after the trade-offs were presented. This is a stated exception to D-003 and narrows D-009's web limit, for Binance Spot and Margin reads on web only. The API key and signature pass through the proxy.
+Impacts: `docs/agents/plans/2026-11-07-binance-web-proxy.md`.
+
+### D-014 — Proxy host and allowed origin
+Decision: nginx on the VPS; web origin `https://app.tradingbalancef.com`.
+
 ## Coordinator Proposals For Approval
+
+### P-006 — Reuse `api.tradingbalancef.com`
+The location goes in the existing server block under `/binance-proxy/`, so no new DNS or certificate is needed.
+
 
 These follow from the decisions above. Accepted by plan approval on 2026-11-07 ("Duyệt, bắt đầu T116").
 
