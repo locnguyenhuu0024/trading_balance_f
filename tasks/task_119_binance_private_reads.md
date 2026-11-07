@@ -28,14 +28,18 @@ Observed Effective Effort: unavailable
 
 ## Stage instruction (current)
 
-This task runs in stages because long runs have ended early. Stage 1 code is committed and reviewed.
+This task runs in stages because long runs have ended early. Stage 1 is committed: keys, signing, private client and classification are tested.
 
-**Current stage 1b, do only these two test fixes in `test/exchanges/binance/binance_private_client_test.dart`:**
+**Current stage 2 of 3, do only this:** steps 3, 4, 5, 6 and 8 of section 6.
 
-1. The test `-1021 resyncs and retries once even if it fails twice` fails because `r.path` holds the full URL with query, so `endsWith('/account')` never matches. Match on the parsed URI path. The client is correct; do not change it.
-2. Replace the standard SHA-256 vector in `HMAC SHA256 signs the exact query` with the published Binance example: secret `NhqPtmdSJYdKjVHjA7PZj4Mge3R5YNiP1e3UZjInClVN65XAbvqqM6A7H5fATj0j`, query `symbol=LTCBTC&side=BUY&type=LIMIT&timeInForce=GTC&quantity=1&price=0.1&recvWindow=5000&timestamp=1499827319559`, expected signature `c8db56825ae71d6d79447849e617115f4a920fa2acdcab2b053c4b2838bd6b71`. That secret is a public documentation example, verified independently by the coordinator.
+- `exchange_models.dart`: add `MarginAccountRow` and `AccountSnapshot.marginRows`.
+- `binance_market.dart` and `binance_client.dart`: add `/api/v3/ticker/price` for valuation prices.
+- `binance_reader.dart`: wallet reads, valuation, positions, pending orders.
+- `binance_adapter.dart`: `BinanceAdapter implements ExchangeAdapter`, plus a provider building `BinancePrivateClient` from stored keys, using `exchangeRequestCoordinatorProvider(ExchangeId.binance)` and `kIsWeb` by default with an injectable platform flag.
 
-Finish by returning the structured report.
+Tests in `binance_reader_test.dart` and `binance_adapter_test.dart`: fixtures USD-M USDT marginBalance `1000.50`, Spot BTC `0.01` at `76000`, Spot USDT `100`, cross ETH netAsset `-0.1` at `2000` give total `1660.50`, not partial; with cross failing, `1860.50`, partial. `-2015` on all wallets is terminal; `-2015` on Margin only leaves the others with a notice and a partial total. An unpriced asset such as `LDUSDT` stays listed and makes the total partial. Web: zero Spot or Margin requests. USD-M position joins `leverage` and `isolated` from `/fapi/v2/account`, with a missing field staying null. Isolated margin row maps `liquidatePrice` and `marginLevel`.
+
+No history in this stage. Finish by returning the structured report.
 
 ## 2. Objective
 

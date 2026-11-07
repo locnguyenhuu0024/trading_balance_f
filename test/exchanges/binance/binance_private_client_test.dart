@@ -65,10 +65,10 @@ void main() {
   test('HMAC SHA256 signs the exact query', () {
     expect(
       BinancePrivateClient.signature(
-        'key',
-        'The quick brown fox jumps over the lazy dog',
+        'NhqPtmdSJYdKjVHjA7PZj4Mge3R5YNiP1e3UZjInClVN65XAbvqqM6A7H5fATj0j',
+        'symbol=LTCBTC&side=BUY&type=LIMIT&timeInForce=GTC&quantity=1&price=0.1&recvWindow=5000&timestamp=1499827319559',
       ),
-      'f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8',
+      'c8db56825ae71d6d79447849e617115f4a920fa2acdcab2b053c4b2838bd6b71',
     );
   });
   test('-2015 is terminal without retry and errors hide secrets', () async {
@@ -98,7 +98,7 @@ void main() {
     );
     expect(fixture.requests.where((r) => r.path.endsWith('/time')).length, 2);
     expect(
-      fixture.requests.where((r) => r.path.endsWith('/account')).length,
+      fixture.requests.where((r) => r.uri.path.endsWith('/account')).length,
       2,
     );
   });
