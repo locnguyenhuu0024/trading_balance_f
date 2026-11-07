@@ -26,24 +26,51 @@ Requested Effort: high
 Observed Effective Model: unavailable
 Observed Effective Effort: unavailable
 
+## Stage instruction (current)
+
+This task runs in stages because long runs have ended early.
+
+**Current stage 1 of 3, do only this:** steps 1 and 2 of section 6, plus credentials.
+
+- `binance_credential_bundle.dart`: key and secret, validated, no logging.
+- `secure_storage_helper.dart` and `WebStorageHelper` in `main.dart`: `BINANCE_API_KEY`, `BINANCE_API_SECRET`, save and clear, and a generation state mirroring `okxCredentialState`. OKX keys are untouched.
+- `exchange_scope.dart`: use the Binance generation when scope is Binance.
+- `binance_private_client.dart`: signing, time offset, the GET allowlist, classification, and the generation fence before and after each fetch.
+
+Tests: the published Binance HMAC example; `-2015` is terminal with no retry; `-1021` retries once after time resync; 429 backs off with `Retry-After`; rotation mid-read drops the result; no secret in any error text; a route outside the allowlist is rejected; a platform-web request to a Spot or Margin private route issues no network call.
+
+Finish by returning the structured report.
+
 ## 2. Objective
 
 A complete Binance adapter reads USD-M, Spot and Margin with signing, credentials, classification, valuation and scoped history, using fake transports.
 
 Done when: All wallet mappings and failure classes pass against documented fixtures. No UI selection is exposed yet.
 
+Complete the work in this run; a long run is normal. Ending without file changes is a failed attempt.
+
 ## 3. Preconditions
 
-Predecessors: T117 = PASS; G1 complete. Decisions: D-009, D-010, P-005.
+Predecessors: T117, T118 = PASS; G1 closed. Decisions: D-009, D-010, P-005.
 Required state: clean checkout on branch `codex/multi-platform-view-only`. Plan revision 2 approved.
 
 ## 4. Allowed Scope
 
-- `lib/exchanges/binance/*`
-- `lib/features/settings/domain/binance_credential_bundle.dart` (new)
-- `lib/core/security/secure_storage_helper.dart` (new Binance keys and generation state mirroring OKX; do not alter OKX keys)
-- `lib/core/exchange/*` (additions only)
-- `test/exchanges/binance/*`, `test/core/security/*`
+Exact write list across stages (new files use exactly these names); each stage may narrow it. Read access covers all non-protected source and tests.
+
+- `lib/features/settings/domain/binance_credential_bundle.dart`
+- `lib/core/security/secure_storage_helper.dart`
+- `lib/main.dart`
+- `lib/core/exchange/exchange_scope.dart`
+- `lib/exchanges/binance/binance_private_client.dart`
+- `test/exchanges/binance/binance_private_client_test.dart`
+- `test/core/security/binance_credentials_test.dart`
+- `lib/exchanges/binance/binance_reader.dart`
+- `lib/exchanges/binance/binance_adapter.dart`
+- `lib/core/exchange/exchange_models.dart`
+- `test/exchanges/binance/binance_reader_test.dart`
+- `test/exchanges/binance/binance_adapter_test.dart`
+- `test/exchanges/binance/binance_history_test.dart`
 
 ## 5. Forbidden Scope
 
@@ -58,13 +85,16 @@ If required work exceeds Allowed Scope, return `BLOCKED`.
 
 ## 6. Executor Contract
 
-1. Sign with HMAC-SHA256 hex over the exact query, appending `signature` last; send `X-MBX-APIKEY`; `recvWindow` 5000; server time offset cached per host.
-2. Allow only GET routes: `/fapi/v3/account`, `/fapi/v2/account`, `/fapi/v3/positionRisk`, `/fapi/v1/openOrders`, `/fapi/v1/allOrders`, `/api/v3/account`, `/api/v3/openOrders`, `/api/v3/allOrders`, `/sapi/v1/margin/account`, `/sapi/v1/margin/isolated/account`, `/sapi/v1/margin/openOrders`, `/sapi/v1/margin/allOrders`, plus the time routes. Adjust only as G1 records.
-3. Inject platform; on web, Spot and Margin return `unavailableOnPlatform` with no request.
-4. Read each wallet independently; merge into `AccountSnapshot`, computing valuation per spec section 6.
-5. Classify errors per spec section 12. `-1021` resyncs and retries once. Back off on 429, `-1003` and 418 using `Retry-After`.
-6. History: select at most 10 symbols in the required order and load sequentially, always sending `symbol`, no time window. Return coverage metadata.
-7. Mirror the credential generation fence before and after each fetch. Never include secrets in errors.
+Design is fixed; mechanism details are yours if they satisfy the invariants and tests. Report what you chose. Stop only for a conflict about product behavior.
+
+1. Sign with HMAC-SHA256 hex over the exact query string, appending `signature` last. Send `X-MBX-APIKEY`, `recvWindow=5000`, `timestamp` from a per-host server time offset using `/fapi/v1/time` and `/api/v3/time`. Use the `crypto` package already imported by `okx_interceptor.dart`. Add no dependency.
+2. GET-only allowlist: `/fapi/v3/account`, `/fapi/v2/account`, `/fapi/v3/positionRisk`, `/fapi/v1/openOrders`, `/fapi/v1/allOrders`, `/api/v3/account`, `/api/v3/openOrders`, `/api/v3/allOrders`, `/sapi/v1/margin/account`, `/sapi/v1/margin/isolated/account`, `/sapi/v1/margin/openOrders`, `/sapi/v1/margin/allOrders`, plus time routes. No write route may exist. Inject the platform; on web, Spot and Margin routes return `unavailableOnPlatform` with no request. Classify per spec section 12: 401, `-2014`, `-2015`, `-2008` credential; `-1021` resync and retry once; `-1022` terminal; 429, `-1003` transient with `Retry-After`; 418 long backoff; 5xx and network transient.
+3. Wallets are read independently: USD-M `/fapi/v3/account`, Spot `/api/v3/account?omitZeroBalances=true`, cross `/sapi/v1/margin/account`, isolated `/sapi/v1/margin/isolated/account`. One failing leaves the others and marks the total partial. Value each row per spec section 6, pricing from `/api/v3/ticker/price` added to the public client allowlist through `binance_market.dart`, with stablecoin USDT as 1. An unpriced row stays listed, excluded from the total, total partial. Hide zero rows. On web the snapshot records USD-M only.
+4. `AccountSnapshot` gains `marginRows`: `MarginAccountRow` for cross (per asset with non-zero net or borrowed) and isolated (per pair with base and quote net, borrowed, interest, `marginLevel`, `marginRatio`, `liquidatePrice`, `indexPrice`).
+5. USD-M positions: `/fapi/v3/positionRisk`, non-zero `positionAmt`. Leverage and margin mode come from `/fapi/v2/account` position rows (`leverage`, `isolated`), joined on symbol and position side. Any missing field stays null. Base and quote come from `exchangeInfo`, never parsed from a display label.
+6. Pending orders: `/fapi/v1/openOrders` without symbol; `/api/v3/openOrders` without symbol; `/sapi/v1/margin/openOrders` without symbol for cross; with `symbol` and `isIsolated=TRUE` per held isolated pair. Respect `orderFilterProvider` values: `SWAP` is USD-M, `SPOT`, `MARGIN`, `ALL`.
+7. History per D-010: select at most 10 symbols in this order: open positions, held assets by descending value, Binance watchlist. Load sequentially, always sending `symbol`, no time window, `limit=100`. Return coverage metadata naming the symbols.
+8. `binance_adapter.dart`: `BinanceAdapter implements ExchangeAdapter`, using `BinanceMarket` for `market`. Do not register it in the default registry; T120 does.
 
 Required invariants and edges: INV-003, INV-004, INV-006; EDGE-004..008, EDGE-010.
 Apply reuse-first, minimal complete changes. Do not invent product semantics. If the contract is insufficient, return `BLOCKED`.

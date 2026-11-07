@@ -46,7 +46,7 @@ None. Live private reads have not been exercised; agents hold no exchange keys.
 
 | ID | Hypothesis | Evidence | Status |
 |---|---|---|---|
-| HYP-001 | `/fapi/v3/positionRisk` returns entry, mark, liquidation and unrealized PnL but not leverage or margin type | Docs page truncated at this section | UNCONFIRMED; closed by gate G1 |
+| HYP-001 | `/fapi/v3/positionRisk` returns entry, mark, liquidation and unrealized PnL but not leverage or margin type | Docs page truncated at this section | UNCONFIRMED; G1 closed by contract: leverage and margin mode come from documented `/fapi/v2/account` rows, any missing field renders `—`, and the user live check verifies real data |
 | HYP-002 | USD-M `allOrders` needs `symbol` | Fetched doc table reads as optional, which contradicts general knowledge | UNCONFIRMED; contract sends `symbol` always, which is valid either way |
 
 ## 3. Scope
