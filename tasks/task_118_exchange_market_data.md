@@ -35,7 +35,7 @@ Done when: With scope set to Binance by provider override, these screens show Bi
 ## 3. Preconditions
 
 Predecessors: T117 = PASS. Decisions: D-005.
-Required state: clean checkout on branch `codex/multi-platform-view-only`. Dispatch only after explicit approval of the currently presented plan.
+Required state: clean checkout on branch `codex/multi-platform-view-only`. Plan revision 2 approved.
 
 ## 4. Allowed Scope
 

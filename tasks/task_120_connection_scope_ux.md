@@ -35,7 +35,7 @@ Done when: OKX and Binance are both registered and selectable, and switching fol
 ## 3. Preconditions
 
 Predecessors: T118 and T119 = PASS. Decisions: D-001, D-004, D-008, D-009, D-010, P-003.
-Required state: clean checkout on branch `codex/multi-platform-view-only`. Dispatch only after explicit approval of the currently presented plan.
+Required state: clean checkout on branch `codex/multi-platform-view-only`. Plan revision 2 approved.
 
 ## 4. Allowed Scope
 

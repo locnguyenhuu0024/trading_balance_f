@@ -35,18 +35,57 @@ Done when: Those screens render through a registered adapter, a fake second adap
 ## 3. Preconditions
 
 Predecessors: T116 = PASS. Decisions: D-001, D-004, D-008.
-Required state: clean checkout on branch `codex/multi-platform-view-only`. Dispatch only after explicit approval of the currently presented plan.
+Required state: clean checkout on branch `codex/multi-platform-view-only`. Plan revision 2 approved.
 
 ## 4. Allowed Scope
 
-- `lib/core/exchange/*` (new)
-- `lib/exchanges/okx/okx_adapter.dart` (new)
-- `lib/core/network/okx_read_scope.dart` (general `runPrivateRead`, keep `runOkxPrivateRead` wrapper)
-- `lib/features/portfolio/presentation/portfolio_screen.dart`, `portfolio_details_screen.dart`, `presentation/providers/portfolio_provider.dart`, `presentation/widgets/*`
-- `lib/features/orders/presentation/orders_screen.dart`, `presentation/providers/order_provider.dart`, read-only widgets under `presentation/widgets/` that render orders
-- `lib/main.dart` (load selected connection at startup)
-- `lib/core/security/secure_storage_helper.dart` (selected connection read and write)
-- `test/core/exchange/*` (new), and existing portfolio and orders tests for wiring only
+Exact write list (new files use exactly these names). Read access covers all non-protected source and tests.
+
+- `lib/core/exchange/exchange_models.dart`
+- `lib/core/exchange/exchange_adapter.dart`
+- `lib/core/exchange/exchange_registry.dart`
+- `lib/core/exchange/exchange_scope.dart`
+- `lib/core/exchange/scoped_read.dart`
+- `lib/exchanges/okx/okx_adapter.dart`
+- `lib/core/network/okx_read_scope.dart`
+- `lib/features/portfolio/presentation/portfolio_screen.dart`
+- `lib/features/portfolio/presentation/portfolio_details_screen.dart`
+- `lib/features/portfolio/presentation/providers/portfolio_provider.dart`
+- `lib/features/portfolio/presentation/widgets/portfolio_currency_amount.dart`
+- `lib/features/orders/presentation/orders_screen.dart`
+- `lib/features/orders/presentation/providers/order_provider.dart`
+- `lib/features/orders/presentation/widgets/order_notional.dart`
+- `lib/features/orders/presentation/widgets/order_filter_controls.dart`
+- `lib/features/orders/presentation/widgets/responsive_order_grid.dart`
+- `lib/main.dart`
+- `lib/core/security/secure_storage_helper.dart`
+- `lib/core/widgets/app_startup.dart`
+- `test/core/exchange/exchange_models_test.dart`
+- `test/core/exchange/exchange_scope_test.dart`
+- `test/core/exchange/okx_adapter_test.dart`
+- `test/support/fake_exchange_adapter.dart`
+- `test/features/portfolio/portfolio_scope_test.dart`
+- `test/features/orders/orders_scope_test.dart`
+- `test/features/portfolio/monochrome_portfolio_preview_test.dart`
+- `test/features/portfolio/portfolio_currency_amount_test.dart`
+- `test/features/portfolio/portfolio_dual_currency_screen_test.dart`
+- `test/features/portfolio/portfolio_loading_test.dart`
+- `test/features/orders/order_filter_controls_test.dart`
+- `test/features/orders/order_provider_defaults_test.dart`
+- `test/features/orders/orders_screen_refresh_test.dart`
+- `test/features/orders/position_actions_test.dart`
+- `test/features/orders/order_cancellation_flow_test.dart`
+- `test/features/orders/backend_position_actions_dialog_test.dart`
+- `test/features/orders/presentation/order_timezone_test.dart`
+- `test/features/orders/presentation/orders_screen_history_layout_test.dart`
+- `test/features/orders/presentation/orders_screen_mobile_layout_test.dart`
+- `test/features/orders/presentation/orders_screen_notional_test.dart`
+- `test/features/orders/presentation/orders_screen_position_layout_test.dart`
+- `test/features/orders/presentation/orders_screen_price_formatting_test.dart`
+- `test/features/orders/presentation/widgets/order_notional_test.dart`
+- `test/core/backend_features_test.dart`
+- `test/core/widgets/app_startup_test.dart`
+- `test/widget_test.dart`
 
 ## 5. Forbidden Scope
 
@@ -61,12 +100,20 @@ If required work exceeds Allowed Scope, return `BLOCKED`.
 
 ## 6. Executor Contract
 
-1. Add neutral types per spec section 6 with text-verbatim numerics.
-2. Add `ExchangeAdapter`, registry, `selectedConnectionProvider`, `exchangeScopeProvider`, and `Provider.family` instances of `RequestCoordinator` and `ForegroundReadGate` per exchange, without changing those two classes.
-3. Implement the OKX adapter by mapping existing repositories and freezed models field by field.
-4. Convert Portfolio and Orders read providers to `autoDispose.family` on `ExchangeScope`, cancelling through the existing lease in `ref.onDispose`.
-5. Reset `orderFilterProvider` and `orderTabProvider` on scope change.
-6. Keep backend-typed widgets OKX-typed and untouched; keep the OKX `totalEq` path.
+Design is fixed; follow it.
+
+1. `exchange_models.dart`: plain Dart types from spec section 6. Numerics are `String?` verbatim. `ExchangePosition` and `ExchangeOrder` carry `Object? native` for the exchange's own record.
+2. `exchange_adapter.dart`: `ExchangeAdapter` with `id`, `capabilities`, `readAccount(Ref, ExchangeScope)`, `readPositions(Ref, ExchangeScope)`, `readOrders(Ref, ExchangeScope)`, plus `invalidateAccount`, `invalidatePositions`, `invalidateOrders`, each taking `void Function(ProviderOrFamily) invalidate`, and `classify(Object error)`.
+3. `exchange_registry.dart`: `exchangeRegistryProvider`, a `Provider<List<ExchangeRegistration>>` holding profile and adapter, defaulting to OKX only. Tests override it with a fake exchange.
+4. `exchange_scope.dart`: `selectedConnectionIdProvider` (`StateProvider<String>`, overridden at startup, unknown value falls back to `okx-default`), `exchangeScopeProvider`, `exchangeRequestCoordinatorProvider` and `exchangeReadGateProvider` as `Provider.family` on `ExchangeId`. For OKX these return the existing `requestCoordinatorProvider` and `okxDirectReadGateProvider`; other exchanges get their own instance. Do not change `RequestCoordinator` or `ForegroundReadGate`.
+5. `scoped_read.dart`: `runPrivateRead` taking the adapter's classifier; `runOkxPrivateRead` stays as a thin wrapper. Add `scopedAccountProvider`, `scopedPositionsProvider`, `scopedOrdersProvider` as `FutureProvider.autoDispose.family` keyed by `ExchangeScope`, each delegating to the adapter from the registry.
+6. `okx_adapter.dart`: `readAccount` does `ref.watch(portfolioFutureProvider.future)` and maps; likewise `positionsFutureProvider` and `ordersFutureProvider`. Keep those three OKX providers and their names, so existing test overrides stay valid and OKX reads keep their fences. Map field by field and put the freezed record in `native`.
+7. Screens watch the scoped family with `ref.watch(exchangeScopeProvider)`. Refresh goes through the adapter's invalidate methods. Never use `.value` from a former scope: a family key change gives a new element, which is why the family is required.
+8. `PortfolioScreen` and `PortfolioDetailsScreen` render from `AccountSnapshot`. Live price valuation stays OKX-only and is reached only when scope is OKX.
+9. `OrdersScreen` cards render from neutral types. Only gate-true backend widgets cast `native` to `OkxPosition` or `OkxOrder`.
+10. Reset filters structurally: `orderFilterProvider` and `orderTabProvider` initial builders `ref.watch(selectedConnectionIdProvider)`.
+11. Add `getSelectedConnectionId` and `saveSelectedConnectionId` to `SecureStorageHelper` and to `WebStorageHelper` in `main.dart`, key `SELECTED_CONNECTION_ID`; load at startup in the same way as other settings, with failure falling back to `okx-default`. No UI for selecting yet.
+12. Add the fake adapter in `test/support/fake_exchange_adapter.dart` and the tests below. Change existing tests only for wiring; do not weaken assertions.
 
 Required invariants and edges: INV-001, INV-002, INV-003, INV-004; EDGE-001, EDGE-003.
 Apply reuse-first, minimal complete changes. Do not invent product semantics. If the contract is insufficient, return `BLOCKED`.

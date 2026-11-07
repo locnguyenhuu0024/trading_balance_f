@@ -35,7 +35,7 @@ Done when: Rendered light and dark review of retained frames passes with no beha
 ## 3. Preconditions
 
 Predecessors: T120 = PASS.
-Required state: clean checkout on branch `codex/multi-platform-view-only`. Dispatch only after explicit approval of the currently presented plan.
+Required state: clean checkout on branch `codex/multi-platform-view-only`. Plan revision 2 approved.
 
 ## 4. Allowed Scope
 
