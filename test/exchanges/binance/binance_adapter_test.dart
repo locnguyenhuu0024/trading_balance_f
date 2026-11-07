@@ -6,25 +6,41 @@ import 'package:trading_balance_f/exchanges/binance/binance_adapter.dart';
 import 'package:trading_balance_f/exchanges/binance/binance_private_client.dart';
 
 void main() {
-  test('margin positions are empty without opening a Binance reader', () async {
-    const adapter = BinanceAdapter();
-    final positions = FutureProvider(
-      (ref) => adapter.readPositions(
-        ref,
-        const ExchangeScope(
-          exchange: ExchangeId.binance,
-          connectionId: 'binance',
-          credentialGeneration: 0,
-          switchEpoch: 0,
-        ),
-      ),
+  for (final filter in ['ALL', 'SWAP', 'MARGIN', 'SPOT']) {
+    test(
+      '$filter positions ${filter == 'ALL' || filter == 'SWAP' ? 'reach' : 'skip'} the reader',
+      () async {
+        const adapter = BinanceAdapter();
+        final sentinel = StateError('reader reached');
+        final positions = FutureProvider(
+          (ref) => adapter.readPositions(
+            ref,
+            const ExchangeScope(
+              exchange: ExchangeId.binance,
+              connectionId: 'binance',
+              credentialGeneration: 0,
+              switchEpoch: 0,
+            ),
+          ),
+        );
+        final container = ProviderContainer(
+          overrides: [
+            orderFilterProvider.overrideWith((ref) => filter),
+            binanceReaderProvider.overrideWith((ref) => throw sentinel),
+          ],
+        );
+        addTearDown(container.dispose);
+        if (filter == 'ALL' || filter == 'SWAP') {
+          await expectLater(
+            container.read(positions.future),
+            throwsA(same(sentinel)),
+          );
+        } else {
+          expect(await container.read(positions.future), isEmpty);
+        }
+      },
     );
-    final container = ProviderContainer(
-      overrides: [orderFilterProvider.overrideWith((ref) => 'MARGIN')],
-    );
-    addTearDown(container.dispose);
-    expect(await container.read(positions.future), isEmpty);
-  });
+  }
   test('adapter identifies Binance and classifies private failures', () {
     const adapter = BinanceAdapter();
     expect(adapter.id, ExchangeId.binance);

@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/exchange/exchange_models.dart';
+import 'package:trading_balance_f/core/widgets/account_state_view.dart';
 import 'package:trading_balance_f/core/exchange/exchange_registry.dart';
 import 'package:trading_balance_f/core/exchange/exchange_scope.dart';
 import 'package:trading_balance_f/exchanges/binance/binance_adapter.dart';
@@ -13,6 +15,9 @@ import 'package:trading_balance_f/features/settings/presentation/settings_screen
 import '../../support/fake_exchange_adapter.dart';
 
 class _Fake extends FakeExchangeAdapter {
+  _Fake({this.accountOverride, this.emptyPositions = false});
+  final Future<AccountSnapshot> Function()? accountOverride;
+  final bool emptyPositions;
   @override
   ExchangeCapabilities get capabilities =>
       const ExchangeCapabilities(readableProducts: ['SWAP', 'SPOT', 'MARGIN']);
@@ -20,7 +25,7 @@ class _Fake extends FakeExchangeAdapter {
   Future<List<ExchangePosition>> readPositions(
     Ref ref,
     ExchangeScope scope,
-  ) async => ref.watch(orderFilterProvider) == 'MARGIN'
+  ) async => emptyPositions || ref.watch(orderFilterProvider) == 'MARGIN'
       ? []
       : [
           const ExchangePosition(
@@ -36,28 +41,39 @@ class _Fake extends FakeExchangeAdapter {
         ];
   @override
   Future<AccountSnapshot> readAccount(Ref ref, ExchangeScope scope) async =>
-      const AccountSnapshot(
-        balances: [AssetBalance(wallet: 'Spot', asset: 'UNKNOWN', total: '1')],
-        marginRows: [
-          MarginAccountRow(asset: 'BTC', net: '2', borrowed: '1'),
-          MarginAccountRow(
-            key: InstrumentKey(
-              exchange: ExchangeId.binance,
-              product: 'MARGIN',
-              nativeId: 'BTCUSDT',
-              base: 'BTC',
-              quote: 'USDT',
+      accountOverride != null
+      ? accountOverride!()
+      : const AccountSnapshot(
+          balances: [
+            AssetBalance(wallet: 'Spot', asset: 'UNKNOWN', total: '1'),
+          ],
+          marginRows: [
+            MarginAccountRow(asset: 'BTC', net: '2', borrowed: '1'),
+            MarginAccountRow(
+              key: InstrumentKey(
+                exchange: ExchangeId.binance,
+                product: 'MARGIN',
+                nativeId: 'BTCUSDT',
+                base: 'BTC',
+                quote: 'USDT',
+              ),
+              baseNet: '3',
+              indexPrice: '4',
             ),
-            baseNet: '3',
-            indexPrice: '4',
-          ),
-        ],
-      );
+          ],
+        );
+}
+
+Future<void> _pumpChip(WidgetTester tester) async {
+  for (var i = 0; i < 5; i++) {
+    await tester.pump(const Duration(milliseconds: 50));
+  }
 }
 
 void main() {
-  for (final proxy in [false, true]) {
-    testWidgets('Binance positions and filters on web proxy=$proxy', (
+  for (final scenario in [(false, false), (true, false), (true, true)]) {
+    final (web, proxy) = scenario;
+    testWidgets('Binance positions and filters web=$web proxy=$proxy', (
       tester,
     ) async {
       final container = ProviderContainer(
@@ -75,7 +91,7 @@ void main() {
               ),
             ],
           ),
-          binanceIsWebProvider.overrideWithValue(true),
+          binanceIsWebProvider.overrideWithValue(web),
           binanceProxyBaseUrlProvider.overrideWithValue(
             proxy ? 'https://proxy.example' : '',
           ),
@@ -94,31 +110,102 @@ void main() {
       expect(find.text('BTCUSDT'), findsNothing);
       expect(find.text('Tất cả'), findsOneWidget);
       expect(find.text('USDⓈ-M'), findsWidgets);
-      expect(find.text('Spot'), proxy ? findsOneWidget : findsNothing);
-      expect(find.text('Margin'), proxy ? findsOneWidget : findsNothing);
+      expect(find.text('Spot'), !web || proxy ? findsOneWidget : findsNothing);
+      expect(
+        find.text('Margin'),
+        !web || proxy ? findsOneWidget : findsNothing,
+      );
       expect(find.textContaining('Cross Margin'), findsOneWidget);
       expect(find.textContaining('Isolated Margin'), findsOneWidget);
       expect(find.textContaining('—'), findsWidgets);
       expect(find.byType(OrderCancellationControl), findsNothing);
-      if (proxy) {
+      if (!web || proxy) {
         await tester.tap(find.text('Margin'));
-        await tester.pump();
-        await tester.pump();
+        await _pumpChip(tester);
         expect(find.textContaining('Cross Margin'), findsOneWidget);
         expect(find.textContaining('Isolated Margin'), findsOneWidget);
         expect(find.text('BTC/USDT'), findsNothing);
         await tester.tap(find.text('USDⓈ-M').first);
-        await tester.pump();
-        await tester.pump();
+        await _pumpChip(tester);
         expect(find.text('BTC/USDT'), findsWidgets);
         expect(find.textContaining('Cross Margin'), findsNothing);
         expect(find.textContaining('Isolated Margin'), findsNothing);
         await tester.tap(find.text('Tất cả'));
-        await tester.pump();
-        await tester.pump();
+        await _pumpChip(tester);
         expect(find.text('BTC/USDT'), findsWidgets);
         expect(find.textContaining('Cross Margin'), findsOneWidget);
       }
+      await tester.pumpWidget(const SizedBox());
+      container.dispose();
+    });
+  }
+  for (final state in ['loading', 'error', 'partial', 'partialRows', 'empty']) {
+    testWidgets('Margin account state: $state', (tester) async {
+      final pending = Completer<AccountSnapshot>();
+      final adapter = _Fake(
+        emptyPositions: true,
+        accountOverride: () => switch (state) {
+          'loading' => pending.future,
+          'error' => Future<AccountSnapshot>.error(Exception('failure')),
+          'partial' => Future.value(
+            const AccountSnapshot(
+              walletResults: [
+                WalletResult(wallet: 'Cross Margin', available: false),
+              ],
+            ),
+          ),
+          'partialRows' => Future.value(
+            const AccountSnapshot(
+              walletResults: [
+                WalletResult(wallet: 'Cross Margin', available: false),
+              ],
+              marginRows: [MarginAccountRow(asset: 'BTC', net: '2')],
+            ),
+          ),
+          _ => Future.value(const AccountSnapshot()),
+        },
+      );
+      final container = ProviderContainer(
+        overrides: [
+          selectedConnectionIdProvider.overrideWith((ref) => 'fake'),
+          exchangeRegistryProvider.overrideWith(
+            (ref) => [
+              ExchangeRegistration(
+                profile: const ConnectionProfile(
+                  connectionId: 'fake',
+                  exchange: ExchangeId.binance,
+                  label: 'Binance',
+                ),
+                adapter: adapter,
+              ),
+            ],
+          ),
+          binanceIsWebProvider.overrideWithValue(true),
+          binanceProxyBaseUrlProvider.overrideWithValue(
+            'https://proxy.example',
+          ),
+          vndExchangeRateProvider.overrideWith((ref) async => 25400),
+        ],
+      );
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const MaterialApp(home: OrdersScreen()),
+        ),
+      );
+      await _pumpChip(tester);
+      await tester.tap(find.text('Margin'));
+      await _pumpChip(tester);
+      expect(
+        find.text('Chưa có vị thế trên Binance'),
+        state == 'empty' ? findsOneWidget : findsNothing,
+      );
+      if (state == 'loading')
+        expect(find.byType(CircularProgressIndicator), findsWidgets);
+      if (state == 'error')
+        expect(find.byType(AccountStateView), findsOneWidget);
+      if (state == 'partial' || state == 'partialRows')
+        expect(find.text('Không thể tải ví Margin chéo'), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
       container.dispose();
     });

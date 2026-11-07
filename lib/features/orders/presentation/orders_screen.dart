@@ -139,6 +139,12 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     if (tab == OrderTab.positions) {
       adapter.invalidatePositions(ref.invalidate);
       ref.invalidate(scopedPositionsProvider(scope));
+      if (scope.exchange == ExchangeId.binance &&
+          (ref.read(orderFilterProvider) == 'ALL' ||
+              ref.read(orderFilterProvider) == 'MARGIN')) {
+        adapter.invalidateAccount(ref.invalidate);
+        ref.invalidate(scopedAccountProvider(scope));
+      }
     } else {
       adapter.invalidateOrders(ref.invalidate);
       ref.invalidate(scopedOrdersProvider(scope));
@@ -345,58 +351,109 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
               color: palette.ink,
               backgroundColor: palette.raised,
               onRefresh: _refreshCurrentRead,
-              child: positionsAsyncValue.when(
-                skipLoadingOnReload: false,
-                loading: () => Center(
-                  child: CircularProgressIndicator(color: palette.ink),
-                ),
-                error: (error, stack) => AccountStateView.fromError(
-                  error: error,
-                  registration: ref
-                      .read(exchangeRegistryProvider)
-                      .firstWhere(
-                        (entry) =>
-                            entry.profile.connectionId ==
-                            ref.read(exchangeScopeProvider).connectionId,
-                      ),
-                  onRetry: _refreshCurrentRead,
-                ),
-                data: (positions) {
-                  final scope = ref.watch(exchangeScopeProvider);
-                  final rows =
-                      scope.exchange == ExchangeId.binance &&
-                          (filter == 'ALL' || filter == 'MARGIN')
-                      ? (ref
-                                .watch(scopedAccountProvider(scope))
-                                .value
-                                ?.marginRows ??
-                            const <MarginAccountRow>[])
-                      : const <MarginAccountRow>[];
-                  if (positions.isEmpty && rows.isEmpty) {
-                    return _buildEmptyState(
-                      scope.exchange == ExchangeId.okx
-                          ? 'Không có vị thế nào đang mở.'
-                          : 'Chưa có vị thế trên ${ref.watch(exchangeRegistryProvider).firstWhere((entry) => entry.profile.connectionId == scope.connectionId).profile.label}',
-                      isDark,
-                    );
-                  }
-                  return ResponsiveOrderGrid(
-                    children: [
-                      ...rows.map((row) => MarginAccountCard(row: row)),
-                      ...positions
-                          .map(
-                            (position) => _buildPositionCard(
-                              position,
-                              isDark,
-                              currency,
-                              exchangeRate,
-                              isBalanceHidden,
+              child: ScrollConfiguration(
+                behavior: const _AlwaysScrollableBehavior(),
+                child: positionsAsyncValue.when(
+                  skipLoadingOnReload: false,
+                  loading: () => _scrollableState(
+                    Center(
+                      child: CircularProgressIndicator(color: palette.ink),
+                    ),
+                  ),
+                  error: (error, stack) => _scrollableState(
+                    AccountStateView.fromError(
+                      error: error,
+                      registration: ref
+                          .read(exchangeRegistryProvider)
+                          .firstWhere(
+                            (entry) =>
+                                entry.profile.connectionId ==
+                                ref.read(exchangeScopeProvider).connectionId,
+                          ),
+                      onRetry: _refreshCurrentRead,
+                    ),
+                  ),
+                  data: (positions) {
+                    final scope = ref.watch(exchangeScopeProvider);
+                    final showMargin =
+                        scope.exchange == ExchangeId.binance &&
+                        (filter == 'ALL' || filter == 'MARGIN');
+                    final accountAsync = showMargin
+                        ? ref.watch(scopedAccountProvider(scope))
+                        : null;
+                    final account = accountAsync?.value;
+                    final rows =
+                        account?.marginRows ?? const <MarginAccountRow>[];
+                    final marginUnavailable =
+                        account?.walletResults.any(
+                          (result) =>
+                              !result.available &&
+                              (result.wallet == 'Cross Margin' ||
+                                  result.wallet == 'Isolated Margin'),
+                        ) ??
+                        false;
+                    final notice = marginUnavailable
+                        ? PartialAccountNotice(
+                            account: account!,
+                            spotMarginAvailable: ref.watch(
+                              binanceSpotMarginAvailableProvider,
                             ),
                           )
-                          .toList(growable: false),
-                    ],
-                  );
-                },
+                        : null;
+                    if (positions.isEmpty && rows.isEmpty) {
+                      if (accountAsync != null) {
+                        if (accountAsync.isLoading && account == null) {
+                          return _scrollableState(
+                            Center(
+                              child: CircularProgressIndicator(
+                                color: palette.ink,
+                              ),
+                            ),
+                          );
+                        }
+                        if (accountAsync.hasError) {
+                          return _scrollableState(
+                            AccountStateView.fromError(
+                              error: accountAsync.error!,
+                              registration: ref
+                                  .read(exchangeRegistryProvider)
+                                  .firstWhere(
+                                    (entry) =>
+                                        entry.profile.connectionId ==
+                                        scope.connectionId,
+                                  ),
+                              onRetry: _refreshCurrentRead,
+                            ),
+                          );
+                        }
+                      }
+                      if (notice != null) return _scrollableState(notice);
+                      return _buildEmptyState(
+                        scope.exchange == ExchangeId.okx
+                            ? 'Không có vị thế nào đang mở.'
+                            : 'Chưa có vị thế trên ${ref.watch(exchangeRegistryProvider).firstWhere((entry) => entry.profile.connectionId == scope.connectionId).profile.label}',
+                        isDark,
+                      );
+                    }
+                    return ResponsiveOrderGrid(
+                      children: [
+                        if (notice != null) notice,
+                        ...rows.map((row) => MarginAccountCard(row: row)),
+                        ...positions
+                            .map(
+                              (position) => _buildPositionCard(
+                                position,
+                                isDark,
+                                currency,
+                                exchangeRate,
+                                isBalanceHidden,
+                              ),
+                            )
+                            .toList(growable: false),
+                      ],
+                    );
+                  },
+                ),
               ),
             ),
           ),
@@ -486,6 +543,13 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       return orderList;
     }
   }
+
+  Widget _scrollableState(Widget child) => LayoutBuilder(
+    builder: (context, constraints) => SingleChildScrollView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      child: SizedBox(height: constraints.maxHeight, child: child),
+    ),
+  );
 
   Widget _buildEmptyState(String message, bool isDark) {
     final palette = AppPalette.forBrightness(isDark);
@@ -1499,4 +1563,12 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       ),
     );
   }
+}
+
+class _AlwaysScrollableBehavior extends MaterialScrollBehavior {
+  const _AlwaysScrollableBehavior();
+
+  @override
+  ScrollPhysics getScrollPhysics(BuildContext context) =>
+      const AlwaysScrollableScrollPhysics();
 }

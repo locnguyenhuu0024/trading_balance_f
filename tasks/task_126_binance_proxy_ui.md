@@ -12,34 +12,25 @@ Parent Route Inheritance: FORBIDDEN
 Specification: `docs/agents/specs/2026-11-07-binance-web-proxy-design.md`
 Plan: `docs/agents/plans/2026-11-07-binance-web-proxy.md`
 
-## Remediation R01 (current instruction)
+## Remediation R02 (current instruction)
 
-The first pass is committed. Items 1 and 2 of the contract in section 6 are done; do not redo them. Coordinator audit found these defects. Fix only these, writing only:
+R01 is committed. Its new test `Margin account state: error` fails on the host, and audit found more. Fix only these, writing only `lib/features/orders/presentation/orders_screen.dart` and `test/features/orders/orders_binance_view_test.dart`.
 
-- `lib/features/orders/presentation/orders_screen.dart`
-- `test/features/orders/orders_binance_view_test.dart`
-- `test/exchanges/binance/binance_adapter_test.dart`
+AUD-126-06, crash. `accountAsync?.value` rethrows when the account read is an error with no previous value, so `OrdersScreen` throws during build: `Exception: failure` at `orders_screen.dart:384`. Use `valueOrNull`. The expected view is `AccountStateView`. Add a test: filter `ALL`, positions present, account read fails: positions still show and nothing throws.
 
-AUD-126-01, false empty state. On the Vị thế tab for Binance with filter `ALL` or `MARGIN`, margin rows come from `scopedAccountProvider`, read with `.value`. When there are no positions and no rows, the screen shows `Chưa có vị thế trên ...` even if that account read is still loading, failed, or lost a margin wallet. The Margin chip always has no positions, so a proxy failure there reads as "no positions". Required rule, for Binance with filter `ALL` or `MARGIN` when positions are empty and rows are empty:
+AUD-126-07, polling after a credential failure. On the Margin chip `readPositions` returns `[]`, so the 5-second timer checks a positions read that can never fail and keeps re-reading the account with a rejected key. Other tabs stop in this case. Required, in both the timer and `_refreshCurrentRead`, for Binance with filter `ALL` or `MARGIN` when the positions read has data:
 
-- Account read loading with no value: the same progress indicator the tab uses.
-- Account read failed: `AccountStateView.fromError` as the positions branch does, with `onRetry: _refreshCurrentRead`.
-- Account data where `walletResults` marks `Cross Margin` or `Isolated Margin` unavailable: `PartialAccountNotice`, not the empty state.
-- Otherwise: the existing empty state.
+- Account read loading: skip this tick.
+- Timer only: `isTerminalAccountFailure` on the account read's error: skip, the same as the existing positions check.
+- A non-terminal account error keeps being retried.
 
-AUD-126-02, silent omission. For Binance with filter `ALL` or `MARGIN`, when rows or positions exist and a margin wallet is unavailable, also show `PartialAccountNotice` on this tab. Pull to refresh must keep working in every state above. OKX, `SWAP` and `SPOT` output is unchanged.
+Do not create an account read for `SWAP`, `SPOT`, or OKX. Tests on the Margin chip with no positions, using a fake that counts `readAccount` calls and whose `classify` returns the credential kind for its error: after pumping past 11 seconds the count stays 1. With a non-terminal error the count grows.
 
-AUD-126-03, unreliable test. `Binance positions and filters on web proxy=true` fails on the host. The screen is correct: a temporary probe with timed pumps showed the cards under Margin. Returning to `Tất cả` re-reads the account. Replace the bare double `pump()` after each chip tap with a small helper that pumps a few times with a short duration. Keep every expectation.
+AUD-126-08, behavior changed beyond scope. Remove `_AlwaysScrollableBehavior` and the `ScrollConfiguration` wrapper: it applies to every exchange and drops platform scroll physics, such as the iOS bounce, and the requirement was that OKX stays unchanged. Restore the original `loading` and `error` widgets of the positions `.when`. Use `_scrollableState` only for the new Binance account states. `ResponsiveOrderGrid` and `_buildEmptyState` already scroll.
 
-AUD-126-04, lost coverage. The first pass replaced the `web=false` case. Restore a native case with no proxy: Spot and Margin chips present. Cover three states: native, web without proxy, web with proxy.
+AUD-126-09, overflow risk. `_scrollableState` uses a fixed `SizedBox(height: constraints.maxHeight)`, which overflows when the content is taller at large text. Use `ConstrainedBox(constraints: BoxConstraints(minHeight: constraints.maxHeight), child: Center(child: child))`. Add a test: account error state at width 320, height 480, text scale 2.0, no exception.
 
-AUD-126-05, adapter coverage. `_Fake` reimplements the filter, so the real adapter is covered only for `MARGIN`. In `binance_adapter_test.dart`, override `binanceReaderProvider` to throw a sentinel and prove `ALL` and `SWAP` reach the reader, while `MARGIN` and `SPOT` return empty without it.
-
-New tests in `orders_binance_view_test.dart`, all on the Margin chip with no positions:
-- account never completes: progress indicator, no empty-state text;
-- account fails: no empty-state text, error view present;
-- `Cross Margin` unavailable: `Không thể tải ví Margin chéo`, no empty-state text;
-- all wallets available and no rows: the empty-state text.
+Keep every other test and all R01 behavior.
 
 ## 1. Dispatch Compliance
 
