@@ -13,6 +13,55 @@ import 'package:trading_balance_f/features/connections/scope_switch_gate.dart';
 import 'package:trading_balance_f/main.dart' show WebStorageHelper;
 
 void main() {
+  testWidgets(
+    'saved secret stays out of text fields and stored keys can be tested',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final storage = WebStorageHelper(await SharedPreferences.getInstance());
+      await tester.runAsync(
+        () => storage.saveBinanceKeys(
+          apiKey: 'saved-key',
+          apiSecret: 'saved-secret',
+        ),
+      );
+      String? testedSecret;
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            secureStorageProvider.overrideWithValue(storage),
+            binanceConnectionTestProvider.overrideWithValue((
+              key,
+              secret,
+            ) async {
+              testedSecret = secret;
+            }),
+          ],
+          child: const MaterialApp(home: BinanceConnectionForm()),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Đã lưu khóa'), findsOneWidget);
+      expect(
+        tester
+            .widgetList<TextField>(find.byType(TextField))
+            .any((field) => field.controller?.text == 'saved-secret'),
+        isFalse,
+      );
+      await tester.tap(find.text('Kiểm tra kết nối'));
+      await tester.pumpAndSettle();
+      expect(testedSecret, 'saved-secret');
+      await tester.tap(find.text('Thay khóa'));
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widgetList<TextField>(find.byType(TextField))
+            .every((field) => field.controller!.text.isEmpty),
+        isTrue,
+      );
+      await tester.pumpWidget(const SizedBox());
+      storage.dispose();
+    },
+  );
   testWidgets('failed test retains input and shows safe failure class', (
     tester,
   ) async {

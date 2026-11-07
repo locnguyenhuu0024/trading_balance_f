@@ -322,6 +322,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _buildAssetSummary(
+          totalMissing: !isOkx && accountData.total == null,
           totalEquity: dynamicTotalEquity,
           baseEquity: baseEquity,
           unrealizedPnl: totalUnrealizedPnl,
@@ -376,7 +377,12 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
                     }
 
                     // Ẩn các loại coin có giá trị nhỏ hơn $0.01 (dust)
-                    if (currentUsdValue < 0.01) return const SizedBox.shrink();
+                    final unpriced =
+                        !isOkx &&
+                        realtimePriceStr == null &&
+                        coin.valueUsdt == null;
+                    if (!unpriced && currentUsdValue < 0.01)
+                      return const SizedBox.shrink();
 
                     return Card(
                       elevation: 0,
@@ -414,7 +420,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
                             const SizedBox(height: 2),
                             Text(
                               _obfuscate(
-                                'SL: ${NumberFormat("#,##0.00##", "en_US").format(eq)}',
+                                'SL: ${!isOkx && coin.total == null ? '—' : NumberFormat("#,##0.00##", "en_US").format(eq)}',
                                 isHidden,
                               ),
                               style: TextStyle(
@@ -435,24 +441,26 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
                             ],
                           ],
                         ),
-                        trailing: PortfolioCurrencyAmount(
-                          usdtAmount: currentUsdValue,
-                          currencyMode: currency,
-                          vndRate: exchangeRate,
-                          hidden: isHidden,
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          textAlign: TextAlign.right,
-                          primaryStyle: TextStyle(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 14,
-                            color: textColor,
-                          ),
-                          secondaryStyle: TextStyle(
-                            fontWeight: FontWeight.w600,
-                            fontSize: 12,
-                            color: subtitleColor,
-                          ),
-                        ),
+                        trailing: unpriced
+                            ? Text(isHidden ? '******' : 'Chưa định giá')
+                            : PortfolioCurrencyAmount(
+                                usdtAmount: currentUsdValue,
+                                currencyMode: currency,
+                                vndRate: exchangeRate,
+                                hidden: isHidden,
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                textAlign: TextAlign.right,
+                                primaryStyle: TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 14,
+                                  color: textColor,
+                                ),
+                                secondaryStyle: TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 12,
+                                  color: subtitleColor,
+                                ),
+                              ),
                       ),
                     );
                   },
@@ -463,6 +471,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
   }
 
   Widget _buildAssetSummary({
+    required bool totalMissing,
     required double totalEquity,
     required double baseEquity,
     required double unrealizedPnl,
@@ -494,23 +503,32 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
         FittedBox(
           fit: BoxFit.scaleDown,
           alignment: Alignment.centerLeft,
-          child: PortfolioCurrencyAmount(
-            usdtAmount: totalEquity,
-            currencyMode: currency,
-            vndRate: exchangeRate,
-            hidden: isHidden,
-            primaryStyle: TextStyle(
-              color: textColor,
-              fontSize: 30,
-              fontWeight: FontWeight.w800,
-              letterSpacing: -0.5,
-            ),
-            secondaryStyle: TextStyle(
-              color: labelColor,
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
+          child: totalMissing
+              ? Text(
+                  isHidden ? '******' : '—',
+                  style: TextStyle(
+                    color: textColor,
+                    fontSize: 30,
+                    fontWeight: FontWeight.w800,
+                  ),
+                )
+              : PortfolioCurrencyAmount(
+                  usdtAmount: totalEquity,
+                  currencyMode: currency,
+                  vndRate: exchangeRate,
+                  hidden: isHidden,
+                  primaryStyle: TextStyle(
+                    color: textColor,
+                    fontSize: 30,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.5,
+                  ),
+                  secondaryStyle: TextStyle(
+                    color: labelColor,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
         ),
       ],
     );
@@ -527,22 +545,25 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
           ),
         ),
         const SizedBox(height: 4),
-        PortfolioCurrencyAmount(
-          usdtAmount: baseEquity,
-          currencyMode: currency,
-          vndRate: exchangeRate,
-          hidden: isHidden,
-          primaryStyle: TextStyle(
-            color: textColor,
-            fontSize: 13,
-            fontWeight: FontWeight.w700,
+        if (totalMissing)
+          Text(isHidden ? '******' : '—')
+        else
+          PortfolioCurrencyAmount(
+            usdtAmount: baseEquity,
+            currencyMode: currency,
+            vndRate: exchangeRate,
+            hidden: isHidden,
+            primaryStyle: TextStyle(
+              color: textColor,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+            ),
+            secondaryStyle: TextStyle(
+              color: labelColor,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
           ),
-          secondaryStyle: TextStyle(
-            color: labelColor,
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
       ],
     );
 

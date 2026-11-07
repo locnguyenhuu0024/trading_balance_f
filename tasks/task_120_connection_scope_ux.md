@@ -28,14 +28,18 @@ Observed Effective Effort: unavailable
 
 ## Stage instruction (current)
 
-This task runs in stages. Stages A and B are committed and verified except one finding below.
+This task runs in stages. Stages A, B and C1 are committed. C1 code is verified; one test fixture below needs alignment.
 
-**Current stage C1, do exactly this:**
+**Current stage C2, the last stage of this task, do exactly this:**
 
-1. AUD-120-04: `binance_connection_form.dart` loads the saved secret back into a text field. Do not load saved key or secret into the UI. When keys exist, show `Đã lưu khóa` with `Thay khóa` and `Xóa kết nối`; entry fields start empty. `Kiểm tra kết nối` uses entered values if present, otherwise the stored keys.
-2. Steps 10, 11, 12 of section 6, and the `—` and `Chưa định giá` part of step 13. New widget `lib/features/orders/presentation/widgets/margin_account_card.dart`. Existing OKX cards, keys and layout stay the same.
+1. In `test/features/orders/orders_scope_test.dart`, the fake instrument `FAKE-USDT-SWAP` uses `ExchangeId.binance` with no base and quote, so it now correctly displays the id unsplit. Add `base: 'FAKE', quote: 'USDT'` to the fixture and expect the `FAKE/USDT` label instead of `FAKEUSDT`. Keep the assertion that `LATEUSDT` is absent.
+2. New widget `lib/core/widgets/account_state_view.dart`, used for step 14: `AccountStateView.fromError` uses the adapter's `classify`. Credential failure shows `Cần kiểm tra lại kết nối`, naming the affected connection, with `Kiểm tra kết nối` opening that connection's form. Other failures show a Vietnamese generic message with `Thử lại`. Raw exception text never appears. Replace `Lỗi: $error` at both sites in `orders_screen.dart`, `Lỗi kết nối: $errorMessage` in `portfolio_screen.dart` and `Lỗi tải dữ liệu:\\n$err` in `market_screen.dart`.
+3. Automatic refresh stops on terminal failure for every exchange: OKX keeps `isTerminalOkxReadFailure`, other exchanges use `classify` with a credential result.
+4. `portfolio_screen.dart` and `portfolio_details_screen.dart`: partial total shows `Chưa đầy đủ`, with one Vietnamese line per unavailable wallet from `walletResults`, and on web `Spot và Margin chỉ có trên ứng dụng`. Do not show English issue text. OKX screens stay as they are.
+5. Empty positions on a selected exchange: `Chưa có vị thế trên <exchange>`, as in the design; OKX empty copy may stay as it is if existing tests assert it.
+6. Binance history tab shows the covered symbols from `binanceHistorySymbolsProvider`, for example `Lịch sử của: BTCUSDT, ETHUSDT`, and a coverage explanation when there are none.
 
-Tests in `orders_binance_view_test.dart`, using a fake adapter returning a `BTCUSDT` position with base and quote: card shows `BTC` and `BTC/USDT`-style label from metadata, never splitting the id; filter shows Binance chips, and web shows only `Tất cả` and `USDⓈ-M`; cross and isolated margin cards show values and `—` for absent values, with no close control; an absent balance total shows `—`, not `0.00`; an unpriced row shows `Chưa định giá`. Add a form test that the saved secret is not in any text field. Use `tester.runAsync` for real async, and dispose semantics handles in the test body. Finish by returning the structured report.
+Tests in `test/features/connections/account_state_test.dart`: expired Binance shows the repair action and OKX stays selectable from the picker; a raw exception string containing `secret` is never shown; `Thử lại` re-reads; partial total and Vietnamese wallet lines; web app-only line; history coverage line; automatic refresh makes no further read after a credential failure. Use `tester.runAsync` for real async, and dispose semantics handles in the test body. Finish by returning the structured report.
 
 ## 2. Objective
 

@@ -204,22 +204,25 @@ class _DetailsContent extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 5),
-                  PortfolioCurrencyAmount(
-                    usdtAmount: total,
-                    currencyMode: currency,
-                    vndRate: exchangeRate,
-                    hidden: hidden,
-                    primaryStyle: TextStyle(
-                      color: textColor,
-                      fontSize: 26,
-                      fontWeight: FontWeight.w800,
+                  if (!isOkx && account.total == null)
+                    Text(hidden ? '******' : '—')
+                  else
+                    PortfolioCurrencyAmount(
+                      usdtAmount: total,
+                      currencyMode: currency,
+                      vndRate: exchangeRate,
+                      hidden: hidden,
+                      primaryStyle: TextStyle(
+                        color: textColor,
+                        fontSize: 26,
+                        fontWeight: FontWeight.w800,
+                      ),
+                      secondaryStyle: TextStyle(
+                        color: subtitle,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
-                    secondaryStyle: TextStyle(
-                      color: subtitle,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
                   const SizedBox(height: 10),
                   Text(
                     'Principal / base capital',
@@ -230,23 +233,29 @@ class _DetailsContent extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 4),
-                  PortfolioCurrencyAmount(
-                    key: const Key('portfolio-principal-base'),
-                    usdtAmount: base,
-                    currencyMode: currency,
-                    vndRate: exchangeRate,
-                    hidden: hidden,
-                    primaryStyle: TextStyle(
-                      color: textColor,
-                      fontSize: 17,
-                      fontWeight: FontWeight.w800,
+                  if (!isOkx && account.total == null)
+                    Text(
+                      hidden ? '******' : '—',
+                      key: const Key('portfolio-principal-base'),
+                    )
+                  else
+                    PortfolioCurrencyAmount(
+                      key: const Key('portfolio-principal-base'),
+                      usdtAmount: base,
+                      currencyMode: currency,
+                      vndRate: exchangeRate,
+                      hidden: hidden,
+                      primaryStyle: TextStyle(
+                        color: textColor,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                      ),
+                      secondaryStyle: TextStyle(
+                        color: subtitle,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
-                    secondaryStyle: TextStyle(
-                      color: subtitle,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
                   const SizedBox(height: 14),
                   if (!pnlRevealed)
                     OutlinedButton.icon(
@@ -281,6 +290,7 @@ class _DetailsContent extends StatelessWidget {
             for (final coin in account.balances)
               _BalanceTile(
                 coin: coin,
+                isOkx: isOkx,
                 value: values[coin],
                 currency: currency,
                 exchangeRate: exchangeRate,
@@ -360,6 +370,7 @@ class _PnlBlock extends StatelessWidget {
 class _BalanceTile extends StatelessWidget {
   const _BalanceTile({
     required this.coin,
+    required this.isOkx,
     required this.value,
     required this.currency,
     required this.exchangeRate,
@@ -367,6 +378,7 @@ class _BalanceTile extends StatelessWidget {
   });
 
   final AssetBalance coin;
+  final bool isOkx;
   final double? value;
   final String currency;
   final double exchangeRate;
@@ -400,11 +412,11 @@ class _BalanceTile extends StatelessWidget {
         subtitle: Text(
           hidden
               ? '******'
-              : 'Qty ${NumberFormat('#,##0.########', 'en_US').format(eq ?? 0)}',
+              : 'Qty ${!isOkx && eq == null ? '—' : NumberFormat('#,##0.########', 'en_US').format(eq ?? 0)}',
           style: TextStyle(color: subtitle, fontSize: 12),
         ),
         trailing: value == null
-            ? const Text('-')
+            ? Text(hidden ? '******' : (isOkx ? '-' : 'Chưa định giá'))
             : PortfolioCurrencyAmount(
                 usdtAmount: value!,
                 currencyMode: currency,

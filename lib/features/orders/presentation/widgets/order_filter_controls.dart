@@ -11,8 +11,10 @@ class OrderFilterControls extends StatelessWidget {
     required this.isDark,
     required this.onTabChanged,
     required this.onFilterChanged,
+    this.binanceProducts,
   });
 
+  final List<String>? binanceProducts;
   final OrderTab currentTab;
   final String currentFilter;
   final bool isDark;
@@ -99,6 +101,31 @@ class OrderFilterControls extends StatelessWidget {
       ),
     );
 
+    if (binanceProducts != null) {
+      final options = <(String, String)>[
+        ('ALL', 'Tất cả'),
+        if (binanceProducts!.contains('SWAP')) ('SWAP', 'USDⓈ-M'),
+        if (binanceProducts!.contains('SPOT')) ('SPOT', 'Spot'),
+        if (binanceProducts!.contains('MARGIN')) ('MARGIN', 'Margin'),
+      ];
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(width: 140, child: tabSelect),
+          Wrap(
+            spacing: 6,
+            children: [
+              for (final option in options)
+                ChoiceChip(
+                  label: Text(option.$2),
+                  selected: currentFilter == option.$1,
+                  onSelected: (_) => onFilterChanged(option.$1),
+                ),
+            ],
+          ),
+        ],
+      );
+    }
     final filterSelect = Semantics(
       label: 'Loại giao dịch',
       value: currentFilter,

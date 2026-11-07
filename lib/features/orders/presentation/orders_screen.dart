@@ -29,10 +29,24 @@ import '../../portfolio/presentation/widgets/portfolio_currency_amount.dart';
 import '../../settings/presentation/settings_screen.dart'
     show currencyProvider, vndExchangeRateProvider;
 import 'widgets/order_filter_controls.dart';
+import 'widgets/margin_account_card.dart';
+import '../../../exchanges/binance/binance_adapter.dart';
 import 'widgets/order_notional.dart';
 import 'widgets/order_cancellation_control.dart';
 import 'widgets/responsive_order_grid.dart';
 import 'widgets/trade_account_controls.dart';
+
+String _instrumentBase(InstrumentKey key) =>
+    key.base ??
+    (key.exchange == ExchangeId.okx
+        ? key.nativeId.split('-').first
+        : key.nativeId);
+String _instrumentLabel(InstrumentKey key) =>
+    key.exchange != ExchangeId.okx && key.base != null && key.quote != null
+    ? '${key.base}/${key.quote}'
+    : (key.exchange == ExchangeId.okx
+          ? key.nativeId.split('-').take(2).join()
+          : key.nativeId);
 
 String formatOrderTimestamp(String rawTimestamp, String timeZoneId) {
   final timestampMs = int.tryParse(rawTimestamp);
@@ -159,6 +173,23 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
         ? kToolbarHeight + (textScale - 1) * 24
         : kToolbarHeight;
     final filterControls = OrderFilterControls(
+      binanceProducts: scope.exchange == ExchangeId.binance
+          ? ref
+                .watch(exchangeRegistryProvider)
+                .firstWhere(
+                  (entry) =>
+                      entry.profile.connectionId == scope.connectionId &&
+                      entry.profile.exchange == scope.exchange,
+                )
+                .adapter
+                .capabilities
+                .readableProducts
+                .where(
+                  (product) =>
+                      !ref.watch(binanceIsWebProvider) || product == 'SWAP',
+                )
+                .toList()
+          : null,
       currentTab: currentTab,
       currentFilter: currentFilter,
       isDark: isDark,
@@ -320,24 +351,37 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                   ),
                 ),
                 data: (positions) {
-                  if (positions.isEmpty) {
+                  final scope = ref.watch(exchangeScopeProvider);
+                  final rows =
+                      scope.exchange == ExchangeId.binance &&
+                          (filter == 'ALL' || filter == 'MARGIN')
+                      ? (ref
+                                .watch(scopedAccountProvider(scope))
+                                .value
+                                ?.marginRows ??
+                            const <MarginAccountRow>[])
+                      : const <MarginAccountRow>[];
+                  if (positions.isEmpty && rows.isEmpty) {
                     return _buildEmptyState(
                       'Không có vị thế nào đang mở.',
                       isDark,
                     );
                   }
                   return ResponsiveOrderGrid(
-                    children: positions
-                        .map(
-                          (position) => _buildPositionCard(
-                            position,
-                            isDark,
-                            currency,
-                            exchangeRate,
-                            isBalanceHidden,
-                          ),
-                        )
-                        .toList(growable: false),
+                    children: [
+                      ...rows.map((row) => MarginAccountCard(row: row)),
+                      ...positions
+                          .map(
+                            (position) => _buildPositionCard(
+                              position,
+                              isDark,
+                              currency,
+                              exchangeRate,
+                              isBalanceHidden,
+                            ),
+                          )
+                          .toList(growable: false),
+                    ],
                   );
                 },
               ),
@@ -586,10 +630,8 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       hidden: isBalanceHidden,
     );
 
-    final String baseCoin = position.key.nativeId.split('-').isNotEmpty
-        ? position.key.nativeId.split('-').first
-        : '?';
-    final instrumentLabel = position.key.nativeId.split('-').take(2).join();
+    final baseCoin = _instrumentBase(position.key);
+    final instrumentLabel = _instrumentLabel(position.key);
     final instrumentType = position.productLabel.toUpperCase();
 
     // Bảng màu cho Card
@@ -919,8 +961,8 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       (order.createdAtMs ?? ''),
       timeZoneId,
     );
-    final baseCoin = order.key.nativeId.split('-').first;
-    final instrumentLabel = order.key.nativeId.split('-').take(2).join();
+    final baseCoin = _instrumentBase(order.key);
+    final instrumentLabel = _instrumentLabel(order.key);
     final cardColor = palette.raised;
     final borderColor = palette.border;
     final textColor = palette.ink;
@@ -1206,10 +1248,8 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       timeZoneId,
     );
 
-    final String baseCoin = order.key.nativeId.split('-').isNotEmpty
-        ? order.key.nativeId.split('-').first
-        : '?';
-    final instrumentLabel = order.key.nativeId.split('-').take(2).join();
+    final baseCoin = _instrumentBase(order.key);
+    final instrumentLabel = _instrumentLabel(order.key);
     final instrumentType = order.productLabel.toUpperCase();
     final leverage =
         (order.leverage ?? '').isNotEmpty && (order.leverage ?? '') != '0'

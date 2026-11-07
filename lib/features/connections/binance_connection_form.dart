@@ -66,6 +66,8 @@ class _BinanceConnectionFormState extends ConsumerState<BinanceConnectionForm> {
   final _key = TextEditingController();
   final _secret = TextEditingController();
   bool _busy = false;
+  bool _hasKeys = false;
+  bool _editing = false;
   String? _message;
 
   @override
@@ -79,8 +81,10 @@ class _BinanceConnectionFormState extends ConsumerState<BinanceConnectionForm> {
     final key = await storage.getBinanceApiKey();
     final secret = await storage.getBinanceApiSecret();
     if (!mounted) return;
-    if (_key.text.isEmpty) _key.text = key ?? '';
-    if (_secret.text.isEmpty) _secret.text = secret ?? '';
+    setState(
+      () => _hasKeys =
+          (key?.isNotEmpty ?? false) && (secret?.isNotEmpty ?? false),
+    );
   }
 
   @override
@@ -96,9 +100,14 @@ class _BinanceConnectionFormState extends ConsumerState<BinanceConnectionForm> {
       _message = null;
     });
     try {
+      final storage = ref.read(secureStorageProvider);
+      final key = _key.text.trim();
+      final secret = _secret.text.trim();
       await ref.read(binanceConnectionTestProvider)(
-        _key.text.trim(),
-        _secret.text.trim(),
+        key.isNotEmpty ? key : (await storage.getBinanceApiKey() ?? ''),
+        secret.isNotEmpty
+            ? secret
+            : (await storage.getBinanceApiSecret() ?? ''),
       );
       if (mounted) setState(() => _message = 'Kết nối thành công');
     } catch (error) {
@@ -180,15 +189,24 @@ class _BinanceConnectionFormState extends ConsumerState<BinanceConnectionForm> {
         const Text('Tên tài khoản'),
         const Text('Chính'),
         const SizedBox(height: 16),
-        TextField(
-          controller: _key,
-          decoration: const InputDecoration(labelText: 'API key'),
-        ),
-        TextField(
-          controller: _secret,
-          obscureText: true,
-          decoration: const InputDecoration(labelText: 'Khóa bí mật'),
-        ),
+        if (_hasKeys && !_editing) ...[
+          const Text('Đã lưu khóa'),
+          TextButton(
+            onPressed: _busy ? null : () => setState(() => _editing = true),
+            child: const Text('Thay khóa'),
+          ),
+        ],
+        if (!_hasKeys || _editing)
+          TextField(
+            controller: _key,
+            decoration: const InputDecoration(labelText: 'API key'),
+          ),
+        if (!_hasKeys || _editing)
+          TextField(
+            controller: _secret,
+            obscureText: true,
+            decoration: const InputDecoration(labelText: 'Khóa bí mật'),
+          ),
         const SizedBox(height: 12),
         const Text('Dùng khóa chỉ đọc'),
         if (_message != null) Text(_message!),
