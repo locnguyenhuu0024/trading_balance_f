@@ -12,7 +12,22 @@ Parent Route Inheritance: FORBIDDEN
 Specification: `docs/agents/specs/2026-11-07-binance-estimated-pnl-design.md`
 Plan: `docs/agents/plans/2026-11-07-binance-estimated-pnl.md`
 
-## 1. Dispatch Compliance
+## Remediation R01 (current instruction)
+
+The first pass is committed. Do not redo it. Fix only these, writing only `lib/exchanges/binance/binance_estimated_pnl.dart`, `lib/features/portfolio/presentation/portfolio_screen.dart`, `lib/features/orders/presentation/orders_screen.dart`, `test/exchanges/binance/binance_estimated_pnl_test.dart`, `test/features/portfolio/portfolio_scope_test.dart` and `test/features/orders/orders_binance_view_test.dart`.
+
+AUD-130-01, false state during a run. `BinanceCostController.run` returns at once when a run is in progress, so the second screen sets `_costFinished` while `view.loading` is true and its symbols are still empty. Rows then show `Chưa tính`, and the Assets summary shows `Chưa đủ dữ liệu giá vốn`, until the run ends. Required: while `view.loading` is true and a symbol has no entry, show nothing, and show no summary. `view.loading` must count as not finished. Entries that already exist keep showing. Add tests: a loading view with empty symbols gives no row and no summary; after loading ends, the states appear.
+
+AUD-130-02, manual refresh reads too much. `_refreshCurrentRead` in `orders_screen.dart` awaits `scopedAccountProvider(scope).future` in its `finally`. That holds `_manualRefreshInFlight` open and creates an account read under `USDⓈ-M`, where none is otherwise needed. Follow the Assets screen: read `.valueOrNull`, start the run only for Binance with filter `ALL` or `MARGIN` when a value exists, and do not await the account. Add a test: pull to refresh under `USDⓈ-M` calls `readAccount` no additional time.
+
+AUD-130-03, missing tests from section 8:
+- TEST-130-6: OKX on Assets and Orders shows no estimate text, and `binanceCostStateProvider` and the controller are not built. Override the controller provider so that building it fails the test.
+- TEST-130-7: the controller provider fails: total, USDⓈ-M line, balance rows and margin cards still show, with no exception and no estimate text.
+- TEST-130-8 on Assets: a row with the longest text, partial coverage plus `chưa cập nhật`, at width 320 and text scale 2.0, with no exception.
+
+Keep every other test and behavior.
+
+
 
 The dispatcher passes `--model` and `model_reasoning_effort` on your command line, and your prompt states the route. `UNVERIFIABLE` is a valid state; do not stop for it.
 

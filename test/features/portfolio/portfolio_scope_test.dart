@@ -1,4 +1,7 @@
 import 'dart:async';
+import 'package:trading_balance_f/exchanges/binance/binance_adapter.dart';
+import 'package:trading_balance_f/exchanges/binance/binance_trade_history.dart';
+import 'package:trading_balance_f/exchanges/binance/binance_cost_basis.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -50,13 +53,101 @@ class _SnapshotAdapter extends FakeExchangeAdapter {
       snapshot;
 }
 
+class _CostController implements BinanceCostController {
+  int runs = 0;
+  @override
+  Future<void> run(AccountSnapshot account) async {
+    runs++;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 void main() {
+  testWidgets(
+    'estimates stay separate from USD-M and polling does not run history',
+    (tester) async {
+      final controller = _CostController();
+      const snapshot = AccountSnapshot(
+        total: '1200',
+        balances: [
+          AssetBalance(
+            wallet: 'USD-M',
+            asset: 'USDT',
+            total: '1100',
+            valueUsdt: '1100',
+            unrealizedPnl: '100',
+          ),
+          AssetBalance(
+            wallet: 'Spot',
+            asset: 'BTC',
+            total: '1',
+            valueUsdt: '100',
+          ),
+        ],
+      );
+      const view = BinanceCostView(
+        symbols: {
+          'Spot:BTCUSDT': BinanceSymbolCost(
+            CostState(quantity: 1, cost: 80),
+            completed: true,
+          ),
+        },
+      );
+      final container = ProviderContainer(
+        overrides: [
+          selectedConnectionIdProvider.overrideWith((ref) => 'test'),
+          exchangeRegistryProvider.overrideWith(
+            (ref) => [
+              ExchangeRegistration(
+                profile: const ConnectionProfile(
+                  connectionId: 'test',
+                  exchange: ExchangeId.binance,
+                  label: 'Binance',
+                ),
+                adapter: _SnapshotAdapter(snapshot),
+              ),
+            ],
+          ),
+          binanceCostControllerProvider.overrideWith((ref) async => controller),
+          binanceCostStateProvider.overrideWith((ref) => Stream.value(view)),
+          vndExchangeRateProvider.overrideWith((ref) async => 25400),
+        ],
+      );
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const MaterialApp(home: PortfolioScreen()),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('(+10.00%)'), findsOneWidget);
+      expect(find.textContaining('Ước tính Spot · Margin:'), findsOneWidget);
+      expect(find.text('Tính trên 1/1 tài sản'), findsOneWidget);
+      expect(find.textContaining('Giá vốn TB 80.00'), findsOneWidget);
+      expect(controller.runs, 1);
+      await tester.pump(const Duration(seconds: 6));
+      await tester.pump();
+      await tester.pump();
+      expect(controller.runs, 1);
+      container.read(hideBalanceProvider.notifier).state = true;
+      await tester.pump();
+      expect(find.textContaining('Giá vốn TB'), findsNothing);
+      expect(find.textContaining('Ước tính Spot · Margin'), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+      container.dispose();
+    },
+  );
   for (final details in [false, true]) {
     for (final scenario in ['binance', 'no-usdm', 'okx']) {
       testWidgets('PnL scope $scenario ${details ? "details" : "home"}', (
         tester,
       ) async {
         final isOkx = scenario == 'okx';
+        var costReads = 0;
         final noUsdm = scenario == 'no-usdm';
         final snapshot = AccountSnapshot(
           total: '2000',
@@ -79,6 +170,11 @@ void main() {
         );
         final container = ProviderContainer(
           overrides: [
+            if (isOkx)
+              binanceCostStateProvider.overrideWith((ref) {
+                costReads++;
+                return Stream.value(const BinanceCostView());
+              }),
             selectedConnectionIdProvider.overrideWith((ref) => 'test'),
             exchangeRegistryProvider.overrideWith(
               (ref) => [
@@ -138,6 +234,7 @@ void main() {
           );
         }
         if (!noUsdm) expect(find.text(r'$1,900.00'), findsOneWidget);
+        if (isOkx) expect(costReads, 0);
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox.shrink());
         container.dispose();

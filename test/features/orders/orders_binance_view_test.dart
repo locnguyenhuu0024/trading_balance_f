@@ -1,4 +1,8 @@
 import 'dart:async';
+import 'package:trading_balance_f/features/orders/presentation/widgets/margin_account_card.dart';
+import 'package:trading_balance_f/exchanges/binance/binance_estimated_pnl.dart';
+import 'package:trading_balance_f/exchanges/binance/binance_cost_basis.dart';
+import 'package:trading_balance_f/exchanges/binance/binance_trade_history.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -73,6 +77,17 @@ class _Fake extends FakeExchangeAdapter {
   }
 }
 
+class _CostController implements BinanceCostController {
+  int runs = 0;
+  @override
+  Future<void> run(AccountSnapshot account) async {
+    runs++;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 Future<void> _pumpChip(WidgetTester tester) async {
   for (var i = 0; i < 5; i++) {
     await tester.pump(const Duration(milliseconds: 50));
@@ -80,6 +95,119 @@ Future<void> _pumpChip(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets(
+    'margin estimates hide and account polling does not run history',
+    (tester) async {
+      final controller = _CostController();
+      final adapter = _Fake(
+        accountOverride: () async => const AccountSnapshot(
+          balances: [
+            AssetBalance(
+              wallet: 'Cross Margin',
+              asset: 'BTC',
+              net: '1',
+              valueUsdt: '110',
+              interest: '0',
+            ),
+          ],
+          marginRows: [MarginAccountRow(asset: 'BTC', net: '1', interest: '0')],
+        ),
+      );
+      final container = ProviderContainer(
+        overrides: [
+          selectedConnectionIdProvider.overrideWith((ref) => 'fake'),
+          exchangeRegistryProvider.overrideWith(
+            (ref) => [
+              ExchangeRegistration(
+                profile: const ConnectionProfile(
+                  connectionId: 'fake',
+                  exchange: ExchangeId.binance,
+                  label: 'Binance',
+                ),
+                adapter: adapter,
+              ),
+            ],
+          ),
+          binanceCostControllerProvider.overrideWith((ref) async => controller),
+          binanceCostStateProvider.overrideWith(
+            (ref) => Stream.value(
+              const BinanceCostView(
+                symbols: {
+                  'Cross Margin:BTCUSDT': BinanceSymbolCost(
+                    CostState(quantity: 1, cost: 100, isMargin: true),
+                    completed: true,
+                  ),
+                },
+              ),
+            ),
+          ),
+          vndExchangeRateProvider.overrideWith((ref) async => 25400),
+        ],
+      );
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const MaterialApp(home: OrdersScreen()),
+        ),
+      );
+      await _pumpChip(tester);
+      expect(find.textContaining('Giá vốn TB 100.00'), findsOneWidget);
+      expect(controller.runs, 1);
+      await tester.pump(const Duration(seconds: 6));
+      await _pumpChip(tester);
+      expect(controller.runs, 1);
+      container.read(hideBalanceProvider.notifier).state = true;
+      await tester.pump();
+      expect(find.textContaining('Giá vốn TB'), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+      container.dispose();
+    },
+  );
+  testWidgets('margin estimate wraps at 320 and large text', (tester) async {
+    tester.view.physicalSize = const Size(320, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    const row = MarginAccountRow(
+      key: InstrumentKey(
+        exchange: ExchangeId.binance,
+        product: 'MARGIN',
+        nativeId: 'BTCUSDT',
+        base: 'BTC',
+        quote: 'USDT',
+      ),
+      baseNet: '4',
+      indexPrice: '110',
+    );
+    const view = BinanceCostView(
+      symbols: {
+        'Isolated Margin:BTCUSDT': BinanceSymbolCost(
+          CostState(quantity: 1, cost: 100, isMargin: true),
+          completed: true,
+        ),
+      },
+    );
+    final text = estimatedPnlText(
+      estimatedMargin(view, true, row, const AccountSnapshot())!,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MediaQuery(
+          data: const MediaQueryData(
+            size: Size(320, 900),
+            textScaler: TextScaler.linear(2),
+          ),
+          child: Scaffold(
+            body: SingleChildScrollView(
+              child: MarginAccountCard(row: row, estimateText: text),
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(find.textContaining('tính trên 25% lượng'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
   for (final scenario in [(false, false), (true, false), (true, true)]) {
     final (web, proxy) = scenario;
     testWidgets('Binance positions and filters web=$web proxy=$proxy', (

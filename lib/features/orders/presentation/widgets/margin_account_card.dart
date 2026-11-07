@@ -5,8 +5,9 @@ import '../../../../core/theme/app_theme.dart';
 import '../../../../core/exchange/exchange_models.dart';
 
 class MarginAccountCard extends StatelessWidget {
-  const MarginAccountCard({super.key, required this.row});
+  const MarginAccountCard({super.key, required this.row, this.estimateText});
   final MarginAccountRow row;
+  final String? estimateText;
 
   @override
   Widget build(BuildContext context) {
@@ -45,6 +46,7 @@ class MarginAccountCard extends StatelessWidget {
               Text('Vay: ${value(row.borrowed)}'),
               Text('Lãi vay: ${value(row.interest)}'),
             ],
+            if (estimateText != null) Text(estimateText!),
             Text('Mức ký quỹ: ${value(row.marginLevel)}'),
             if (isolated) ...[
               Text('Giá thanh lý: ${value(row.liquidation)}'),

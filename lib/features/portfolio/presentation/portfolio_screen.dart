@@ -1,6 +1,8 @@
 import '../../../core/widgets/scope_bar.dart';
 import '../../../core/widgets/account_state_view.dart';
 import '../../../exchanges/binance/binance_adapter.dart';
+import '../../../exchanges/binance/binance_estimated_pnl.dart';
+import '../../../exchanges/binance/binance_trade_history.dart';
 // File Name: portfolio_screen.dart
 // File Path: lib/features/portfolio/presentation/portfolio_screen.dart
 
@@ -50,6 +52,25 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
   List<String>? _pendingCoins;
   OkxWebsocketService? _tickerService;
   Timer? _refreshTimer;
+  ExchangeScope? _costScope;
+  bool _costFinished = false;
+
+  void _startCost(ExchangeScope scope, AccountSnapshot account) {
+    _costScope = scope;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted || ref.read(exchangeScopeProvider) != scope) return;
+      try {
+        final controller = await ref.read(binanceCostControllerProvider.future);
+        await controller.run(account);
+      } catch (_) {
+        // History is independent of the account read.
+      } finally {
+        if (mounted && ref.read(exchangeScopeProvider) == scope) {
+          setState(() => _costFinished = true);
+        }
+      }
+    });
+  }
 
   @override
   void initState() {
@@ -121,6 +142,11 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
     if (!mounted) return;
     try {
       await _refreshPortfolio();
+      final scope = ref.read(exchangeScopeProvider);
+      final account = ref.read(scopedAccountProvider(scope)).valueOrNull;
+      if (scope.exchange == ExchangeId.binance && account != null) {
+        _startCost(scope, account);
+      }
     } finally {
       if (mounted) setState(() => _pageRefreshInFlight = false);
     }
@@ -174,6 +200,13 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
     final scope = ref.watch(exchangeScopeProvider);
     final isOkx = scope.exchange == ExchangeId.okx;
     final portfolioAsyncValue = ref.watch(scopedAccountProvider(scope));
+    if (_costScope != scope) {
+      _costFinished = false;
+      if (isOkx) _costScope = scope;
+    }
+    final costView = scope.exchange == ExchangeId.binance
+        ? ref.watch(binanceCostStateProvider).valueOrNull
+        : null;
     final livePrices = isOkx
         ? ref.watch(livePriceProvider)
         : <String, String>{};
@@ -268,6 +301,8 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
                             );
                           },
                           data: (data) {
+                            if (!isOkx && _costScope != scope)
+                              _startCost(scope, data);
                             _syncTickerSubscription(
                               isOkx
                                   ? data.balances.map((e) => e.asset).toList()
@@ -282,6 +317,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
                               isDark,
                               currency,
                               exchangeRate,
+                              costView,
                             );
                           },
                         ),
@@ -307,6 +343,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
     bool isDark,
     String currency,
     double exchangeRate,
+    BinanceCostView? costView,
   ) {
     double dynamicTotalEquity = 0.0;
     double totalUnrealizedPnl = 0.0;
@@ -371,6 +408,47 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
           exchangeRate: exchangeRate,
         ),
 
+        if (isBinance &&
+            costView != null &&
+            costView.available &&
+            _costFinished &&
+            !isHidden)
+          Builder(
+            builder: (context) {
+              final summary = estimatedSummary(
+                costView,
+                _costFinished,
+                accountData,
+              );
+              final amount = formatPortfolioCurrencyLines(
+                usdtAmount: summary.profit,
+                currencyMode: currency,
+                vndRate: exchangeRate,
+                showPositiveSign: true,
+              );
+              return Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 8,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      summary.covered == 0
+                          ? 'Ước tính Spot · Margin: Chưa đủ dữ liệu giá vốn'
+                          : 'Ước tính Spot · Margin: ${amount.primary} (${summary.percentage >= 0 ? '+' : ''}${summary.percentage.toStringAsFixed(2)}%)',
+                    ),
+                    if (summary.covered > 0 && amount.secondary != null)
+                      Text(amount.secondary!),
+                    Text(
+                      'Tính trên ${summary.covered}/${summary.eligible} tài sản',
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
           child: Column(
@@ -445,7 +523,8 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
                       !isOkx &&
                       realtimePriceStr == null &&
                       coin.valueUsdt == null;
-                  if (!unpriced && currentUsdValue < 0.01)
+                  if (!unpriced &&
+                      (isOkx ? currentUsdValue : currentUsdValue.abs()) < 0.01)
                     return const SizedBox.shrink();
 
                   return Column(
@@ -484,6 +563,31 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
                                 fontSize: 12,
                               ),
                             ),
+                            if (isBinance && !isHidden && costView != null)
+                              Builder(
+                                builder: (context) {
+                                  final estimate = estimatedBalance(
+                                    costView,
+                                    _costFinished,
+                                    coin,
+                                  );
+                                  if (estimate == null)
+                                    return const SizedBox.shrink();
+                                  final vnd =
+                                      currency == CurrencyDisplayMode.vnd;
+                                  return Text(
+                                    estimatedPnlText(
+                                      estimate,
+                                      rate: vnd ? exchangeRate : 1,
+                                      unit: vnd ? 'đ' : 'USDT',
+                                    ),
+                                    style: TextStyle(
+                                      color: subtitleColor,
+                                      fontSize: 12,
+                                    ),
+                                  );
+                                },
+                              ),
                             if (realtimePriceStr != null) ...[
                               const SizedBox(height: 2),
                               Text(

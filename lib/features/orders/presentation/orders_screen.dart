@@ -31,6 +31,7 @@ import '../../settings/presentation/settings_screen.dart'
 import 'widgets/order_filter_controls.dart';
 import 'widgets/margin_account_card.dart';
 import '../../../exchanges/binance/binance_adapter.dart';
+import '../../../exchanges/binance/binance_estimated_pnl.dart';
 import 'widgets/order_notional.dart';
 import 'widgets/order_cancellation_control.dart';
 import 'widgets/responsive_order_grid.dart';
@@ -65,6 +66,26 @@ class OrdersScreen extends ConsumerStatefulWidget {
 class _OrdersScreenState extends ConsumerState<OrdersScreen> {
   Timer? _refreshTimer;
   bool _manualRefreshInFlight = false;
+  ExchangeScope? _costScope;
+  ExchangeScope? _activeCostScope;
+  bool _costFinished = false;
+
+  void _startCost(ExchangeScope scope, AccountSnapshot account) {
+    _costScope = scope;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted || ref.read(exchangeScopeProvider) != scope) return;
+      try {
+        final controller = await ref.read(binanceCostControllerProvider.future);
+        await controller.run(account);
+      } catch (_) {
+        // History failure does not affect account data.
+      } finally {
+        if (mounted && ref.read(exchangeScopeProvider) == scope) {
+          setState(() => _costFinished = true);
+        }
+      }
+    });
+  }
 
   @override
   void initState() {
@@ -145,6 +166,15 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     } catch (_) {
       // The current tab provider renders its read error.
     } finally {
+      if (mounted && scope.exchange == ExchangeId.binance) {
+        try {
+          final account = await ref.read(scopedAccountProvider(scope).future);
+          if (mounted && ref.read(exchangeScopeProvider) == scope)
+            _startCost(scope, account);
+        } catch (_) {
+          // The account read remains independent of order refresh.
+        }
+      }
       if (mounted) setState(() => _manualRefreshInFlight = false);
     }
   }
@@ -175,6 +205,12 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final activeScope = ref.watch(exchangeScopeProvider);
+    if (_activeCostScope != activeScope) {
+      _activeCostScope = activeScope;
+      _costScope = null;
+      _costFinished = false;
+    }
     final currentFilter = ref.watch(orderFilterProvider);
     final currentTab = ref.watch(orderTabProvider);
     final isDark = ref.watch(
@@ -398,6 +434,12 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                       ? ref.watch(scopedAccountProvider(scope))
                       : null;
                   final account = accountAsync?.valueOrNull;
+                  if (_costScope != scope) _costFinished = false;
+                  if (account != null && _costScope != scope)
+                    _startCost(scope, account);
+                  final costView = showMargin
+                      ? ref.watch(binanceCostStateProvider).valueOrNull
+                      : null;
                   final rows =
                       account?.marginRows ?? const <MarginAccountRow>[];
                   final marginUnavailable =
@@ -454,7 +496,30 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                   return ResponsiveOrderGrid(
                     children: [
                       if (notice != null) notice,
-                      ...rows.map((row) => MarginAccountCard(row: row)),
+                      ...rows.map((row) {
+                        final estimate =
+                            account != null &&
+                                costView != null &&
+                                !isBalanceHidden
+                            ? estimatedMargin(
+                                costView,
+                                _costFinished,
+                                row,
+                                account,
+                              )
+                            : null;
+                        final vnd = currency == 'VNĐ';
+                        return MarginAccountCard(
+                          row: row,
+                          estimateText: estimate == null
+                              ? null
+                              : estimatedPnlText(
+                                  estimate,
+                                  rate: vnd ? exchangeRate : 1,
+                                  unit: vnd ? 'đ' : 'USDT',
+                                ),
+                        );
+                      }),
                       ...positions
                           .map(
                             (position) => _buildPositionCard(
