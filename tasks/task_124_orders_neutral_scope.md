@@ -1,6 +1,6 @@
 # Task 124 — Orders on the neutral scope
 
-Status: PENDING
+Status: PASS
 Agent Role: implementation_executor
 Executor Class: E3
 Target Model: gpt-6.1-terra
@@ -163,4 +163,10 @@ Return `BLOCKED` when repository evidence contradicts this contract, a design de
 
 ## 12. Coordinator Audit
 
-Verdict: PENDING
+Attempt: c280d66023904891a283976d33a6a70c
+Dispatch route compliance: UNVERIFIABLE (requested gpt-6.1-terra/high, explicit).
+Parent route inheritance: NO
+RED and GREEN executed by the coordinator on the host, RED first (VAL-005): late OKX positions and pending orders do not render under the fake exchange; then existing orders tests and the fake exchange on all tabs
+Regression and buildability, coordinator-observed: 217 tests passed in orders, portfolio, exchange, gate, widget, navigation, settings; analyzer 0 errors; web build pass. The second attempt returned an invalid structured report, but its one-line diff was reviewed directly. Follow-up for T120: cards split nativeId on '-', Binance needs base and quote from metadata. Existing: direct OKX reads leave position size empty on the card, addressed in T121.
+Task buildability gate: PASS
+Verdict: PASS
