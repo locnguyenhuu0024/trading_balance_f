@@ -26,6 +26,12 @@ Requested Effort: high
 Observed Effective Model: unavailable
 Observed Effective Effort: unavailable
 
+## Remediation R01 (current instruction)
+
+Attempt 6e88e4588e2e4d22b3b7448f9e665e83 is committed as work in progress and reviewed. One finding remains: the adapter now maps `size` from `OkxPosition.size`, which correctly preserves what the Orders card shows today, but `test/core/exchange/okx_adapter_test.dart` still has a fixture without `size`, so it fails at the `p.size` assertion.
+
+Do only this: in that test's `OkxPosition` fixture, add `size: '0.10'`, keeping `pos`. Change nothing else, and do not change `okx_adapter.dart`. Sections below describe the already completed work.
+
 ## 2. Objective
 
 `OrdersScreen` cards render from neutral types through the scoped providers, with no visible OKX change.

@@ -6,6 +6,10 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/backend_features.dart';
+import '../../../core/exchange/exchange_models.dart';
+import '../../../core/exchange/exchange_registry.dart';
+import '../../../core/exchange/exchange_scope.dart';
+import '../../../core/exchange/scoped_read.dart';
 import '../../../core/formatting/adaptive_number_format.dart';
 import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/network/okx_read_scope.dart';
@@ -17,7 +21,6 @@ import '../../../core/widgets/manual_refresh_button.dart';
 import 'providers/order_provider.dart';
 import 'providers/order_cancellation_flow_provider.dart';
 import '../data/okx_order_model.dart';
-import '../data/okx_position_model.dart';
 import 'providers/trade_session_provider.dart';
 import 'package:intl/intl.dart';
 import '../../portfolio/presentation/portfolio_screen.dart'; // Thêm import này để lấy trạng thái Dark Mode
@@ -56,19 +59,17 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       final currentFilter = ref.read(orderFilterProvider);
       if (currentTab == OrderTab.positions && currentFilter == 'SPOT') return;
 
+      final scope = ref.read(exchangeScopeProvider);
       final currentRead = currentTab == OrderTab.positions
-          ? ref.read(positionsFutureProvider)
-          : ref.read(ordersFutureProvider);
+          ? ref.read(scopedPositionsProvider(scope))
+          : ref.read(scopedOrdersProvider(scope));
       if (currentRead.isLoading ||
-          isTerminalOkxReadFailure(currentRead.asError?.error)) {
+          (scope.exchange == ExchangeId.okx &&
+              isTerminalOkxReadFailure(currentRead.asError?.error))) {
         return;
       }
 
-      if (currentTab == OrderTab.positions) {
-        ref.invalidate(positionsFutureProvider);
-      } else {
-        ref.invalidate(ordersFutureProvider);
-      }
+      _invalidateCurrentRead(scope, currentTab);
     });
   }
 
@@ -83,24 +84,43 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     final currentFilter = ref.read(orderFilterProvider);
     if (currentTab == OrderTab.positions && currentFilter == 'SPOT') return;
 
+    final scope = ref.read(exchangeScopeProvider);
     final currentRead = currentTab == OrderTab.positions
-        ? ref.read(positionsFutureProvider)
-        : ref.read(ordersFutureProvider);
+        ? ref.read(scopedPositionsProvider(scope))
+        : ref.read(scopedOrdersProvider(scope));
     if (currentRead.isLoading || _manualRefreshInFlight) return;
 
     setState(() => _manualRefreshInFlight = true);
     try {
       if (currentTab == OrderTab.positions) {
-        ref.invalidate(positionsFutureProvider);
-        await ref.read(positionsFutureProvider.future);
+        _invalidateCurrentRead(scope, currentTab);
+        await ref.read(scopedPositionsProvider(scope).future);
       } else {
-        ref.invalidate(ordersFutureProvider);
-        await ref.read(ordersFutureProvider.future);
+        _invalidateCurrentRead(scope, currentTab);
+        await ref.read(scopedOrdersProvider(scope).future);
       }
     } catch (_) {
       // The current tab provider renders its read error.
     } finally {
       if (mounted) setState(() => _manualRefreshInFlight = false);
+    }
+  }
+
+  void _invalidateCurrentRead(ExchangeScope scope, OrderTab tab) {
+    final adapter = ref
+        .read(exchangeRegistryProvider)
+        .firstWhere(
+          (entry) =>
+              entry.profile.connectionId == scope.connectionId &&
+              entry.profile.exchange == scope.exchange,
+        )
+        .adapter;
+    if (tab == OrderTab.positions) {
+      adapter.invalidatePositions(ref.invalidate);
+      ref.invalidate(scopedPositionsProvider(scope));
+    } else {
+      adapter.invalidateOrders(ref.invalidate);
+      ref.invalidate(scopedOrdersProvider(scope));
     }
   }
 
@@ -115,15 +135,18 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     final timeZoneId = ref.watch(appTimeZoneProvider);
     final exchangeRate = ref.watch(vndExchangeRateProvider).value ?? 25400.0;
     final isBalanceHidden = ref.watch(hideBalanceProvider);
-    final backendFeaturesEnabled = ref.watch(backendFeaturesEnabledProvider);
+    final scope = ref.watch(exchangeScopeProvider);
+    final backendFeaturesEnabled =
+        ref.watch(backendFeaturesEnabledProvider) &&
+        scope.exchange == ExchangeId.okx;
     final tradeSessionState = backendFeaturesEnabled
         ? ref.watch(tradeSessionProvider)
         : null;
     final isTradeAuthenticated = tradeSessionState?.isAuthenticated ?? false;
     final isCurrentReadLoading = switch (currentTab) {
       OrderTab.positions when currentFilter == 'SPOT' => false,
-      OrderTab.positions => ref.watch(positionsFutureProvider).isLoading,
-      _ => ref.watch(ordersFutureProvider).isLoading,
+      OrderTab.positions => ref.watch(scopedPositionsProvider(scope)).isLoading,
+      _ => ref.watch(scopedOrdersProvider(scope)).isLoading,
     };
 
     final palette = AppPalette.of(context);
@@ -269,7 +292,9 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
         );
       }
 
-      final positionsAsyncValue = ref.watch(positionsFutureProvider);
+      final positionsAsyncValue = ref.watch(
+        scopedPositionsProvider(ref.watch(exchangeScopeProvider)),
+      );
       return Column(
         children: [
           Expanded(
@@ -316,7 +341,9 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
         ],
       );
     } else {
-      final ordersAsyncValue = ref.watch(ordersFutureProvider);
+      final ordersAsyncValue = ref.watch(
+        scopedOrdersProvider(ref.watch(exchangeScopeProvider)),
+      );
       final orderList = RefreshIndicator(
         color: palette.ink,
         backgroundColor: palette.raised,
@@ -522,14 +549,14 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
 
   // --- Thẻ hiển thị VỊ THẾ MỞ ---
   Widget _buildPositionCard(
-    OkxPosition position,
+    ExchangePosition position,
     bool isDark,
     String currency,
     double exchangeRate,
     bool isBalanceHidden,
   ) {
     final palette = AppPalette.forBrightness(isDark);
-    final posSide = position.posSide.toUpperCase();
+    final posSide = (position.side ?? '').toUpperCase();
     final isLong = posSide == 'LONG';
 
     final sideColor = posSide == 'NET'
@@ -537,14 +564,14 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
         : (isLong ? palette.positive : palette.negative);
     final sideText = posSide == 'NET' ? 'VỊ THẾ' : (isLong ? 'LONG' : 'SHORT');
 
-    final pnl = double.tryParse(position.upl);
+    final pnl = double.tryParse((position.unrealizedPnl ?? ''));
     final pnlColor = resolvePnlColor(pnl, palette, hidden: isBalanceHidden);
     final pnlSign = pnl == null ? '' : (pnl >= 0 ? '+' : '');
     final pnlFormatted = pnl == null
         ? '--'
         : NumberFormat("#,##0.00", "en_US").format(pnl.abs());
 
-    final pnlRatio = double.tryParse(position.uplRatio);
+    final pnlRatio = double.tryParse((position.unrealizedPnlRatio ?? ''));
     final pnlRatioPercent = pnlRatio == null
         ? '--'
         : '${pnlRatio >= 0 ? '+' : ''}${(pnlRatio * 100).toStringAsFixed(2)}%';
@@ -554,11 +581,11 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       hidden: isBalanceHidden,
     );
 
-    final String baseCoin = position.instId.split('-').isNotEmpty
-        ? position.instId.split('-').first
+    final String baseCoin = position.key.nativeId.split('-').isNotEmpty
+        ? position.key.nativeId.split('-').first
         : '?';
-    final instrumentLabel = position.instId.split('-').take(2).join();
-    final instrumentType = position.instType.toUpperCase();
+    final instrumentLabel = position.key.nativeId.split('-').take(2).join();
+    final instrumentType = position.productLabel.toUpperCase();
 
     // Bảng màu cho Card
     final cardColor = palette.raised;
@@ -654,9 +681,9 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                               ),
                             ),
                             child: Text(
-                              position.lever.isEmpty
+                              (position.leverage ?? '').isEmpty
                                   ? '--'
-                                  : '${position.lever}x',
+                                  : '${(position.leverage ?? '')}x',
                               style: TextStyle(
                                 color: palette.ink,
                                 fontSize: 12,
@@ -671,23 +698,23 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                 ),
               ],
             ),
-            if (position.instType.isNotEmpty) ...[
+            if (position.productLabel.isNotEmpty) ...[
               const SizedBox(height: 6),
               Wrap(
                 spacing: 8,
                 runSpacing: 2,
                 children: [
                   Text(
-                    '${position.direction.toUpperCase()} · ${position.size}',
+                    '${(position.direction ?? '').toUpperCase()} · ${position.size ?? ''}',
                     style: TextStyle(color: subtitleColor, fontSize: 12),
                   ),
                   Text(
-                    '${position.instType} · ${position.mgnMode.toUpperCase()}',
+                    '${position.productLabel} · ${(position.marginMode ?? '').toUpperCase()}',
                     style: TextStyle(color: subtitleColor, fontSize: 12),
                   ),
-                  if (position.marginCurrency.isNotEmpty)
+                  if ((position.marginCurrency ?? '').isNotEmpty)
                     Text(
-                      'Ký quỹ ${position.marginCurrency}',
+                      'Ký quỹ ${(position.marginCurrency ?? '')}',
                       style: TextStyle(color: subtitleColor, fontSize: 12),
                     ),
                 ],
@@ -757,7 +784,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        formatAdaptiveNumber(position.avgPx),
+                        formatAdaptiveNumber((position.entry ?? '')),
                         style: TextStyle(
                           fontWeight: FontWeight.w600,
                           fontSize: 12,
@@ -777,7 +804,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        formatAdaptiveNumber(position.markPx),
+                        formatAdaptiveNumber((position.mark ?? '')),
                         style: TextStyle(
                           fontWeight: FontWeight.w600,
                           fontSize: 12,
@@ -797,9 +824,11 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        position.liqPx.isEmpty
+                        (position.liquidation ?? '').isEmpty
                             ? '--'
-                            : formatAdaptiveNumber(position.liqPx),
+                            : formatAdaptiveNumber(
+                                (position.liquidation ?? ''),
+                              ),
                         style: TextStyle(
                           fontWeight: FontWeight.w600,
                           fontSize: 12,
@@ -817,17 +846,17 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     );
   }
 
-  String _nativePositionDisplayKey(OkxPosition position) {
-    if (position.positionId.isNotEmpty) {
-      return 'native-pos:${position.positionId}';
+  String _nativePositionDisplayKey(ExchangePosition position) {
+    if ((position.positionId ?? '').isNotEmpty) {
+      return 'native-pos:${(position.positionId ?? '')}';
     }
     return jsonEncode([
-      position.instId,
-      position.instType,
-      position.posSide,
-      position.mgnMode,
-      position.marginCurrency,
-      position.positionCurrency,
+      position.key.nativeId,
+      position.productLabel,
+      (position.side ?? ''),
+      (position.marginMode ?? ''),
+      (position.marginCurrency ?? ''),
+      (position.positionCurrency ?? ''),
     ]);
   }
 
@@ -869,7 +898,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
   }
 
   Widget _buildPendingOrderCard(
-    OkxOrder order,
+    ExchangeOrder order,
     bool isDark,
     String currency,
     double exchangeRate,
@@ -878,22 +907,26 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     bool backendFeaturesEnabled,
   ) {
     final palette = AppPalette.forBrightness(isDark);
-    final isBuy = order.side.toLowerCase() == 'buy';
+    final isBuy = (order.side ?? '').toLowerCase() == 'buy';
     final sideColor = isBuy ? palette.positive : palette.negative;
     final sideText = isBuy ? 'MUA' : 'BÁN';
-    final timeString = formatOrderTimestamp(order.cTime, timeZoneId);
-    final baseCoin = order.instId.split('-').first;
-    final instrumentLabel = order.instId.split('-').take(2).join();
+    final timeString = formatOrderTimestamp(
+      (order.createdAtMs ?? ''),
+      timeZoneId,
+    );
+    final baseCoin = order.key.nativeId.split('-').first;
+    final instrumentLabel = order.key.nativeId.split('-').take(2).join();
     final cardColor = palette.raised;
     final borderColor = palette.border;
     final textColor = palette.ink;
     final subtitleColor = palette.muted;
     final iconBgColor = palette.surface;
     final notional = resolveOrderNotional(order);
-    final leverage = order.lever.isNotEmpty && order.lever != '0'
-        ? order.lever
+    final leverage =
+        (order.leverage ?? '').isNotEmpty && (order.leverage ?? '') != '0'
+        ? (order.leverage ?? '')
         : null;
-    final instrumentType = order.instType.toUpperCase();
+    final instrumentType = order.productLabel.toUpperCase();
 
     return Card(
       elevation: 0,
@@ -1044,7 +1077,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
               rowName: 'state',
               label: 'Trạng thái',
               value: Text(
-                order.state.toUpperCase(),
+                (order.state ?? '').toUpperCase(),
                 maxLines: 1,
                 softWrap: false,
                 style: TextStyle(
@@ -1060,7 +1093,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
               rowName: 'price',
               label: 'Giá',
               value: Text(
-                formatAdaptiveNumber(order.px),
+                formatAdaptiveNumber((order.price ?? '')),
                 maxLines: 1,
                 softWrap: false,
                 style: TextStyle(
@@ -1076,7 +1109,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
               rowName: 'quantity',
               label: 'KL',
               value: Text(
-                formatAdaptiveNumber(order.sz),
+                formatAdaptiveNumber((order.quantity ?? '')),
                 maxLines: 1,
                 softWrap: false,
                 style: TextStyle(
@@ -1125,8 +1158,10 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
               labelColor: subtitleColor,
               crossAxisAlignment: CrossAxisAlignment.start,
             ),
-            if (backendFeaturesEnabled && isActiveLimitOrder(order))
-              OrderCancellationControl(order: order),
+            if (backendFeaturesEnabled &&
+                order.native is OkxOrder &&
+                isActiveLimitOrder(order.native as OkxOrder))
+              OrderCancellationControl(order: order.native as OkxOrder),
           ],
         ),
       ),
@@ -1135,7 +1170,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
 
   // --- Thẻ hiển thị LỆNH ---
   Widget _buildOrderCard(
-    OkxOrder order,
+    ExchangeOrder order,
     OrderTab currentTab,
     bool isDark,
     String currency,
@@ -1157,19 +1192,23 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     }
 
     final palette = AppPalette.forBrightness(isDark);
-    final isBuy = order.side.toLowerCase() == 'buy';
+    final isBuy = (order.side ?? '').toLowerCase() == 'buy';
     final sideColor = isBuy ? palette.positive : palette.negative;
     final sideText = isBuy ? 'MUA' : 'BÁN';
 
-    final timeString = formatOrderTimestamp(order.cTime, timeZoneId);
+    final timeString = formatOrderTimestamp(
+      (order.createdAtMs ?? ''),
+      timeZoneId,
+    );
 
-    final String baseCoin = order.instId.split('-').isNotEmpty
-        ? order.instId.split('-').first
+    final String baseCoin = order.key.nativeId.split('-').isNotEmpty
+        ? order.key.nativeId.split('-').first
         : '?';
-    final instrumentLabel = order.instId.split('-').take(2).join();
-    final instrumentType = order.instType.toUpperCase();
-    final leverage = order.lever.isNotEmpty && order.lever != '0'
-        ? order.lever
+    final instrumentLabel = order.key.nativeId.split('-').take(2).join();
+    final instrumentType = order.productLabel.toUpperCase();
+    final leverage =
+        (order.leverage ?? '').isNotEmpty && (order.leverage ?? '') != '0'
+        ? (order.leverage ?? '')
         : null;
 
     // Bảng màu
@@ -1281,7 +1320,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      order.state.toUpperCase(),
+                      (order.state ?? '').toUpperCase(),
                       style: TextStyle(
                         color: subtitleColor,
                         fontWeight: FontWeight.bold,
@@ -1299,7 +1338,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     Text(
-                      'Giá: ${formatAdaptiveNumber(order.px)}',
+                      'Giá: ${formatAdaptiveNumber((order.price ?? ''))}',
                       style: TextStyle(
                         fontWeight: FontWeight.w500,
                         fontSize: 12,
@@ -1308,7 +1347,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                     ),
                     const SizedBox(height: AppTokens.space1),
                     Text(
-                      'KL: ${formatAdaptiveNumber(order.sz)}',
+                      'KL: ${formatAdaptiveNumber((order.quantity ?? ''))}',
                       style: TextStyle(
                         fontWeight: FontWeight.w500,
                         fontSize: 12,
@@ -1357,8 +1396,9 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
             ),
             if (backendFeaturesEnabled &&
                 currentTab == OrderTab.pending &&
-                isActiveLimitOrder(order))
-              OrderCancellationControl(order: order),
+                order.native is OkxOrder &&
+                isActiveLimitOrder(order.native as OkxOrder))
+              OrderCancellationControl(order: order.native as OkxOrder),
           ],
         ),
       ),

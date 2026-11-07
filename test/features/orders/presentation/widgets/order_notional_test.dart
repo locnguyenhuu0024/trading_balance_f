@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:trading_balance_f/core/exchange/exchange_models.dart';
 import 'package:trading_balance_f/features/orders/data/okx_order_model.dart';
 import 'package:trading_balance_f/features/orders/data/okx_position_model.dart';
 import 'package:trading_balance_f/features/orders/presentation/widgets/order_notional.dart';
@@ -28,7 +29,15 @@ void main() {
 
   test('uses the absolute USD notional supplied for an open position', () {
     final notional = resolvePositionNotional(
-      const OkxPosition(notionalUsd: '-1250.5'),
+      const ExchangePosition(
+        key: InstrumentKey(
+          exchange: ExchangeId.okx,
+          product: 'SWAP',
+          nativeId: '',
+        ),
+        productLabel: 'SWAP',
+        notional: '-1250.5',
+      ),
     );
 
     expect(notional?.usdAmount, 1250.5);
@@ -37,10 +46,12 @@ void main() {
 
   test('prefers the filled notional over an order estimate', () {
     final notional = resolveOrderNotional(
-      const OkxOrder(
-        instType: 'SWAP',
-        fillNotionalUsd: '400',
-        notionalUsd: '500',
+      const ExchangeOrder(
+        id: '',
+        key: InstrumentKey(exchange: ExchangeId.okx, product: '', nativeId: ''),
+        productLabel: 'SWAP',
+        filledNotional: '400',
+        notional: '500',
       ),
     );
 
@@ -50,7 +61,12 @@ void main() {
 
   test('uses an API order estimate when no fill notional is available', () {
     final notional = resolveOrderNotional(
-      const OkxOrder(instType: 'FUTURES', notionalUsd: '275.25'),
+      const ExchangeOrder(
+        id: '',
+        key: InstrumentKey(exchange: ExchangeId.okx, product: '', nativeId: ''),
+        productLabel: 'FUTURES',
+        notional: '275.25',
+      ),
     );
 
     expect(notional?.usdAmount, 275.25);
@@ -59,7 +75,13 @@ void main() {
 
   test('derives a notional only for spot and margin base quantities', () {
     final notional = resolveOrderNotional(
-      const OkxOrder(instType: 'SPOT', px: '100', sz: '0.25'),
+      const ExchangeOrder(
+        id: '',
+        key: InstrumentKey(exchange: ExchangeId.okx, product: '', nativeId: ''),
+        productLabel: 'SPOT',
+        price: '100',
+        quantity: '0.25',
+      ),
     );
 
     expect(notional?.usdAmount, 25);
@@ -70,7 +92,17 @@ void main() {
     'does not guess a derivatives notional from contract quantity and price',
     () {
       final notional = resolveOrderNotional(
-        const OkxOrder(instType: 'SWAP', px: '100', sz: '0.25'),
+        const ExchangeOrder(
+          id: '',
+          key: InstrumentKey(
+            exchange: ExchangeId.okx,
+            product: '',
+            nativeId: '',
+          ),
+          productLabel: 'SWAP',
+          price: '100',
+          quantity: '0.25',
+        ),
       );
 
       expect(notional, isNull);
@@ -81,12 +113,32 @@ void main() {
     'returns unavailable for empty, zero, and malformed monetary fields',
     () {
       expect(
-        resolvePositionNotional(const OkxPosition(notionalUsd: 'invalid')),
+        resolvePositionNotional(
+          const ExchangePosition(
+            key: InstrumentKey(
+              exchange: ExchangeId.okx,
+              product: 'SWAP',
+              nativeId: '',
+            ),
+            productLabel: 'SWAP',
+            notional: 'invalid',
+          ),
+        ),
         isNull,
       );
       expect(
         resolveOrderNotional(
-          const OkxOrder(instType: 'SPOT', px: '0', sz: '1'),
+          const ExchangeOrder(
+            id: '',
+            key: InstrumentKey(
+              exchange: ExchangeId.okx,
+              product: '',
+              nativeId: '',
+            ),
+            productLabel: 'SPOT',
+            price: '0',
+            quantity: '1',
+          ),
         ),
         isNull,
       );
