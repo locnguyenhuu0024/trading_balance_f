@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -16,7 +17,7 @@ import subprocess
 import sys
 import tempfile
 
-from compat import CompatibilityError, load_lock, verify_compatibility
+from compat import CompatibilityError, load_lock, load_route_policy, POLICY_PATH, verify_compatibility
 
 DOMAINS = ("backend", "web", "mobile")
 SCOPES = ("company", "personal")
@@ -113,6 +114,28 @@ def plan_copy(project: Path, source_files: dict):
         target = guarded_path(project, rel, existing=False)
         # Read only files that are in the managed, explicit OptCodex/CCB inventory.
         contents = source.read_bytes()
+        # Runtime routing is a validated user-owned project choice, NOT an
+        # immutable upstream blob. Preserve it across managed upgrades.
+        if rel == POLICY_PATH and target.is_file():
+            try:
+                load_route_policy(project)
+            except CompatibilityError as exc:
+                # A version-1 E0/E1/E2 policy must NOT be interpreted as v2.
+                # Surface it as a reviewed, backed-up migration conflict.
+                try:
+                    legacy = json.loads(target.read_text(encoding="utf-8"))
+                except (ValueError, OSError) as read_error:
+                    raise InstallError("Invalid existing routing policy") from read_error
+                if (not isinstance(legacy, dict)
+                        or legacy.get("schema_version") != 1
+                        or legacy.get("governance_contract") != "optcodex-executor-routing-v1"
+                        or not isinstance(legacy.get("defaults"), dict)
+                        or set(legacy["defaults"]) != {"E0", "E1", "E2"}):
+                    raise InstallError("Existing routing policy is not a recognized legacy policy") from exc
+                plan.append((rel, source, target, "conflict"))
+                continue
+            plan.append((rel, source, target, "identical"))
+            continue
         state = "identical" if target.is_file() and target.read_bytes() == contents else (
             "conflict" if target.exists() else "create"
         )
@@ -169,6 +192,58 @@ def apply_copy(project: Path, plan, replace_existing: bool, backup_root: Path):
     return changed, len(backups)
 
 
+def _receipt_path(project: Path) -> Path:
+    base = Path(os.environ.get("CCB_INSTALL_RECEIPT_DIR", str(Path.home() / ".ccb" / "installed"))).expanduser()
+    if not base.is_absolute() or base.is_symlink():
+        raise InstallError("Install receipt directory must be absolute and not a symlink")
+    base = base.resolve(strict=False)
+    if base.is_relative_to(project):
+        raise InstallError("Install receipt must be outside the project")
+    digest = hashlib.sha256(str(project).casefold().encode("utf-8")).hexdigest()[:24]
+    return base / (digest + ".json")
+
+
+def read_receipt(project: Path) -> dict:
+    receipt = _receipt_path(project)
+    if not receipt.exists():
+        return {}
+    if receipt.is_symlink() or receipt.stat().st_size > 65536:
+        raise InstallError("Unsafe managed installation receipt")
+    try:
+        doc = json.loads(receipt.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise InstallError("Invalid managed installation receipt") from exc
+    if (not isinstance(doc, dict) or set(doc) != {"schema_version", "project", "managed_sha256"}
+            or doc["schema_version"] != 1 or doc["project"] != str(project)
+            or not isinstance(doc["managed_sha256"], dict)):
+        raise InstallError("Unrecognized managed installation receipt")
+    for name, sha in doc["managed_sha256"].items():
+        if not isinstance(name, str) or not isinstance(sha, str) or len(sha) != 64:
+            raise InstallError("Invalid receipt entry")
+    return doc["managed_sha256"]
+
+
+def write_receipt(project: Path, plan) -> Path:
+    path = _receipt_path(project)
+    if path.is_symlink():
+        raise InstallError("Symlink install receipt blocked")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    record = {rel: hashlib.sha256(target.read_bytes()).hexdigest()
+              for rel, _, target, _ in plan}
+    obj = {"schema_version": 1, "project": str(project), "managed_sha256": record}
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".ccb-receipt-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(obj, stream, separators=(",", ":"))
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+    return path
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Install pinned OptCodex + CCB into a project")
     parser.add_argument("--project", required=True, type=Path, help="Existing target project directory")
@@ -177,12 +252,15 @@ def main(argv=None):
     parser.add_argument("--optcodex-source", type=Path, help="Local OptCodexRules checkout (recommended)")
     parser.add_argument("--ccb-source", type=Path, default=Path(__file__).resolve().parents[2])
     parser.add_argument("--apply", action="store_true", help="Write files only after user review")
-    parser.add_argument("--replace-existing", action="store_true", help="Back up and replace conflicting managed files")
+    parser.add_argument("--replace-existing", action="store_true", help="Back up and replace all conflicting managed files")
+    parser.add_argument("--upgrade-managed", action="store_true", help="Back up and update only unchanged previously managed files")
     parser.add_argument("--backup-dir", type=Path, help="Explicit backup location outside the project")
     args = parser.parse_args(argv)
     try:
-        if args.replace_existing and not args.apply:
-            raise InstallError("--replace-existing requires --apply")
+        if (args.replace_existing or args.upgrade_managed) and not args.apply:
+            raise InstallError("--replace-existing/--upgrade-managed require --apply")
+        if args.replace_existing and args.upgrade_managed:
+            raise InstallError("Choose only one replacement policy")
         if args.project.is_symlink() or not args.project.is_dir():
             raise InstallError("Target project must be an existing non-symlink directory")
         if args.ccb_source.is_symlink() or not args.ccb_source.is_dir():
@@ -209,10 +287,18 @@ def main(argv=None):
                                        "or provide --optcodex-source (details intentionally suppressed)")
                 tree = subprocess.check_output(["git", "-C", str(upstream), "rev-parse",
                                                 "HEAD^{tree}"], text=True).strip()
-                if tree != lock["source_revision"]:
-                    raise InstallError("Upstream OptCodexRules changed; pinned snapshot review required")
+                # Git tree may advance when only the independent operational
+                # routing defaults change. Governance file pins and routing
+                # allowlist are verified by prepare_sources() below.
+                # Never skip verify_compatibility for the fetched source.
+                if not tree or len(tree) != 40:
+                    raise InstallError("Cannot identify OptCodex source tree")
             variant, source_files = prepare_sources(ccb, upstream, lock, args.domain, args.scope)
             plan = plan_copy(project, source_files)
+            receipt = read_receipt(project)
+            eligible = [rel for rel, _, target, state in plan
+                        if state == "conflict" and rel != POLICY_PATH and receipt.get(rel) ==
+                        hashlib.sha256(target.read_bytes()).hexdigest()]
             stale = []
             for other_domain, other_rel in DOMAIN_OVERLAY.items():
                 if other_domain == args.domain:
@@ -227,9 +313,14 @@ def main(argv=None):
                 "domain": args.domain,
                 "scope": args.scope,
                 "optcodex_variant": variant,
-                "upstream_tree": lock["source_revision"],
+                "governance_tree_pin": lock["source_revision"],
                 "counts": counts,
                 "conflicts": [p[0] for p in plan if p[3] == "conflict"],
+                "managed_conflicts_safe_to_upgrade": eligible,
+                "legacy_route_policy_migration_required": any(
+                    rel == POLICY_PATH and state == "conflict" for rel, _, _, state in plan),
+                "unverified_or_user_modified_conflicts": [p[0] for p in plan
+                    if p[3] == "conflict" and p[0] not in eligible],
                 "changes": [p[0] for p in plan if p[3] != "identical"],
                 "deletes": [],
                 "stale_domain_overlays": stale,
@@ -243,14 +334,20 @@ def main(argv=None):
             stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             backup = args.backup_dir or project.parent / ("." + project.name + "-ccb-backups") / stamp
             backup = backup.resolve(strict=False)
-            changes, backup_count = apply_copy(project, plan, args.replace_existing, backup)
+            conflicts = [rel for rel, _, _, state in plan if state == "conflict"]
+            if args.upgrade_managed and set(conflicts) != set(eligible):
+                raise InstallError("Unverified or user-modified files block --upgrade-managed; inspect preview")
+            changes, backup_count = apply_copy(
+                project, plan, args.replace_existing or args.upgrade_managed, backup)
             # Ensure the installed policy pins still match before claiming completion.
             verify_compatibility(project, variant, lock)
+            managed_receipt = write_receipt(project, plan)
             print(json.dumps({
                 "status": "INSTALLED",
                 "optcodex_variant": variant, "domain": args.domain,
                 "created_or_replaced": len(changes),
                 "backed_up_existing": backup_count,
+                "managed_receipt": str(managed_receipt),
                 "backup_dir": str(backup) if backup_count else None,
                 "no_files_deleted": True,
             }, ensure_ascii=False, indent=2))

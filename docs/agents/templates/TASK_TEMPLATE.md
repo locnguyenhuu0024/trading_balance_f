@@ -2,7 +2,7 @@
 
 Status: PENDING | READY | EXECUTING | VERIFYING | PASS | REWORK | BLOCKED | BLOCKED_ROUTE
 Agent Role: implementation_executor
-Executor Class: E0 | E1 | E2
+Executor Class: E0 | E1 | E2 | E3 | E4 | E5
 Target Model: gpt-6-luna
 Target Effort: high | xhigh | max
 Target Route: gpt-6-luna / <high|xhigh|max>
@@ -69,7 +69,7 @@ Required invariants: INV-<...>
 Required edge behavior: EDGE-<...>
 Preserved behavior: <...>
 
-Do not invent missing architecture/product semantics. If the contract is insufficient, return `BLOCKED`. Do not self-escalate the executor model/effort; report evidence to the coordinator, which owns any `E0 -> E1 -> E2` escalation.
+Do not invent missing architecture/product semantics. If the contract is insufficient, return `BLOCKED`. Do not self-escalate the executor model/effort; report evidence to the coordinator, which owns any `E0 -> E1 -> E2 -> E3 -> E4 -> E5` escalation.
 
 ## 7. External Configuration / Environment Actions
 

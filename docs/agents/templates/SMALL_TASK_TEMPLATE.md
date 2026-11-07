@@ -3,7 +3,7 @@
 Status: PENDING | READY | EXECUTING | VERIFYING | PASS | REWORK | BLOCKED | BLOCKED_ROUTE
 Plan: <path>#P01
 Agent Role: implementation_executor
-Executor Class: E0 | E1 | E2
+Executor Class: E0 | E1 | E2 | E3 | E4 | E5
 Target Model: gpt-6-luna
 Target Effort: high | xhigh | max
 Target Route: gpt-6-luna / <high|xhigh|max>
@@ -52,7 +52,7 @@ Blocked until returned: YES | NO
 ## External Configuration / Environment Action
 <none | target file/path + location/section/key + exact non-secret snippet using <SET_BY_USER> for secrets + scope + reason + validation/restart>. Do not apply it. If target/location/semantics are unknown, ask the user immediately.
 
-Do not self-escalate model/effort. If the selected executor route is insufficient, report the observed implementation difficulty to the coordinator for `E0 -> E1 -> E2` reclassification. If the runtime-reported role/model/effort does not match this task contract, stop further mutation and return `ROUTE_MISMATCH` rather than continuing on the inherited/default route.
+Do not self-escalate model/effort. If the selected executor route is insufficient, report the observed implementation difficulty to the coordinator for `E0 -> E1 -> E2 -> E3 -> E4 -> E5` reclassification. If the runtime-reported role/model/effort does not match this task contract, stop further mutation and return `ROUTE_MISMATCH` rather than continuing on the inherited/default route.
 
 ## Stop Conditions
 Return `BLOCKED` if a design decision, missing information, contradictory non-protected repository evidence, required protected configuration/environment information, or write outside Allowed scope is required. Never inspect protected config to resolve a blocker.

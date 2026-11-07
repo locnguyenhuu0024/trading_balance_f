@@ -16,3 +16,5 @@ argument-hint: "[project path] [backend|web|mobile] [company|personal]"
 7. Model alternatives in `model-routing.json` are advice only; strict OptCodex writer routes remain binding.
 
 Request: $ARGUMENTS
+
+For v1.3→v1.4 routing migration, `legacy_route_policy_migration_required` appears in preview. `--upgrade-managed` intentionally blocks the v1 policy. Obtain explicit approval for `--apply --replace-existing` and back up existing rules, then reclassify/reapprove unfinished E1/E2 tasks. Unknown schemas remain blocked.

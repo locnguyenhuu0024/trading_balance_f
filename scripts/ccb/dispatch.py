@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CCB v0.4: gated single-writer Codex CLI adapter; not a security sandbox.
+"""CCB v0.7: gated single-writer Codex CLI adapter; not a security sandbox.
 
 Reads only the approved task/manifest and Git path metadata. It never examines
 repository configuration contents or product source files. Execution requires
@@ -21,16 +21,16 @@ import subprocess
 import sys
 import tempfile
 
-from compat import CompatibilityError, load_lock, require_route, verify_compatibility
+from compat import CompatibilityError, ALLOWED_ROUTES, load_lock, load_route_policy, require_route, verify_compatibility
 from task_ledger import LedgerError, record_attempt_event
 
 
 EFFORTS = {"low", "medium", "high", "xhigh", "max"}
-ROUTES = {"E0", "E1", "E2"}
+ROUTES = {"E0", "E1", "E2", "E3", "E4", "E5"}
 ALLOWED_EXTENSIONS = {
     ".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs", ".java",
     ".kt", ".swift", ".cs", ".c", ".h", ".cpp", ".hpp",
-    ".sql", ".html", ".css", ".scss", ".md", ".dart",
+    ".sql", ".html", ".css", ".scss", ".md",
 }
 BLOCKED_NAMES = {
     "agents.md", "claude.md", "package.json", "pyproject.toml", "cargo.toml",
@@ -135,7 +135,8 @@ def get_manifest(path: Path) -> dict:
     if m["route_binding"] != "EXPLICIT" or m["parent_route_inheritance"] != "FORBIDDEN":
         raise GateError("Explicit route binding is required")
     try:
-        require_route(m["route_class"], m["model"], m["effort"], m.get("terra_trial"))
+        if (m["model"], m["effort"]) not in ALLOWED_ROUTES[m["route_class"]]:
+            raise CompatibilityError("ROUTE_MISMATCH: unsupported executor route")
     except CompatibilityError as exc:
         raise GateError(str(exc)) from exc
     if not isinstance(m["optcodex_variant"], str):
@@ -275,7 +276,8 @@ def main() -> int:
     parser.add_argument("--plan-root", type=Path, help="root containing task files; defaults to repo")
     parser.add_argument("--execute", action="store_true", help="actually invoke Codex")
     parser.add_argument("--approved-plan-id", default="", help="explicit approved plan ID")
-    parser.add_argument("--approved-experiment-id", default="", help="separately authorized Terra trial ID")
+    parser.add_argument("--approved-experiment-id", default="", help="legacy explicit Terra trial ID")
+    parser.add_argument("--approved-route-override-id", default="", help="explicit nondefault route approval ID")
     opts = parser.parse_args()
     try:
         repo = opts.repo.resolve(strict=True)
@@ -301,6 +303,13 @@ def main() -> int:
         ):
             if manifest[manifest_field] != compatible[actual_field]:
                 raise GateError("Incompatible OptCodex pin: " + manifest_field)
+        policy = load_route_policy(repo)
+        try:
+            require_route(manifest["route_class"], manifest["model"], manifest["effort"],
+                          manifest.get("terra_trial"), policy=policy,
+                          override=manifest.get("route_override"))
+        except CompatibilityError as exc:
+            raise GateError(str(exc)) from exc
         task_candidate = plan_root / manifest["task_file"]
         if any(p.is_symlink() for p in (plan_root / Path(*Path(manifest["task_file"]).parts[:n])
                                         for n in range(1, len(Path(manifest["task_file"]).parts) + 1))):
@@ -339,7 +348,13 @@ def main() -> int:
                 if opts.approved_experiment_id != trial["experiment_id"]:
                     raise GateError("BLOCKED_ROUTE: missing separately approved Terra experiment ID")
             elif opts.approved_experiment_id:
-                raise GateError("Unexpected Terra approval argument on default route")
+                raise GateError("Unexpected legacy Terra experiment approval argument")
+            override = manifest.get("route_override")
+            if override is not None:
+                if opts.approved_route_override_id != override["approval_id"]:
+                    raise GateError("BLOCKED_ROUTE: missing independently approved route override ID")
+            elif opts.approved_route_override_id:
+                raise GateError("Unexpected route override approval on a default route")
             if shutil.which("codex") is None:
                 raise GateError("codex executable not found in PATH")
             task_content = taskfile.read_text(encoding="utf-8")

@@ -1,0 +1,30 @@
+{
+  "schema_version": 2,
+  "governance_contract": "optcodex-executor-routing-v2",
+  "defaults": {
+    "E0": {
+      "model": "gpt-6-luna",
+      "effort": "xhigh"
+    },
+    "E1": {
+      "model": "gpt-6.1-terra",
+      "effort": "low"
+    },
+    "E2": {
+      "model": "gpt-6.1-terra",
+      "effort": "medium"
+    },
+    "E3": {
+      "model": "gpt-6.1-terra",
+      "effort": "high"
+    },
+    "E4": {
+      "model": "gpt-6.1-terra",
+      "effort": "xhigh"
+    },
+    "E5": {
+      "model": "gpt-6.1-terra",
+      "effort": "max"
+    }
+  }
+}

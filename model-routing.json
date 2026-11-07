@@ -6,7 +6,7 @@
     "https://developers.openai.com/api/docs/guides/model-selection",
     "https://openai.com/index/introducing-gpt-6-1-terra/"
   ],
-  "policy_authority": "OptCodexRules 1.2.0: Luna defaults, separately user-approved Terra E1/E2 trials only",
+  "policy_authority": "OptCodexRules 1.4.0: E0-E5 dynamic defaults under validated routing contract v2",
   "models": {
     "gpt-6-luna": {
       "type": "executor",
@@ -62,14 +62,26 @@
       "executor": {
         "E0": {
           "model": "gpt-6-luna",
-          "effort": "high"
-        },
-        "E1": {
-          "model": "gpt-6-luna",
           "effort": "xhigh"
         },
+        "E1": {
+          "model": "gpt-6.1-terra",
+          "effort": "low"
+        },
         "E2": {
-          "model": "gpt-6-luna",
+          "model": "gpt-6.1-terra",
+          "effort": "medium"
+        },
+        "E3": {
+          "model": "gpt-6.1-terra",
+          "effort": "high"
+        },
+        "E4": {
+          "model": "gpt-6.1-terra",
+          "effort": "xhigh"
+        },
+        "E5": {
+          "model": "gpt-6.1-terra",
           "effort": "max"
         }
       },
@@ -77,17 +89,37 @@
         "gpt-6.1-sol",
         "gpt-6-astra"
       ],
-      "terra_trial_routes": {
-        "E1": {
-          "model": "gpt-6.1-terra",
-          "effort": "high",
-          "separate_approval": true
-        },
-        "E2": {
-          "model": "gpt-6.1-terra",
-          "effort": "xhigh",
-          "separate_approval": true
-        }
+      "allowlisted_nondefault_routes": {
+        "E1": [
+          {
+            "model": "gpt-6-luna",
+            "effort": "xhigh"
+          }
+        ],
+        "E2": [
+          {
+            "model": "gpt-6.1-terra",
+            "effort": "low"
+          }
+        ],
+        "E3": [
+          {
+            "model": "gpt-6.1-terra",
+            "effort": "medium"
+          }
+        ],
+        "E4": [
+          {
+            "model": "gpt-6.1-terra",
+            "effort": "high"
+          }
+        ],
+        "E5": [
+          {
+            "model": "gpt-6.1-terra",
+            "effort": "xhigh"
+          }
+        ]
       }
     },
     "web": {
@@ -95,14 +127,26 @@
       "executor": {
         "E0": {
           "model": "gpt-6-luna",
-          "effort": "high"
-        },
-        "E1": {
-          "model": "gpt-6-luna",
           "effort": "xhigh"
         },
+        "E1": {
+          "model": "gpt-6.1-terra",
+          "effort": "low"
+        },
         "E2": {
-          "model": "gpt-6-luna",
+          "model": "gpt-6.1-terra",
+          "effort": "medium"
+        },
+        "E3": {
+          "model": "gpt-6.1-terra",
+          "effort": "high"
+        },
+        "E4": {
+          "model": "gpt-6.1-terra",
+          "effort": "xhigh"
+        },
+        "E5": {
+          "model": "gpt-6.1-terra",
           "effort": "max"
         }
       },
@@ -110,17 +154,37 @@
         "gpt-6.1-terra",
         "gpt-6.1-sol"
       ],
-      "terra_trial_routes": {
-        "E1": {
-          "model": "gpt-6.1-terra",
-          "effort": "high",
-          "separate_approval": true
-        },
-        "E2": {
-          "model": "gpt-6.1-terra",
-          "effort": "xhigh",
-          "separate_approval": true
-        }
+      "allowlisted_nondefault_routes": {
+        "E1": [
+          {
+            "model": "gpt-6-luna",
+            "effort": "xhigh"
+          }
+        ],
+        "E2": [
+          {
+            "model": "gpt-6.1-terra",
+            "effort": "low"
+          }
+        ],
+        "E3": [
+          {
+            "model": "gpt-6.1-terra",
+            "effort": "medium"
+          }
+        ],
+        "E4": [
+          {
+            "model": "gpt-6.1-terra",
+            "effort": "high"
+          }
+        ],
+        "E5": [
+          {
+            "model": "gpt-6.1-terra",
+            "effort": "xhigh"
+          }
+        ]
       }
     },
     "mobile": {
@@ -128,14 +192,26 @@
       "executor": {
         "E0": {
           "model": "gpt-6-luna",
-          "effort": "high"
-        },
-        "E1": {
-          "model": "gpt-6-luna",
           "effort": "xhigh"
         },
+        "E1": {
+          "model": "gpt-6.1-terra",
+          "effort": "low"
+        },
         "E2": {
-          "model": "gpt-6-luna",
+          "model": "gpt-6.1-terra",
+          "effort": "medium"
+        },
+        "E3": {
+          "model": "gpt-6.1-terra",
+          "effort": "high"
+        },
+        "E4": {
+          "model": "gpt-6.1-terra",
+          "effort": "xhigh"
+        },
+        "E5": {
+          "model": "gpt-6.1-terra",
           "effort": "max"
         }
       },
@@ -143,26 +219,46 @@
         "gpt-6.1-terra",
         "gpt-6.1-sol"
       ],
-      "terra_trial_routes": {
-        "E1": {
-          "model": "gpt-6.1-terra",
-          "effort": "high",
-          "separate_approval": true
-        },
-        "E2": {
-          "model": "gpt-6.1-terra",
-          "effort": "xhigh",
-          "separate_approval": true
-        }
+      "allowlisted_nondefault_routes": {
+        "E1": [
+          {
+            "model": "gpt-6-luna",
+            "effort": "xhigh"
+          }
+        ],
+        "E2": [
+          {
+            "model": "gpt-6.1-terra",
+            "effort": "low"
+          }
+        ],
+        "E3": [
+          {
+            "model": "gpt-6.1-terra",
+            "effort": "medium"
+          }
+        ],
+        "E4": [
+          {
+            "model": "gpt-6.1-terra",
+            "effort": "high"
+          }
+        ],
+        "E5": [
+          {
+            "model": "gpt-6.1-terra",
+            "effort": "xhigh"
+          }
+        ]
       }
     }
   },
   "selection_rules": [
-    "E0 only gpt-6-luna/high; E1 defaults luna/xhigh, E2 defaults luna/max.",
-    "Terra/high E1 or Terra/xhigh E2 require bounded experiment ID, controlled reason and explicit task-specific authorization; CLI --approved-experiment-id mandatory.",
-    "Terra is NOT auto selected by Claude and cannot override requirements, protected files or audit.",
-    "Claude coordinator/subagents use Claude models, not OpenAI Codex executor routes.",
-    "Record distinct task IDs, attempt IDs and independent audit outcomes, not fabricated quota."
+    "E0-E5: Luna/xhigh, Terra/low, Terra/medium, Terra/high, Terra/xhigh, Terra/max respectively; classification by implementation entropy and task complexity, not file count.",
+    "Never silently reclassify E1/E2 from pre-v1.4 manifests; require migration and explicit approval of current task.",
+    "Only allowlisted nondefault routes with separate task-specific route_override and matching CLI ID; no silent fallback or parent-route inheritance.",
+    "E5 Max exceptional, not default for difficult sounding tasks; unresolved requirements go back to planner.",
+    "Claude coordinator owns plan/audit/QA; Sol remains advisory and Codex executor reports never count as audit PASS."
   ],
   "planning_pilot": {
     "orchestrator": {
@@ -188,7 +284,8 @@
     },
     "spec_plan_tasks_owner": "Claude Sonnet 5.5 High",
     "auditor": "Claude Sonnet 5.5 High",
-    "default_executor": "GPT-6 Luna",
-    "optional_executor": "GPT-6.1 Terra E1/E2 with per-task approval"
-  }
+    "default_executor": "GPT-6 Luna/xhigh E0; GPT-6.1 Terra low–max E1–E5",
+    "optional_executor": "Approved allowlisted nondefault routes only"
+  },
+  "routing_source": "docs/agents/framework/EXECUTOR_ROUTING_POLICY.json contract v2 (installed upstream, dynamically validated)"
 }

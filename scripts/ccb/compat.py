@@ -12,10 +12,22 @@ import re
 from pathlib import Path
 
 ROUTES = {
-    "E0": ("gpt-6-luna", "high"),
-    "E1": ("gpt-6-luna", "xhigh"),
-    "E2": ("gpt-6-luna", "max"),
+    "E0": ("gpt-6-luna", "xhigh"),
+    "E1": ("gpt-6.1-terra", "low"),
+    "E2": ("gpt-6.1-terra", "medium"),
+    "E3": ("gpt-6.1-terra", "high"),
+    "E4": ("gpt-6.1-terra", "xhigh"),
+    "E5": ("gpt-6.1-terra", "max"),
 }
+ALLOWED_ROUTES = {
+    "E0": {("gpt-6-luna", "xhigh")},
+    "E1": {("gpt-6.1-terra", "low"), ("gpt-6-luna", "xhigh")},
+    "E2": {("gpt-6.1-terra", "medium"), ("gpt-6.1-terra", "low")},
+    "E3": {("gpt-6.1-terra", "high"), ("gpt-6.1-terra", "medium")},
+    "E4": {("gpt-6.1-terra", "xhigh"), ("gpt-6.1-terra", "high")},
+    "E5": {("gpt-6.1-terra", "max"), ("gpt-6.1-terra", "xhigh")},
+}
+POLICY_PATH = "docs/agents/framework/EXECUTOR_ROUTING_POLICY.json"
 SUPPORTED_VARIANTS = ("company", "personal", "frontend-company", "frontend-personal")
 LOCK_PATH = Path(__file__).resolve().parents[2] / "optcodex.lock.json"
 
@@ -104,9 +116,19 @@ def verify_compatibility(root: Path, variant: str, lock: dict | None = None) -> 
     for relative, sha in expected.items():
         if not isinstance(sha, str) or len(sha) != 40 or any(x not in "0123456789abcdef" for x in sha):
             raise CompatibilityError("Malformed expected Git blob SHA")
-        actual = git_blob_sha(_safe_governance_path(root, relative).read_bytes())
+        contents = _safe_governance_path(root, relative).read_bytes()
+        actual = git_blob_sha(contents)
         if actual != sha:
-            raise CompatibilityError("OptCodex governance drift: " + relative + " (STOP; review/update lock)")
+            # Git core.autocrlf can materialize canonical LF blobs as CRLF
+            # on Windows. The lock pins canonical Git bytes, not the checkout.
+            # Accept ONLY a matching canonical hash after EOL conversion.
+            normalized = contents.replace(b"\r\n", b"\n")
+            if normalized == contents or git_blob_sha(normalized) != sha:
+                raise CompatibilityError(
+                    "OptCodex governance drift: " + relative +
+                    " (STOP; review/update lock; non-EOL change)"
+                )
+    load_route_policy(root)
     return {
         "variant": variant,
         "variant_version": spec["variant_version"],
@@ -117,24 +139,73 @@ def verify_compatibility(root: Path, variant: str, lock: dict | None = None) -> 
     }
 
 
-TERRA_ROUTES = {"E1": ("gpt-6.1-terra", "high"), "E2": ("gpt-6.1-terra", "xhigh")}
 TERRA_REASONS = {"UI_VISUAL", "HARD_DEBUG", "LUNA_REWORK", "E2_COMPLEX"}
+OVERRIDE_REASONS = {"MODEL_AVAILABILITY", "LATENCY", "COST", "A_B_TEST", "REWORK", "USER_REQUEST"}
 
 
-def require_route(route: str, model: object, effort: object, trial: object = None) -> None:
-    """Fail closed; opt-in Terra is a user-approved exception, not a default."""
-    if route not in ROUTES:
+def load_route_policy(root: Path) -> dict:
+    """Load runtime defaults, never arbitrary routes. Governance pins are separate."""
+    path = _required_path(root.resolve(strict=True), POLICY_PATH)
+    if path.stat().st_size > 4096:
+        raise CompatibilityError("Oversized executor routing policy")
+    try:
+        obj = json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, OSError) as exc:
+        raise CompatibilityError("Invalid executor routing policy JSON") from exc
+    if (not isinstance(obj, dict)
+            or set(obj) != {"schema_version", "governance_contract", "defaults"}
+            or obj["schema_version"] != 2
+            or obj["governance_contract"] != "optcodex-executor-routing-v2"):
+        raise CompatibilityError("Invalid routing policy contract")
+    defaults = obj["defaults"]
+    if not isinstance(defaults, dict) or set(defaults) != set(ALLOWED_ROUTES):
+        raise CompatibilityError("Missing executor class in routing defaults")
+    for cls, choices in ALLOWED_ROUTES.items():
+        entry = defaults[cls]
+        if not isinstance(entry, dict) or set(entry) != {"model", "effort"}:
+            raise CompatibilityError("Invalid default route entry: " + cls)
+        try:
+            pair = (entry["model"], entry["effort"])
+            if pair not in choices:
+                raise CompatibilityError("Default route outside allowlist: " + cls)
+        except TypeError as exc:
+            raise CompatibilityError("Unhashable route fields") from exc
+    return obj
+
+
+def require_route(route: str, model: object, effort: object, trial: object = None,
+                  *, policy: dict | None = None, override: object = None) -> None:
+    """Enforce allowlisted explicit model+effort; nondefault route needs authorization."""
+    if route not in ALLOWED_ROUTES:
         raise CompatibilityError("Unknown executor class")
-    if (model, effort) == ROUTES[route]:
-        if trial is not None:
-            raise CompatibilityError("ROUTE_MISMATCH: Luna route must not carry a Terra trial")
-        return
-    if route not in TERRA_ROUTES or (model, effort) != TERRA_ROUTES[route]:
+    try:
+        valid = (model, effort) in ALLOWED_ROUTES[route]
+    except TypeError:
+        valid = False
+    if not valid:
         raise CompatibilityError("ROUTE_MISMATCH: unsupported executor route")
-    if not isinstance(trial, dict) or set(trial) != {"experiment_id", "reason", "user_approved"}:
-        raise CompatibilityError("BLOCKED_ROUTE: Terra requires full experiment authorization")
-    experiment = trial["experiment_id"]
-    if (not isinstance(experiment, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", experiment)
-            or not isinstance(trial["reason"], str) or trial["reason"] not in TERRA_REASONS or trial["user_approved"] is not True):
-        raise CompatibilityError("BLOCKED_ROUTE: invalid Terra trial authorization")
-
+    defaults = (policy or {"defaults": {
+        key: {"model": m, "effort": e} for key, (m, e) in ROUTES.items()
+    }})["defaults"]
+    selected_default = (defaults[route]["model"], defaults[route]["effort"])
+    if trial is not None and override is not None:
+        raise CompatibilityError("BLOCKED_ROUTE: conflicting approval objects")
+    if trial is not None:
+        if not isinstance(trial, dict) or set(trial) != {"experiment_id", "reason", "user_approved"}:
+            raise CompatibilityError("BLOCKED_ROUTE: malformed legacy Terra experiment")
+        if (model != "gpt-6.1-terra" or not isinstance(trial["experiment_id"], str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", trial["experiment_id"])
+                or trial["reason"] not in TERRA_REASONS or trial["user_approved"] is not True):
+            raise CompatibilityError("BLOCKED_ROUTE: invalid Terra experiment authorization")
+        return
+    if (model, effort) == selected_default:
+        if override is not None:
+            raise CompatibilityError("BLOCKED_ROUTE: override on default route")
+        return
+    if not isinstance(override, dict) or set(override) != {"approval_id", "reason", "user_approved"}:
+        raise CompatibilityError("BLOCKED_ROUTE: explicit non-default override required")
+    if (not isinstance(override["approval_id"], str)
+            or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", override["approval_id"])
+            or override["reason"] not in OVERRIDE_REASONS
+            or override["user_approved"] is not True):
+        raise CompatibilityError("BLOCKED_ROUTE: invalid non-default approval")
