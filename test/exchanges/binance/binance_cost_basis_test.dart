@@ -97,6 +97,13 @@ void main() {
     expect(state.lastTradeId, 2);
   });
 
+  test('TEST-128-5b: Spot sale with no known quantity stays at zero', () {
+    final state = const CostState().apply(trade(1, false, 1, 100));
+    expect(state.quantity, 0);
+    expect(state.cost, 0);
+    expect(state.lastTradeId, 1);
+  });
+
   test('TEST-128-6: margin crossing restarts cost at trade price', () {
     final short = applyAll(const CostState(isMargin: true), [
       trade(1, true, 1, 100),
