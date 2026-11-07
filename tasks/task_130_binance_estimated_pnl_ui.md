@@ -36,9 +36,11 @@ Predecessors: T129 = PASS.
 
 Exact write list. Read access covers all non-protected source and tests.
 
+- `lib/exchanges/binance/binance_estimated_pnl.dart`
 - `lib/features/portfolio/presentation/portfolio_screen.dart`
 - `lib/features/orders/presentation/orders_screen.dart`
 - `lib/features/orders/presentation/widgets/margin_account_card.dart`
+- `test/exchanges/binance/binance_estimated_pnl_test.dart`
 - `test/features/portfolio/portfolio_scope_test.dart`
 - `test/features/orders/orders_binance_view_test.dart`
 
@@ -49,9 +51,13 @@ Do not read or change protected configuration, `backend/` or Git state. No new d
 ## 6. Executor Contract
 
 1. Compute from `binanceCostStateProvider` and the account snapshot. Mark comes from the account read, with no new price request.
+   T129 provides `binanceCostControllerProvider` with `run(AccountSnapshot)`, which is throttled to once per 60 seconds, and `binanceCostStateProvider` with `BinanceCostView`. Symbol keys are `<wallet>:<symbol>`, such as `Spot:BTCUSDT`, `Cross Margin:BTCUSDT`, `Isolated Margin:BTCUSDT`. Put row and summary logic in `binance_estimated_pnl.dart`, free of widgets.
+   Which rows: Assets rows for wallets `Spot` and `Cross Margin`; margin cards for cross and isolated. The summary sums Spot, Cross Margin and Isolated Margin once each, in USDT. An asset in two wallets counts per wallet. `Tính trên N/M tài sản` counts holdings with a figure out of holdings that are eligible, excluding USDT.
+   Holding and mark: Spot uses `total`; Cross Margin uses `net`; both take mark from `valueUsdt / amount`, and a missing or zero value means no figure. Isolated uses `baseNet` and `indexPrice`.
+   State mapping: `available` false shows nothing. No entry after a finished run, or a pair that is not USDT: `Chưa tính`. Before the first run finishes: nothing. `completed` false: `Đang tải lịch sử`, with any figure kept. `stale` true: the figure plus `· chưa cập nhật`. No estimate: `Chưa đủ dữ liệu giá vốn`.
 2. Section 6 defines the text. Amounts follow the existing currency and hide-balance behavior.
 3. The USDⓈ-M line, total and percentage do not change. An estimate failure never replaces account data.
-4. Add a run trigger on screen open and on pull to refresh only.
+4. Call `run` once when a screen first has account data after it opens, and on pull to refresh. Never from a poll tick, and never from a listener that fires on every account read. A test proves that account polling makes no additional `run` calls.
 5. Long text must not overflow at width 320 with text scale 2.0.
 6. An estimate with `ratio` below 0.01 shows `Chưa đủ dữ liệu giá vốn`, because floating-point or real dust would read as `0%`.
 7. Margin interest argument: cross uses the row's `interest`. Isolated uses `baseInterest + quoteInterest / mark`. Holding is the margin net asset, signed. Isolated holding is `baseNet`.

@@ -68,6 +68,12 @@ Map<String, dynamic> trade(
   'isBuyer': buy,
 };
 
+Map<String, dynamic> marginTrade(
+  int id, {
+  String price = '100',
+  String qty = '1',
+}) => {...trade(id, qty: qty), 'price': price}..remove('quoteQty');
+
 void main() {
   late SharedPreferences prefs;
   late ValueNotifier<OkxCredentialSnapshot> generation;
@@ -130,6 +136,83 @@ void main() {
     await controller.run(btc);
     expect(client.calls.last['fromId'], 30000);
   });
+
+  test(
+    'margin price supplies quote quantity and malformed price is stale',
+    () async {
+      const account = AccountSnapshot(
+        balances: [
+          AssetBalance(wallet: 'Cross Margin', asset: 'BTC', valueUsdt: '200'),
+          AssetBalance(wallet: 'Cross Margin', asset: 'ETH', valueUsdt: '100'),
+        ],
+      );
+      await store.write(
+        const BinanceCostSymbol('Cross Margin', 'ETHUSDT', 'ETH', 0),
+        const BinanceSymbolCost(
+          CostState(quantity: 2, cost: 80, lastTradeId: 3, isMargin: true),
+          completed: true,
+        ),
+      );
+      client.respond = (q) async => q['symbol'] == 'BTCUSDT'
+          ? [marginTrade(0, price: '125', qty: '2')]
+          : [marginTrade(4, price: 'invalid')];
+      await controller.run(account);
+      final btcCost = controller.state.symbols['Cross Margin:BTCUSDT']!;
+      expect(btcCost.stale, isFalse);
+      expect(btcCost.cost.quantity, 2);
+      expect(btcCost.cost.cost, 250);
+      expect(
+        store
+            .read(const BinanceCostSymbol('Cross Margin', 'BTCUSDT', 'BTC', 0))!
+            .cost
+            .cost,
+        250,
+      );
+      final ethCost = controller.state.symbols['Cross Margin:ETHUSDT']!;
+      expect(ethCost.stale, isTrue);
+      expect(ethCost.cost.lastTradeId, 3);
+      expect(ethCost.cost.cost, 80);
+    },
+  );
+
+  test(
+    'descending page folds in id order and rejects previously stored ids',
+    () async {
+      client.respond = (_) async => [
+        trade(1, qty: '0.5', quote: '75', buy: false),
+        trade(0, qty: '1', quote: '100'),
+      ];
+      await controller.run(btc);
+      final first = controller.state.symbols['Spot:BTCUSDT']!;
+      expect(first.stale, isFalse);
+      expect(first.cost.quantity, 0.5);
+      expect(first.cost.cost, 50);
+      expect(first.cost.lastTradeId, 1);
+      final ascending = BinanceCostController(
+        client,
+        market,
+        BinanceCostStore(prefs, 'another-key'),
+        clock: () => now,
+      );
+      client.respond = (_) async => [
+        trade(0, qty: '1', quote: '100'),
+        trade(1, qty: '0.5', quote: '75', buy: false),
+      ];
+      await ascending.run(btc);
+      expect(
+        ascending.state.symbols['Spot:BTCUSDT']!.cost.toJson(),
+        first.cost.toJson(),
+      );
+      ascending.dispose();
+      now = now.add(const Duration(seconds: 60));
+      client.respond = (_) async => [trade(2), trade(1)];
+      await controller.run(btc);
+      final rejected = controller.state.symbols['Spot:BTCUSDT']!;
+      expect(rejected.stale, isTrue);
+      expect(rejected.cost.lastTradeId, 1);
+      expect(rejected.cost.cost, 50);
+    },
+  );
 
   test('top 20 eligible holdings and isolated route', () async {
     for (var i = 0; i < 22; i++) {

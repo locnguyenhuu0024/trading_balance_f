@@ -175,7 +175,12 @@ class BinanceCostController extends StateNotifier<BinanceCostView> {
               },
             );
             if (cancelled()) return;
-            final rows = response.data as List;
+            final rows = List<dynamic>.of(response.data as List)
+              ..sort(
+                (a, b) => int.parse(
+                  '${(a as Map)['id']}',
+                ).compareTo(int.parse('${(b as Map)['id']}')),
+              );
             var next = working;
             for (final raw in rows) {
               final row = raw as Map;
@@ -184,12 +189,15 @@ class BinanceCostController extends StateNotifier<BinanceCostView> {
                 throw const FormatException('Unordered trades');
               if (row['isBuyer'] is! bool)
                 throw const FormatException('Invalid trade side');
+              final quantity = double.parse('${row['qty']}');
               next = next.apply(
                 CostTrade(
                   id: id,
                   isBuyer: row['isBuyer'] as bool,
-                  quantity: double.parse('${row['qty']}'),
-                  quoteQuantity: double.parse('${row['quoteQty']}'),
+                  quantity: quantity,
+                  quoteQuantity: row['quoteQty'] != null
+                      ? double.parse('${row['quoteQty']}')
+                      : double.parse('${row['price']}') * quantity,
                   commission: double.parse('${row['commission']}'),
                   commissionAsset: '${row['commissionAsset']}',
                   baseAsset: symbol.base,
