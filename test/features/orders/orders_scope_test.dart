@@ -22,6 +22,8 @@ const _key = InstrumentKey(
   exchange: ExchangeId.binance,
   product: 'SWAP',
   nativeId: 'FAKE-USDT-SWAP',
+  base: 'FAKE',
+  quote: 'USDT',
 );
 
 class _Fake extends FakeExchangeAdapter {
@@ -97,7 +99,7 @@ void main() {
       ]);
       await tester.pump();
       await tester.pump();
-      expect(find.text('FAKEUSDT'), findsOneWidget);
+      expect(find.text('FAKE/USDT'), findsOneWidget);
       expect(find.text('LATEUSDT'), findsNothing);
       await tester.pumpWidget(const SizedBox.shrink());
     });
@@ -135,7 +137,7 @@ void main() {
         container.read(orderTabProvider.notifier).state = tab;
         await tester.pump();
         await tester.pump();
-        expect(find.text('FAKEUSDT'), findsOneWidget);
+        expect(find.text('FAKE/USDT'), findsOneWidget);
         expect(find.byType(TradeAccountControls), findsNothing);
         expect(find.byType(OrderCancellationControl), findsNothing);
       }

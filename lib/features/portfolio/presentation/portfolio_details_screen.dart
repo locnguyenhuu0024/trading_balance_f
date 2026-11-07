@@ -7,6 +7,8 @@ import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/pnl_color.dart';
 import '../../../core/widgets/crypto_icon.dart';
+import '../../../core/widgets/account_state_view.dart';
+import '../../../exchanges/binance/binance_adapter.dart';
 import '../../../core/widgets/manual_refresh_button.dart';
 import '../../market/presentation/providers/market_provider.dart';
 import '../../settings/presentation/settings_screen.dart';
@@ -95,12 +97,19 @@ class _PortfolioDetailsScreenState
         child: async.when(
           loading: () =>
               Center(child: CircularProgressIndicator(color: foreground)),
-          error: (error, _) => _DetailsState(
-            message: 'Unable to load portfolio details: $error',
+          error: (error, _) => AccountStateView.fromError(
+            error: error,
+            registration: ref
+                .read(exchangeRegistryProvider)
+                .firstWhere(
+                  (entry) => entry.profile.connectionId == scope.connectionId,
+                ),
+            onRetry: _refreshPortfolio,
           ),
           data: (account) => _DetailsContent(
             account: account,
             isOkx: isOkx,
+            isWeb: !isOkx && ref.watch(binanceIsWebProvider),
             livePrices: isOkx ? ref.watch(livePriceProvider) : const {},
             currency: currency,
             exchangeRate: rate,
@@ -119,6 +128,7 @@ class _DetailsContent extends StatelessWidget {
   const _DetailsContent({
     required this.account,
     required this.isOkx,
+    required this.isWeb,
     required this.livePrices,
     required this.currency,
     required this.exchangeRate,
@@ -130,6 +140,7 @@ class _DetailsContent extends StatelessWidget {
 
   final AccountSnapshot account;
   final bool isOkx;
+  final bool isWeb;
   final Map<String, String> livePrices;
   final String currency;
   final double exchangeRate;
@@ -223,6 +234,8 @@ class _DetailsContent extends StatelessWidget {
                         fontWeight: FontWeight.w600,
                       ),
                     ),
+                  if (!isOkx)
+                    PartialAccountNotice(account: account, isWeb: isWeb),
                   const SizedBox(height: 10),
                   Text(
                     'Principal / base capital',

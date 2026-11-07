@@ -1,4 +1,5 @@
 import '../../../core/widgets/scope_bar.dart';
+import '../../../core/widgets/account_state_view.dart';
 // File Name: orders_screen.dart
 // File Path: lib/features/orders/presentation/orders_screen.dart
 
@@ -13,7 +14,6 @@ import '../../../core/exchange/exchange_scope.dart';
 import '../../../core/exchange/scoped_read.dart';
 import '../../../core/formatting/adaptive_number_format.dart';
 import '../../../core/navigation/navigation_content_frame.dart';
-import '../../../core/network/okx_read_scope.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/pnl_color.dart';
 import '../../../core/timezone/app_time_zone.dart';
@@ -79,8 +79,14 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
           ? ref.read(scopedPositionsProvider(scope))
           : ref.read(scopedOrdersProvider(scope));
       if (currentRead.isLoading ||
-          (scope.exchange == ExchangeId.okx &&
-              isTerminalOkxReadFailure(currentRead.asError?.error))) {
+          isTerminalAccountFailure(
+            ref
+                .read(exchangeRegistryProvider)
+                .firstWhere(
+                  (entry) => entry.profile.connectionId == scope.connectionId,
+                ),
+            currentRead.asError?.error,
+          )) {
         return;
       }
 
@@ -343,12 +349,16 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                 loading: () => Center(
                   child: CircularProgressIndicator(color: palette.ink),
                 ),
-                error: (error, stack) => Center(
-                  child: Text(
-                    'Lỗi: $error',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 12, color: palette.negative),
-                  ),
+                error: (error, stack) => AccountStateView.fromError(
+                  error: error,
+                  registration: ref
+                      .read(exchangeRegistryProvider)
+                      .firstWhere(
+                        (entry) =>
+                            entry.profile.connectionId ==
+                            ref.read(exchangeScopeProvider).connectionId,
+                      ),
+                  onRetry: _refreshCurrentRead,
                 ),
                 data: (positions) {
                   final scope = ref.watch(exchangeScopeProvider);
@@ -363,7 +373,9 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                       : const <MarginAccountRow>[];
                   if (positions.isEmpty && rows.isEmpty) {
                     return _buildEmptyState(
-                      'Không có vị thế nào đang mở.',
+                      scope.exchange == ExchangeId.okx
+                          ? 'Không có vị thế nào đang mở.'
+                          : 'Chưa có vị thế trên ${ref.watch(exchangeRegistryProvider).firstWhere((entry) => entry.profile.connectionId == scope.connectionId).profile.label}',
                       isDark,
                     );
                   }
@@ -401,12 +413,16 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
           skipLoadingOnReload: false,
           loading: () =>
               Center(child: CircularProgressIndicator(color: palette.ink)),
-          error: (error, stack) => Center(
-            child: Text(
-              'Lỗi: $error',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 12, color: palette.negative),
-            ),
+          error: (error, stack) => AccountStateView.fromError(
+            error: error,
+            registration: ref
+                .read(exchangeRegistryProvider)
+                .firstWhere(
+                  (entry) =>
+                      entry.profile.connectionId ==
+                      ref.read(exchangeScopeProvider).connectionId,
+                ),
+            onRetry: _refreshCurrentRead,
           ),
           data: (orders) {
             if (orders.isEmpty) {
@@ -441,6 +457,27 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
           children: [
             if (backendFeaturesEnabled)
               const TradeAccountControls(showCloseAll: false),
+            Expanded(child: orderList),
+          ],
+        );
+      }
+      final scope = ref.watch(exchangeScopeProvider);
+      if (scope.exchange == ExchangeId.binance) {
+        final coverage = ref.watch(binanceHistorySymbolsProvider(scope));
+        return Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text(
+                coverage.when(
+                  data: (symbols) => symbols.isEmpty
+                      ? 'Chưa có cặp giao dịch để xem lịch sử.'
+                      : 'Lịch sử của: ${symbols.join(', ')}',
+                  loading: () => 'Đang tải phạm vi lịch sử',
+                  error: (_, __) => 'Không thể xác định phạm vi lịch sử.',
+                ),
+              ),
+            ),
             Expanded(child: orderList),
           ],
         );

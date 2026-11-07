@@ -1,4 +1,5 @@
 import '../../../core/widgets/scope_bar.dart';
+import '../../../core/widgets/account_state_view.dart';
 // File Name: market_screen.dart
 // File Path: lib/features/market/presentation/market_screen.dart
 // Note: Màn hình hiển thị Top 50 các đồng coin giao dịch SPOT có Volume lớn nhất
@@ -191,12 +192,10 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
                   loading: () => Center(
                     child: CircularProgressIndicator(color: textColor),
                   ),
-                  error: (err, stack) => Center(
-                    child: Text(
-                      'Lỗi tải dữ liệu:\n$err',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: palette.negative),
-                    ),
+                  error: (err, stack) => AccountStateView.fromError(
+                    error: err,
+                    registration: registration,
+                    onRetry: _refreshMarket,
                   ),
                   data: (tickers) {
                     return ListView.builder(

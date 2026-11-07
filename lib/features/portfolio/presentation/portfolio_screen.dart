@@ -1,4 +1,6 @@
 import '../../../core/widgets/scope_bar.dart';
+import '../../../core/widgets/account_state_view.dart';
+import '../../../exchanges/binance/binance_adapter.dart';
 // File Name: portfolio_screen.dart
 // File Path: lib/features/portfolio/presentation/portfolio_screen.dart
 
@@ -7,7 +9,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../../core/currency/currency_display_mode.dart';
-import '../../../core/network/okx_read_scope.dart';
 import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/platform_brightness_provider.dart';
@@ -66,8 +67,14 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
         _portfolioRefreshInFlight ||
         currentRead.isLoading ||
         (automatic &&
-            scope.exchange == ExchangeId.okx &&
-            isTerminalOkxReadFailure(currentRead.asError?.error))) {
+            isTerminalAccountFailure(
+              ref
+                  .read(exchangeRegistryProvider)
+                  .firstWhere(
+                    (entry) => entry.profile.connectionId == scope.connectionId,
+                  ),
+              currentRead.asError?.error,
+            ))) {
       return;
     }
     _portfolioRefreshInFlight = true;
@@ -235,10 +242,16 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
                         ),
                         error: (error, stack) {
                           _syncTickerSubscription(const <String>[]);
-                          return _buildErrorState(
-                            context,
-                            error.toString(),
-                            isDark,
+                          return AccountStateView.fromError(
+                            error: error,
+                            registration: ref
+                                .read(exchangeRegistryProvider)
+                                .firstWhere(
+                                  (entry) =>
+                                      entry.profile.connectionId ==
+                                      scope.connectionId,
+                                ),
+                            onRetry: _refreshPortfolioAndRate,
                           );
                         },
                         data: (data) {
@@ -333,6 +346,14 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
           exchangeRate: exchangeRate,
         ),
 
+        if (!isOkx)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: PartialAccountNotice(
+              account: accountData,
+              isWeb: ref.watch(binanceIsWebProvider),
+            ),
+          ),
         Divider(height: 1, indent: 16, endIndent: 16, color: palette.border),
 
         Padding(
@@ -665,19 +686,6 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
             ],
           );
         },
-      ),
-    );
-  }
-
-  Widget _buildErrorState(
-    BuildContext context,
-    String errorMessage,
-    bool isDark,
-  ) {
-    return Center(
-      child: Text(
-        'Lỗi kết nối: $errorMessage',
-        style: TextStyle(color: AppPalette.of(context).ink),
       ),
     );
   }
