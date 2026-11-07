@@ -71,10 +71,18 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('Nguồn giá: Binance'), findsOneWidget);
+      expect(find.text('Spot'), findsOneWidget);
+      expect(find.text('USDⓈ-M'), findsOneWidget);
+      expect(
+        tester
+            .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, 'USDⓈ-M'))
+            .selected,
+        isTrue,
+      );
       expect(find.text('BTC'), findsOneWidget);
       expect(find.text('\$12.00'), findsOneWidget);
       expect(client.paths, ['/fapi/v1/ticker/24hr']);
-      await tester.tap(find.text('SPOT'));
+      await tester.tap(find.text('Spot'));
       await tester.pumpAndSettle();
       expect(client.paths.last, '/api/v3/ticker/24hr');
     },
@@ -171,7 +179,7 @@ class _BinanceAdapter extends FakeExchangeAdapter {
   _BinanceAdapter(this.client);
   final BinanceClient client;
   @override
-  List<String> get marketProducts => const ['USD-M', 'SPOT'];
+  List<String> get marketProducts => const ['SPOT', 'SWAP'];
   @override
   MarketSource market(Ref ref) => BinanceMarket(client);
 }

@@ -1,6 +1,6 @@
 # Implementation Plan: Multi-platform view-only restructure
 
-Status: APPROVED revision 2 (user, chat, 2026-11-07: "Duyệt, chạy T122"; includes PRE-4); EXECUTING
+Status: COMPLETE for code (all tasks PASS, final audit `docs/agents/audits/2026-11-07-multi-platform-final-audit.md`); user live verification pending
 Date: 2026-11-07
 Tier: L
 Plan ID: PLAN-20261107-multi-platform-view-only
@@ -186,15 +186,15 @@ Routing follows `docs/agents/framework/EXECUTOR_ROUTING_POLICY.json` v2. Classes
 ## 14. Completion Gate
 
 - [x] planning workstream coverage gate has a permitted `EXCEPTION` recorded
-- [ ] every task PASS
-- [ ] every code-producing task had a `PASS` task buildability gate at its final task-local executable state
-- [ ] compile-coupled changes were merged or compatibility-staged
-- [ ] every affected AC has implementation/verification evidence
-- [ ] RED precedes GREEN for every task
-- [ ] relevant repository checks observed
-- [ ] final diff matches approved scope
-- [ ] final integration audit PASS
-- [ ] no protected configuration/environment file was read or modified by an agent
+- [x] every task PASS
+- [x] every code-producing task had a `PASS` task buildability gate at its final task-local executable state
+- [x] compile-coupled changes were merged or compatibility-staged
+- [x] every affected AC has implementation/verification evidence; live evidence pending
+- [x] RED precedes GREEN for every task (VAL-005)
+- [x] relevant repository checks observed
+- [x] final diff matches approved scope
+- [x] final integration audit PASS
+- [x] no protected configuration/environment file was read or modified by an agent
 - [x] every external configuration/environment action is reported or N/A
 
 ## 15. Change Log

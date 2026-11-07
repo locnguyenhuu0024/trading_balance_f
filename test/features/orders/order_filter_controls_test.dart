@@ -9,12 +9,11 @@ void main() {
   testWidgets('tabs and OKX chips remain accessible at narrow width', (
     tester,
   ) async {
+    final semantics = tester.ensureSemantics();
     tester.view.physicalSize = const Size(320, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    final semantics = tester.ensureSemantics();
-    addTearDown(semantics.dispose);
     OrderTab? tab;
     String? filter;
     await tester.pumpWidget(
@@ -52,5 +51,6 @@ void main() {
       greaterThanOrEqualTo(48),
     );
     expect(tester.takeException(), isNull);
+    semantics.dispose();
   });
 }

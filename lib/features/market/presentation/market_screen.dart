@@ -57,8 +57,8 @@ final marketProductProvider = StateProvider<String>((ref) {
       .firstWhere((entry) => entry.profile.connectionId == scope.connectionId)
       .adapter
       .marketProducts;
-  return scope.exchange == ExchangeId.binance && products.contains('USD-M')
-      ? 'USD-M'
+  return scope.exchange == ExchangeId.binance && products.contains('SWAP')
+      ? 'SWAP'
       : products.first;
 });
 
@@ -179,7 +179,13 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
                     children: [
                       for (final item in registration.adapter.marketProducts)
                         ChoiceChip(
-                          label: Text(item),
+                          label: Text(
+                            item == 'SPOT'
+                                ? 'Spot'
+                                : item == 'SWAP'
+                                ? 'USDⓈ-M'
+                                : item,
+                          ),
                           selected: item == product,
                           onSelected: (_) =>
                               ref.read(marketProductProvider.notifier).state =
