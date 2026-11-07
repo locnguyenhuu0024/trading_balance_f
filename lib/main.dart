@@ -12,6 +12,8 @@ import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/navigation/main_navigation_shell.dart';
+import 'core/exchange/exchange_scope.dart';
+import 'core/exchange/exchange_registry.dart';
 import 'core/security/secure_storage_helper.dart';
 import 'core/services/background_service.dart';
 import 'core/theme/app_theme.dart';
@@ -33,6 +35,7 @@ class AppStartupData {
     required this.currency,
     required this.timeZoneId,
     required this.appTextScale,
+    this.selectedConnectionId = defaultConnectionId,
   });
 
   final SecureStorageHelper secureStorage;
@@ -42,6 +45,7 @@ class AppStartupData {
   final String currency;
   final String timeZoneId;
   final double appTextScale;
+  final String selectedConnectionId;
 }
 
 Future<AppStartupData> initializeAppStartup({
@@ -98,6 +102,13 @@ Future<AppStartupData> initializeAppStartup({
     debugPrint('App text-scale restoration failed; using the default.');
   }
 
+  var selectedConnectionId = defaultConnectionId;
+  try {
+    selectedConnectionId = await helper.getSelectedConnectionId();
+  } catch (_) {
+    selectedConnectionId = defaultConnectionId;
+  }
+
   final initialThemeMode = themeModeStr == 'dark'
       ? ThemeMode.dark
       : (themeModeStr == 'light' ? ThemeMode.light : ThemeMode.system);
@@ -111,6 +122,7 @@ Future<AppStartupData> initializeAppStartup({
     currency: currencyStr,
     timeZoneId: initialTimeZoneId,
     appTextScale: appTextScale,
+    selectedConnectionId: selectedConnectionId,
   );
 }
 
@@ -126,6 +138,18 @@ Widget buildInitializedApp(AppStartupData startup, {Widget? home}) {
   return ProviderScope(
     overrides: [
       secureStorageProvider.overrideWithValue(startup.secureStorage),
+      selectedConnectionIdProvider.overrideWith(
+        (ref) =>
+            ref
+                .watch(exchangeRegistryProvider)
+                .any(
+                  (entry) =>
+                      entry.profile.connectionId ==
+                      startup.selectedConnectionId,
+                )
+            ? startup.selectedConnectionId
+            : defaultConnectionId,
+      ),
       hideBalanceProvider.overrideWith((ref) => startup.hideBalanceDefault),
       themeModeProvider.overrideWith((ref) => startup.themeMode),
       currencyProvider.overrideWith((ref) => startup.currency),
@@ -361,6 +385,16 @@ class WebStorageHelper extends SecureStorageHelper {
   final SharedPreferences _prefs;
 
   WebStorageHelper(this._prefs) : super(const FlutterSecureStorage());
+
+  @override
+  Future<String> getSelectedConnectionId() async =>
+      _prefs.getString('SELECTED_CONNECTION_ID') ?? defaultConnectionId;
+
+  @override
+  Future<void> saveSelectedConnectionId(String id) async {
+    if (!await _prefs.setString('SELECTED_CONNECTION_ID', id))
+      throw StateError('Unable to save selected connection.');
+  }
 
   @override
   Future<void> saveOkxCredentials({

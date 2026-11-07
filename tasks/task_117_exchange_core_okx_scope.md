@@ -1,6 +1,6 @@
 # Task 117 — Exchange core, scope and OKX adapter
 
-Status: PENDING
+Status: PASS
 Agent Role: implementation_executor
 Executor Class: E4
 Target Model: gpt-6.1-terra
@@ -171,4 +171,10 @@ Return `BLOCKED` when repository evidence contradicts this contract, a design de
 
 ## 12. Coordinator Audit
 
-Verdict: PENDING
+Attempt: 9175f813e6ad42879932621cd8011c9b
+Dispatch route compliance: UNVERIFIABLE (requested gpt-6.1-terra/xhigh, explicit).
+Parent route inheritance: NO
+RED and GREEN executed by the coordinator on the host, RED first (VAL-005): late response dropped and cancelled, fake 429 leaves OKX lane open, filter and tab reset; then OKX adapter mapping
+Regression and buildability, coordinator-observed: 350 tests passed across network, security, widgets, portfolio, orders, navigation, settings, market, BMAG, S/R, Strategy screen; analyzer 0 errors; web build pass
+Task buildability gate: PASS
+Verdict: PASS

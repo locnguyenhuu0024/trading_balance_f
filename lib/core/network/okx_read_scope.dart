@@ -3,6 +3,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../security/secure_storage_helper.dart';
+import '../exchange/exchange_models.dart';
+import '../exchange/scoped_read.dart';
 import 'backend_data_client.dart';
 import 'foreground_read_gate.dart';
 import 'okx_data_client.dart';
@@ -63,26 +65,27 @@ Future<T> runOkxPrivateRead<T>({
     );
   }
 
-  final gate = ref.read(okxDirectReadGateProvider);
-  var callerActive = true;
-  final lease = gate.acquire<T>(
+  return runPrivateRead<T>(
+    ref: ref,
+    gate: ref.read(okxDirectReadGateProvider),
     sessionIdentity: storage,
     generation: snapshot.generation,
     requestKey: requestKey,
     canStart: () =>
-        callerActive &&
-        !snapshot.rotating &&
-        storage.okxCredentialState.value == snapshot,
+        !snapshot.rotating && storage.okxCredentialState.value == snapshot,
     load: load,
-    isTransientFailure: isTransientOkxReadFailure,
-    isCancellationFailure: isOkxReadCancellation,
     retryAfter: okxReadRetryAfter,
+    classify: (error) {
+      if (isOkxReadCancellation(error))
+        return const ExchangeFailure(ExchangeFailureKind.cancellation);
+      if (isTransientOkxReadFailure(error))
+        return ExchangeFailure(
+          ExchangeFailureKind.transient,
+          retryAfter: okxReadRetryAfter(error, DateTime.now()),
+        );
+      return const ExchangeFailure(ExchangeFailureKind.other);
+    },
   );
-  ref.onDispose(() {
-    callerActive = false;
-    lease.release();
-  });
-  return await lease.future;
 }
 
 bool isTransientOkxReadFailure(Object error) {

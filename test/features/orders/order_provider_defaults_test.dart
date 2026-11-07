@@ -1,9 +1,53 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:trading_balance_f/core/exchange/exchange_scope.dart';
+import 'package:trading_balance_f/core/exchange/exchange_registry.dart';
+import 'package:trading_balance_f/core/exchange/exchange_models.dart';
+import '../../support/fake_exchange_adapter.dart';
+import 'package:trading_balance_f/exchanges/okx/okx_adapter.dart';
 import 'package:trading_balance_f/features/orders/presentation/providers/order_provider.dart';
 
 void main() {
+  test('selection resets filter and tab', () async {
+    final fake = FakeExchangeAdapter();
+    final container = ProviderContainer(
+      overrides: [
+        exchangeRegistryProvider.overrideWith(
+          (ref) => [
+            const ExchangeRegistration(
+              profile: ConnectionProfile(
+                connectionId: 'okx-default',
+                exchange: ExchangeId.okx,
+                label: 'OKX',
+              ),
+              adapter: OkxAdapter(),
+            ),
+            ExchangeRegistration(
+              profile: const ConnectionProfile(
+                connectionId: 'fake',
+                exchange: ExchangeId.binance,
+                label: 'Fake',
+              ),
+              adapter: fake,
+            ),
+          ],
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+    final filter = container.listen(orderFilterProvider, (_, __) {});
+    final tab = container.listen(orderTabProvider, (_, __) {});
+    container.read(orderFilterProvider.notifier).state = 'SWAP';
+    container.read(orderTabProvider.notifier).state = OrderTab.history;
+    container.read(selectConnectionProvider)('fake');
+    await container.pump();
+    expect(container.read(orderFilterProvider), 'ALL');
+    expect(container.read(orderTabProvider), OrderTab.positions);
+    filter.close();
+    tab.close();
+  });
+
   testWidgets('keeps an explicit transaction type across reads and rebuilds', (
     tester,
   ) async {

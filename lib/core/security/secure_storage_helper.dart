@@ -98,6 +98,12 @@ class SecureStorageHelper {
     _okxCredentialState.dispose();
   }
 
+  Future<String> getSelectedConnectionId() async =>
+      await _storage.read(key: 'SELECTED_CONNECTION_ID') ?? 'okx-default';
+
+  Future<void> saveSelectedConnectionId(String id) =>
+      _storage.write(key: 'SELECTED_CONNECTION_ID', value: id);
+
   // Define keys
   static const String _okxApiKey = 'OKX_API_KEY';
   static const String _okxSecretKey = 'OKX_SECRET_KEY';

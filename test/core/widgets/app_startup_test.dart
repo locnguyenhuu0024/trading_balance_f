@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/security/secure_storage_helper.dart';
+import 'package:trading_balance_f/core/exchange/exchange_scope.dart';
 import 'package:trading_balance_f/core/timezone/app_time_zone.dart';
 import 'package:trading_balance_f/core/typography/app_text_scale.dart';
 import 'package:trading_balance_f/core/widgets/app_startup.dart';
@@ -19,11 +20,21 @@ class _StartupStorage extends SecureStorageHelper {
     this.failBiometricRead = false,
     this.textScale = 1.25,
     this.calls,
+    this.selection = 'okx-default',
+    this.failSelection = false,
   }) : super(const FlutterSecureStorage());
 
   final bool failBiometricRead;
   final double textScale;
   final List<String>? calls;
+  final String selection;
+  final bool failSelection;
+
+  @override
+  Future<String> getSelectedConnectionId() async {
+    if (failSelection) throw StateError('unreadable selection');
+    return selection;
+  }
 
   @override
   Future<bool> getBiometricAuth() async {
@@ -187,6 +198,30 @@ void main() {
     },
   );
 
+  test('selection restoration falls back when storage fails', () async {
+    final storage = _StartupStorage(failSelection: true);
+    final startup = await app.initializeAppStartup(
+      isWeb: false,
+      createNativeStorage: () => storage,
+      initializeTimeZone: () {},
+      retireLegacyBackgroundService: () async {},
+    );
+    expect(startup.selectedConnectionId, defaultConnectionId);
+    storage.dispose();
+  });
+
+  test('selection restoration loads stored value', () async {
+    final storage = _StartupStorage(selection: 'other');
+    final startup = await app.initializeAppStartup(
+      isWeb: false,
+      createNativeStorage: () => storage,
+      initializeTimeZone: () {},
+      retireLegacyBackgroundService: () async {},
+    );
+    expect(startup.selectedConnectionId, 'other');
+    storage.dispose();
+  });
+
   testWidgets(
     'initialized values retain provider overrides and native biometric gate',
     (tester) async {
@@ -199,6 +234,7 @@ void main() {
         currency: 'VND',
         timeZoneId: 'Asia/Ho_Chi_Minh',
         appTextScale: 1.25,
+        selectedConnectionId: 'other',
       );
 
       await tester.pumpWidget(
@@ -212,6 +248,7 @@ void main() {
                 Text('hidden:${ref.watch(hideBalanceProvider)}'),
                 Text('timezone:${ref.watch(appTimeZoneProvider)}'),
                 Text('scale:${ref.watch(appTextScaleProvider)}'),
+                Text('connection:${ref.watch(selectedConnectionIdProvider)}'),
                 Text(
                   'same-storage:${identical(ref.watch(secureStorageProvider), storage)}',
                 ),
@@ -226,6 +263,7 @@ void main() {
       expect(find.text('hidden:true'), findsOneWidget);
       expect(find.text('timezone:Asia/Ho_Chi_Minh'), findsOneWidget);
       expect(find.text('scale:1.25'), findsOneWidget);
+      expect(find.text('connection:okx-default'), findsOneWidget);
       expect(find.text('same-storage:true'), findsOneWidget);
       expect(
         tester
