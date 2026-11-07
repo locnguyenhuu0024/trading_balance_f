@@ -12,7 +12,15 @@ Parent Route Inheritance: FORBIDDEN
 Specification: `docs/agents/specs/2026-11-07-binance-estimated-pnl-design.md`
 Plan: `docs/agents/plans/2026-11-07-binance-estimated-pnl.md`
 
-## 1. Dispatch Compliance
+## Remediation R01 (current instruction)
+
+The first pass is committed. Do not redo it. Your report named the screen triggers as a blocker: they belong to T130, so they are not needed here. Fix only this, writing only `lib/exchanges/binance/binance_trade_history.dart` and `test/exchanges/binance/binance_trade_history_test.dart`.
+
+AUD-129-01, every margin symbol fails. `/sapi/v1/margin/myTrades` has no `quoteQty` field: its documented fields are `commission`, `commissionAsset`, `id`, `isBestMatch`, `isBuyer`, `isMaker`, `orderId`, `price`, `qty`, `symbol`, `time`, and also `isIsolated`. `double.parse('${row['quoteQty']}')` therefore throws for every margin trade, so each margin symbol stays stale with no cost. The fixture hid this by always sending `quoteQty`. Required: use `quoteQty` when present, otherwise `price * qty`. If neither gives a valid value, the existing failed-symbol path applies. Change the fixture so margin trades carry `price` and no `quoteQty`, as Binance returns them, and add a test that a margin symbol then produces the expected cost, including one with a malformed price that becomes stale.
+
+AUD-129-02, ordering assumption. Sort the rows of each page by `id` ascending before applying them. A descending page must produce the same state as an ascending one. Keep the rejection of an id at or below the stored id. Add a test.
+
+
 
 The dispatcher passes `--model` and `model_reasoning_effort` on your command line, and your prompt states the route. `UNVERIFIABLE` is a valid state; do not stop for it.
 

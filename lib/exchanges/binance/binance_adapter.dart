@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/exchange/exchange_adapter.dart';
 import '../../core/exchange/exchange_models.dart';
 import '../../core/exchange/exchange_scope.dart';
@@ -12,6 +13,7 @@ import 'binance_client.dart';
 import 'binance_market.dart';
 import 'binance_private_client.dart';
 import 'binance_reader.dart';
+import 'binance_trade_history.dart';
 
 final binanceIsWebProvider = Provider<bool>((ref) => kIsWeb);
 final binanceProxyBaseUrlProvider = Provider<String>(
@@ -64,6 +66,29 @@ final binanceReaderProvider = FutureProvider<BinanceReader>((ref) async {
   final market = ref.watch(binanceMarketProvider);
   final client = await ref.watch(binancePrivateClientProvider.future);
   return BinanceReader(client, market);
+});
+
+// Screens call run explicitly with their account snapshot; this provider never
+// subscribes to account polling or order filters.
+final binanceCostControllerProvider = FutureProvider<BinanceCostController>((
+  ref,
+) async {
+  final client = await ref.watch(binancePrivateClientProvider.future);
+  final market = ref.watch(binanceMarketProvider);
+  final preferences = await SharedPreferences.getInstance();
+  final controller = BinanceCostController(
+    client,
+    market,
+    BinanceCostStore(preferences, client.keys.apiKey),
+  );
+  ref.onDispose(controller.dispose);
+  return controller;
+});
+
+final binanceCostStateProvider = StreamProvider<BinanceCostView>((ref) async* {
+  final controller = await ref.watch(binanceCostControllerProvider.future);
+  yield controller.state;
+  yield* controller.stream;
 });
 
 final binanceHistorySymbolsProvider = FutureProvider.autoDispose

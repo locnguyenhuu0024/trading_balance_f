@@ -8,6 +8,9 @@ import 'package:trading_balance_f/core/exchange/exchange_models.dart';
 import 'package:trading_balance_f/core/network/request_coordinator.dart';
 import 'package:trading_balance_f/core/security/secure_storage_helper.dart';
 import 'package:trading_balance_f/exchanges/binance/binance_private_client.dart';
+import 'package:trading_balance_f/exchanges/binance/binance_client.dart';
+import 'package:trading_balance_f/exchanges/binance/binance_market.dart';
+import 'package:trading_balance_f/exchanges/binance/binance_reader.dart';
 
 class Fixture implements HttpClientAdapter {
   Fixture(this.respond);
@@ -237,6 +240,55 @@ void main() {
       );
     },
   );
+  test('trade routes use the proxy and are unavailable without it', () async {
+    final fixture = Fixture(
+      (r) async =>
+          r.uri.path.endsWith('/time') ? body({'serverTime': 1000}) : body([]),
+    );
+    final unavailable = client(fixture, web: true);
+    for (final path in ['/api/v3/myTrades', '/sapi/v1/margin/myTrades']) {
+      await expectLater(
+        unavailable.get(path),
+        throwsA(
+          predicate(
+            (e) => failure(e, ExchangeFailureKind.unavailableOnPlatform),
+          ),
+        ),
+      );
+    }
+    expect(fixture.requests, isEmpty);
+    final proxied = client(fixture, web: true, proxy: 'https://proxy.example');
+    for (final path in ['/api/v3/myTrades', '/sapi/v1/margin/myTrades']) {
+      await proxied.get(path, queryParameters: {'symbol': 'BTCUSDT'});
+    }
+    expect(
+      fixture.requests
+          .where((r) => r.uri.path.endsWith('/myTrades'))
+          .every((r) => r.uri.host == 'proxy.example'),
+      isTrue,
+    );
+  });
+  test('account reads never request trade history', () async {
+    final fixture = Fixture((r) async {
+      if (r.uri.path.endsWith('/time')) return body({'serverTime': 1000});
+      if (r.uri.path == '/fapi/v3/account') return body({'assets': []});
+      if (r.uri.path == '/api/v3/account') return body({'balances': []});
+      if (r.uri.path == '/sapi/v1/margin/account')
+        return body({'userAssets': []});
+      if (r.uri.path == '/sapi/v1/margin/isolated/account')
+        return body({'assets': []});
+      return body({});
+    });
+    final reader = BinanceReader(
+      client(fixture),
+      BinanceMarket(BinanceClient(coordinator: coordinator)),
+    );
+    await reader.readAccount();
+    expect(
+      fixture.requests.any((request) => request.uri.path.endsWith('/myTrades')),
+      isFalse,
+    );
+  });
   test('invalid proxy values disable web private routes', () async {
     for (final proxy in [
       'http://proxy.example',

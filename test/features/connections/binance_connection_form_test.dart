@@ -8,6 +8,8 @@ import 'package:trading_balance_f/core/exchange/scoped_read.dart';
 import 'package:trading_balance_f/core/security/secure_storage_helper.dart';
 import 'package:trading_balance_f/core/widgets/scope_bar.dart';
 import 'package:trading_balance_f/exchanges/binance/binance_private_client.dart';
+import 'package:trading_balance_f/exchanges/binance/binance_trade_history.dart';
+import 'package:trading_balance_f/exchanges/binance/binance_cost_basis.dart';
 import 'package:trading_balance_f/features/connections/binance_connection_form.dart';
 import 'package:trading_balance_f/features/connections/scope_switch_gate.dart';
 import 'package:trading_balance_f/main.dart' show WebStorageHelper;
@@ -161,6 +163,13 @@ void main() {
       container.read(exchangeScopeProvider).connectionId,
       'binance-default',
     );
+    final prefs = await SharedPreferences.getInstance();
+    final costStore = BinanceCostStore(prefs, 'key');
+    const symbol = BinanceCostSymbol('Spot', 'BTCUSDT', 'BTC', 100);
+    await costStore.write(
+      symbol,
+      const BinanceSymbolCost(CostState(quantity: 1, cost: 100)),
+    );
     await tester.tap(find.text('Open'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Xóa kết nối'));
@@ -168,6 +177,7 @@ void main() {
     await tester.tap(find.text('Xóa kết nối').last);
     await tester.pumpAndSettle();
     expect(container.read(exchangeScopeProvider).connectionId, 'okx-default');
+    expect(costStore.read(symbol), isNull);
     await tester.pumpWidget(const SizedBox());
     container.dispose();
     storage.dispose();

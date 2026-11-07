@@ -17,6 +17,8 @@ Binance balance endpoints return no entry price, cost or profit for Spot, Cross 
 | `/api/v3/myTrades`: `symbol` required, weight 20, limit 500 to 1000, fields `id`, `price`, `qty`, `quoteQty`, `commission`, `commissionAsset`, `time`, `isBuyer` | Binance Spot account docs |
 | `/sapi/v1/margin/myTrades`: `symbol` required, `isIsolated` optional, weight 10, limit 500 to 1000, `fromId` pages, without `fromId` only 24 hours return | Binance docs through a search summary; the page text was not readable directly |
 
+The margin trade route has no `quoteQty`, so its value is `price * qty`.
+
 Unknown until the live check: how far back trade history goes, and whether `fromId=0` returns the oldest trade on both routes.
 
 ## 3. Requirements

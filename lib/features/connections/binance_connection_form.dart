@@ -8,6 +8,7 @@ import '../../core/network/request_coordinator.dart';
 import '../../core/security/secure_storage_helper.dart';
 import '../../exchanges/binance/binance_adapter.dart';
 import '../../exchanges/binance/binance_private_client.dart';
+import '../../exchanges/binance/binance_trade_history.dart';
 
 typedef BinanceConnectionTest =
     Future<void> Function(String key, String secret);
@@ -139,12 +140,13 @@ class _BinanceConnectionFormState extends ConsumerState<BinanceConnectionForm> {
     }
     setState(() => _busy = true);
     try {
-      await ref
-          .read(secureStorageProvider)
-          .saveBinanceKeys(
-            apiKey: _key.text.trim(),
-            apiSecret: _secret.text.trim(),
-          );
+      final storage = ref.read(secureStorageProvider);
+      final oldKey = await storage.getBinanceApiKey();
+      await storage.saveBinanceKeys(
+        apiKey: _key.text.trim(),
+        apiSecret: _secret.text.trim(),
+      );
+      if (oldKey != _key.text.trim()) await BinanceCostStore.clearAll();
       if (mounted) Navigator.of(context).pop();
     } catch (_) {
       if (mounted) setState(() => _message = 'Không thể lưu kết nối');
@@ -175,6 +177,7 @@ class _BinanceConnectionFormState extends ConsumerState<BinanceConnectionForm> {
     setState(() => _busy = true);
     try {
       await ref.read(secureStorageProvider).clearBinanceKeys();
+      await BinanceCostStore.clearAll();
       if (mounted) Navigator.of(context).pop();
     } catch (_) {
       if (mounted) setState(() => _message = 'Không thể xóa kết nối');
