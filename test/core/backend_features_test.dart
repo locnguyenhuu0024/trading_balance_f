@@ -79,6 +79,8 @@ void main() {
         find.byKey(const Key('settings-trade-access-button')),
         enabled ? findsOneWidget : findsNothing,
       );
+      expect(find.text('Ẩn số dư mặc định'), findsOneWidget);
+      expect(find.text('Khoá sinh trắc học'), findsOneWidget);
     }
   });
 

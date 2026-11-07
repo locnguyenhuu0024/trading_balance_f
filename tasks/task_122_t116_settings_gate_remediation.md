@@ -44,7 +44,12 @@ Predecessor: T116 attempt committed as work in progress so the checkout is clean
 
 ## 5. Forbidden Scope
 
-Do not read or change protected configuration, `backend/`, Git state, or any file not listed. No refactors.
+Do not read or change protected configuration, `backend/` or Git state. Do not write any file not listed. No refactors.
+
+Read access is not limited to the write surface. Non-protected source and tests may be read as needed, starting with:
+- `test/features/orders/order_cancellation_flow_test.dart:22` (`OkxOrder` fixture) and `:101` (`OkxPosition` fixture)
+- `test/features/orders/presentation/orders_screen_mobile_layout_test.dart:51` (`orderTabProvider` override)
+- `lib/features/orders/presentation/providers/order_cancellation_flow_provider.dart:44` (`isActiveLimitOrder`: limit type, state live or partially filled)
 
 ## 6. Executor Contract
 
@@ -64,9 +69,9 @@ Planned action: none.
 ## 9. Mandatory Verification
 
 ### RED — RED-122
-Scenario: run TEST-122-1 before step 1.
+Scenario: TEST-122-2 with the gate true must find `OrderCancellationControl` on the active limit order and `TradeAccountControls` on the positions tab, and with the gate false must find neither while both rows stay visible. Show it can fail by first asserting the controls absent with the gate true.
 Command/method: `rtk flutter test --no-pub test/core/backend_features_test.dart --plain-name '<name>'`
-Expected: fails with the gate false, because neither switch is found.
+Expected: the deliberately inverted assertion fails with the gate true, proving the fixture really renders the controls. TEST-122-1 RED already observed in attempt 1.
 Actual: PENDING
 Status: PENDING
 
@@ -98,5 +103,9 @@ Return `BLOCKED` if a fix needs any other file.
 - [ ] return compact executor report
 
 ## 12. Coordinator Audit
+
+Attempt 7872ecba73cf4370806f91f3cdfb7ce2: REWORK. Step 1 and the Settings part of step 2 are correct and verified by the coordinator (250 tests, analyzer 0 errors, web build pass). Step 3 was not done: the original section 5 read as forbidding reads outside the write surface, which is a contract defect, not a route failure, so the route is unchanged.
+
+Remaining for the next attempt: step 3 only. Do not redo steps 1 and 2.
 
 Verdict: PENDING

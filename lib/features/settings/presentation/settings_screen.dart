@@ -552,84 +552,80 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ),
                   ),
                 ),
-                if (backendFeaturesEnabled)
-                  Card(
-                    elevation: 0,
-                    color: cardColor,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      side: BorderSide(color: palette.border),
-                    ),
-                    child: Column(
-                      children: [
-                        SwitchListTile(
-                          secondary: Icon(
-                            Icons.visibility_off,
-                            color: textColor,
-                            size: 22,
-                          ),
-                          title: Text(
-                            'Ẩn số dư mặc định',
-                            style: TextStyle(
-                              color: textColor,
-                              fontWeight: FontWeight.w500,
-                              fontSize: 14,
-                            ),
-                          ),
-                          subtitle: Text(
-                            'Che tài sản khi vừa mở ứng dụng',
-                            style: TextStyle(
-                              color: sectionTitleColor,
-                              fontSize: 12,
-                            ),
-                          ),
-                          value: hideBalanceDefault,
-                          onChanged: (val) {
-                            ref
-                                    .read(defaultHideBalanceProvider.notifier)
-                                    .state =
-                                val;
-                            ref.read(hideBalanceProvider.notifier).state =
-                                val; // Cập nhật luôn màn chính
-                            _saveAllPreferences();
-                          },
-                        ),
-                        Divider(
-                          height: 1,
-                          color: isDark ? palette.border : palette.surface,
-                          indent: 52,
-                        ),
-                        SwitchListTile(
-                          secondary: Icon(
-                            Icons.fingerprint,
-                            color: textColor,
-                            size: 22,
-                          ),
-                          title: Text(
-                            'Khoá sinh trắc học',
-                            style: TextStyle(
-                              color: textColor,
-                              fontWeight: FontWeight.w500,
-                              fontSize: 14,
-                            ),
-                          ),
-                          subtitle: Text(
-                            'Yêu cầu vân tay / FaceID khi mở app',
-                            style: TextStyle(
-                              color: sectionTitleColor,
-                              fontSize: 12,
-                            ),
-                          ),
-                          value: bioAuth,
-                          onChanged: (val) {
-                            ref.read(biometricAuthProvider.notifier).state =
-                                val;
-                            _saveAllPreferences();
-                          },
-                        ),
-                      ],
-                    ),
+                Card(
+                  elevation: 0,
+                  color: cardColor,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    side: BorderSide(color: palette.border),
                   ),
+                  child: Column(
+                    children: [
+                      SwitchListTile(
+                        secondary: Icon(
+                          Icons.visibility_off,
+                          color: textColor,
+                          size: 22,
+                        ),
+                        title: Text(
+                          'Ẩn số dư mặc định',
+                          style: TextStyle(
+                            color: textColor,
+                            fontWeight: FontWeight.w500,
+                            fontSize: 14,
+                          ),
+                        ),
+                        subtitle: Text(
+                          'Che tài sản khi vừa mở ứng dụng',
+                          style: TextStyle(
+                            color: sectionTitleColor,
+                            fontSize: 12,
+                          ),
+                        ),
+                        value: hideBalanceDefault,
+                        onChanged: (val) {
+                          ref.read(defaultHideBalanceProvider.notifier).state =
+                              val;
+                          ref.read(hideBalanceProvider.notifier).state =
+                              val; // Cập nhật luôn màn chính
+                          _saveAllPreferences();
+                        },
+                      ),
+                      Divider(
+                        height: 1,
+                        color: isDark ? palette.border : palette.surface,
+                        indent: 52,
+                      ),
+                      SwitchListTile(
+                        secondary: Icon(
+                          Icons.fingerprint,
+                          color: textColor,
+                          size: 22,
+                        ),
+                        title: Text(
+                          'Khoá sinh trắc học',
+                          style: TextStyle(
+                            color: textColor,
+                            fontWeight: FontWeight.w500,
+                            fontSize: 14,
+                          ),
+                        ),
+                        subtitle: Text(
+                          'Yêu cầu vân tay / FaceID khi mở app',
+                          style: TextStyle(
+                            color: sectionTitleColor,
+                            fontSize: 12,
+                          ),
+                        ),
+                        value: bioAuth,
+                        onChanged: (val) {
+                          ref.read(biometricAuthProvider.notifier).state = val;
+                          _saveAllPreferences();
+                        },
+                      ),
+                    ],
+                  ),
+                ),
 
                 const SizedBox(height: 24),
 
