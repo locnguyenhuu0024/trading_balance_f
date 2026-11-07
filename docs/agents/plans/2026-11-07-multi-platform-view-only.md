@@ -200,3 +200,4 @@ Routing follows `docs/agents/framework/EXECUTOR_ROUTING_POLICY.json` v2. Classes
 | Revision | Change | Reason |
 |---|---|---|
 | 2 | T117..T121 reclassified to E0-E5 routes; T122 added as T116 remediation; analyzer gate no longer fails on pre-existing infos | User request after upgrade to OptCodex v1.4.0 and CCB v0.7; rules require re-approval of pre-v1.4 task routes; T116 audit |
+| 2.1 | VAL-001: INV-003 scoped so OKX freezed defaults stay as they are | T117 executor reported that `OkxAccountData` converts missing values to "0" before the adapter sees them, conflicting with INV-003 as written; REQ-012 takes precedence, no behavior change |

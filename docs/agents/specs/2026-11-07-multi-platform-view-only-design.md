@@ -187,7 +187,7 @@ Authorization: Binance `X-MBX-APIKEY` plus HMAC-SHA256 hex signature over the ex
 
 - INV-001: No aggregate across exchanges anywhere.
 - INV-002: A `BTC / USDT` label is never an identifier.
-- INV-003: Absent numeric data is shown as unavailable, never zero.
+- INV-003: Absent numeric data is shown as unavailable, never zero, for every value an adapter parses itself. The OKX adapter maps values from existing OKX models as they are; their `@Default('0')` deserialization is existing behavior preserved by REQ-012 and is not changed by this plan (VAL-001).
 - INV-004: Secrets never appear in logs, errors, state exposed to widgets or telemetry.
 - INV-005: With the gate false, no code path constructs a live backend client call.
 - INV-006: `Binance` private routes are an allowlist of GET paths only; no write route exists in the client.
