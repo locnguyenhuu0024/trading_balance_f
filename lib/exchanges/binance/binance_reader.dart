@@ -285,4 +285,70 @@ class BinanceReader {
     _check(generation);
     return orders;
   }
+
+  Future<ExchangeOrderHistory> readHistory(
+    String filter,
+    List<String> symbols,
+  ) async {
+    final generation = client.credentialState.value;
+    final coverage = symbols.toSet().take(10).toList();
+    final orders = <ExchangeOrder>[];
+    final issues = <String>[];
+    final products = <(String, String)>[
+      if (filter == 'ALL' || filter == 'SWAP') ('SWAP', '/fapi/v1/allOrders'),
+      if (!client.isWeb && (filter == 'ALL' || filter == 'SPOT'))
+        ('SPOT', '/api/v3/allOrders'),
+      if (!client.isWeb && (filter == 'ALL' || filter == 'MARGIN'))
+        ('MARGIN', '/sapi/v1/margin/allOrders'),
+    ];
+    for (final (product, path) in products) {
+      for (final symbol in coverage) {
+        try {
+          final response = await client.get(
+            path,
+            queryParameters: {'symbol': symbol, 'limit': 100},
+          );
+          _check(generation);
+          for (final row in response.data as List) {
+            orders.add(
+              ExchangeOrder(
+                id: '${row['orderId']}',
+                key: InstrumentKey(
+                  exchange: ExchangeId.binance,
+                  product: product,
+                  nativeId: '${row['symbol']}',
+                ),
+                productLabel: product,
+                type: _s(row['type']),
+                side: _s(row['side']),
+                price: _s(row['price']),
+                quantity: _s(row['origQty']),
+                filled: _s(row['executedQty']),
+                state: _s(row['status']),
+                createdAtMs: _s(row['time']),
+                native: row,
+              ),
+            );
+          }
+        } catch (error) {
+          _check(generation);
+          if (error is BinancePrivateException &&
+              error.failure.kind == ExchangeFailureKind.cancellation)
+            rethrow;
+          issues.add('$product $symbol unavailable');
+        }
+      }
+    }
+    _check(generation);
+    orders.sort(
+      (a, b) => (int.tryParse(b.createdAtMs ?? '') ?? 0).compareTo(
+        int.tryParse(a.createdAtMs ?? '') ?? 0,
+      ),
+    );
+    return ExchangeOrderHistory(
+      orders: orders,
+      symbols: coverage,
+      issues: issues,
+    );
+  }
 }

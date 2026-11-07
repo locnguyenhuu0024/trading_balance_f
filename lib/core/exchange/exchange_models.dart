@@ -1,3 +1,5 @@
+import 'dart:collection';
+
 /// Stable exchange identity; display labels are never identifiers.
 enum ExchangeId { okx, binance }
 
@@ -187,6 +189,30 @@ class ExchangeOrder {
       state,
       createdAtMs;
   final Object? native;
+}
+
+/// History result retaining coverage and partial-failure information.
+class ExchangeOrderHistory extends ListBase<ExchangeOrder> {
+  ExchangeOrderHistory({
+    required List<ExchangeOrder> orders,
+    required List<String> symbols,
+    required List<String> issues,
+  }) : _orders = List.unmodifiable(orders),
+       symbols = List.unmodifiable(symbols),
+       issues = List.unmodifiable(issues);
+
+  final List<ExchangeOrder> _orders;
+  final List<String> symbols;
+  final List<String> issues;
+  @override
+  int get length => _orders.length;
+  @override
+  set length(int value) => throw UnsupportedError('History is immutable');
+  @override
+  ExchangeOrder operator [](int index) => _orders[index];
+  @override
+  void operator []=(int index, ExchangeOrder value) =>
+      throw UnsupportedError('History is immutable');
 }
 
 class MarginAccountRow {

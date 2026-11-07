@@ -28,17 +28,7 @@ Observed Effective Effort: unavailable
 
 ## Stage instruction (current)
 
-This task runs in stages because long runs have ended early. Stages 1 and 2 are committed: keys, signing, wallets, valuation, positions and pending orders are tested.
-
-**Current stage 3 of 3, do only this:** step 7 of section 6, the Binance order history.
-
-- `binanceHistorySymbolsProvider`, an `autoDispose.family` on `ExchangeScope`, returns at most 10 symbols with this order and no duplicates: open USD-M position symbols; then held assets by descending `valueUsdt` as `<asset>USDT`, leaving out USDT itself; then Binance watchlist identifiers read through `WatchlistStore` with `binanceStorageKey`. A failed source is skipped, never fatal.
-- `BinanceAdapter.readOrders` watches `orderTabProvider`: positions tab returns empty, pending returns the existing pending read, history loads those symbols sequentially, in that order, always sending `symbol`, no time window, `limit=100`.
-- Filter: `SWAP` uses `/fapi/v1/allOrders`, `SPOT` uses `/api/v3/allOrders`, `MARGIN` uses `/sapi/v1/margin/allOrders`, `ALL` uses all of those available on the platform. On web only `/fapi`. A failure for one symbol or product is skipped, recorded as an issue, and leaves the others. Results sort newest first.
-
-Tests in `binance_history_test.dart`: 12 eligible symbols yield 10 requests per product in the expected order, sequentially (the second request does not start until the first completes); no eligible symbol yields no requests and an empty result; web issues only `/fapi` requests; one failing symbol leaves the rest; `symbol` is present on every request.
-
-Finish by returning the structured report.
+Stages 1 to 3 are committed. **Current stage 3b, test-only fix in `test/exchanges/binance/binance_history_test.dart`:** three tests fail because the client embeds the query in the request URL, so `RequestOptions.queryParameters` is empty. In the fake transport, read parameters from `r.uri.queryParameters`, with `limit` compared as text. The reader and adapter are correct; do not change them. Finish by returning the structured report.
 
 ## 2. Objective
 

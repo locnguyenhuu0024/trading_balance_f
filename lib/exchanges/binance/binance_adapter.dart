@@ -6,6 +6,8 @@ import '../../core/exchange/exchange_scope.dart';
 import '../../core/exchange/market_source.dart';
 import '../../core/security/secure_storage_helper.dart';
 import '../../features/orders/presentation/providers/order_provider.dart';
+import '../../features/support_resistance/data/watchlist_store.dart';
+import '../../features/support_resistance/presentation/providers/watchlist_provider.dart';
 import 'binance_client.dart';
 import 'binance_market.dart';
 import 'binance_private_client.dart';
@@ -52,6 +54,48 @@ final binanceReaderProvider = FutureProvider<BinanceReader>((ref) async {
   return BinanceReader(client, market);
 });
 
+final binanceHistorySymbolsProvider = FutureProvider.autoDispose
+    .family<List<String>, ExchangeScope>((ref, scope) async {
+      final symbols = <String>{};
+      try {
+        final reader = await ref.watch(binanceReaderProvider.future);
+        if (reader.client.credentialState.value.generation !=
+                scope.credentialGeneration ||
+            reader.client.credentialState.value.rotating) {
+          throw const BinancePrivateException(
+            ExchangeFailure(ExchangeFailureKind.cancellation),
+          );
+        }
+        try {
+          for (final position in await reader.readPositions()) {
+            symbols.add(position.key.nativeId);
+          }
+        } catch (_) {}
+        try {
+          final balances = (await reader.readAccount()).balances.toList()
+            ..sort(
+              (a, b) => (double.tryParse(b.valueUsdt ?? '') ?? 0).compareTo(
+                double.tryParse(a.valueUsdt ?? '') ?? 0,
+              ),
+            );
+          for (final balance in balances) {
+            if (balance.asset != 'USDT') symbols.add('${balance.asset}USDT');
+          }
+        } catch (_) {}
+      } catch (_) {}
+      try {
+        final watchlist = await WatchlistStore(
+          exchange: ExchangeId.binance,
+          storage: DeferredSharedPreferencesWatchlistStorage(
+            exchange: ExchangeId.binance,
+          ),
+        ).load();
+        symbols.addAll(watchlist.spotInstrumentIds);
+        symbols.addAll(watchlist.perpetualInstrumentIds);
+      } catch (_) {}
+      return symbols.take(10).toList();
+    });
+
 class BinanceAdapter implements ExchangeAdapter {
   const BinanceAdapter();
   @override
@@ -85,8 +129,22 @@ class BinanceAdapter implements ExchangeAdapter {
   ) async => (await _reader(ref, scope)).readPositions();
   @override
   Future<List<ExchangeOrder>> readOrders(Ref ref, ExchangeScope scope) async {
+    final tab = ref.watch(orderTabProvider);
+    if (tab == OrderTab.positions) return const [];
     final filter = ref.watch(orderFilterProvider);
-    return (await _reader(ref, scope)).readOrders(filter);
+    final reader = await _reader(ref, scope);
+    if (tab == OrderTab.pending) return reader.readOrders(filter);
+    final symbols = await ref.watch(
+      binanceHistorySymbolsProvider(scope).future,
+    );
+    if (reader.client.credentialState.value.generation !=
+            scope.credentialGeneration ||
+        reader.client.credentialState.value.rotating) {
+      throw const BinancePrivateException(
+        ExchangeFailure(ExchangeFailureKind.cancellation),
+      );
+    }
+    return reader.readHistory(filter, symbols);
   }
 
   @override
