@@ -1,6 +1,6 @@
 # Task 128 — Binance cost basis calculation
 
-Status: PENDING
+Status: PASS
 Agent Role: implementation_executor
 Executor Class: E3
 Target Model: gpt-6.1-terra
@@ -106,4 +106,10 @@ Return `BLOCKED` if the fix needs a file outside the list.
 
 ## 11. Coordinator Audit
 
-Verdict: PENDING
+Attempt: 0a1717bbb6c742049e6b174e1024746b
+Dispatch route compliance: UNVERIFIABLE (requested gpt-6.1-terra/high, explicit).
+Parent route inheritance: NO
+RED and GREEN executed by the coordinator on the host, RED first (VAL-005): Ten mutations of cost, floor, crossing, interest, coverage, sign and fees each failed the suite, then GREEN passed with the specification's worked examples. Noted for T129 and T130: apply throws on malformed trades, and estimates with very small coverage need an insufficient-data display.
+Regression and buildability, coordinator-observed: 8 tests pass in binance_cost_basis_test.dart; analyzer 0 errors; web build passes. Full suite runs at the plan's final gate.
+Task buildability gate: PASS
+Verdict: PASS

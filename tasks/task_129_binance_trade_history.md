@@ -56,6 +56,7 @@ Do not read or change protected configuration, `backend/` or Git state. No new d
 4. `binanceCostStateProvider` exposes per-symbol state, stale and loading flags. It watches no order filter or poll, and no account read depends on it.
 5. `spotMarginAvailable` false: no request and an unavailable state.
 6. A cancellation or generation change discards the run without writing partial state for that page.
+7. Use `CostState.apply` from `binance_cost_basis.dart`. It throws `ArgumentError` on a malformed trade: treat that as a failed symbol, which keeps old state and is stale. Trades in a symbol with base not ending the symbol, or quote other than USDT, are out of scope.
 
 Mechanism details are yours if they satisfy these and the tests; report what you chose. Stop only for a conflict about product behavior.
 

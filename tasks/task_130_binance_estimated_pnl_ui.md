@@ -53,6 +53,8 @@ Do not read or change protected configuration, `backend/` or Git state. No new d
 3. The USDⓈ-M line, total and percentage do not change. An estimate failure never replaces account data.
 4. Add a run trigger on screen open and on pull to refresh only.
 5. Long text must not overflow at width 320 with text scale 2.0.
+6. An estimate with `ratio` below 0.01 shows `Chưa đủ dữ liệu giá vốn`, because floating-point or real dust would read as `0%`.
+7. Margin interest argument: cross uses the row's `interest`. Isolated uses `baseInterest + quoteInterest / mark`. Holding is the margin net asset, signed. Isolated holding is `baseNet`.
 
 Mechanism details are yours if they satisfy these and the tests; report what you chose. Stop only for a conflict about product behavior.
 
