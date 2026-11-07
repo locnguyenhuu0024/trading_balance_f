@@ -28,16 +28,16 @@ Observed Effective Effort: unavailable
 
 ## Stage instruction (current)
 
-This task runs in stages. Stage A2 is committed as work in progress.
+This task runs in stages. Stage A is committed and verified: selection, picker, switch gate and bar work.
 
-**Current stage A3, fix exactly these coordinator-observed failures. You cannot run tests in the sandbox, so the causes are given:**
+**Current stage B of 3, do only steps 7, 8 and 9 of section 6:**
 
-1. AUD-120-03, a real defect: `ScopeBar` uses a fixed `SizedBox(height: 54)`, so with enlarged text it overflows at the bottom, breaking REQ-011 and eight existing tests in `orders_screen_mobile_layout_test`, `orders_screen_position_layout_test`, `orders_screen_history_layout_test` and `fractal_screen_price_formatting_test`. Use a minimum height of 54 with content-driven growth, and let both text lines wrap or ellipsize. The bar must not overflow at 320 wide at the app's largest text scale. Do not weaken or change those existing tests.
-2. Those tests have fixed-height screens. If, after fix 1, the body still overflows because of the added bar, make that screen's body scrollable in the existing layout, not the test.
-3. `scope_bar_test`: `semantics.dispose` runs too late through `addTearDown`. Call `semantics.dispose()` at the end of the test body.
-4. `scope_switch_test: selection survives restart through storage` hangs: `initializeAppStartup` does real async work inside a fake-async test. Wrap that call in `tester.runAsync`.
+- `lib/features/connections/connections_screen.dart` and `connection_catalog_screen.dart`, with the picker's `Quản lý kết nối` and the Tools `Sàn & tài khoản` card opening `ConnectionsScreen`.
+- `lib/features/connections/binance_connection_form.dart`. The test action creates a temporary `BinancePrivateClient` from the entered keys and is successful if any platform-available wallet read succeeds; show failure by class: invalid key, no network, other. Copy: `Tên tài khoản` is not editable in this version, so show `Chính`; `Dùng khóa chỉ đọc`, `Kiểm tra kết nối`, `Lưu`, `Xóa kết nối`.
+- Save and delete go through `trackBinanceCredentialMutation`. Add `saveBinanceKeys` and `clearBinanceKeys` if absent, in `SecureStorageHelper` and `WebStorageHelper`.
+- OKX opens the existing `SettingsTradeAccessPage` unchanged.
 
-Finish by returning the structured report.
+Tests in `connections_screen_test.dart` and `binance_connection_form_test.dart`: lists only configured connections; catalog shows `Sàn khác` disabled and an existing connection opens its form; saving keys makes Binance appear in the picker; deleting selected Binance falls back to OKX; a failed test keeps entered text and shows the class without any key or secret in the message. If your test needs real async, use `tester.runAsync`. Dispose semantics handles inside the test body. Finish by returning the structured report.
 
 ## 2. Objective
 

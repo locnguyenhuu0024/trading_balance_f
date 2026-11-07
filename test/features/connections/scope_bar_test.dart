@@ -26,7 +26,6 @@ void main() {
       final keys = Keys();
       addTearDown(keys.dispose);
       final semantics = tester.ensureSemantics();
-      addTearDown(semantics.dispose);
       await tester.pumpWidget(
         ProviderScope(
           overrides: [secureStorageProvider.overrideWithValue(keys)],
@@ -45,6 +44,35 @@ void main() {
       expect(find.text('OKX / Chính'), findsWidgets);
       expect(find.text('Binance / Chính'), findsNothing);
       expect(find.text('Đang xem'), findsOneWidget);
+      semantics.dispose();
     },
   );
+
+  testWidgets('bar grows without overflow at large text scale', (tester) async {
+    final keys = Keys();
+    addTearDown(keys.dispose);
+    tester.view.physicalSize = const Size(320, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [secureStorageProvider.overrideWithValue(keys)],
+        child: MaterialApp(
+          home: MediaQuery(
+            data: const MediaQueryData(textScaler: TextScaler.linear(2)),
+            child: const Scaffold(
+              body: Align(
+                alignment: Alignment.topCenter,
+                child: SizedBox(width: 320, child: ScopeBar()),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(tester.getSize(find.byType(ScopeBar)).height, greaterThan(54));
+  });
 }

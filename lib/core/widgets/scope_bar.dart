@@ -36,10 +36,10 @@ class ScopeBar extends ConsumerWidget {
           child: InkWell(
             borderRadius: BorderRadius.circular(12),
             onTap: openPicker,
-            child: SizedBox(
-              height: 54,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 54),
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 child: Row(
                   children: [
                     CircleAvatar(
@@ -49,12 +49,19 @@ class ScopeBar extends ConsumerWidget {
                     const SizedBox(width: 10),
                     Expanded(
                       child: Column(
+                        mainAxisSize: MainAxisSize.min,
                         mainAxisAlignment: MainAxisAlignment.center,
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('${profile.label} / Chính'),
+                          Text(
+                            '${profile.label} / Chính',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                           Text(
                             scopeProductLine(profile.exchange),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
                             style: Theme.of(context).textTheme.bodySmall,
                           ),
                         ],

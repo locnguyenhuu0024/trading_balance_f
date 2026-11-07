@@ -162,12 +162,14 @@ void main() {
     await tester.pump();
     await tester.pump();
     container.dispose();
-    final startup = await app.initializeAppStartup(
-      isWeb: false,
-      createNativeStorage: () => keys,
-      initializeTimeZone: () {},
-      retireLegacyBackgroundService: () async {},
-    );
+    final startup = (await tester.runAsync(
+      () => app.initializeAppStartup(
+        isWeb: false,
+        createNativeStorage: () => keys,
+        initializeTimeZone: () {},
+        retireLegacyBackgroundService: () async {},
+      ),
+    ))!;
     expect(startup.selectedConnectionId, 'binance-default');
     await tester.pumpWidget(
       app.buildInitializedApp(startup, home: const SizedBox()),
