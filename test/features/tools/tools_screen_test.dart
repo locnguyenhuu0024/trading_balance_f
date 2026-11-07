@@ -62,6 +62,10 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    expect(find.text('Fractal theo nguồn giá của sàn'), findsOneWidget);
+    expect(find.text('Coin theo dõi riêng theo sàn'), findsOneWidget);
+    expect(find.text('Thêm, đổi hoặc quản lý kết nối'), findsOneWidget);
+    expect(find.text('Hiển thị, tiền tệ, múi giờ'), findsOneWidget);
     expect(find.text('BMAG'), findsOneWidget);
     expect(find.text('Hỗ trợ / kháng cự'), findsOneWidget);
     expect(find.text('Sàn & tài khoản'), findsOneWidget);

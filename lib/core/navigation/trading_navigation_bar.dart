@@ -1,11 +1,9 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 
+import '../theme/app_theme.dart';
 import 'navigation_destination_data.dart';
 
-/// Full-width fixed navigation with a raised, tangent-continuous selection.
-class TradingNavigationBar extends StatefulWidget {
+class TradingNavigationBar extends StatelessWidget {
   const TradingNavigationBar({
     super.key,
     required this.selectedIndex,
@@ -15,12 +13,14 @@ class TradingNavigationBar extends StatefulWidget {
     this.bottomInset = 0,
   });
 
-  static const barHeight = 60.0;
-  static const crestHeight = 16.0;
-  static const _animationDuration = Duration(milliseconds: 220);
-
-  /// Kept as a compatibility entry point for existing callers and tests.
+  static const barHeight = 76.0;
+  static const crestHeight = 0.0;
   static const List<NavigationItemData> items = navigationItems;
+
+  static double heightFor(BuildContext context) {
+    final labelHeight = MediaQuery.textScalerOf(context).scale(11) * 1.4;
+    return (24 + 4 + labelHeight + 24).clamp(barHeight, double.infinity);
+  }
 
   final int selectedIndex;
   final bool isDark;
@@ -29,508 +29,117 @@ class TradingNavigationBar extends StatefulWidget {
   final double bottomInset;
 
   @override
-  State<TradingNavigationBar> createState() => _TradingNavigationBarState();
-}
-
-class _TradingNavigationBarState extends State<TradingNavigationBar>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _selectionController;
-  late int _previousIndex;
-
-  @override
-  void initState() {
-    super.initState();
-    _previousIndex = widget.selectedIndex;
-    _selectionController = AnimationController(
-      vsync: this,
-      duration: TradingNavigationBar._animationDuration,
-      value: 1,
-    );
-  }
-
-  @override
-  void didUpdateWidget(covariant TradingNavigationBar oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (!_sameDestinationOrder(oldWidget.destinations, widget.destinations)) {
-      _previousIndex = widget.selectedIndex;
-      _selectionController.value = 1;
-      return;
-    }
-    if (oldWidget.selectedIndex == widget.selectedIndex) return;
-
-    _previousIndex = oldWidget.selectedIndex;
-    final mediaQuery = MediaQuery.maybeOf(context);
-    final reduceMotion =
-        mediaQuery?.disableAnimations == true ||
-        mediaQuery?.accessibleNavigation == true;
-    if (reduceMotion) {
-      _selectionController.value = 1;
-    } else {
-      _selectionController.forward(from: 0);
-    }
-  }
-
-  @override
-  void dispose() {
-    _selectionController.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final surfaceColor = widget.isDark ? Colors.white : Colors.black;
-    final contentColor = widget.isDark ? Colors.black : Colors.white;
-    final mediaQuery = MediaQuery.of(context);
-    final reduceMotion =
-        mediaQuery.disableAnimations || mediaQuery.accessibleNavigation;
-    final duration = reduceMotion
-        ? Duration.zero
-        : TradingNavigationBar._animationDuration;
-
-    if (reduceMotion && _selectionController.value != 1) {
-      _selectionController.value = 1;
-    }
-
+    final palette = AppPalette.forBrightness(isDark);
+    final height = heightFor(context);
     return Semantics(
       container: true,
       label: 'Điều hướng chính',
-      child: RepaintBoundary(
-        child: SizedBox(
-          height:
-              TradingNavigationBar.crestHeight +
-              TradingNavigationBar.barHeight +
-              widget.bottomInset,
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              const barTop = TradingNavigationBar.crestHeight;
-              const buttonScale = 1.0;
-              final contentWidth = math
-                  .max(constraints.maxWidth, 48.0 * widget.destinations.length)
-                  .toDouble();
-              final cellWidth = contentWidth / widget.destinations.length;
-              final targetSize = math
-                  .min(math.max(48.0, 52.0 * buttonScale).toDouble(), cellWidth)
-                  .toDouble();
-              final effectiveScale = math
-                  .min(buttonScale, targetSize / 52.0)
-                  .toDouble();
-              const buttonOpacity = 0.5;
-
-              final content = SizedBox(
-                width: contentWidth,
-                height: constraints.maxHeight,
-                child: Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    Positioned.fill(
-                      child: IgnorePointer(
-                        child: AnimatedBuilder(
-                          animation: _selectionController,
-                          builder: (context, _) {
-                            return CustomPaint(
-                              key: const Key('navigation-bar-silhouette'),
-                              painter: _NavigationSurfacePainter(
-                                color: surfaceColor,
-                                barTop: barTop,
-                                barHeight: TradingNavigationBar.barHeight,
-                                selectedIndex: widget.selectedIndex,
-                                previousIndex: _previousIndex,
-                                destinationCount: widget.destinations.length,
-                                buttonScale: effectiveScale,
-                                progress: Curves.easeOutCubic.transform(
-                                  reduceMotion ? 1 : _selectionController.value,
+      child: Container(
+        key: const Key('navigation-bar-silhouette'),
+        foregroundDecoration: BoxDecoration(
+          border: Border(top: BorderSide(color: palette.border)),
+        ),
+        child: Material(
+          key: const Key('navigation-bar-surface'),
+          color: palette.background,
+          child: Padding(
+            padding: EdgeInsets.only(bottom: bottomInset),
+            child: SizedBox(
+              key: const Key('navigation-bar-layout'),
+              height: height,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final width =
+                      constraints.maxWidth < destinations.length * 48.0
+                      ? destinations.length * 48.0
+                      : constraints.maxWidth;
+                  final row = SizedBox(
+                    width: width,
+                    child: Row(
+                      children: [
+                        for (
+                          var index = 0;
+                          index < destinations.length;
+                          index++
+                        )
+                          Expanded(
+                            child: Semantics(
+                              selected: index == selectedIndex,
+                              button: true,
+                              label: destinations[index].label,
+                              child: Tooltip(
+                                message: destinations[index].label,
+                                child: InkWell(
+                                  key: Key('navigation-destination-$index'),
+                                  excludeFromSemantics: true,
+                                  onTap: () => onDestinationSelected(index),
+                                  child: Container(
+                                    key: Key('navigation-indicator-$index'),
+                                    margin: const EdgeInsets.symmetric(
+                                      horizontal: 2,
+                                      vertical: 8,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: index == selectedIndex
+                                          ? palette.surface
+                                          : Colors.transparent,
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: Column(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        Icon(
+                                          index == selectedIndex
+                                              ? destinations[index].selectedIcon
+                                              : destinations[index].icon,
+                                          size: 24,
+                                          color: index == selectedIndex
+                                              ? palette.ink
+                                              : palette.muted,
+                                        ),
+                                        const SizedBox(height: 4),
+                                        ExcludeSemantics(
+                                          child: Text(
+                                            destinations[index].label,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              height: 1.4,
+                                              color: index == selectedIndex
+                                                  ? palette.ink
+                                                  : palette.muted,
+                                              fontWeight: index == selectedIndex
+                                                  ? FontWeight.bold
+                                                  : FontWeight.normal,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
                                 ),
                               ),
-                            );
-                          },
-                        ),
-                      ),
-                    ),
-                    Positioned(
-                      top: barTop,
-                      left: 0,
-                      right: 0,
-                      height: TradingNavigationBar.barHeight,
-                      child: ClipPath(
-                        clipper: _NavigationBarSurfaceClipper(
-                          selectedIndex: widget.selectedIndex,
-                          destinationCount: widget.destinations.length,
-                          buttonScale: effectiveScale,
-                        ),
-                        child: Material(
-                          key: const Key('navigation-bar-surface'),
-                          color: surfaceColor,
-                          child: const SizedBox(
-                            key: Key('navigation-bar-layout'),
+                            ),
                           ),
-                        ),
-                      ),
+                      ],
                     ),
-                    for (
-                      var index = 0;
-                      index < widget.destinations.length;
-                      index++
-                    )
-                      _DestinationControl(
-                        index: index,
-                        item: widget.destinations[index],
-                        isSelected: index == widget.selectedIndex,
-                        cellLeft: cellWidth * index,
-                        cellWidth: cellWidth,
-                        targetSize: targetSize,
-                        surfaceColor: surfaceColor,
-                        contentColor: contentColor,
-                        buttonScale: buttonScale,
-                        buttonOpacity: buttonOpacity,
-                        reduceMotion: reduceMotion,
-                        duration: duration,
-                        onTap: () => widget.onDestinationSelected(index),
-                      ),
-                  ],
-                ),
-              );
-
-              if (contentWidth <= constraints.maxWidth) return content;
-              return SingleChildScrollView(
-                key: const Key('navigation-bar-horizontal-scroll'),
-                scrollDirection: Axis.horizontal,
-                child: content,
-              );
-            },
-          ),
-        ),
-      ),
-    );
-  }
-
-  static bool _sameDestinationOrder(
-    List<NavigationItemData> first,
-    List<NavigationItemData> second,
-  ) {
-    if (first.length != second.length) return false;
-    for (var index = 0; index < first.length; index++) {
-      if (first[index].id != second[index].id) return false;
-    }
-    return true;
-  }
-}
-
-class _DestinationControl extends StatelessWidget {
-  const _DestinationControl({
-    required this.index,
-    required this.item,
-    required this.isSelected,
-    required this.cellLeft,
-    required this.cellWidth,
-    required this.targetSize,
-    required this.surfaceColor,
-    required this.contentColor,
-    required this.buttonScale,
-    required this.buttonOpacity,
-    required this.reduceMotion,
-    required this.duration,
-    required this.onTap,
-  });
-
-  static const _indicatorSize = 46.0;
-
-  final int index;
-  final NavigationItemData item;
-  final bool isSelected;
-  final double cellLeft;
-  final double cellWidth;
-  final double targetSize;
-  final Color surfaceColor;
-  final Color contentColor;
-  final double buttonScale;
-  final double buttonOpacity;
-  final bool reduceMotion;
-  final Duration duration;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final indicatorSize = math.min(
-      _indicatorSize * buttonScale,
-      targetSize - 2,
-    );
-    final centeredLeft = cellLeft + (cellWidth - targetSize) / 2;
-    final unselectedTop =
-        TradingNavigationBar.crestHeight +
-        (TradingNavigationBar.barHeight - targetSize) / 2;
-
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        AnimatedPositioned(
-          duration: duration,
-          curve: Curves.easeOutCubic,
-          left: centeredLeft,
-          top: isSelected ? 0 : unselectedTop,
-          width: targetSize,
-          height: targetSize,
-          child: Semantics(
-            selected: isSelected,
-            button: true,
-            label: item.label,
-            child: Tooltip(
-              message: item.label,
-              child: Material(
-                color: Colors.transparent,
-                child: InkResponse(
-                  key: Key('navigation-destination-$index'),
-                  excludeFromSemantics: true,
-                  containedInkWell: true,
-                  highlightShape: BoxShape.circle,
-                  radius: targetSize / 2,
-                  onTap: onTap,
-                  child: SizedBox(
-                    width: targetSize,
-                    height: targetSize,
-                    child: AnimatedAlign(
-                      duration: duration,
-                      curve: Curves.easeOutCubic,
-                      alignment: isSelected
-                          ? Alignment.topCenter
-                          : Alignment.center,
-                      child: AnimatedContainer(
-                        key: Key('navigation-indicator-$index'),
-                        duration: duration,
-                        curve: Curves.easeOutCubic,
-                        width: indicatorSize,
-                        height: indicatorSize,
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                          color: isSelected
-                              ? surfaceColor.withValues(alpha: buttonOpacity)
-                              : Colors.transparent,
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(
-                          isSelected ? item.selectedIcon : item.icon,
-                          color: isSelected
-                              ? contentColor
-                              : contentColor.withValues(alpha: 0.7),
-                          size: 22 * buttonScale,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
+                  );
+                  return width > constraints.maxWidth
+                      ? SingleChildScrollView(
+                          key: const Key('navigation-bar-horizontal-scroll'),
+                          scrollDirection: Axis.horizontal,
+                          child: row,
+                        )
+                      : row;
+                },
               ),
             ),
           ),
         ),
-        Positioned(
-          top: TradingNavigationBar.crestHeight + 32,
-          left: cellLeft,
-          width: cellWidth,
-          height: 22,
-          child: IgnorePointer(
-            child: Center(
-              child: reduceMotion
-                  ? _buildLabel(buttonScale, contentColor)
-                  : AnimatedSize(
-                      duration: duration,
-                      curve: Curves.easeOutCubic,
-                      child: _buildLabel(buttonScale, contentColor),
-                    ),
-            ),
-          ),
-        ),
-      ],
+      ),
     );
-  }
-
-  Widget _buildLabel(double buttonScale, Color contentColor) => isSelected
-      ? ExcludeSemantics(
-          child: Text(
-            item.label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: contentColor,
-              fontSize: 10 * buttonScale,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        )
-      : const SizedBox.shrink();
-}
-
-class _NavigationBarSurfaceClipper extends CustomClipper<Path> {
-  const _NavigationBarSurfaceClipper({
-    required this.selectedIndex,
-    required this.destinationCount,
-    required this.buttonScale,
-  });
-
-  final int selectedIndex;
-  final int destinationCount;
-  final double buttonScale;
-
-  @override
-  Path getClip(Size size) {
-    final surface = Path()..addRect(Offset.zero & size);
-    if (selectedIndex < 0 || selectedIndex >= destinationCount) {
-      return surface;
-    }
-
-    final radius = 23.0 * buttonScale;
-    final center = Offset(
-      size.width * (selectedIndex + 0.5) / destinationCount,
-      radius - TradingNavigationBar.crestHeight,
-    );
-    final hole = Path()
-      ..addOval(Rect.fromCircle(center: center, radius: radius));
-    return Path.combine(PathOperation.difference, surface, hole);
-  }
-
-  @override
-  bool shouldReclip(covariant _NavigationBarSurfaceClipper oldClipper) {
-    return selectedIndex != oldClipper.selectedIndex ||
-        destinationCount != oldClipper.destinationCount ||
-        buttonScale != oldClipper.buttonScale;
-  }
-}
-
-class _NavigationSurfacePainter extends CustomPainter {
-  const _NavigationSurfacePainter({
-    required this.color,
-    required this.barTop,
-    required this.barHeight,
-    required this.selectedIndex,
-    required this.previousIndex,
-    required this.destinationCount,
-    required this.buttonScale,
-    required this.progress,
-  });
-
-  final Color color;
-  final double barTop;
-  final double barHeight;
-  final int selectedIndex;
-  final int previousIndex;
-  final int destinationCount;
-  final double buttonScale;
-  final double progress;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = color
-      ..isAntiAlias = true
-      ..style = PaintingStyle.fill;
-
-    var surfacePath = Path()
-      ..addRect(Rect.fromLTWH(0, barTop, size.width, barHeight));
-
-    if (previousIndex == selectedIndex || progress >= 1) {
-      surfacePath = Path.combine(
-        PathOperation.union,
-        surfacePath,
-        _contourPath(size, selectedIndex, 1),
-      );
-    } else {
-      surfacePath = Path.combine(
-        PathOperation.union,
-        surfacePath,
-        _contourPath(size, previousIndex, 1 - progress),
-      );
-      surfacePath = Path.combine(
-        PathOperation.union,
-        surfacePath,
-        _contourPath(size, selectedIndex, progress),
-      );
-    }
-
-    final selectedCircle = _circlePath(size, selectedIndex);
-    canvas.drawPath(
-      Path.combine(PathOperation.difference, surfacePath, selectedCircle),
-      paint,
-    );
-  }
-
-  Path _circlePath(Size size, int index) {
-    final radius = 23.0 * buttonScale;
-    final center = Offset(
-      size.width * (index + 0.5) / destinationCount,
-      barTop + radius - TradingNavigationBar.crestHeight,
-    );
-    return Path()..addOval(Rect.fromCircle(center: center, radius: radius));
-  }
-
-  Path _contourPath(Size size, int index, double value) {
-    if (value <= 0 || index < 0 || index >= destinationCount) return Path();
-
-    final radius = 23.0 * buttonScale;
-    final desiredShoulderReach = 12.0 * buttonScale;
-    const maxShoulderAngle = 0.7;
-    final crestRise = TradingNavigationBar.crestHeight * value;
-    final centerX = size.width * (index + 0.5) / destinationCount;
-    final centerY = barTop + radius - crestRise;
-    final angularSpread = maxShoulderAngle * value;
-    final leftAngle = math.pi * 1.5 - angularSpread;
-    final rightAngle = math.pi * 1.5 + angularSpread;
-    final leftJoin = Offset(
-      centerX + radius * math.cos(leftAngle),
-      centerY + radius * math.sin(leftAngle),
-    );
-    final rightJoin = Offset(
-      centerX + radius * math.cos(rightAngle),
-      centerY + radius * math.sin(rightAngle),
-    );
-    final reachableShoulder = math.max(
-      0,
-      math.min(leftJoin.dx, size.width - rightJoin.dx),
-    );
-    final shoulderReach = math.min(
-      desiredShoulderReach * value,
-      reachableShoulder,
-    );
-    final leftStart = Offset(leftJoin.dx - shoulderReach, barTop);
-    final rightEnd = Offset(rightJoin.dx + shoulderReach, barTop);
-    final sweepAngle = rightAngle - leftAngle;
-    final leftTangent = Offset(-math.sin(leftAngle), math.cos(leftAngle));
-    final rightTangent = Offset(-math.sin(rightAngle), math.cos(rightAngle));
-    final tangentLength = 10 * buttonScale * value;
-
-    return Path()
-      ..moveTo(leftStart.dx, leftStart.dy)
-      ..cubicTo(
-        leftStart.dx + shoulderReach * 0.5,
-        leftStart.dy,
-        leftJoin.dx - leftTangent.dx * tangentLength,
-        leftJoin.dy - leftTangent.dy * tangentLength,
-        leftJoin.dx,
-        leftJoin.dy,
-      )
-      ..arcTo(
-        Rect.fromCircle(center: Offset(centerX, centerY), radius: radius),
-        leftAngle,
-        sweepAngle,
-        false,
-      )
-      ..cubicTo(
-        rightJoin.dx + rightTangent.dx * tangentLength,
-        rightJoin.dy + rightTangent.dy * tangentLength,
-        rightEnd.dx - shoulderReach * 0.5,
-        rightEnd.dy,
-        rightEnd.dx,
-        rightEnd.dy,
-      )
-      ..close();
-  }
-
-  @override
-  bool shouldRepaint(covariant _NavigationSurfacePainter oldDelegate) {
-    return color != oldDelegate.color ||
-        barTop != oldDelegate.barTop ||
-        barHeight != oldDelegate.barHeight ||
-        selectedIndex != oldDelegate.selectedIndex ||
-        previousIndex != oldDelegate.previousIndex ||
-        destinationCount != oldDelegate.destinationCount ||
-        buttonScale != oldDelegate.buttonScale ||
-        progress != oldDelegate.progress;
   }
 }

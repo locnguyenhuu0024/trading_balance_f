@@ -6,6 +6,7 @@ import '../../features/connections/scope_picker.dart';
 import '../exchange/exchange_models.dart';
 import '../exchange/exchange_registry.dart';
 import '../exchange/exchange_scope.dart';
+import '../theme/app_theme.dart';
 
 String scopeProductLine(ExchangeId exchange) => exchange == ExchangeId.okx
     ? 'Tài khoản giao dịch'
@@ -25,28 +26,47 @@ class ScopeBar extends ConsumerWidget {
       context: context,
       builder: (_) => const ScopePicker(),
     );
+    final palette = AppPalette.of(context);
     return Semantics(
       button: true,
       onTap: openPicker,
       label: '${profile.label}, Chính',
       child: ExcludeSemantics(
         child: Material(
-          color: Theme.of(context).colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(12),
+          color: palette.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(color: palette.border),
+          ),
           child: InkWell(
             borderRadius: BorderRadius.circular(12),
             onTap: openPicker,
             child: ConstrainedBox(
               constraints: const BoxConstraints(minHeight: 54),
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 4,
+                ),
                 child: Row(
                   children: [
-                    CircleAvatar(
-                      radius: 17,
-                      child: Text(profile.label.substring(0, 1)),
+                    Container(
+                      width: 34,
+                      height: 34,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: palette.ink,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        profile.label.substring(0, 1),
+                        style: TextStyle(
+                          color: palette.onStrong,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
                     ),
-                    const SizedBox(width: 10),
+                    const SizedBox(width: 12),
                     Expanded(
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
@@ -57,12 +77,14 @@ class ScopeBar extends ConsumerWidget {
                             '${profile.label} / Chính',
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontWeight: FontWeight.bold),
                           ),
                           Text(
                             scopeProductLine(profile.exchange),
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.bodySmall,
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(color: palette.muted),
                           ),
                         ],
                       ),

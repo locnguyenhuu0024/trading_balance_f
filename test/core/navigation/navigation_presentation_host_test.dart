@@ -40,7 +40,7 @@ void main() {
     expect(find.byKey(const Key('floating-navigation-group')), findsNothing);
   });
 
-  testWidgets('raised button hits do not fall through to page content', (
+  testWidgets('navigation button hits do not fall through to page content', (
     tester,
   ) async {
     addTearDown(tester.view.resetPhysicalSize);

@@ -4,6 +4,7 @@ import '../../core/exchange/exchange_scope.dart';
 import '../../core/exchange/scoped_read.dart';
 import '../../core/network/okx_read_scope.dart';
 import '../../core/widgets/scope_bar.dart';
+import '../../core/theme/app_theme.dart';
 
 class ScopeSwitchGate extends ConsumerWidget {
   const ScopeSwitchGate({super.key, required this.child});
@@ -40,29 +41,48 @@ class ScopeSwitchGate extends ConsumerWidget {
     if (!account.isLoading || account.hasValue) return child;
     final name = scope.exchange.name == 'okx' ? 'OKX' : 'Binance';
     final reducedMotion = MediaQuery.disableAnimationsOf(context);
+    final palette = AppPalette.of(context);
     return SafeArea(
-      child: Column(
-        children: [
-          const Padding(padding: EdgeInsets.all(16), child: ScopeBar()),
-          Expanded(
-            child: Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Semantics(
-                    liveRegion: true,
-                    child: Text('Đang tải $name / Chính'),
-                  ),
-                  const SizedBox(height: 16),
-                  if (reducedMotion)
-                    const Icon(Icons.hourglass_empty)
-                  else
-                    const CircularProgressIndicator(),
-                ],
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Đang đổi tài khoản',
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
               ),
             ),
-          ),
-        ],
+            const SizedBox(height: 16),
+            const ScopeBar(),
+            const SizedBox(height: 64),
+            Center(
+              child: reducedMotion
+                  ? const Icon(Icons.hourglass_empty)
+                  : const CircularProgressIndicator(),
+            ),
+            const SizedBox(height: 64),
+            Semantics(
+              liveRegion: true,
+              child: Text(
+                'Đang tải $name / Chính',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            const SizedBox(height: 32),
+            Text(
+              'Ẩn dữ liệu tài khoản cũ trong khi tải.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: palette.muted),
+            ),
+          ],
+        ),
       ),
     );
   }

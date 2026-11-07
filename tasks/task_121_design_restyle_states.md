@@ -28,15 +28,17 @@ Observed Effective Effort: unavailable
 
 ## Stage instruction (current)
 
-This task runs in stages. **Current stage 1 of 3: the shell.**
+This task runs in stages. Stage 1 (shell, navigation, scope bar, picker, Tools) is committed and reviewed from rendered screenshots.
 
-- `trading_navigation_bar.dart`: bottom bar per handoff section 5: surface with top border, icon above label, selected item in a radius 12 `surface` pill, no floating circle or crest. Labels at least 11 at default scale, scaling with `textScaler`; targets at least 48.
-- `scope_bar.dart`: minimum 54, radius 12, `surface` with `border`, badge 34 square radius 8 in `ink` with `onStrong`, Bold account line and muted product line, chevron.
-- `scope_picker.dart`: full design rows, active row border in `ink`, `Đang xem`, explanatory line `Chỉ hiển thị một tài khoản mỗi lần.`, and an outlined `Quản lý kết nối`.
-- `tools_screen.dart`: `Công cụ` title and four design cards with subtitle copy: `Fractal theo nguồn giá của sàn`, `Coin theo dõi riêng theo sàn`, `Thêm, đổi hoặc quản lý kết nối`, `Hiển thị, tiền tệ, múi giờ`.
-- `scope_switch_gate.dart`: frame 08 layout without the prototype button.
+**Current stage 2 of 3: Tài sản and Lệnh.**
 
-Tests: bar has no overflow at 320 wide at the largest text scale; update assertions that named the removed floating circle, keeping the behavior ones. Finish by returning the structured report.
+`portfolio_screen.dart`: title `Tài sản` Bold 24 in the body with the existing hide and refresh actions on the same row, then the scope bar, then a 16-radius `surface` card with the existing total label and amount, the visibility action in the card if that keeps existing keys and behavior, and `Lãi / lỗ chưa thực hiện`. Then rows `Phạm vi dữ liệu` showing `<exchange> / <account>` and `Tiền tệ hiển thị` showing the current currency. Then `Tài sản chi tiết` with flat rows split by thin dividers, not boxed cards: 40 coin badge, symbol and quantity, right-aligned value. Keep existing total, currency, masking and PnL color logic exactly.
+
+`orders_screen.dart`: title `Lệnh` Bold 24 in the body with the existing refresh action, replacing `Quản lý Giao dịch`; scope bar; tabs `Vị thế`, `Chờ khớp`, `Lịch sử` as an underlined or selected-weight row; filter chips; a label `Vị thế của <exchange> / <account>`. Cards use the common rules. Keep every existing `Key` and all row content.
+
+`okx_adapter.dart`: map neutral `size` to `OkxPosition.size` when non-empty, otherwise `pos`, so direct OKX reads show the quantity.
+
+Existing test assertions on titles may change only where they named `Quản lý Giao dịch` or `Tổng tài sản` styling; behavior assertions stay. Update the adapter test for the empty-size case. Finish by returning the structured report.
 
 ## 2. Objective
 

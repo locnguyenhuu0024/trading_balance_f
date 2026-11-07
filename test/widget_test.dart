@@ -9,12 +9,19 @@ import 'package:trading_balance_f/features/orders/presentation/widgets/responsiv
 import 'package:trading_balance_f/features/settings/presentation/settings_screen.dart';
 
 void main() {
-  Widget shellApp({ThemeMode themeMode = ThemeMode.light}) {
+  Widget shellApp({
+    ThemeMode themeMode = ThemeMode.light,
+    TextScaler? textScaler,
+  }) {
     const destinationScreenIndices = [0, 2, 3, 8];
     return ProviderScope(
       key: ValueKey(themeMode),
       overrides: [themeModeProvider.overrideWith((ref) => themeMode)],
       child: MaterialApp(
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(textScaler: textScaler),
+          child: child!,
+        ),
         home: MainNavigationShell(
           destinationBuilder: (context, index) {
             final screenIndex = destinationScreenIndices[index];
@@ -46,7 +53,7 @@ void main() {
     expect(find.byTooltip('Lệnh'), findsOneWidget);
     expect(find.byTooltip('Thị trường'), findsOneWidget);
     expect(find.byTooltip('Thêm'), findsOneWidget);
-    expect(find.text('Thị trường'), findsNothing);
+    expect(find.text('Thị trường'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('navigation-destination-2')));
     await tester.pumpAndSettle();
@@ -60,70 +67,34 @@ void main() {
     expect(find.text('Thêm'), findsOneWidget);
   });
 
-  testWidgets(
-    'navigation bar fills the width with a floating selected circle',
-    (tester) async {
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-      tester.view.devicePixelRatio = 1;
-      tester.view.physicalSize = const Size(390, 844);
-
-      await tester.pumpWidget(shellApp());
-      await tester.pumpAndSettle();
-
-      final lightSurface = tester.widget<Material>(
-        find.byKey(const Key('navigation-bar-surface')),
+  testWidgets('navigation bar uses a surface pill and accessible targets', (
+    tester,
+  ) async {
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(320, 900);
+    await tester.pumpWidget(shellApp(textScaler: const TextScaler.linear(2)));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    for (var index = 0; index < TradingNavigationBar.items.length; index++) {
+      final target = tester.getSize(
+        find.byKey(Key('navigation-destination-$index')),
       );
-      final lightIndicator = tester.widget<AnimatedContainer>(
-        find.byKey(const Key('navigation-indicator-0')),
-      );
-      final lightSurfaceRect = tester.getRect(
-        find.byKey(const Key('navigation-bar-surface')),
-      );
-      final navigationLayoutRect = tester.getRect(
-        find.byKey(const Key('navigation-bar-layout')),
-      );
-      final lightIndicatorRect = tester.getRect(
-        find.byKey(const Key('navigation-indicator-0')),
-      );
-
-      expect(lightSurface.color, Colors.black);
-      expect(lightSurface.borderRadius, isNull);
-      expect(
-        (lightIndicator.decoration! as BoxDecoration).color,
-        Colors.black.withValues(alpha: 0.5),
-      );
-      expect(lightSurfaceRect.width, 390);
-      expect(lightSurfaceRect.height, 60);
-      expect(lightSurfaceRect.left, 0);
-      expect(navigationLayoutRect, lightSurfaceRect);
-      expect(lightIndicatorRect.top, lessThan(lightSurfaceRect.top));
-      expect(lightIndicatorRect.bottom, greaterThan(lightSurfaceRect.top));
-
-      for (var index = 1; index < TradingNavigationBar.items.length; index++) {
-        final indicatorRect = tester.getRect(
-          find.byKey(Key('navigation-indicator-$index')),
-        );
-        expect(indicatorRect.center.dy, lightSurfaceRect.center.dy);
-      }
-
-      await tester.pumpWidget(shellApp(themeMode: ThemeMode.dark));
-      await tester.pumpAndSettle();
-
-      final darkSurface = tester.widget<Material>(
-        find.byKey(const Key('navigation-bar-surface')),
-      );
-      final darkIndicator = tester.widget<AnimatedContainer>(
-        find.byKey(const Key('navigation-indicator-0')),
-      );
-
-      expect(darkSurface.color, Colors.white);
-      expect(
-        (darkIndicator.decoration! as BoxDecoration).color,
-        Colors.white.withValues(alpha: 0.5),
-      );
-    },
-  );
+      expect(target.width, greaterThanOrEqualTo(48));
+      expect(target.height, greaterThanOrEqualTo(48));
+    }
+    final indicator = tester.widget<Container>(
+      find.byKey(const Key('navigation-indicator-0')),
+    );
+    expect(
+      (indicator.decoration! as BoxDecoration).borderRadius,
+      BorderRadius.circular(12),
+    );
+    await tester.tap(find.byKey(const Key('navigation-destination-2')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('destination-body-3')), findsOneWidget);
+  });
 
   testWidgets('order select controls update their selected values', (
     tester,

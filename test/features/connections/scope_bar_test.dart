@@ -44,6 +44,11 @@ void main() {
       expect(find.text('OKX / Chính'), findsWidgets);
       expect(find.text('Binance / Chính'), findsNothing);
       expect(find.text('Đang xem'), findsOneWidget);
+      expect(find.text('Chỉ hiển thị một tài khoản mỗi lần.'), findsOneWidget);
+      expect(
+        find.widgetWithText(OutlinedButton, 'Quản lý kết nối'),
+        findsOneWidget,
+      );
       semantics.dispose();
     },
   );
