@@ -21,6 +21,7 @@ class BinanceClient {
     '/api/v3/exchangeInfo',
     '/fapi/v1/ticker/24hr',
     '/api/v3/ticker/24hr',
+    '/api/v3/ticker/price',
     '/fapi/v1/klines',
     '/api/v3/klines',
   };

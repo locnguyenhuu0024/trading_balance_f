@@ -74,12 +74,14 @@ class AccountSnapshot {
     this.isPartial = false,
     this.balances = const [],
     this.walletResults = const [],
+    this.marginRows = const [],
     this.issues = const [],
   });
   final String? total, totalCurrency;
   final bool isPartial;
   final List<AssetBalance> balances;
   final List<WalletResult> walletResults;
+  final List<MarginAccountRow> marginRows;
   final List<String> issues;
 }
 
@@ -197,7 +199,21 @@ class MarginAccountRow {
     this.marginLevel,
     this.liquidation,
     this.indexPrice,
+    this.marginRatio,
+    this.baseNet,
+    this.baseBorrowed,
+    this.baseInterest,
+    this.quoteNet,
+    this.quoteBorrowed,
+    this.quoteInterest,
   });
+  final String? marginRatio,
+      baseNet,
+      baseBorrowed,
+      baseInterest,
+      quoteNet,
+      quoteBorrowed,
+      quoteInterest;
   final String? asset,
       borrowed,
       interest,

@@ -22,6 +22,27 @@ class BinanceMarket implements MarketSource {
     return value;
   }
 
+  Future<Map<String, double>> valuationPrices() async {
+    final response = await client.get('/api/v3/ticker/price');
+    return {
+      for (final row in response.data as List)
+        if (row is Map && double.tryParse('${row['price']}') != null)
+          '${row['symbol']}': double.parse('${row['price']}'),
+    };
+  }
+
+  Future<Map<String, Map<String, String>>> instruments(String product) async {
+    final prefix = product == 'SWAP' ? '/fapi/v1' : '/api/v3';
+    final response = await client.get('$prefix/exchangeInfo');
+    return {
+      for (final row in response.data['symbols'] as List)
+        '${row['symbol']}': {
+          'base': '${row['baseAsset']}',
+          'quote': '${row['quoteAsset']}',
+        },
+    };
+  }
+
   @override
   Future<List<MarketRow>> topTickers(String product) async {
     final prefix = product == 'SPOT' ? '/api/v3' : '/fapi/v1';
