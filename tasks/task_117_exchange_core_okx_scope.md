@@ -155,11 +155,11 @@ Escalate only if: a shared provider or fixture used outside this set changes.
 
 ### Verification environment
 
-The sandbox cannot write to the default Flutter SDK cache or home directory, so `flutter` fails there. Always run Flutter through this prepared SDK clone, including for RED, GREEN and buildability:
+Try plain `rtk flutter test --no-pub <file>` first; earlier executors ran it successfully here. If it fails with a write denial on the Flutter SDK cache or home directory, use this prepared SDK clone instead, for RED, GREEN and buildability:
 
 `env HOME=/private/tmp/claude-501/-Users-locnguyen--claude-spares-spare-1YiVQu/74faedd6-f84d-41fb-aa01-a0288d74204a/scratchpad/flutter-home PUB_CACHE=/Users/locnguyen/.pub-cache /private/tmp/claude-501/-Users-locnguyen--claude-spares-spare-1YiVQu/74faedd6-f84d-41fb-aa01-a0288d74204a/scratchpad/flutter-sdk/bin/flutter <subcommand>`
 
-Example: `env HOME=/private/tmp/claude-501/-Users-locnguyen--claude-spares-spare-1YiVQu/74faedd6-f84d-41fb-aa01-a0288d74204a/scratchpad/flutter-home PUB_CACHE=/Users/locnguyen/.pub-cache /private/tmp/claude-501/-Users-locnguyen--claude-spares-spare-1YiVQu/74faedd6-f84d-41fb-aa01-a0288d74204a/scratchpad/flutter-sdk/bin/flutter test --no-pub <file> --plain-name '<name>'`. It adds no repository changes. In the commands of this task, read `rtk flutter` and `flutter` as this prefix. If it still fails, report the exact error.
+An environment failure never stops implementation. Finish the code and tests, then report the exact error with `BLOCKED_ENVIRONMENT` for the verification steps you could not run, and the coordinator will run them on the host. Observed RED remains required wherever the tools work.
 
 ### Task Buildability Gate
 
