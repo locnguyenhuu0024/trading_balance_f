@@ -28,16 +28,14 @@ Observed Effective Effort: unavailable
 
 ## Stage instruction (current)
 
-This task runs in stages. Stage A is committed and verified: selection, picker, switch gate and bar work.
+This task runs in stages. Stages A and B are committed and verified except one finding below.
 
-**Current stage B of 3, do only steps 7, 8 and 9 of section 6:**
+**Current stage C1, do exactly this:**
 
-- `lib/features/connections/connections_screen.dart` and `connection_catalog_screen.dart`, with the picker's `Quản lý kết nối` and the Tools `Sàn & tài khoản` card opening `ConnectionsScreen`.
-- `lib/features/connections/binance_connection_form.dart`. The test action creates a temporary `BinancePrivateClient` from the entered keys and is successful if any platform-available wallet read succeeds; show failure by class: invalid key, no network, other. Copy: `Tên tài khoản` is not editable in this version, so show `Chính`; `Dùng khóa chỉ đọc`, `Kiểm tra kết nối`, `Lưu`, `Xóa kết nối`.
-- Save and delete go through `trackBinanceCredentialMutation`. Add `saveBinanceKeys` and `clearBinanceKeys` if absent, in `SecureStorageHelper` and `WebStorageHelper`.
-- OKX opens the existing `SettingsTradeAccessPage` unchanged.
+1. AUD-120-04: `binance_connection_form.dart` loads the saved secret back into a text field. Do not load saved key or secret into the UI. When keys exist, show `Đã lưu khóa` with `Thay khóa` and `Xóa kết nối`; entry fields start empty. `Kiểm tra kết nối` uses entered values if present, otherwise the stored keys.
+2. Steps 10, 11, 12 of section 6, and the `—` and `Chưa định giá` part of step 13. New widget `lib/features/orders/presentation/widgets/margin_account_card.dart`. Existing OKX cards, keys and layout stay the same.
 
-Tests in `connections_screen_test.dart` and `binance_connection_form_test.dart`: lists only configured connections; catalog shows `Sàn khác` disabled and an existing connection opens its form; saving keys makes Binance appear in the picker; deleting selected Binance falls back to OKX; a failed test keeps entered text and shows the class without any key or secret in the message. If your test needs real async, use `tester.runAsync`. Dispose semantics handles inside the test body. Finish by returning the structured report.
+Tests in `orders_binance_view_test.dart`, using a fake adapter returning a `BTCUSDT` position with base and quote: card shows `BTC` and `BTC/USDT`-style label from metadata, never splitting the id; filter shows Binance chips, and web shows only `Tất cả` and `USDⓈ-M`; cross and isolated margin cards show values and `—` for absent values, with no close control; an absent balance total shows `—`, not `0.00`; an unpriced row shows `Chưa định giá`. Add a form test that the saved secret is not in any text field. Use `tester.runAsync` for real async, and dispose semantics handles in the test body. Finish by returning the structured report.
 
 ## 2. Objective
 

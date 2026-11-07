@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import '../../core/navigation/navigation_content_frame.dart';
 import '../fractal_tracker/presentation/fractal_screen.dart';
 import '../settings/presentation/settings_screen.dart';
-import '../settings/presentation/settings_trade_access_page.dart';
+import '../connections/connections_screen.dart';
 import '../support_resistance/presentation/support_resistance_screen.dart';
 
 class ToolsScreen extends StatelessWidget {
@@ -33,7 +33,7 @@ class ToolsScreen extends StatelessWidget {
             _ToolCard(
               icon: Icons.key_outlined,
               title: 'Sàn & tài khoản',
-              destination: (_) => const SettingsTradeAccessPage(),
+              destination: (_) => const ConnectionsScreen(),
             ),
             _ToolCard(
               icon: Icons.settings_outlined,

@@ -7,7 +7,7 @@ import 'package:trading_balance_f/features/fractal_tracker/data/fractal_model.da
 import 'package:trading_balance_f/features/fractal_tracker/presentation/fractal_screen.dart';
 import 'package:trading_balance_f/features/fractal_tracker/presentation/providers/fractal_provider.dart';
 import 'package:trading_balance_f/features/settings/presentation/settings_screen.dart';
-import 'package:trading_balance_f/features/settings/presentation/settings_trade_access_page.dart';
+import 'package:trading_balance_f/features/connections/connections_screen.dart';
 import 'package:trading_balance_f/features/support_resistance/data/watchlist_store.dart';
 import 'package:trading_balance_f/features/support_resistance/domain/models.dart';
 import 'package:trading_balance_f/features/support_resistance/presentation/providers/levels_provider.dart';
@@ -81,8 +81,8 @@ void main() {
 
     await tester.tap(find.text('Sàn & tài khoản'));
     await tester.pumpAndSettle();
-    expect(find.byType(SettingsTradeAccessPage), findsOneWidget);
-    Navigator.of(tester.element(find.byType(SettingsTradeAccessPage))).pop();
+    expect(find.byType(ConnectionsScreen), findsOneWidget);
+    Navigator.of(tester.element(find.byType(ConnectionsScreen))).pop();
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Cài đặt'));

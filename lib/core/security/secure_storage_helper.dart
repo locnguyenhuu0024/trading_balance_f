@@ -157,6 +157,13 @@ class SecureStorageHelper {
         ]);
       });
 
+  Future<void> saveBinanceKeys({
+    required String apiKey,
+    required String apiSecret,
+  }) => saveBinanceCredentials(apiKey: apiKey, apiSecret: apiSecret);
+
+  Future<void> clearBinanceKeys() => clearBinanceCredentials();
+
   // Define keys
   static const String _okxApiKey = 'OKX_API_KEY';
   static const String _okxSecretKey = 'OKX_SECRET_KEY';

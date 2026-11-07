@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/exchange/exchange_scope.dart';
 import '../../core/widgets/scope_bar.dart';
+import 'connections_screen.dart';
 
 class ScopePicker extends ConsumerWidget {
   const ScopePicker({super.key});
@@ -57,7 +58,18 @@ class ScopePicker extends ConsumerWidget {
                   );
                 }) ??
                 [],
-            const ListTile(title: Text('Quản lý kết nối')),
+            ListTile(
+              title: const Text('Quản lý kết nối'),
+              onTap: () {
+                final navigator = Navigator.of(context);
+                navigator.pop();
+                navigator.push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const ConnectionsScreen(),
+                  ),
+                );
+              },
+            ),
           ],
         ),
       ),
