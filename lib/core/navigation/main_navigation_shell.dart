@@ -10,6 +10,9 @@ import '../../features/support_resistance/presentation/support_resistance_screen
 import '../../features/strategy/presentation/strategy_screen.dart';
 import '../../features/tools/tools_screen.dart';
 import '../backend_features.dart';
+import '../exchange/exchange_scope.dart';
+import '../widgets/scope_bar.dart';
+import '../../features/connections/scope_switch_gate.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_page_transition.dart';
 import 'navigation_destination_data.dart';
@@ -55,6 +58,12 @@ class _MainNavigationShellState extends ConsumerState<MainNavigationShell> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<int>(switchEpochProvider, (previous, next) {
+      if (previous == next) return;
+      Navigator.of(context).popUntil((route) => route.isFirst);
+      if (_selectedIndex != 0) setState(() => _selectedIndex = 0);
+    });
+    final scope = ref.watch(exchangeScopeProvider);
     final backendFeaturesEnabled = ref.watch(backendFeaturesEnabledProvider);
     final destinations = navigationItemsForBackendFeatures(
       backendFeaturesEnabled,
@@ -86,12 +95,28 @@ class _MainNavigationShellState extends ConsumerState<MainNavigationShell> {
         },
         child: AppDestinationTransition(
           destinationId: selectedScreenIndex,
-          child: KeyedSubtree(
-            key: ValueKey<int>(selectedScreenIndex),
-            child: _buildSelectedScreen(
-              context,
-              selectedScreenIndex,
-              selectedVisibleIndex,
+          child: ScopeSwitchGate(
+            child: KeyedSubtree(
+              key: ValueKey(
+                '${scope.connectionId}:${scope.switchEpoch}:$selectedScreenIndex',
+              ),
+              child: Column(
+                children: [
+                  if (widget.destinationBuilder == null &&
+                      selectedScreenIndex != 7)
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(16, 12, 16, 0),
+                      child: ScopeBar(),
+                    ),
+                  Expanded(
+                    child: _buildSelectedScreen(
+                      context,
+                      selectedScreenIndex,
+                      selectedVisibleIndex,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),

@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../exchanges/okx/okx_adapter.dart';
+import '../../exchanges/binance/binance_adapter.dart';
 import 'exchange_adapter.dart';
 import 'exchange_models.dart';
 
@@ -18,6 +19,14 @@ final exchangeRegistryProvider = Provider<List<ExchangeRegistration>>(
         label: 'OKX',
       ),
       adapter: const OkxAdapter(),
+    ),
+    ExchangeRegistration(
+      profile: const ConnectionProfile(
+        connectionId: 'binance-default',
+        exchange: ExchangeId.binance,
+        label: 'Binance',
+      ),
+      adapter: const BinanceAdapter(),
     ),
   ],
 );

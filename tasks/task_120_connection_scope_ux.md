@@ -28,9 +28,16 @@ Observed Effective Effort: unavailable
 
 ## Stage instruction (current)
 
-This task runs in stages because long runs have ended early.
+This task runs in stages because long runs have ended early. Stage A code is committed as work in progress and reviewed by the coordinator.
 
-**Current stage A of 3, do only steps 1 to 6 of section 6.** Tests in `scope_bar_test.dart` and `scope_switch_test.dart`: OKX to Binance with fake transports shows target loading, no former data, lands on Tài sản with filters at defaults; selection survives restart; picker lists configured connections only; Binance keys removed while selected falls back to OKX with no crash; bar is at least 48 high with the semantic label. Existing tests change for wiring only. Finish by returning the structured report.
+**Current stage A2, finish stage A with exactly these fixes:**
+
+1. AUD-120-01: `ScopeSwitchGate` replaces the whole screen on any reload because it tests `account.isLoading`, so a manual refresh hides the screen. Show the gate only when the new scope has no value yet: `account.isLoading && !account.hasValue`.
+2. AUD-120-02: the shell puts `ScopeBar` above each screen's `AppBar`, so it can sit under the status bar, and pushed tool screens have no bar. Remove it from the shell. Per step 6, put `ScopeBar` at the top of the body of Tài sản, Lệnh, Thị trường, Công cụ, BMAG, Hỗ trợ / kháng cự and Cài đặt, inside each screen's existing safe layout.
+3. Coordinator-observed test failures, which you cannot see because the sandbox cannot run tests: `scope_bar_test` finds no `Đang xem` text in the picker, so make the active row show it as its own text widget. `scope_switch_test: removed selected Binance keys fall back to OKX` fails with pending timers, because the real `OkxDataClient` starts; override the read providers with fakes as the other test does.
+4. Add the missing scenarios: selection survives a restart through storage; after a switch the shell is on Tài sản with filter and tab at defaults, including when a tool route was pushed; a manual refresh does not show the gate.
+
+The picker's `Quản lý kết nối` stays a no-op until stage B. That is expected, not a blocker. Finish by returning the structured report.
 
 ## 2. Objective
 

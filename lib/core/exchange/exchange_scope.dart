@@ -59,6 +59,33 @@ final binanceCredentialReadScopeProvider =
       ),
     );
 
+/// Connections with complete credentials, in registry order.
+final configuredConnectionsProvider =
+    FutureProvider<List<ExchangeRegistration>>((ref) async {
+      ref.watch(okxCredentialSnapshotProvider);
+      ref.watch(binanceCredentialReadScopeProvider).state.value;
+      final storage = ref.watch(secureStorageProvider);
+      final registry = ref.watch(exchangeRegistryProvider);
+      final okx = await Future.wait([
+        storage.getOkxApiKey(),
+        storage.getOkxSecretKey(),
+        storage.getOkxPassphrase(),
+      ]);
+      final binance = await Future.wait([
+        storage.getBinanceApiKey(),
+        storage.getBinanceApiSecret(),
+      ]);
+      bool complete(List<String?> keys) =>
+          keys.every((key) => key != null && key.trim().isNotEmpty);
+      return registry
+          .where(
+            (entry) => entry.profile.exchange == ExchangeId.okx
+                ? complete(okx)
+                : complete(binance),
+          )
+          .toList();
+    });
+
 final exchangeScopeProvider = Provider<ExchangeScope>((ref) {
   final id = ref.watch(selectedConnectionIdProvider);
   final registry = ref.watch(exchangeRegistryProvider);
