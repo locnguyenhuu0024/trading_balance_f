@@ -57,6 +57,11 @@ Impacts: REQ-007, T119, T120.
 Decision: Curated packets are not sent to GPT-6.1 Sol. Independent workstreams use Claude subagents, and the plan records that the Sol route was not used.
 Impacts: plan fan-out record.
 
+### D-012 — Reclassify tasks under new executor rules
+Decision: "Ngoại trừ task đang chạy, hãy lập lại task theo bộ rules cho executor mới."
+Consequence: T116 keeps its dispatched route. Later tasks use `EXECUTOR_ROUTING_POLICY.json` v2. Route changes need fresh approval, per the v1.4.0 rule.
+Impacts: T117..T121, T122.
+
 ## Coordinator Proposals For Approval
 
 These follow from the decisions above. Accepted by plan approval on 2026-11-07 ("Duyệt, bắt đầu T116").
@@ -85,3 +90,4 @@ None.
 | Revision | Change | Reason |
 |---|---|---|
 | 1 | Initial record | Planning cycle 2026-11-07 |
+| 2 | D-012 added | Executor rules upgraded to OptCodex v1.4.0 |

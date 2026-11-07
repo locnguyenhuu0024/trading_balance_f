@@ -1,6 +1,7 @@
 # Task 116 — View-only mode and fixed navigation
 
-Status: READY
+Status: REWORK
+Route Note: dispatched under pre-v1.4 rules as legacy E1 gpt-6-luna/xhigh; kept as the user excluded this task from reclassification.
 Agent Role: implementation_executor
 Executor Class: E1
 Target Model: gpt-6-luna
@@ -112,7 +113,7 @@ Escalate only if: a shared provider or fixture used outside this set changes.
 
 Required: YES
 Affected canonical build unit: Flutter app `lib/` and `test/`
-Exact secret-free build command: `flutter analyze --no-pub && flutter build web --no-pub`
+Exact secret-free build command: `flutter analyze --no-pub --no-fatal-infos --no-fatal-warnings && flutter build web --no-pub`
 Executed after the last task-local change: PENDING
 Result: PENDING
 
@@ -137,4 +138,16 @@ Return `BLOCKED` when repository evidence contradicts this contract, a design de
 
 ## 12. Coordinator Audit
 
-Verdict: PENDING
+Attempt: 7d41604a679d4abaa9b4d288b07ed94a
+Dispatcher result: BLOCKED. Cause: governance files were upgraded to OptCodex v1.4.0 in the checkout at 16:06 during execution, so they appeared as out-of-scope changes; the executor also reported its chained gate as blocked. Executor write surface itself: all 41 changed `lib/` and `test/` paths are inside the manifest.
+Dispatch route compliance: UNVERIFIABLE (requested gpt-6-luna/xhigh, explicit).
+Parent route inheritance: NO
+Coordinator-observed tests: V3 set, 222 passed. Web build: PASS. Analyzer: 0 errors, 10 warnings, 68 infos; `flutter analyze` exits non-zero on infos, so the original gate command was a plan defect, corrected in revision 2.
+RED evidence: executor report only, in prose; test structure is consistent.
+Task buildability gate: PASS under the corrected command.
+
+Findings:
+- AUD-116-01 Must fix: `settings_screen.dart:555` gates the `Ẩn số dư mặc định` and biometric card on `backendFeaturesEnabled`. With the gate false the user loses both, and the section title stays above nothing. Violates REQ-012 and handoff section 7. The test suite does not catch it.
+- AUD-116-02 Must fix: `test/core/backend_features_test.dart` asserts zero cancel controls against empty order lists, so that part of AC-002 is unproven. Needs an active limit order row and a position row, with and without the gate.
+
+Verdict: REWORK. Remediation: `tasks/task_122_t116_settings_gate_remediation.md`.

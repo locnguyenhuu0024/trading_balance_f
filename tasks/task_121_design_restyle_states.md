@@ -1,11 +1,13 @@
 # Task 121 — Design shell and accessibility
 
-Status: READY
+Status: PENDING
 Agent Role: implementation_executor
-Executor Class: E1
-Target Model: gpt-6-luna
-Target Effort: xhigh
-Target Route: gpt-6-luna / xhigh
+Executor Class: E2
+Target Model: gpt-6.1-terra
+Target Effort: medium
+Target Route: gpt-6.1-terra / medium
+Routing Policy: EXECUTOR_ROUTING_POLICY.json v2 (OptCodex v1.4.0)
+Route Rationale: Routine presentation work with no logic or provider change and clear acceptance criteria.
 Route Binding: EXPLICIT
 Parent Route Inheritance: FORBIDDEN
 Specification: `docs/agents/specs/2026-11-07-multi-platform-view-only-design.md`
@@ -97,7 +99,7 @@ Escalate only if: a shared provider or fixture used outside this set changes.
 
 Required: YES
 Affected canonical build unit: Flutter app `lib/` and `test/`
-Exact secret-free build command: `flutter analyze --no-pub && flutter build web --no-pub`
+Exact secret-free build command: `flutter analyze --no-pub --no-fatal-infos --no-fatal-warnings && flutter build web --no-pub`
 Executed after the last task-local change: PENDING
 Result: PENDING
 

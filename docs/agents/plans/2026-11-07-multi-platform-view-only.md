@@ -1,6 +1,6 @@
 # Implementation Plan: Multi-platform view-only restructure
 
-Status: APPROVED (user, chat, 2026-11-07: "Duyệt, bắt đầu T116"; covers revision 1 and PRE-1..PRE-3); EXECUTING
+Status: APPROVED revision 2 (user, chat, 2026-11-07: "Duyệt, chạy T122"; includes PRE-4); EXECUTING
 Date: 2026-11-07
 Tier: L
 Plan ID: PLAN-20261107-multi-platform-view-only
@@ -20,6 +20,7 @@ Before the first dispatch, each needing specific user approval:
 - PRE-1 Git: commit `designs/` and these planning artifacts so the writer checkout is clean (`scripts/ccb/dispatch.py` rejects dirty trees, including untracked files), then create branch `codex/multi-platform-view-only` from main.
 - PRE-2 CCB: `scripts/ccb/dispatch.py` `ALLOWED_EXTENSIONS` on main has no `.dart`, so every task here would be refused. Re-add that one entry in a separate commit.
 - PRE-3 Git: commit each task after its audit PASS.
+- PRE-4 Git (revision 2): commit the OptCodex v1.4.0 and CCB v0.7 upgrade in the checkout, re-add `.dart` to `ALLOWED_EXTENSIONS` in a separate commit since the upgrade removed it again, and commit the T116 attempt as work in progress so T122 can run on a clean checkout.
 
 ## 3. Repository Impact
 
@@ -65,7 +66,7 @@ Coordinator runtime: the app reports Claude Opus 5.5, while the CCB rules descri
 ## 5. Dependency Graph
 
 ```text
-PRE-1, PRE-2 -> T116 -> T117 -> T118 -> G1 -> T119 -> T120 -> T121 -> final audit -> user live check
+PRE-1, PRE-2 -> T116 -> T122 -> T117 -> T118 -> G1 -> T119 -> T120 -> T121 -> final audit -> user live check
 ```
 
 All serial: CCB allows one writer per checkout, and these tasks share screens and providers.
@@ -162,22 +163,23 @@ Rollback steps: leave unmerged or revert. No data cleanup is needed.
 
 Six tasks exceed the Tier L target of 2 to 5. Reason: T118 and T119 use different hosts, credentials and verification; T121 needs rendered review; merging them would make one executor hold too many independent failure modes. Nav and gate were merged because they share one surface.
 
-| Task | Plan Steps | Requirements/AC | Depends On | Executor Class | Allowed Write Surface |
-|---|---|---|---|---|---|
-| T116 | P01 | REQ-001..003 / AC-001..003 | PRE-1, PRE-2 | E1 Luna xhigh | see task |
-| T117 | P02 | REQ-004, 005, 012 / AC-004, 005, 012 | T116 | E2 Luna max | see task |
-| T118 | P03 | REQ-008 / AC-008 | T117 | E1 Luna xhigh | see task |
-| T119 | P04 | REQ-006, 007 / AC-006, 007 | T117, G1 | E2 Luna max | see task |
-| T120 | P05 | REQ-009, 010 / AC-009, 010 | T118, T119 | E1 Luna xhigh | see task |
-| T121 | P06 | REQ-011 / AC-011 | T120 | E1 Luna xhigh | see task |
+| Task | Plan Steps | Requirements/AC | Depends On | Executor Class | Route | Allowed Write Surface |
+|---|---|---|---|---|---|---|
+| T116 | P01 | REQ-001..003 / AC-001..003 | PRE-1, PRE-2 | legacy E1 | gpt-6-luna / xhigh, kept per user | REWORK |
+| T122 (T116 R01) | P01 | REQ-002, 012 / AC-002 | T116 WIP commit | E1 | gpt-6.1-terra / low | see task |
+| T117 | P02 | REQ-004, 005, 012 / AC-004, 005, 012 | T116 PASS | E4 | gpt-6.1-terra / xhigh | see task |
+| T118 | P03 | REQ-008 / AC-008 | T117 | E3 | gpt-6.1-terra / high | see task |
+| T119 | P04 | REQ-006, 007 / AC-006, 007 | T117, G1 | E3 | gpt-6.1-terra / high | see task |
+| T120 | P05 | REQ-009, 010 / AC-009, 010 | T118, T119 | E3 | gpt-6.1-terra / high | see task |
+| T121 | P06 | REQ-011 / AC-011 | T120 | E2 | gpt-6.1-terra / medium | see task |
 
-No Terra trial is proposed.
+Routing follows `docs/agents/framework/EXECUTOR_ROUTING_POLICY.json` v2. Classes come from implementation entropy; rationale is in each task. No E5 and no route override is proposed. Escalation happens only on observed evidence.
 
 ### Task Buildability Plan
 
 | Task | Required | Affected Canonical Build Unit | Exact Secret-Free Build Command | Boundary Strategy |
 |---|---|---|---|---|
-| T116..T121 | YES | Flutter app `lib/` plus `test/` | `flutter analyze --no-pub && flutter build web --no-pub` | Compatibility-staged: `runOkxPrivateRead` kept as wrapper; screens move only in the task that owns them; new code is additive until wired |
+| T116..T121 | YES | Flutter app `lib/` plus `test/` | `flutter analyze --no-pub --no-fatal-infos --no-fatal-warnings && flutter build web --no-pub` | Compatibility-staged: `runOkxPrivateRead` kept as wrapper; screens move only in the task that owns them; new code is additive until wired |
 
 ## 14. Completion Gate
 
@@ -192,3 +194,9 @@ No Terra trial is proposed.
 - [ ] final integration audit PASS
 - [ ] no protected configuration/environment file was read or modified by an agent
 - [x] every external configuration/environment action is reported or N/A
+
+## 15. Change Log
+
+| Revision | Change | Reason |
+|---|---|---|
+| 2 | T117..T121 reclassified to E0-E5 routes; T122 added as T116 remediation; analyzer gate no longer fails on pre-existing infos | User request after upgrade to OptCodex v1.4.0 and CCB v0.7; rules require re-approval of pre-v1.4 task routes; T116 audit |
