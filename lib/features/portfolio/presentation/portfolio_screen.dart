@@ -412,6 +412,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
             costView != null &&
             costView.available &&
             _costFinished &&
+            !costView.loading &&
             !isHidden)
           Builder(
             builder: (context) {

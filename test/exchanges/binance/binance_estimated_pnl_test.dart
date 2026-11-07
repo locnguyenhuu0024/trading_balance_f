@@ -12,6 +12,34 @@ void main() {
     valueUsdt: '440',
   );
   const cost = CostState(quantity: 1, cost: 100);
+  test('missing symbol waits for the active run to finish', () {
+    const balance = AssetBalance(
+      wallet: 'Spot',
+      asset: 'BTC',
+      total: '1',
+      valueUsdt: '100',
+    );
+    expect(
+      estimatedBalance(const BinanceCostView(loading: true), true, balance),
+      isNull,
+    );
+    expect(
+      estimatedBalance(
+        const BinanceCostView(
+          loading: true,
+          symbols: {'Spot:BTCUSDT': BinanceSymbolCost(cost, completed: true)},
+        ),
+        true,
+        balance,
+      )!.estimate,
+      isNotNull,
+    );
+    expect(
+      estimatedBalance(const BinanceCostView(), true, balance)!.message,
+      'Chưa tính',
+    );
+  });
+
   test('coverage, loading, stale, missing and unavailable states', () {
     const view = BinanceCostView(
       symbols: {'Spot:BTCUSDT': BinanceSymbolCost(cost, completed: true)},
@@ -186,5 +214,26 @@ void main() {
     expect(summary.eligible, 3);
     expect(summary.covered, 3);
     expect(summary.profit, closeTo(28, .0001));
+  });
+  test('summary counts only Spot, Cross Margin and isolated rows', () {
+    final summary = estimatedSummary(
+      const BinanceCostView(),
+      true,
+      const AccountSnapshot(
+        balances: [
+          AssetBalance(wallet: 'USD-M', asset: 'BTC', total: '1', net: '1'),
+          AssetBalance(
+            wallet: 'Isolated Margin',
+            asset: 'BTC',
+            total: '1',
+            net: '1',
+          ),
+          AssetBalance(wallet: 'Spot', asset: 'USDT', total: '1'),
+          AssetBalance(wallet: 'Spot', asset: 'BTC', total: '1'),
+        ],
+      ),
+    );
+    expect(summary.eligible, 1);
+    expect(summary.covered, 0);
   });
 }

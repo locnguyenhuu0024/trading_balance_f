@@ -166,14 +166,12 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     } catch (_) {
       // The current tab provider renders its read error.
     } finally {
-      if (mounted && scope.exchange == ExchangeId.binance) {
-        try {
-          final account = await ref.read(scopedAccountProvider(scope).future);
-          if (mounted && ref.read(exchangeScopeProvider) == scope)
-            _startCost(scope, account);
-        } catch (_) {
-          // The account read remains independent of order refresh.
-        }
+      if (mounted &&
+          scope.exchange == ExchangeId.binance &&
+          (currentFilter == 'ALL' || currentFilter == 'MARGIN') &&
+          ref.read(exchangeScopeProvider) == scope) {
+        final account = ref.read(scopedAccountProvider(scope)).valueOrNull;
+        if (account != null) _startCost(scope, account);
       }
       if (mounted) setState(() => _manualRefreshInFlight = false);
     }

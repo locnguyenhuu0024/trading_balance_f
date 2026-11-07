@@ -1,6 +1,6 @@
 # Task 130 — Estimated profit on Assets and margin cards
 
-Status: PENDING
+Status: PASS
 Agent Role: implementation_executor
 Executor Class: E2
 Target Model: gpt-6.1-terra
@@ -133,4 +133,10 @@ Return `BLOCKED` if the fix needs a file outside the list.
 
 ## 11. Coordinator Audit
 
-Verdict: PENDING
+Attempt: 84bf6def83b94e9eb88806569cfc946f
+Dispatch route compliance: UNVERIFIABLE (requested gpt-6.1-terra/medium, explicit).
+Parent route inheritance: NO
+RED and GREEN executed by the coordinator on the host, RED first (VAL-005): Thirteen mutations were run. Twelve failed the suite. The isolated double-count mutation survived, so the coordinator added a summary test, and it then failed too. GREEN passed. The executor's final attempt returned no valid structured report, so the dispatcher marked it BLOCKED; its changed files were in scope and this verdict rests on coordinator evidence only. Coordinator corrections, test files only: a stream close that hung the run, a viewport of 3000 for the Assets large-text test because the row is off screen and unbuilt at 1200, and the summary test.
+Regression and buildability, coordinator-observed: 666 tests pass in the full suite; analyzer 0 errors, 156 warnings and infos; web build passes with the define.
+Task buildability gate: PASS
+Verdict: PASS

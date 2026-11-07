@@ -66,6 +66,229 @@ class _CostController implements BinanceCostController {
 
 void main() {
   testWidgets(
+    'active history run hides missing row and summary until finished',
+    (tester) async {
+      final views = StreamController<BinanceCostView>();
+      final container = ProviderContainer(
+        overrides: [
+          selectedConnectionIdProvider.overrideWith((ref) => 'test'),
+          exchangeRegistryProvider.overrideWith(
+            (ref) => [
+              ExchangeRegistration(
+                profile: const ConnectionProfile(
+                  connectionId: 'test',
+                  exchange: ExchangeId.binance,
+                  label: 'Binance',
+                ),
+                adapter: _SnapshotAdapter(
+                  const AccountSnapshot(
+                    total: '100',
+                    balances: [
+                      AssetBalance(
+                        wallet: 'Spot',
+                        asset: 'BTC',
+                        total: '1',
+                        valueUsdt: '100',
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          binanceCostControllerProvider.overrideWith(
+            (ref) async => _CostController(),
+          ),
+          binanceCostStateProvider.overrideWith((ref) => views.stream),
+          vndExchangeRateProvider.overrideWith((ref) async => 25400),
+        ],
+      );
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const MaterialApp(home: PortfolioScreen()),
+        ),
+      );
+      await tester.pump();
+      views.add(const BinanceCostView(loading: true));
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('Chưa tính'), findsNothing);
+      expect(find.textContaining('Ước tính Spot · Margin'), findsNothing);
+      views.add(const BinanceCostView());
+      await tester.pump();
+      expect(find.text('Chưa tính'), findsOneWidget);
+      expect(
+        find.textContaining('Ước tính Spot · Margin: Chưa đủ dữ liệu giá vốn'),
+        findsOneWidget,
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+      container.dispose();
+      addTearDown(views.close);
+    },
+  );
+
+  for (final isOkx in [true, false]) {
+    testWidgets(
+      'Assets preserves account when cost provider ${isOkx ? "is not built for OKX" : "fails"}',
+      (tester) async {
+        var stateBuilds = 0;
+        var controllerBuilds = 0;
+        final container = ProviderContainer(
+          overrides: [
+            selectedConnectionIdProvider.overrideWith((ref) => 'test'),
+            exchangeRegistryProvider.overrideWith(
+              (ref) => [
+                ExchangeRegistration(
+                  profile: ConnectionProfile(
+                    connectionId: 'test',
+                    exchange: isOkx ? ExchangeId.okx : ExchangeId.binance,
+                    label: 'Test',
+                  ),
+                  adapter: _SnapshotAdapter(
+                    const AccountSnapshot(
+                      total: '1200',
+                      balances: [
+                        AssetBalance(
+                          wallet: 'USD-M',
+                          asset: 'USDT',
+                          total: '1100',
+                          valueUsdt: '1100',
+                          unrealizedPnl: '100',
+                        ),
+                        AssetBalance(
+                          wallet: 'Spot',
+                          asset: 'BTC',
+                          total: '1',
+                          valueUsdt: '100',
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            binanceCostControllerProvider.overrideWith((ref) async {
+              controllerBuilds++;
+              if (isOkx) fail('OKX built the cost controller');
+              throw StateError('history failed');
+            }),
+            binanceCostStateProvider.overrideWith((ref) {
+              stateBuilds++;
+              if (isOkx) fail('OKX built the cost state');
+              return Stream<BinanceCostView>.error(
+                StateError('history failed'),
+              );
+            }),
+            livePriceProvider.overrideWith((ref) => LivePriceNotifier()),
+            okxWebsocketProvider.overrideWithValue(_Socket()),
+            vndExchangeRateProvider.overrideWith((ref) async => 25400),
+          ],
+        );
+        await tester.pumpWidget(
+          UncontrolledProviderScope(
+            container: container,
+            child: const MaterialApp(home: PortfolioScreen()),
+          ),
+        );
+        await tester.pump();
+        await tester.pump();
+        await tester.pump();
+        expect(find.text('BTC'), findsOneWidget);
+        expect(find.textContaining('Giá vốn TB'), findsNothing);
+        expect(find.textContaining('Ước tính Spot · Margin'), findsNothing);
+        if (isOkx) {
+          expect(stateBuilds, 0);
+          expect(controllerBuilds, 0);
+        }
+        if (!isOkx) expect(find.text('(+10.00%)'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+        container.dispose();
+      },
+    );
+  }
+
+  testWidgets('Assets partial stale estimate fits at large text', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 3000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final container = ProviderContainer(
+      overrides: [
+        selectedConnectionIdProvider.overrideWith((ref) => 'test'),
+        exchangeRegistryProvider.overrideWith(
+          (ref) => [
+            ExchangeRegistration(
+              profile: const ConnectionProfile(
+                connectionId: 'test',
+                exchange: ExchangeId.binance,
+                label: 'Binance',
+              ),
+              adapter: _SnapshotAdapter(
+                const AccountSnapshot(
+                  total: '400',
+                  balances: [
+                    AssetBalance(
+                      wallet: 'Spot',
+                      asset: 'BTC',
+                      total: '4',
+                      valueUsdt: '400',
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+        binanceCostControllerProvider.overrideWith(
+          (ref) async => _CostController(),
+        ),
+        binanceCostStateProvider.overrideWith(
+          (ref) => Stream.value(
+            const BinanceCostView(
+              symbols: {
+                'Spot:BTCUSDT': BinanceSymbolCost(
+                  CostState(quantity: 1, cost: 80),
+                  completed: true,
+                  stale: true,
+                ),
+              },
+            ),
+          ),
+        ),
+        vndExchangeRateProvider.overrideWith((ref) async => 25400),
+      ],
+    );
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(
+          home: MediaQuery(
+            data: MediaQueryData(
+              size: Size(320, 3000),
+              textScaler: TextScaler.linear(2),
+            ),
+            child: PortfolioScreen(),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    await tester.pump();
+    expect(
+      find.textContaining('tính trên 25% lượng · chưa cập nhật'),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    container.dispose();
+  });
+
+  testWidgets(
     'estimates stay separate from USD-M and polling does not run history',
     (tester) async {
       final controller = _CostController();

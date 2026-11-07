@@ -22,7 +22,7 @@ Target: the `server` block that serves `api.tradingbalancef.com`. Add this insid
 
 ```nginx
 # Read-only Binance Spot and Margin proxy for the web app. GET only, nothing stored.
-location ~ ^/binance-proxy/(?<binance_path>api/v3/(?:account|openOrders|allOrders)|sapi/v1/margin/(?:account|isolated/account|openOrders|allOrders))$ {
+location ~ ^/binance-proxy/(?<binance_path>api/v3/(?:account|openOrders|allOrders|myTrades)|sapi/v1/margin/(?:account|isolated/account|openOrders|allOrders|myTrades))$ {
     access_log off;
 
     if ($http_origin != "https://app.tradingbalancef.com") {

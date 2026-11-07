@@ -29,6 +29,7 @@ class _Fake extends FakeExchangeAdapter {
   ExchangeFailure classify(Object error) => ExchangeFailure(failureKind);
   final Future<AccountSnapshot> Function()? accountOverride;
   final bool emptyPositions;
+  int positionReads = 0;
   @override
   ExchangeCapabilities get capabilities =>
       const ExchangeCapabilities(readableProducts: ['SWAP', 'SPOT', 'MARGIN']);
@@ -36,20 +37,24 @@ class _Fake extends FakeExchangeAdapter {
   Future<List<ExchangePosition>> readPositions(
     Ref ref,
     ExchangeScope scope,
-  ) async => emptyPositions || ref.watch(orderFilterProvider) == 'MARGIN'
-      ? []
-      : [
-          const ExchangePosition(
-            key: InstrumentKey(
-              exchange: ExchangeId.binance,
-              product: 'SWAP',
-              nativeId: 'BTCUSDT',
-              base: 'BTC',
-              quote: 'USDT',
+  ) async {
+    positionReads++;
+    return emptyPositions || ref.watch(orderFilterProvider) == 'MARGIN'
+        ? []
+        : [
+            const ExchangePosition(
+              key: InstrumentKey(
+                exchange: ExchangeId.binance,
+                product: 'SWAP',
+                nativeId: 'BTCUSDT',
+                base: 'BTC',
+                quote: 'USDT',
+              ),
+              productLabel: 'SWAP',
             ),
-            productLabel: 'SWAP',
-          ),
-        ];
+          ];
+  }
+
   @override
   Future<AccountSnapshot> readAccount(Ref ref, ExchangeScope scope) async {
     accountReads++;
@@ -95,6 +100,97 @@ Future<void> _pumpChip(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('USD-M refresh does not read account', (tester) async {
+    final adapter = _Fake();
+    final container = _errorContainer(adapter);
+    container.read(orderFilterProvider.notifier).state = 'SWAP';
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(home: OrdersScreen()),
+      ),
+    );
+    await _pumpChip(tester);
+    final before = adapter.accountReads;
+    final positionsBefore = adapter.positionReads;
+    await tester.drag(
+      find
+          .descendant(
+            of: find.byType(RefreshIndicator),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+      const Offset(0, 400),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    await _pumpChip(tester);
+    expect(adapter.positionReads, greaterThan(positionsBefore));
+    expect(adapter.accountReads, before);
+    await tester.pumpWidget(const SizedBox.shrink());
+    container.dispose();
+  });
+
+  for (final isOkx in [true, false]) {
+    testWidgets(
+      'Orders preserves data when cost provider ${isOkx ? "is not built for OKX" : "fails"}',
+      (tester) async {
+        var controllerBuilds = 0;
+        var stateBuilds = 0;
+        final container = ProviderContainer(
+          overrides: [
+            selectedConnectionIdProvider.overrideWith((ref) => 'fake'),
+            exchangeRegistryProvider.overrideWith(
+              (ref) => [
+                ExchangeRegistration(
+                  profile: ConnectionProfile(
+                    connectionId: 'fake',
+                    exchange: isOkx ? ExchangeId.okx : ExchangeId.binance,
+                    label: 'Test',
+                  ),
+                  adapter: _Fake(),
+                ),
+              ],
+            ),
+            binanceCostControllerProvider.overrideWith((ref) async {
+              controllerBuilds++;
+              if (isOkx) fail('OKX built the cost controller');
+              throw StateError('history failed');
+            }),
+            binanceCostStateProvider.overrideWith((ref) {
+              stateBuilds++;
+              if (isOkx) fail('OKX built the cost state');
+              return Stream<BinanceCostView>.error(
+                StateError('history failed'),
+              );
+            }),
+            vndExchangeRateProvider.overrideWith((ref) async => 25400),
+          ],
+        );
+        await tester.pumpWidget(
+          UncontrolledProviderScope(
+            container: container,
+            child: const MaterialApp(home: OrdersScreen()),
+          ),
+        );
+        await _pumpChip(tester);
+        expect(find.text('BTC/USDT'), findsWidgets);
+        if (isOkx) {
+          expect(controllerBuilds, 0);
+          expect(stateBuilds, 0);
+        } else {
+          expect(find.textContaining('Cross Margin'), findsOneWidget);
+          expect(find.textContaining('Isolated Margin'), findsOneWidget);
+        }
+        expect(find.textContaining('Giá vốn TB'), findsNothing);
+        expect(find.text('Chưa tính'), findsNothing);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+        container.dispose();
+      },
+    );
+  }
+
   testWidgets(
     'margin estimates hide and account polling does not run history',
     (tester) async {

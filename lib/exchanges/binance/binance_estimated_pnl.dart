@@ -34,7 +34,9 @@ EstimatedPnlRow? _row(
   if (!view.available) return null;
   final entry = key == null ? null : view.symbols[key];
   if (entry == null) {
-    return finished ? const EstimatedPnlRow(null, 'Chưa tính') : null;
+    return finished && !view.loading
+        ? const EstimatedPnlRow(null, 'Chưa tính')
+        : null;
   }
   final result = holding == null || mark == null
       ? null

@@ -1,6 +1,6 @@
 # Implementation Plan: Estimated profit for Binance Spot and Margin
 
-Status: APPROVED
+Status: COMPLETE (code); U3 pending
 Approval: "Duyệt, làm đi" (user, chat, 2026-11-07)
 Date: 2026-11-07
 Tier: M
