@@ -381,10 +381,10 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
               isWeb: ref.watch(binanceIsWebProvider),
             ),
           ),
-        Divider(height: 1, indent: 16, endIndent: 16, color: palette.border),
+        Divider(height: 1, indent: 24, endIndent: 24, color: palette.border),
 
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
           child: Text(
             'Tài sản chi tiết',
             style: TextStyle(

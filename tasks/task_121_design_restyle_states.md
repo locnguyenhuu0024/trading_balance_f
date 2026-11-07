@@ -28,18 +28,11 @@ Observed Effective Effort: unavailable
 
 ## Stage instruction (current)
 
-This task runs in stages. Stage 2 is committed as work in progress and reviewed from rendered screenshots. The layout is close to the design.
+Stage 2b is committed as work in progress. **Current stage 2c, test-only, coordinator-observed failures:**
 
-**Current stage 2b, do exactly this:**
-
-1. `orders_screen.dart` shows the order tabs twice: the new tab row and the old `Vị thế` dropdown. Keep only the tab row. Give each tab semantics as a selected button and a 48 target. Keep the old dropdown's `Key` on the tab row container if tests look it up, and update tests that opened the dropdown to tap the tab instead, with the same behavioral assertions.
-2. `order_filter_controls.dart`: use chips for OKX too, with labels `Tất cả`, `Spot`, `Margin`, `Perpetual`, `Futures` and the same values. Chips scroll horizontally rather than overflow, with hit areas at least 48.
-3. Binance position and order cards show `USDⓈ-M` instead of `SWAP` in their product badge and detail line.
-4. `portfolio_screen.dart`: the `Tài sản chi tiết` heading and divider use the same 24 inset as the other sections.
-5. Coordinator-observed failures to fix:
-   - `orders_screen_position_layout_test: shows an accessible signed-out status` expects one `Tooltip` in the title row, but the refresh button now adds another. Find the status with `find.byTooltip('Chưa đăng nhập')`, keeping the semantics assertion.
-   - `orders_screen_refresh_test: positions filters stay compact beside close-all` measures the removed dropdown (expected 146, actual 170). Assert instead that the chips row and close-all do not overflow at the same widths.
-   - `backend_position_actions_dialog_test: loads only explicit backend targets` finds no `BTCUSDT` text, because the fuller title area pushes the card below its small test viewport. Make the Orders body scrollable as one list if it is not, so the card can be reached, and scroll to it in the test. Keep the test's assertions.
+1. `orders_binance_view_test`: `USDⓈ-M` now appears on the chip and the card. Change that assertion to `findsWidgets`, in both the web and non-web runs.
+2. `orders_screen_refresh_test: manual refresh reloads the active positions provider only` taps text `MARGIN` from the removed dropdown. Tap the `Margin` chip instead, keeping the reload assertions.
+3. `order_filter_controls_test: tabs and OKX chips remain accessible at narrow width`: the selected flag is false at line 39 because the finder resolves to the inner text node. Look up the semantics of the tab's `Semantics` wrapper, for example `tester.getSemantics(find.ancestor(of: find.text('Vị thế'), matching: find.byType(Semantics)).first)`, or use `find.bySemanticsLabel`. If `selected` is genuinely not set on the tab, that is a code defect: then also set `Semantics(selected: ..., button: true)` in the tab widget in `orders_screen.dart`.
 
 Finish by returning the structured report.
 

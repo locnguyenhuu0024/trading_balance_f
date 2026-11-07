@@ -100,6 +100,11 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(targetLoads, 0);
+      await tester.scrollUntilVisible(
+        find.text('BTCUSDT'),
+        100,
+        scrollable: find.byType(Scrollable).first,
+      );
       expect(find.text('BTCUSDT'), findsOneWidget);
       expect(find.byType(PositionActionControls), findsNothing);
       final entry = find.byKey(const Key('backend-position-actions-entry'));
@@ -109,6 +114,7 @@ void main() {
         findsOneWidget,
       );
 
+      await tester.ensureVisible(entry);
       await tester.tap(entry);
       await tester.pumpAndSettle();
 

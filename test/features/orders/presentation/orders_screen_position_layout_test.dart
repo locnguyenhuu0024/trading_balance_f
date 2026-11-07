@@ -214,7 +214,7 @@ void main() {
         .ancestor(of: find.text('Lệnh'), matching: find.byType(Row))
         .first;
     expect(
-      find.descendant(of: titleRow, matching: find.byType(Tooltip)),
+      find.descendant(of: titleRow, matching: find.byTooltip('Chưa đăng nhập')),
       findsOneWidget,
     );
     expect(find.text('Đóng tất cả vị thế'), findsNothing);

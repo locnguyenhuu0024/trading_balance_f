@@ -104,130 +104,83 @@ void main() {
     },
   );
 
-  testWidgets('positions filters stay compact beside close-all without overflow', (
-    tester,
-  ) async {
-    await tester.runAsync(_loadOrdersPreviewFonts);
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    tester.view.devicePixelRatio = 1;
+  testWidgets(
+    'positions filters stay compact beside close-all without overflow',
+    (tester) async {
+      await tester.runAsync(_loadOrdersPreviewFonts);
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      tester.view.devicePixelRatio = 1;
 
-    final scenarios = [
-      (
-        width: 320.0,
-        textScale: 1.0,
-        screenshot: 'orders-filters-mobile-320.png',
-      ),
-      (
-        width: 320.0,
-        textScale: 1.6,
-        screenshot: 'orders-filters-mobile-320-scale-1.6.png',
-      ),
-      (
-        width: 390.0,
-        textScale: 1.0,
-        screenshot: 'orders-filters-mobile-390.png',
-      ),
-      (
-        width: 390.0,
-        textScale: 1.6,
-        screenshot: 'orders-filters-mobile-390-scale-1.6.png',
-      ),
-      (
-        width: 1280.0,
-        textScale: 1.0,
-        screenshot: 'orders-filters-desktop-1280.png',
-      ),
-    ];
+      final scenarios = [
+        (
+          width: 320.0,
+          textScale: 1.0,
+          screenshot: 'orders-filters-mobile-320.png',
+        ),
+        (
+          width: 320.0,
+          textScale: 1.6,
+          screenshot: 'orders-filters-mobile-320-scale-1.6.png',
+        ),
+        (
+          width: 390.0,
+          textScale: 1.0,
+          screenshot: 'orders-filters-mobile-390.png',
+        ),
+        (
+          width: 390.0,
+          textScale: 1.6,
+          screenshot: 'orders-filters-mobile-390-scale-1.6.png',
+        ),
+        (
+          width: 1280.0,
+          textScale: 1.0,
+          screenshot: 'orders-filters-desktop-1280.png',
+        ),
+      ];
 
-    for (final scenario in scenarios) {
-      final width = scenario.width;
-      tester.view.physicalSize = Size(width, 900);
-      await tester.pumpWidget(
-        _positionsOrdersScreen(textScale: scenario.textScale),
-      );
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 250));
+      for (final scenario in scenarios) {
+        final width = scenario.width;
+        tester.view.physicalSize = Size(width, 900);
+        await tester.pumpWidget(
+          _positionsOrdersScreen(textScale: scenario.textScale),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 250));
 
-      expect(find.byType(TradeAccountControls), findsOneWidget);
-      expect(find.byTooltip('Đóng tất cả vị thế'), findsOneWidget);
-      expect(find.byTooltip('Làm mới dữ liệu'), findsOneWidget);
-      expect(find.text('Đóng tất cả vị thế'), findsNothing);
+        expect(find.byType(TradeAccountControls), findsOneWidget);
+        expect(find.byTooltip('Đóng tất cả vị thế'), findsOneWidget);
+        expect(find.byTooltip('Làm mới dữ liệu'), findsOneWidget);
+        expect(find.text('Đóng tất cả vị thế'), findsNothing);
 
-      final statusRect = tester.getRect(
-        find.byKey(const Key('order-tab-select')),
-      );
-      final typeRect = tester.getRect(
-        find.byKey(const Key('order-type-select')),
-      );
-      final statusFaceRect = tester.getRect(
-        find.byKey(const Key('order-tab-select-face')),
-      );
-      final typeFaceRect = tester.getRect(
-        find.byKey(const Key('order-type-select-face')),
-      );
-      final selectedTypeRect = tester.getRect(find.text('FUTURES'));
-      final typeIconRect = tester.getRect(
-        find.byKey(const Key('order-type-select-icon')),
-      );
-      final closeAllRect = tester.getRect(find.byTooltip('Đóng tất cả vị thế'));
-      final refreshRect = tester.getRect(
-        find.byKey(const Key('orders-manual-refresh')),
-      );
-      expect(statusRect.top, typeRect.top);
-      expect(statusRect.top, closeAllRect.top);
-      expect(statusRect.right, lessThanOrEqualTo(typeRect.left));
-      expect(typeRect.right, lessThanOrEqualTo(closeAllRect.left));
-      expect(statusRect.width, lessThanOrEqualTo(140));
-      expect(typeRect.width, lessThanOrEqualTo(140));
-      expect(statusRect.height, 48);
-      expect(typeRect.height, 48);
-      expect(statusFaceRect.height, 40);
-      expect(typeFaceRect.height, 40);
-      expect(
-        (selectedTypeRect.center.dy - typeFaceRect.center.dy).abs(),
-        lessThanOrEqualTo(2),
-        reason:
-            'Selected value center ${selectedTypeRect.center.dy} must align with face center ${typeFaceRect.center.dy} at scale ${scenario.textScale}',
-      );
-      expect(
-        (typeIconRect.center.dy - typeFaceRect.center.dy).abs(),
-        lessThanOrEqualTo(2),
-        reason:
-            'Chevron center ${typeIconRect.center.dy} must align with face center ${typeFaceRect.center.dy} at scale ${scenario.textScale}',
-      );
-      expect(typeRect.left - statusRect.right, 6);
-      expect(closeAllRect.left - typeRect.right, 6);
-      expect(find.byTooltip('Trạng thái'), findsOneWidget);
-      expect(find.byTooltip('Loại giao dịch'), findsOneWidget);
-      expect(
-        tester.widget<Text>(find.text('FUTURES')).semanticsLabel,
-        'FUTURES',
-      );
-      expect(statusRect.left, greaterThanOrEqualTo(0));
-      expect(typeRect.left, greaterThanOrEqualTo(0));
-      expect(statusRect.right, lessThanOrEqualTo(width));
-      expect(typeRect.right, lessThanOrEqualTo(width));
-      expect(statusRect.height, greaterThanOrEqualTo(48));
-      expect(typeRect.height, greaterThanOrEqualTo(48));
-      expect(statusRect.overlaps(typeRect), isFalse);
-      expect(statusRect.overlaps(closeAllRect), isFalse);
-      expect(typeRect.overlaps(closeAllRect), isFalse);
-      expect(closeAllRect.width, 48);
-      expect(closeAllRect.height, 48);
-      expect(closeAllRect.right, lessThanOrEqualTo(width));
-      expect(closeAllRect.left, greaterThanOrEqualTo(0));
-      expect(closeAllRect.bottom, lessThanOrEqualTo(900));
-      expect(refreshRect.width, 48);
-      expect(refreshRect.height, 48);
-      expect(refreshRect.right, lessThanOrEqualTo(width));
-      expect(refreshRect.left, greaterThanOrEqualTo(0));
-      expect(tester.takeException(), isNull);
-      await _writeOrdersPreview(tester, scenario.screenshot);
+        final tabsRect = tester.getRect(
+          find.byKey(const Key('order-tab-select')),
+        );
+        final chipsRect = tester.getRect(
+          find.byKey(const Key('order-type-select')),
+        );
+        final closeAllRect = tester.getRect(
+          find.byTooltip('Đóng tất cả vị thế'),
+        );
+        final refreshRect = tester.getRect(
+          find.byKey(const Key('orders-manual-refresh')),
+        );
+        expect(tabsRect.right, lessThanOrEqualTo(closeAllRect.left));
+        expect(chipsRect.right, lessThanOrEqualTo(closeAllRect.left));
+        expect(chipsRect.right, lessThanOrEqualTo(width));
+        expect(closeAllRect.right, lessThanOrEqualTo(width));
+        expect(closeAllRect.width, 48);
+        expect(closeAllRect.height, 48);
+        expect(refreshRect.width, 48);
+        expect(refreshRect.height, 48);
+        expect(tester.takeException(), isNull);
+        await _writeOrdersPreview(tester, scenario.screenshot);
 
-      await tester.pumpWidget(const SizedBox.shrink());
-    }
-  });
+        await tester.pumpWidget(const SizedBox.shrink());
+      }
+    },
+  );
 
   testWidgets('signed-out orders keeps direct refresh visible and enabled', (
     tester,

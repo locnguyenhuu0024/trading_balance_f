@@ -206,98 +206,100 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       backgroundColor: bgColor,
       body: SafeArea(
         child: NavigationContentFrame(
-          child: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
-                child: Row(
-                  children: [
-                    const Expanded(
-                      child: Text(
-                        'Lệnh',
-                        style: TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                    if (backendFeaturesEnabled)
-                      Tooltip(
-                        message: isTradeAuthenticated
-                            ? 'Đã đăng nhập'
-                            : 'Chưa đăng nhập',
-                        child: Semantics(
-                          label: isTradeAuthenticated
-                              ? 'Đã đăng nhập'
-                              : 'Chưa đăng nhập',
-                          child: Icon(
-                            isTradeAuthenticated
-                                ? Icons.verified_user_outlined
-                                : Icons.lock_outline,
-                            size: 18,
-                            color: isTradeAuthenticated
-                                ? palette.positive
-                                : Theme.of(
-                                    context,
-                                  ).colorScheme.onSurfaceVariant,
+          child: NestedScrollView(
+            headerSliverBuilder: (context, innerBoxIsScrolled) => [
+              SliverList(
+                delegate: SliverChildListDelegate([
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
+                    child: Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            'Lệnh',
+                            style: TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
+                        if (backendFeaturesEnabled)
+                          Tooltip(
+                            message: isTradeAuthenticated
+                                ? 'Đã đăng nhập'
+                                : 'Chưa đăng nhập',
+                            child: Semantics(
+                              label: isTradeAuthenticated
+                                  ? 'Đã đăng nhập'
+                                  : 'Chưa đăng nhập',
+                              child: Icon(
+                                isTradeAuthenticated
+                                    ? Icons.verified_user_outlined
+                                    : Icons.lock_outline,
+                                size: 18,
+                                color: isTradeAuthenticated
+                                    ? palette.positive
+                                    : Theme.of(
+                                        context,
+                                      ).colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                        ManualRefreshButton(
+                          buttonKey: const Key('orders-manual-refresh'),
+                          onRefresh:
+                              currentTab == OrderTab.positions &&
+                                  currentFilter == 'SPOT'
+                              ? null
+                              : _refreshCurrentRead,
+                          isBusy:
+                              _manualRefreshInFlight || isCurrentReadLoading,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(24, 8, 24, 0),
+                    child: ScopeBar(),
+                  ),
+                  if (currentTab == OrderTab.positions &&
+                      backendFeaturesEnabled)
+                    TradeAccountControls(filterControls: filterControls)
+                  else
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                      child: filterControls,
+                    ),
+
+                  if (currentTab == OrderTab.positions)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 8,
                       ),
-                    ManualRefreshButton(
-                      buttonKey: const Key('orders-manual-refresh'),
-                      onRefresh:
-                          currentTab == OrderTab.positions &&
-                              currentFilter == 'SPOT'
-                          ? null
-                          : _refreshCurrentRead,
-                      isBusy: _manualRefreshInFlight || isCurrentReadLoading,
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Vị thế của ${ref.watch(exchangeRegistryProvider).firstWhere((entry) => entry.profile.connectionId == scope.connectionId).profile.label} / Chính',
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
                     ),
-                  ],
-                ),
-              ),
-              const Padding(
-                padding: EdgeInsets.fromLTRB(24, 8, 24, 0),
-                child: ScopeBar(),
-              ),
-              if (currentTab == OrderTab.positions && backendFeaturesEnabled)
-                TradeAccountControls(filterControls: filterControls)
-              else
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-                  child: filterControls,
-                ),
-
-              if (currentTab == OrderTab.positions)
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 24,
-                    vertical: 8,
-                  ),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      'Vị thế của ${ref.watch(exchangeRegistryProvider).firstWhere((entry) => entry.profile.connectionId == scope.connectionId).profile.label} / Chính',
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                ),
-              Divider(height: 16, color: palette.border),
-
-              // --- Nội dung chính ---
-              Expanded(
-                child: _buildBodyContent(
-                  context,
-                  currentTab,
-                  currentFilter,
-                  isDark,
-                  currency,
-                  exchangeRate,
-                  isBalanceHidden,
-                  timeZoneId,
-                  backendFeaturesEnabled,
-                ),
+                  Divider(height: 16, color: palette.border),
+                ]),
               ),
             ],
+            body: _buildBodyContent(
+              context,
+              currentTab,
+              currentFilter,
+              isDark,
+              currency,
+              exchangeRate,
+              isBalanceHidden,
+              timeZoneId,
+              backendFeaturesEnabled,
+            ),
           ),
         ),
       ),
@@ -667,7 +669,11 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
 
     final baseCoin = _instrumentBase(position.key);
     final instrumentLabel = _instrumentLabel(position.key);
-    final instrumentType = position.productLabel.toUpperCase();
+    final instrumentType =
+        position.key.exchange == ExchangeId.binance &&
+            position.productLabel.toUpperCase() == 'SWAP'
+        ? 'USDⓈ-M'
+        : position.productLabel.toUpperCase();
 
     // Bảng màu cho Card
     final cardColor = palette.raised;
@@ -791,7 +797,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                     style: TextStyle(color: subtitleColor, fontSize: 12),
                   ),
                   Text(
-                    '${position.productLabel} · ${(position.marginMode ?? '').toUpperCase()}',
+                    '${position.key.exchange == ExchangeId.binance && position.productLabel.toUpperCase() == 'SWAP' ? 'USDⓈ-M' : position.productLabel} · ${(position.marginMode ?? '').toUpperCase()}',
                     style: TextStyle(color: subtitleColor, fontSize: 12),
                   ),
                   if ((position.marginCurrency ?? '').isNotEmpty)
@@ -1008,7 +1014,11 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
         (order.leverage ?? '').isNotEmpty && (order.leverage ?? '') != '0'
         ? (order.leverage ?? '')
         : null;
-    final instrumentType = order.productLabel.toUpperCase();
+    final instrumentType =
+        order.key.exchange == ExchangeId.binance &&
+            order.productLabel.toUpperCase() == 'SWAP'
+        ? 'USDⓈ-M'
+        : order.productLabel.toUpperCase();
 
     return Card(
       elevation: 0,
@@ -1285,7 +1295,11 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
 
     final baseCoin = _instrumentBase(order.key);
     final instrumentLabel = _instrumentLabel(order.key);
-    final instrumentType = order.productLabel.toUpperCase();
+    final instrumentType =
+        order.key.exchange == ExchangeId.binance &&
+            order.productLabel.toUpperCase() == 'SWAP'
+        ? 'USDⓈ-M'
+        : order.productLabel.toUpperCase();
     final leverage =
         (order.leverage ?? '').isNotEmpty && (order.leverage ?? '') != '0'
         ? (order.leverage ?? '')

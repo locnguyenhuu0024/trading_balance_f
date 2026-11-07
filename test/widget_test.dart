@@ -122,17 +122,14 @@ void main() {
     );
 
     expect(find.byType(SegmentedButton<OrderTab>), findsNothing);
-    expect(find.byType(ChoiceChip), findsNothing);
+    expect(find.byType(ChoiceChip), findsWidgets);
 
-    await tester.tap(find.byKey(const Key('order-tab-select')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Lịch sử').last);
+    await tester.tap(find.text('Lịch sử'));
     await tester.pumpAndSettle();
     expect(tab, OrderTab.history);
 
-    await tester.tap(find.byKey(const Key('order-type-select')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('SWAP').last);
+    await tester.ensureVisible(find.text('Perpetual'));
+    await tester.tap(find.text('Perpetual'));
     await tester.pumpAndSettle();
     expect(filter, 'SWAP');
   });
