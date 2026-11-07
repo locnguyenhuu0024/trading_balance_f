@@ -1,4 +1,4 @@
-# Task 117 — Exchange core and OKX behind it
+# Task 117 — Exchange core, scope and OKX adapter
 
 Status: PENDING
 Agent Role: implementation_executor
@@ -12,7 +12,7 @@ Route Binding: EXPLICIT
 Parent Route Inheritance: FORBIDDEN
 Specification: `docs/agents/specs/2026-11-07-multi-platform-view-only-design.md`
 Plan: `docs/agents/plans/2026-11-07-multi-platform-view-only.md`
-Plan Steps: P02
+Plan Steps: P02a
 Requirements: REQ-004, REQ-005, REQ-012
 Acceptance Criteria: AC-004, AC-005, AC-012
 
@@ -28,9 +28,11 @@ Observed Effective Effort: unavailable
 
 ## 2. Objective
 
-Portfolio and Orders read through the neutral exchange contract and scope providers, with OKX as the only registered exchange and no visible behavior change.
+Add the neutral exchange contract, registry, scope providers and OKX adapter as new code. No screen changes yet; the app behaves exactly as before.
 
-Done when: Those screens render through a registered adapter, a fake second adapter proves scope isolation, and existing OKX tests pass.
+Complete the work in this run. Expect to write every listed file; a long run is normal. Ending without file changes is a failed attempt.
+
+Done when: provider-level tests prove scope isolation with a fake second exchange, and the app and existing tests still pass.
 
 ## 3. Preconditions
 
@@ -48,15 +50,7 @@ Exact write list (new files use exactly these names). Read access covers all non
 - `lib/core/exchange/scoped_read.dart`
 - `lib/exchanges/okx/okx_adapter.dart`
 - `lib/core/network/okx_read_scope.dart`
-- `lib/features/portfolio/presentation/portfolio_screen.dart`
-- `lib/features/portfolio/presentation/portfolio_details_screen.dart`
-- `lib/features/portfolio/presentation/providers/portfolio_provider.dart`
-- `lib/features/portfolio/presentation/widgets/portfolio_currency_amount.dart`
-- `lib/features/orders/presentation/orders_screen.dart`
 - `lib/features/orders/presentation/providers/order_provider.dart`
-- `lib/features/orders/presentation/widgets/order_notional.dart`
-- `lib/features/orders/presentation/widgets/order_filter_controls.dart`
-- `lib/features/orders/presentation/widgets/responsive_order_grid.dart`
 - `lib/main.dart`
 - `lib/core/security/secure_storage_helper.dart`
 - `lib/core/widgets/app_startup.dart`
@@ -64,26 +58,7 @@ Exact write list (new files use exactly these names). Read access covers all non
 - `test/core/exchange/exchange_scope_test.dart`
 - `test/core/exchange/okx_adapter_test.dart`
 - `test/support/fake_exchange_adapter.dart`
-- `test/features/portfolio/portfolio_scope_test.dart`
-- `test/features/orders/orders_scope_test.dart`
-- `test/features/portfolio/monochrome_portfolio_preview_test.dart`
-- `test/features/portfolio/portfolio_currency_amount_test.dart`
-- `test/features/portfolio/portfolio_dual_currency_screen_test.dart`
-- `test/features/portfolio/portfolio_loading_test.dart`
-- `test/features/orders/order_filter_controls_test.dart`
 - `test/features/orders/order_provider_defaults_test.dart`
-- `test/features/orders/orders_screen_refresh_test.dart`
-- `test/features/orders/position_actions_test.dart`
-- `test/features/orders/order_cancellation_flow_test.dart`
-- `test/features/orders/backend_position_actions_dialog_test.dart`
-- `test/features/orders/presentation/order_timezone_test.dart`
-- `test/features/orders/presentation/orders_screen_history_layout_test.dart`
-- `test/features/orders/presentation/orders_screen_mobile_layout_test.dart`
-- `test/features/orders/presentation/orders_screen_notional_test.dart`
-- `test/features/orders/presentation/orders_screen_position_layout_test.dart`
-- `test/features/orders/presentation/orders_screen_price_formatting_test.dart`
-- `test/features/orders/presentation/widgets/order_notional_test.dart`
-- `test/core/backend_features_test.dart`
 - `test/core/widgets/app_startup_test.dart`
 - `test/widget_test.dart`
 
@@ -112,9 +87,7 @@ Design is fixed; follow it.
 4. `exchange_scope.dart`: `selectedConnectionIdProvider` (`StateProvider<String>`, overridden at startup, unknown value falls back to `okx-default`), a `switchEpoch` counter incremented on every selection, `selectConnection(id)` which sets the id, increments the epoch and calls every registered adapter's invalidate methods, and `exchangeScopeProvider`. `ExchangeScope` equality includes `switchEpoch`, so every switch, including back to the same connection within one frame, is a new family key and a fresh read, while invalidating the OKX providers cancels their in-flight read through the existing lease. Also `exchangeRequestCoordinatorProvider` and `exchangeReadGateProvider` as `Provider.family` on `ExchangeId`. For OKX these return the existing `requestCoordinatorProvider` and `okxDirectReadGateProvider`; other exchanges get their own instance. Do not change `RequestCoordinator` or `ForegroundReadGate`.
 5. `scoped_read.dart`: `runPrivateRead` taking the adapter's classifier; `runOkxPrivateRead` stays as a thin wrapper. Add `scopedAccountProvider`, `scopedPositionsProvider`, `scopedOrdersProvider` as `FutureProvider.autoDispose.family` keyed by `ExchangeScope`, each delegating to the adapter from the registry.
 6. `okx_adapter.dart`: `readAccount` does `ref.watch(portfolioFutureProvider.future)` and maps; likewise `positionsFutureProvider` and `ordersFutureProvider`. Keep those three OKX providers and their names, so existing test overrides stay valid and OKX reads keep their fences. Map field by field and put the freezed record in `native`. Map OKX values as the existing models give them, including `@Default('0')` values: per spec INV-003 and VAL-001 this existing behavior is preserved, and the OKX model files are not changed.
-7. Screens watch the scoped family with `ref.watch(exchangeScopeProvider)`. Refresh goes through the adapter's invalidate methods. Never use `.value` from a former scope: a family key change gives a new element, which is why the family is required.
-8. `PortfolioScreen` and `PortfolioDetailsScreen` render from `AccountSnapshot`. The displayed OKX total stays as `PortfolioScreen` computes it today, from asset balances and live prices; do not switch it to `totalEq`. Live price valuation stays OKX-only and is reached only when scope is OKX.
-9. `OrdersScreen` cards render from neutral types. Only gate-true backend widgets cast `native` to `OkxPosition` or `OkxOrder`.
+7. Do not change any screen in this task. `T123` and `T124` move Portfolio and Orders.
 10. Reset filters structurally: `orderFilterProvider` and `orderTabProvider` initial builders `ref.watch(selectedConnectionIdProvider)`.
 11. Add `getSelectedConnectionId` and `saveSelectedConnectionId` to `SecureStorageHelper` and to `WebStorageHelper` in `main.dart`, key `SELECTED_CONNECTION_ID`; load at startup in the same way as other settings, with failure falling back to `okx-default`. No UI for selecting yet.
 12. Mechanism details below this design are yours to choose if they satisfy the listed invariants and tests; report what you chose. Stop only for a conflict about product behavior, not for an implementation detail.
@@ -130,28 +103,30 @@ Blocks verification until user applies: NO
 
 ## 8. Tests
 
-- TEST-117-1: late response dropped.
+- TEST-117-1 in `exchange_scope_test.dart`: late response dropped and cancelled.
 - TEST-117-2: per-exchange lane independence.
-- TEST-117-3: credential rotation drops in-flight result under the wrapper.
-- TEST-117-4: fake adapter renders through both screens.
+- TEST-117-3: credential rotation drops an in-flight result under the wrapper.
+- TEST-117-4: rapid switch back gives a new key and a fresh read.
+- TEST-117-5 in `okx_adapter_test.dart`: OKX field mapping with `native` retained.
+- TEST-117-6 in `order_provider_defaults_test.dart`: filter and tab reset on selection.
 
 ## 9. Mandatory Verification
 
 ### RED — RED-117a/b/c
-Scenario: (a) OKX balance read pending, switch to fake exchange, resolve OKX late. (b) Fake exchange 429 with OKX idle. (c) Filter set to SWAP, then switch.
+Scenario: (a) Provider-level OKX read pending, select the fake exchange, resolve OKX late. (b) Fake exchange 429 with OKX idle. (c) Filter set to SWAP, then select.
 Command/method: `rtk flutter test --no-pub <file> --plain-name '<name>'`
 Expected: (a) Amount never appears and token is cancelled. (b) OKX lane still accepts a read. (c) Filter is ALL and tab is positions.
 Actual: PENDING
 Status: PENDING
 
 ### GREEN — GREEN-117
-Scenario: OKX adapter drives the existing Portfolio and Orders tests; a fake exchange shows its own balances after switching.
+Scenario: The OKX adapter maps a fixture account, position and order; the fake exchange returns its own data only under its own scope.
 Command/method: `rtk flutter test --no-pub <file> --plain-name '<name>'`
-Expected: Existing tests pass unchanged except wiring; fake data appears only under its own scope.
+Expected: Mapped values equal the fixture text verbatim; existing tests unchanged and passing.
 Actual: PENDING
 Status: PENDING
 
-Run RED before GREEN. Verification ceiling: V3: `test/core/network`, `test/core/exchange`, `test/features/portfolio`, `test/features/orders`.
+Run RED before GREEN. Verification ceiling: V3: `test/core/network`, `test/core/exchange`, `test/features/orders`, `test/widget_test.dart`.
 Escalate only if: a shared provider or fixture used outside this set changes.
 
 ### Verification environment

@@ -66,7 +66,7 @@ Coordinator runtime: the app reports Claude Opus 5.5, while the CCB rules descri
 ## 5. Dependency Graph
 
 ```text
-PRE-1, PRE-2 -> T116 -> T122 -> T117 -> T118 -> G1 -> T119 -> T120 -> T121 -> final audit -> user live check
+PRE-1, PRE-2 -> T116 -> T122 -> T117 -> T123 -> T124 -> T118 -> G1 -> T119 -> T120 -> T121 -> final audit -> user live check
 ```
 
 All serial: CCB allows one writer per checkout, and these tasks share screens and providers.
@@ -168,6 +168,8 @@ Six tasks exceed the Tier L target of 2 to 5. Reason: T118 and T119 use differen
 | T116 | P01 | REQ-001..003 / AC-001..003 | PRE-1, PRE-2 | legacy E1 | gpt-6-luna / xhigh, kept per user | REWORK |
 | T122 (T116 R01) | P01 | REQ-002, 012 / AC-002 | T116 WIP commit | E1 | gpt-6.1-terra / low | see task |
 | T117 | P02 | REQ-004, 005, 012 / AC-004, 005, 012 | T116 PASS | E4 | gpt-6.1-terra / xhigh | see task |
+| T123 | P02b | REQ-004, 005, 012 / AC-004, 005, 012 | T117 | E3 | gpt-6.1-terra / high | see task |
+| T124 | P02c | REQ-004, 005, 012 / AC-004, 005, 012 | T123 | E3 | gpt-6.1-terra / high | see task |
 | T118 | P03 | REQ-008 / AC-008 | T117 | E3 | gpt-6.1-terra / high | see task |
 | T119 | P04 | REQ-006, 007 / AC-006, 007 | T117, G1 | E3 | gpt-6.1-terra / high | see task |
 | T120 | P05 | REQ-009, 010 / AC-009, 010 | T118, T119 | E3 | gpt-6.1-terra / high | see task |
@@ -204,3 +206,4 @@ Routing follows `docs/agents/framework/EXECUTOR_ROUTING_POLICY.json` v2. Classes
 | 2.2 | VAL-002: neutral field lists completed from fields the OKX screens use. VAL-003: executors fall back to an SDK clone and isolated HOME in the scratchpad, and report environment failures rather than stop implementation | T117 executor found missing fields; sandbox denies writes to the Flutter SDK cache and home directory, reproduced by the coordinator with `codex sandbox` |
 | 2.3 | VAL-004: spec corrected, OKX displayed total is computed from balances and live prices, not `totalEq`. VAL-005: the executor sandbox cannot run `flutter test` (no loopback bind), so executors write code and tests and the coordinator runs RED then GREEN on the host during audit | Executor findings; the socket denial was reproduced by the coordinator. RED is not observed by the writer, which is a recorded deviation from the usual executor flow |
 | 2.4 | VAL-006: `switchEpoch` added to `ExchangeScope`, selection invalidates adapter providers | T117 executor showed that Riverpod defers auto-dispose by a frame, so an equal key could reuse a former element on rapid switching back |
+| 2.5 | T117 split into core (T117), Portfolio (T123) and Orders (T124), additive first | All six T117 attempts ended within about 150 s with no code, while T116 ran 43 min; a smaller additive unit reduces what one run must hold. Scope, requirements and routes unchanged |
