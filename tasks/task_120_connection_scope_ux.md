@@ -1,6 +1,6 @@
 # Task 120 — Connection experience and account states
 
-Status: PENDING
+Status: PASS
 Agent Role: implementation_executor
 Executor Class: E3
 Target Model: gpt-6.1-terra
@@ -159,4 +159,10 @@ Return `BLOCKED` when repository evidence contradicts this contract, a design de
 
 ## 12. Coordinator Audit
 
-Verdict: PENDING
+Attempt: 9f94cb21b0ea48b0b181447eec1f86c4
+Dispatch route compliance: UNVERIFIABLE (requested gpt-6.1-terra/high, explicit).
+Parent route inheritance: NO
+RED and GREEN executed by the coordinator on the host, RED first (VAL-005): removed keys fallback, expired Binance keeps OKX selectable, raw error hidden; then full suite
+Regression and buildability, coordinator-observed: Full test directories passed; analyzer 0 errors; web build pass. Delivered over stages A, A2, A3, B, C1, C2, C2b. AUD-120-01 to 04 found by coordinator and fixed, including a saved secret loaded into the form.
+Task buildability gate: PASS
+Verdict: PASS

@@ -295,18 +295,24 @@ void main() {
 
     await tester.pump();
     await tester.pump();
-    expect(find.textContaining('balance failed'), findsOneWidget);
+    expect(find.text('Không thể tải dữ liệu'), findsOneWidget);
+    expect(find.textContaining('balance failed'), findsNothing);
+    expect(find.textContaining('retry failed'), findsNothing);
 
     await tester.pump(const Duration(seconds: 5));
     await tester.pump();
     expect(loadCalls, 2);
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.text('Không thể tải dữ liệu'), findsNothing);
     expect(find.textContaining('balance failed'), findsNothing);
+    expect(find.textContaining('retry failed'), findsNothing);
 
     retry.completeError(Exception('retry failed'));
     await tester.pump();
     await tester.pump();
-    expect(find.textContaining('retry failed'), findsOneWidget);
+    expect(find.text('Không thể tải dữ liệu'), findsOneWidget);
+    expect(find.textContaining('balance failed'), findsNothing);
+    expect(find.textContaining('retry failed'), findsNothing);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 }
