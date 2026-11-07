@@ -2,7 +2,7 @@
 
 Plan: `PLAN-20261107-binance-estimated-pnl`
 Date: 2026-11-07
-Verdict: PASS for code. Live behavior is pending U3.
+Verdict: PASS. U3 done: the user reported the live estimates correct, 2026-11-07.
 
 ## Coordinator-observed results
 
@@ -24,7 +24,7 @@ The final attempts of T129 and T130 returned no valid executor report. Those ver
 
 ## Not verified
 
-- Any read of real trades: `fromId=0` behavior, page order and history retention on both routes.
+- Coordinator did not observe live trades. The user checked them and answered "Đúng". Cases that answer does not separately confirm: history retention limits and each margin type.
 - The margin route's documented limits, which came from search summaries and a generated client model, not the page itself.
 - Native iOS and Android builds, still pending from the parent plan.
 

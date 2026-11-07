@@ -2,7 +2,7 @@
 
 Plan: `PLAN-20261107-binance-web-proxy`
 Date: 2026-11-07
-Verdict: PASS for code. Live behavior is pending the user-owned steps below.
+Verdict: PASS. The user deployed the build and reported Spot and Margin data loading.
 
 ## Coordinator-observed results
 
@@ -38,12 +38,11 @@ The user applied the nginx location. Coordinator-observed on the live host with 
 ## Not verified
 
 - U1: the user reported that the VPS ping returned 200; the coordinator did not observe it.
-- Live Spot and Margin reads with real keys through the proxy.
 - Native iOS and Android builds, still pending from the parent plan.
 
 ## User-owned steps
 
-Remaining from `docs/deployment/binance-read-proxy.md`: build with the define, deploy, and check live with a read-only key.
+Done by the user: nginx location, build with the define, deploy, live read.
 
 ## Known limits
 
