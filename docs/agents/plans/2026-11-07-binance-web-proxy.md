@@ -25,6 +25,7 @@ Fan-out Required: NO. Skip Reason: SINGLE_MATERIAL_WORKSTREAM. The client is the
 |---|---|---|---|
 | T125 | Client routes Spot and Margin through the proxy, availability gate in reader | E3 | gpt-6.1-terra / high |
 | T126 | UI follows availability; Margin chip filter defect | E2 | gpt-6.1-terra / medium |
+| T127 | Follow-up, user instruction "Sửa nhãn, lập kế hoạch PnL": profit labels and percentage base. T125 widened the total, which understated the percentage | E2 | gpt-6.1-terra / medium |
 
 Executors write code and tests; the coordinator runs RED then GREEN on the host (VAL-005 of the parent plan).
 
