@@ -397,6 +397,38 @@ class WebStorageHelper extends SecureStorageHelper {
   }
 
   @override
+  Future<String?> getBinanceApiKey() async =>
+      _prefs.getString('BINANCE_API_KEY');
+
+  @override
+  Future<String?> getBinanceApiSecret() async =>
+      _prefs.getString('BINANCE_API_SECRET');
+
+  @override
+  Future<void> saveBinanceCredentials({
+    required String apiKey,
+    required String apiSecret,
+  }) => trackBinanceCredentialMutation(() async {
+    final results = await Future.wait([
+      _prefs.setString('BINANCE_API_KEY', apiKey),
+      _prefs.setString('BINANCE_API_SECRET', apiSecret),
+    ]);
+    if (results.any((result) => !result))
+      throw StateError('Unable to save Binance keys.');
+  });
+
+  @override
+  Future<void> clearBinanceCredentials() =>
+      trackBinanceCredentialMutation(() async {
+        final results = await Future.wait([
+          _prefs.remove('BINANCE_API_KEY'),
+          _prefs.remove('BINANCE_API_SECRET'),
+        ]);
+        if (results.any((result) => !result))
+          throw StateError('Unable to clear Binance keys.');
+      });
+
+  @override
   Future<void> saveOkxCredentials({
     required String apiKey,
     required String secretKey,

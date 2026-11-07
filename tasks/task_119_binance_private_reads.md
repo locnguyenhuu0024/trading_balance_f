@@ -28,16 +28,12 @@ Observed Effective Effort: unavailable
 
 ## Stage instruction (current)
 
-This task runs in stages because long runs have ended early.
+This task runs in stages because long runs have ended early. Stage 1 code is committed and reviewed.
 
-**Current stage 1 of 3, do only this:** steps 1 and 2 of section 6, plus credentials.
+**Current stage 1b, do only these two test fixes in `test/exchanges/binance/binance_private_client_test.dart`:**
 
-- `BinanceKeyBundle` inside `binance_private_client.dart`: key and secret, validated, no logging. The dispatch gate refuses paths containing `credential`, so this class lives here and its tests go in `binance_private_client_test.dart`.
-- `secure_storage_helper.dart` and `WebStorageHelper` in `main.dart`: `BINANCE_API_KEY`, `BINANCE_API_SECRET`, save and clear, and a generation state mirroring `okxCredentialState`. OKX keys are untouched.
-- `exchange_scope.dart`: use the Binance generation when scope is Binance.
-- `binance_private_client.dart`: signing, time offset, the GET allowlist, classification, and the generation fence before and after each fetch.
-
-Tests: the published Binance HMAC example; `-2015` is terminal with no retry; `-1021` retries once after time resync; 429 backs off with `Retry-After`; rotation mid-read drops the result; no secret in any error text; a route outside the allowlist is rejected; a platform-web request to a Spot or Margin private route issues no network call.
+1. The test `-1021 resyncs and retries once even if it fails twice` fails because `r.path` holds the full URL with query, so `endsWith('/account')` never matches. Match on the parsed URI path. The client is correct; do not change it.
+2. Replace the standard SHA-256 vector in `HMAC SHA256 signs the exact query` with the published Binance example: secret `NhqPtmdSJYdKjVHjA7PZj4Mge3R5YNiP1e3UZjInClVN65XAbvqqM6A7H5fATj0j`, query `symbol=LTCBTC&side=BUY&type=LIMIT&timeInForce=GTC&quantity=1&price=0.1&recvWindow=5000&timestamp=1499827319559`, expected signature `c8db56825ae71d6d79447849e617115f4a920fa2acdcab2b053c4b2838bd6b71`. That secret is a public documentation example, verified independently by the coordinator.
 
 Finish by returning the structured report.
 

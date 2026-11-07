@@ -52,6 +52,36 @@ class SecureStorageHelper {
         const OkxCredentialSnapshot(generation: 0, rotating: false),
       );
 
+  final ValueNotifier<OkxCredentialSnapshot> _binanceCredentialState =
+      ValueNotifier(
+        const OkxCredentialSnapshot(generation: 0, rotating: false),
+      );
+  int _activeBinanceCredentialMutations = 0;
+  ValueListenable<OkxCredentialSnapshot> get binanceCredentialState =>
+      _binanceCredentialState;
+
+  Future<T> trackBinanceCredentialMutation<T>(
+    Future<T> Function() mutation,
+  ) async {
+    if (_disposed) throw StateError('SecureStorageHelper is disposed.');
+    _activeBinanceCredentialMutations++;
+    _binanceCredentialState.value = OkxCredentialSnapshot(
+      generation: _binanceCredentialState.value.generation + 1,
+      rotating: true,
+    );
+    try {
+      return await mutation();
+    } finally {
+      _activeBinanceCredentialMutations--;
+      if (!_disposed) {
+        _binanceCredentialState.value = OkxCredentialSnapshot(
+          generation: _binanceCredentialState.value.generation + 1,
+          rotating: _activeBinanceCredentialMutations > 0,
+        );
+      }
+    }
+  }
+
   final ValueNotifier<OkxCredentialSnapshot> _okxCredentialState;
   int _activeOkxCredentialMutations = 0;
   bool _disposed = false;
@@ -96,6 +126,7 @@ class SecureStorageHelper {
     if (_disposed) return;
     _disposed = true;
     _okxCredentialState.dispose();
+    _binanceCredentialState.dispose();
   }
 
   Future<String> getSelectedConnectionId() async =>
@@ -103,6 +134,28 @@ class SecureStorageHelper {
 
   Future<void> saveSelectedConnectionId(String id) =>
       _storage.write(key: 'SELECTED_CONNECTION_ID', value: id);
+
+  Future<String?> getBinanceApiKey() => _storage.read(key: 'BINANCE_API_KEY');
+  Future<String?> getBinanceApiSecret() =>
+      _storage.read(key: 'BINANCE_API_SECRET');
+
+  Future<void> saveBinanceCredentials({
+    required String apiKey,
+    required String apiSecret,
+  }) => trackBinanceCredentialMutation(() async {
+    await Future.wait([
+      _storage.write(key: 'BINANCE_API_KEY', value: apiKey),
+      _storage.write(key: 'BINANCE_API_SECRET', value: apiSecret),
+    ]);
+  });
+
+  Future<void> clearBinanceCredentials() =>
+      trackBinanceCredentialMutation(() async {
+        await Future.wait([
+          _storage.delete(key: 'BINANCE_API_KEY'),
+          _storage.delete(key: 'BINANCE_API_SECRET'),
+        ]);
+      });
 
   // Define keys
   static const String _okxApiKey = 'OKX_API_KEY';

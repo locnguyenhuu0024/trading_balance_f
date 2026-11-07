@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/foundation.dart';
 import '../network/foreground_read_gate.dart';
 import '../network/okx_read_scope.dart';
 import '../network/request_coordinator.dart';
@@ -38,6 +39,26 @@ final selectConnectionProvider = Provider<void Function(String)>((ref) {
 void selectConnection(WidgetRef ref, String id) =>
     ref.read(selectConnectionProvider)(id);
 
+class BinanceCredentialReadScope extends ChangeNotifier {
+  BinanceCredentialReadScope(this.state) {
+    state.addListener(_changed);
+  }
+  final ValueListenable<OkxCredentialSnapshot> state;
+  void _changed() => notifyListeners();
+  @override
+  void dispose() {
+    state.removeListener(_changed);
+    super.dispose();
+  }
+}
+
+final binanceCredentialReadScopeProvider =
+    ChangeNotifierProvider<BinanceCredentialReadScope>(
+      (ref) => BinanceCredentialReadScope(
+        ref.watch(secureStorageProvider).binanceCredentialState,
+      ),
+    );
+
 final exchangeScopeProvider = Provider<ExchangeScope>((ref) {
   final id = ref.watch(selectedConnectionIdProvider);
   final registry = ref.watch(exchangeRegistryProvider);
@@ -48,7 +69,7 @@ final exchangeScopeProvider = Provider<ExchangeScope>((ref) {
       );
   final generation = registration.profile.exchange == ExchangeId.okx
       ? ref.watch(okxCredentialSnapshotProvider).generation
-      : 0;
+      : ref.watch(binanceCredentialReadScopeProvider).state.value.generation;
   return ExchangeScope(
     connectionId: registration.profile.connectionId,
     exchange: registration.profile.exchange,
