@@ -30,7 +30,7 @@ ROUTES = {"E0", "E1", "E2"}
 ALLOWED_EXTENSIONS = {
     ".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs", ".java",
     ".kt", ".swift", ".cs", ".c", ".h", ".cpp", ".hpp",
-    ".sql", ".html", ".css", ".scss", ".md",
+    ".sql", ".html", ".css", ".scss", ".md", ".dart",
 }
 BLOCKED_NAMES = {
     "agents.md", "claude.md", "package.json", "pyproject.toml", "cargo.toml",
