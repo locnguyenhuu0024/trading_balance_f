@@ -1,6 +1,6 @@
 # Task 126 — UI follows Spot and Margin availability; Margin chip filter
 
-Status: PENDING
+Status: PASS
 Agent Role: implementation_executor
 Executor Class: E2
 Target Model: gpt-6.1-terra
@@ -130,4 +130,10 @@ Return `BLOCKED` if the fix needs a file outside the list.
 
 ## 11. Coordinator Audit
 
-Verdict: PENDING
+Attempt: 77c41a83e92b445b9bc21aaec3f7e418
+Dispatch route compliance: UNVERIFIABLE (requested gpt-6.1-terra/medium, explicit).
+Parent route inheritance: NO
+RED and GREEN executed by the coordinator on the host, RED first (VAL-005): Twelve mutations of the adapter filter, chips, notice, product line, account loading, error, wallet failure, polling and valueOrNull failed the suite, then GREEN passed. Rework: R01 and R02 fixed the false empty state, silent wallet omission, a build-time crash on account errors, polling with a rejected key, wider scroll changes and an overflow. Coordinator corrections, test file only: the view API call that did not compile, and the viewport from 320x480 to 320x640, because at 480 the body is off screen; the former fixed height overflows by 115 px at 640 and fails this test.
+Regression and buildability, coordinator-observed: 626 tests pass in the full suite; analyzer 0 errors; web build passes with and without the define.
+Task buildability gate: PASS
+Verdict: PASS

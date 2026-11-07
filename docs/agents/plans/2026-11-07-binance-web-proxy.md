@@ -1,6 +1,6 @@
 # Implementation Plan: Binance Spot and Margin on web through a read proxy
 
-Status: APPROVED
+Status: COMPLETE (code); U1 and U2 pending
 Approval: "Duyệt, làm đi." (user, chat, 2026-11-07)
 Date: 2026-11-07
 Tier: M
