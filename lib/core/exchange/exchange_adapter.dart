@@ -1,8 +1,11 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'exchange_models.dart';
+import 'market_source.dart';
 
 abstract class ExchangeAdapter {
   ExchangeId get id;
+  MarketSource market(Ref ref);
+  List<String> get marketProducts;
   ExchangeCapabilities get capabilities;
   Future<AccountSnapshot> readAccount(Ref ref, ExchangeScope scope);
   Future<List<ExchangePosition>> readPositions(Ref ref, ExchangeScope scope);

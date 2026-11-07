@@ -1,9 +1,14 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:trading_balance_f/core/exchange/exchange_adapter.dart';
 import 'package:trading_balance_f/core/exchange/exchange_models.dart';
+import 'package:trading_balance_f/core/exchange/market_source.dart';
 
 class FakeExchangeAdapter implements ExchangeAdapter {
   int accountReads = 0;
+  @override
+  List<String> get marketProducts => const [];
+  @override
+  MarketSource market(Ref ref) => throw UnimplementedError();
   @override
   ExchangeId get id => ExchangeId.binance;
   @override

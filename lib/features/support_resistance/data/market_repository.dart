@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:trading_balance_f/core/network/okx_data_client.dart';
 
 import '../../../core/network/request_coordinator.dart';
+import '../../../core/exchange/market_source.dart';
 import '../domain/level_calculator.dart';
 import '../domain/models.dart';
 
@@ -11,7 +12,7 @@ typedef SupportResistanceRepositoryClock = DateTime Function();
 ///
 /// The request coordinator is required so application wiring can share the
 /// foreground public lane's single-flight, spacing, and rate-limit state.
-class SupportResistanceRepository {
+class SupportResistanceRepository implements MarketSource {
   SupportResistanceRepository(
     this._client, {
     required this.requestCoordinator,
@@ -28,6 +29,60 @@ class SupportResistanceRepository {
   final RequestCoordinator requestCoordinator;
   final SupportResistanceRepositoryClock clock;
   final SupportResistanceCalculator calculator;
+
+  @override
+  Future<List<MarketRow>> topTickers(String product) async {
+    final response = await _client.get(
+      '/api/v5/market/tickers',
+      queryParameters: {'instType': 'SPOT'},
+    );
+    final rows = _mapRows(response, '/api/v5/market/tickers');
+    final result = rows
+        .where((row) => (row['instId'] as String).endsWith('-USDT'))
+        .map((row) {
+          final id = row['instId'] as String;
+          return MarketRow(
+            instrumentId: id,
+            baseCurrency: id.split('-').first,
+            last: _number(row['last']) ?? 0,
+            open24h: _number(row['sodUtc0']) ?? 0,
+            quoteVolume: _number(row['volCcy24h']) ?? 0,
+          );
+        })
+        .where((row) => row.quoteVolume > 5000000)
+        .toList();
+    result.sort((a, b) => b.quoteVolume.compareTo(a.quoteVolume));
+    return result.take(50).toList();
+  }
+
+  @override
+  Future<List<RawCandle>> fractalCandles({
+    required String coin,
+    required String bar,
+    required int limit,
+    required int endTime,
+  }) async {
+    final current = endTime > clock().millisecondsSinceEpoch;
+    final endpoints = current
+        ? ['/api/v5/market/candles', '/api/v5/market/history-candles']
+        : ['/api/v5/market/history-candles', '/api/v5/market/candles'];
+    for (final endpoint in endpoints) {
+      final response = await _client.get(
+        endpoint,
+        queryParameters: {
+          'instId': '$coin-USDT',
+          'bar': bar,
+          'limit': limit,
+          'after': endTime.toString(),
+        },
+      );
+      if (response.data['code'] == '0') {
+        final rows = (response.data['data'] as List).cast<List<dynamic>>();
+        if (rows.isNotEmpty) return rows;
+      }
+    }
+    return [];
+  }
 
   Future<List<SupportResistanceInstrument>> getInstruments({
     required SupportResistanceMarketMode marketMode,

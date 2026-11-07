@@ -28,9 +28,9 @@ Observed Effective Effort: unavailable
 
 ## Stage instruction (current)
 
-This task runs in stages because long runs have ended early. Attempt 1 is committed: fractal transport errors surface, and the selected coin resets on selection.
+This task runs in stages because long runs have ended early. Stages 1 and 2 are committed: fractal errors surface, `MarketSource`, `BinanceClient`, `BinanceMarket` and the adapter members exist and are tested.
 
-**Current stage 2 of 4, do only this:** steps 1 to 4 and 9 of section 6: `market_source.dart`, adapter members, OKX `MarketSource` wiring with no behavior change, `binance_client.dart`, `binance_market.dart`, and tests in `test/exchanges/binance/`. No screen changes. Stage 3 wires Market and BMAG; stage 4 wires Support/Resistance and watchlists. Stage tests for this stage: fixtures for Spot and USD-M mapping, candle index mapping, Top 50 filter and sort, no `X-MBX-APIKEY` on any request, a 429 backing off the Binance public lane while the OKX lane stays open.
+**Current stage 3 of 4, do only this:** the Market and BMAG parts of steps 5 and 7 of section 6. `market_screen.dart` and `fractal_provider.dart` select the source through the registry using `ref.watch(exchangeScopeProvider)`. Add `Nguồn giá: <exchange label>` to both screens, and Binance product chips on Market from `marketProducts`, default USD-M. OKX queries and results stay identical. Stage tests: with Binance registered by override, Market lists fixture rows and shows the source; BMAG computes from fixture klines with hand-derived values; a Binance candle failure gives an error state; OKX tests unchanged. Finish by returning the structured report.
 
 ## 2. Objective
 

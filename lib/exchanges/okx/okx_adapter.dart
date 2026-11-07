@@ -1,6 +1,10 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/exchange/exchange_adapter.dart';
 import '../../core/exchange/exchange_models.dart';
+import '../../core/exchange/market_source.dart';
+import '../../core/exchange/exchange_scope.dart';
+import '../../core/network/okx_data_client.dart';
+import '../../features/support_resistance/data/market_repository.dart';
 import '../../core/network/okx_read_scope.dart';
 import '../../features/orders/presentation/providers/order_provider.dart';
 import '../../features/portfolio/presentation/providers/portfolio_provider.dart';
@@ -9,6 +13,13 @@ class OkxAdapter implements ExchangeAdapter {
   const OkxAdapter();
   @override
   ExchangeId get id => ExchangeId.okx;
+  @override
+  List<String> get marketProducts => const ['SPOT'];
+  @override
+  MarketSource market(Ref ref) => SupportResistanceRepository(
+    ref.watch(okxDataClientProvider),
+    requestCoordinator: ref.watch(exchangeRequestCoordinatorProvider(id)),
+  );
   @override
   ExchangeCapabilities get capabilities => const ExchangeCapabilities(
     readableProducts: ['SPOT', 'MARGIN', 'SWAP', 'FUTURES'],
