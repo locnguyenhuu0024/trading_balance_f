@@ -146,7 +146,7 @@ Valuation (P-005): `value(asset) = amount × last(asset/USDT)`, USDT itself is 1
 
 Independent worked example: USD-M USDT marginBalance `1000.50`; Spot BTC `0.01` at `76000` = `760`, Spot USDT `100`; cross ETH netAsset `-0.1` at `2000` = `-200`. Total = 1000.50 + 760 + 100 − 200 = `1660.50`, not partial. If the cross read fails: `1860.50`, partial.
 
-OKX continues to use its own `totalEq` (REQ-012).
+OKX keeps its existing displayed total, computed by `PortfolioScreen` from asset balances and live prices, not from `totalEq` (REQ-012, VAL-004).
 
 ## 7. Cross-Layer Mapping
 
