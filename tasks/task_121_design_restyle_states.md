@@ -28,13 +28,14 @@ Observed Effective Effort: unavailable
 
 ## Stage instruction (current)
 
-Stage 2b is committed as work in progress. **Current stage 2c, test-only, coordinator-observed failures:**
+This task runs in stages. Stages 1 and 2 are committed and were reviewed from rendered screenshots.
 
-1. `orders_binance_view_test`: `USDⓈ-M` now appears on the chip and the card. Change that assertion to `findsWidgets`, in both the web and non-web runs.
-2. `orders_screen_refresh_test: manual refresh reloads the active positions provider only` taps text `MARGIN` from the removed dropdown. Tap the `Margin` chip instead, keeping the reload assertions.
-3. `order_filter_controls_test: tabs and OKX chips remain accessible at narrow width`: the selected flag is false at line 39 because the finder resolves to the inner text node. Look up the semantics of the tab's `Semantics` wrapper, for example `tester.getSemantics(find.ancestor(of: find.text('Vị thế'), matching: find.byType(Semantics)).first)`, or use `find.bySemanticsLabel`. If `selected` is genuinely not set on the tab, that is a code defect: then also set `Semantics(selected: ..., button: true)` in the tab widget in `orders_screen.dart`.
+**Current stage 3 of 3, do exactly this:**
 
-Finish by returning the structured report.
+1. Fix the one failing test, `order_filter_controls_test: tabs and OKX chips remain accessible at narrow width`: the selected tab has no selected flag at the semantics node found. Ensure the tab widget in `order_filter_controls.dart` has `Semantics(container: true, button: true, selected: isSelected, ...)` as its outermost wrapper, excluding child semantics if needed, and find it in the test with `find.bySemanticsLabel('Vị thế')`.
+2. Apply the common rules to the remaining screens, with no logic change: `market_screen.dart` (title `Thị trường`, source row, rows with instrument, price, signed 24h change); `fractal_screen.dart` (title `BMAG` with 48 back control when pushed, source row, existing content); `support_resistance_screen.dart` (title `Hỗ trợ / kháng cự`, source row, existing content); `settings_screen.dart` (title `Cài đặt`, cards with thin borders); `connections_screen.dart`, `connection_catalog_screen.dart`, `binance_connection_form.dart` (left-aligned Bold 24 title with 48 back control, primary 48 button in `ink` with `onStrong`); `account_state_view.dart` and `margin_account_card.dart` (common card rules).
+
+Tests: no overflow at 320 wide at the largest text scale on each of those screens, added to `test/features/connections/design_layout_test.dart`; existing behavior assertions stay, and title-text assertions may change only to the new title. Finish by returning the structured report.
 
 ## 2. Objective
 

@@ -265,7 +265,7 @@ void main() {
 
     expect(positionLoads, 2);
     expect(orderLoads, 0);
-    expect(find.text('MARGIN'), findsOneWidget);
+    await tester.tap(find.text('Margin'));
     await tester.pumpWidget(const SizedBox.shrink());
   });
 

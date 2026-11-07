@@ -85,7 +85,7 @@ void main() {
       expect(find.text('BTC/USDT'), findsWidgets);
       expect(find.text('BTCUSDT'), findsNothing);
       expect(find.text('Tất cả'), findsOneWidget);
-      expect(find.text('USDⓈ-M'), findsOneWidget);
+      expect(find.text('USDⓈ-M'), findsWidgets);
       expect(find.text('Spot'), web ? findsNothing : findsOneWidget);
       expect(find.text('Margin'), web ? findsNothing : findsOneWidget);
       expect(find.textContaining('Cross Margin'), findsOneWidget);
