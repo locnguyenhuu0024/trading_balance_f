@@ -109,6 +109,7 @@ class _PortfolioDetailsScreenState
           data: (account) => _DetailsContent(
             account: account,
             isOkx: isOkx,
+            isBinance: scope.exchange == ExchangeId.binance,
             spotMarginAvailable: ref.watch(binanceSpotMarginAvailableProvider),
             livePrices: isOkx ? ref.watch(livePriceProvider) : const {},
             currency: currency,
@@ -128,6 +129,7 @@ class _DetailsContent extends StatelessWidget {
   const _DetailsContent({
     required this.account,
     required this.isOkx,
+    required this.isBinance,
     required this.spotMarginAvailable,
     required this.livePrices,
     required this.currency,
@@ -140,6 +142,7 @@ class _DetailsContent extends StatelessWidget {
 
   final AccountSnapshot account;
   final bool isOkx;
+  final bool isBinance;
   final bool spotMarginAvailable;
   final Map<String, String> livePrices;
   final String currency;
@@ -175,7 +178,17 @@ class _DetailsContent extends StatelessWidget {
     }
     if (!isOkx) total = double.tryParse(account.total ?? '') ?? 0.0;
     final base = total - pnl;
-    final ratio = base > 0 ? pnl / base : null;
+    final ratioBase = isBinance
+        ? account.balances
+                  .where((coin) => coin.wallet == 'USD-M')
+                  .fold<double>(
+                    0.0,
+                    (sum, coin) =>
+                        sum + (double.tryParse(coin.valueUsdt ?? '') ?? 0.0),
+                  ) -
+              pnl
+        : base;
+    final ratio = ratioBase > 0 ? pnl / ratioBase : null;
     final palette = AppPalette.of(context);
     final textColor = palette.ink;
     final subtitle = palette.muted;
@@ -282,6 +295,7 @@ class _DetailsContent extends StatelessWidget {
                     )
                   else
                     _PnlBlock(
+                      isBinance: isBinance,
                       pnl: pnl,
                       ratio: ratio,
                       currency: currency,
@@ -320,6 +334,7 @@ class _DetailsContent extends StatelessWidget {
 
 class _PnlBlock extends StatelessWidget {
   const _PnlBlock({
+    required this.isBinance,
     required this.pnl,
     required this.ratio,
     required this.currency,
@@ -327,6 +342,7 @@ class _PnlBlock extends StatelessWidget {
     required this.hidden,
   });
 
+  final bool isBinance;
   final double pnl;
   final double? ratio;
   final String currency;
@@ -346,7 +362,7 @@ class _PnlBlock extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Unrealized PnL',
+          isBinance ? 'Unrealized PnL · USDⓈ-M' : 'Unrealized PnL',
           style: TextStyle(
             color: palette.muted,
             fontSize: 12,

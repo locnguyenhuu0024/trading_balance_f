@@ -41,7 +41,109 @@ class _Fake extends FakeExchangeAdapter {
       );
 }
 
+class _SnapshotAdapter extends FakeExchangeAdapter {
+  _SnapshotAdapter(this.snapshot);
+  final AccountSnapshot snapshot;
+
+  @override
+  Future<AccountSnapshot> readAccount(Ref ref, ExchangeScope scope) async =>
+      snapshot;
+}
+
 void main() {
+  for (final details in [false, true]) {
+    for (final scenario in ['binance', 'no-usdm', 'okx']) {
+      testWidgets('PnL scope $scenario ${details ? "details" : "home"}', (
+        tester,
+      ) async {
+        final isOkx = scenario == 'okx';
+        final noUsdm = scenario == 'no-usdm';
+        final snapshot = AccountSnapshot(
+          total: '2000',
+          balances: [
+            if (!noUsdm)
+              const AssetBalance(
+                wallet: 'USD-M',
+                asset: 'USDT',
+                total: '1100',
+                valueUsdt: '1100',
+                unrealizedPnl: '100',
+              ),
+            AssetBalance(
+              wallet: 'Spot',
+              asset: 'OTHER',
+              total: noUsdm ? '2000' : '900',
+              valueUsdt: noUsdm ? '2000' : '900',
+            ),
+          ],
+        );
+        final container = ProviderContainer(
+          overrides: [
+            selectedConnectionIdProvider.overrideWith((ref) => 'test'),
+            exchangeRegistryProvider.overrideWith(
+              (ref) => [
+                ExchangeRegistration(
+                  profile: ConnectionProfile(
+                    connectionId: 'test',
+                    exchange: isOkx ? ExchangeId.okx : ExchangeId.binance,
+                    label: isOkx ? 'OKX' : 'Binance',
+                  ),
+                  adapter: _SnapshotAdapter(snapshot),
+                ),
+              ],
+            ),
+            livePriceProvider.overrideWith((ref) => LivePriceNotifier()),
+            okxWebsocketProvider.overrideWithValue(_Socket()),
+            vndExchangeRateProvider.overrideWith((ref) async => 25400),
+          ],
+        );
+        await tester.pumpWidget(
+          UncontrolledProviderScope(
+            container: container,
+            child: MaterialApp(
+              home: details
+                  ? const PortfolioDetailsScreen()
+                  : const PortfolioScreen(),
+            ),
+          ),
+        );
+        await tester.pump();
+        await tester.pump();
+        if (details) {
+          await tester.tap(find.byKey(const Key('portfolio-reveal-pnl')));
+          await tester.pump();
+        }
+        expect(
+          find.text(
+            details
+                ? (isOkx ? 'Unrealized PnL' : 'Unrealized PnL · USDⓈ-M')
+                : (isOkx
+                      ? 'Lãi / lỗ chưa thực hiện'
+                      : 'Lãi / lỗ chưa thực hiện · USDⓈ-M'),
+          ),
+          findsOneWidget,
+        );
+        if (noUsdm && details) {
+          expect(find.text('******'), findsOneWidget);
+        } else {
+          expect(
+            find.text(
+              noUsdm
+                  ? '(+0.00%)'
+                  : isOkx
+                  ? '(+5.26%)'
+                  : '(+10.00%)',
+            ),
+            findsOneWidget,
+          );
+        }
+        if (!noUsdm) expect(find.text(r'$1,900.00'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+        container.dispose();
+      });
+    }
+  }
   testWidgets('fake exchange renders balances without starting OKX prices', (
     tester,
   ) async {

@@ -1,6 +1,6 @@
 # Task 127 — Binance profit labels and percentage base
 
-Status: PENDING
+Status: PASS
 Agent Role: implementation_executor
 Executor Class: E2
 Target Model: gpt-6.1-terra
@@ -107,4 +107,10 @@ Return `BLOCKED` if the fix needs a file outside the list.
 
 ## 11. Coordinator Audit
 
-Verdict: PENDING
+Attempt: b6d2fc598eee4ec4b70bbc4ece4086c5
+Dispatch route compliance: UNVERIFIABLE (requested gpt-6.1-terra/medium, explicit).
+Parent route inheritance: NO
+RED and GREEN executed by the coordinator on the host, RED first (VAL-005): Five mutations of the percentage base and labels each failed the suite, then GREEN passed: +10.00% for the worked example, +5.26% unchanged for OKX.
+Regression and buildability, coordinator-observed: 632 tests pass in the full suite; analyzer 0 errors; web build passes with the define.
+Task buildability gate: PASS
+Verdict: PASS

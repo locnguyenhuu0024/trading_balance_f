@@ -126,6 +126,8 @@ void main() {
       );
       expect(find.textContaining('Cross Margin'), findsOneWidget);
       expect(find.textContaining('Isolated Margin'), findsOneWidget);
+      expect(find.textContaining('Lãi vay'), findsNWidgets(3));
+      expect(find.textContaining('Lãi:'), findsNothing);
       expect(find.textContaining('—'), findsWidgets);
       expect(find.byType(OrderCancellationControl), findsNothing);
       if (!web || proxy) {

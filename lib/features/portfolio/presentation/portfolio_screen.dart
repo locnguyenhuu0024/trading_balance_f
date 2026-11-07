@@ -276,6 +276,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
                             return _buildPortfolioData(
                               data,
                               isOkx,
+                              scope.exchange == ExchangeId.binance,
                               livePrices,
                               isBalanceHidden,
                               isDark,
@@ -300,6 +301,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
   Widget _buildPortfolioData(
     AccountSnapshot accountData,
     bool isOkx,
+    bool isBinance,
     Map<String, String> livePrices,
     bool isHidden,
     bool isDark,
@@ -334,8 +336,18 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
       dynamicTotalEquity = double.tryParse(accountData.total ?? '') ?? 0.0;
     }
     final double baseEquity = dynamicTotalEquity - totalUnrealizedPnl;
-    final double pnlRatio = baseEquity > 0
-        ? (totalUnrealizedPnl / baseEquity) * 100
+    final ratioBase = isBinance
+        ? accountData.balances
+                  .where((coin) => coin.wallet == 'USD-M')
+                  .fold<double>(
+                    0.0,
+                    (sum, coin) =>
+                        sum + (double.tryParse(coin.valueUsdt ?? '') ?? 0.0),
+                  ) -
+              totalUnrealizedPnl
+        : baseEquity;
+    final double pnlRatio = ratioBase > 0
+        ? (totalUnrealizedPnl / ratioBase) * 100
         : 0.0;
 
     final palette = AppPalette.forBrightness(isDark);
@@ -347,6 +359,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
       physics: const AlwaysScrollableScrollPhysics(),
       children: [
         _buildAssetSummary(
+          isBinance: isBinance,
           totalMissing: !isOkx && accountData.total == null,
           totalEquity: dynamicTotalEquity,
           baseEquity: baseEquity,
@@ -526,6 +539,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
   );
 
   Widget _buildAssetSummary({
+    required bool isBinance,
     required bool totalMissing,
     required double totalEquity,
     required double baseEquity,
@@ -626,7 +640,9 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Lãi / lỗ chưa thực hiện',
+          isBinance
+              ? 'Lãi / lỗ chưa thực hiện · USDⓈ-M'
+              : 'Lãi / lỗ chưa thực hiện',
           style: TextStyle(
             color: labelColor,
             fontSize: 12,

@@ -35,15 +35,15 @@ class MarginAccountCard extends StatelessWidget {
             ),
             if (isolated) ...[
               Text(
-                '${key.base ?? '—'}: Net ${value(row.baseNet)} · Vay ${value(row.baseBorrowed)} · Lãi ${value(row.baseInterest)}',
+                '${key.base ?? '—'}: Net ${value(row.baseNet)} · Vay ${value(row.baseBorrowed)} · Lãi vay ${value(row.baseInterest)}',
               ),
               Text(
-                '${key.quote ?? '—'}: Net ${value(row.quoteNet)} · Vay ${value(row.quoteBorrowed)} · Lãi ${value(row.quoteInterest)}',
+                '${key.quote ?? '—'}: Net ${value(row.quoteNet)} · Vay ${value(row.quoteBorrowed)} · Lãi vay ${value(row.quoteInterest)}',
               ),
             ] else ...[
               Text('Net: ${value(row.net)}'),
               Text('Vay: ${value(row.borrowed)}'),
-              Text('Lãi: ${value(row.interest)}'),
+              Text('Lãi vay: ${value(row.interest)}'),
             ],
             Text('Mức ký quỹ: ${value(row.marginLevel)}'),
             if (isolated) ...[
