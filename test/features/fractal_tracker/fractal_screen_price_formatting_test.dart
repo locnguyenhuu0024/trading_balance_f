@@ -9,6 +9,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/theme/app_theme.dart';
+import 'package:trading_balance_f/core/exchange/exchange_models.dart';
+import 'package:trading_balance_f/core/exchange/exchange_registry.dart';
+import 'package:trading_balance_f/core/exchange/exchange_scope.dart';
+import 'package:trading_balance_f/exchanges/okx/okx_adapter.dart';
+import '../../support/fake_exchange_adapter.dart';
 import 'package:trading_balance_f/features/fractal_tracker/data/fractal_model.dart';
 import 'package:trading_balance_f/features/fractal_tracker/presentation/fractal_screen.dart';
 import 'package:trading_balance_f/features/fractal_tracker/presentation/providers/fractal_provider.dart';
@@ -125,6 +130,41 @@ Widget _responsiveScreenWithData(FractalData data, double textScale) {
 }
 
 void main() {
+  testWidgets('BMAG displays Binance as the price source', (tester) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          exchangeRegistryProvider.overrideWith(
+            (ref) => [
+              const ExchangeRegistration(
+                profile: ConnectionProfile(
+                  connectionId: 'okx-default',
+                  exchange: ExchangeId.okx,
+                  label: 'OKX',
+                ),
+                adapter: OkxAdapter(),
+              ),
+              ExchangeRegistration(
+                profile: const ConnectionProfile(
+                  connectionId: 'binance',
+                  exchange: ExchangeId.binance,
+                  label: 'Binance',
+                ),
+                adapter: FakeExchangeAdapter(),
+              ),
+            ],
+          ),
+          selectedConnectionIdProvider.overrideWith((ref) => 'binance'),
+          fractalDataProvider.overrideWith((ref) async => <FractalData>[]),
+        ],
+        child: const MaterialApp(home: FractalScreen()),
+      ),
+    );
+    await tester.pump();
+    expect(find.text('Nguồn giá: Binance'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('quick coin preset remains usable at narrow enlarged width', (
     tester,
   ) async {

@@ -1,10 +1,58 @@
 import 'package:dio/dio.dart';
+import 'package:trading_balance_f/core/exchange/exchange_models.dart';
+import 'package:trading_balance_f/core/exchange/exchange_registry.dart';
+import 'package:trading_balance_f/core/exchange/exchange_scope.dart';
+import 'package:trading_balance_f/core/exchange/market_source.dart';
+import 'package:trading_balance_f/core/network/request_coordinator.dart';
+import 'package:trading_balance_f/core/timezone/app_time_zone.dart';
+import 'package:trading_balance_f/exchanges/binance/binance_client.dart';
+import 'package:trading_balance_f/exchanges/binance/binance_market.dart';
+import 'package:trading_balance_f/exchanges/okx/okx_adapter.dart';
+import '../../support/fake_exchange_adapter.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/network/okx_data_client.dart';
 import 'package:trading_balance_f/features/fractal_tracker/presentation/providers/fractal_provider.dart';
 
 void main() {
+  test('Binance fixture klines compute BMAG quarters', () async {
+    final client = _FractalFixtureClient();
+    final container = _binanceContainer(client);
+    addTearDown(container.dispose);
+    final data = await container.read(fractalDataProvider.future);
+    final month = data.firstWhere((item) => item.timeframeLabel == 'M1');
+    expect(month.quarters[0].open, 10);
+    expect(month.quarters[0].close, 12);
+    expect(month.quarters[0].high, 15);
+    expect(month.quarters[0].low, 8);
+    expect(month.quarters[1].open, 20);
+    expect(month.quarters[1].close, 22);
+    expect(client.symbols, everyElement('BTCUSDT'));
+  });
+
+  test('Binance candle failure surfaces as a provider error', () async {
+    final container = _binanceContainer(_FractalFixtureClient(fail: true));
+    addTearDown(container.dispose);
+    await expectLater(
+      container.read(fractalDataProvider.future),
+      throwsStateError,
+    );
+  });
+
+  test('changing exchange scope resets the selected coin', () {
+    final client = _FractalFixtureClient();
+    final container = _binanceContainer(client);
+    addTearDown(container.dispose);
+    final subscription = container.listen(
+      selectedCoinProvider,
+      (previous, next) {},
+    );
+    addTearDown(subscription.close);
+    container.read(selectedCoinProvider.notifier).state = 'ETH';
+    container.read(selectedConnectionIdProvider.notifier).state = 'okx-default';
+    expect(container.read(selectedCoinProvider), 'BTC');
+  });
+
   test('candle transport failure surfaces as a provider error', () async {
     final container = ProviderContainer(
       overrides: [okxDataClientProvider.overrideWithValue(_FailingClient())],
@@ -123,4 +171,82 @@ class _FailingClient extends OkxDataClient {
     Map<String, dynamic>? queryParameters,
     CancelToken? cancelToken,
   }) async => throw StateError('transport failure');
+}
+
+ProviderContainer _binanceContainer(_FractalFixtureClient client) =>
+    ProviderContainer(
+      overrides: [
+        exchangeRegistryProvider.overrideWith(
+          (ref) => [
+            const ExchangeRegistration(
+              profile: ConnectionProfile(
+                connectionId: 'okx-default',
+                exchange: ExchangeId.okx,
+                label: 'OKX',
+              ),
+              adapter: OkxAdapter(),
+            ),
+            ExchangeRegistration(
+              profile: const ConnectionProfile(
+                connectionId: 'binance',
+                exchange: ExchangeId.binance,
+                label: 'Binance',
+              ),
+              adapter: _BinanceAdapter(client),
+            ),
+          ],
+        ),
+        selectedConnectionIdProvider.overrideWith((ref) => 'binance'),
+        selectedMonthProvider.overrideWith((ref) => DateTime(2024, 1)),
+        selectedYearProvider.overrideWith((ref) => 2024),
+        appTimeZoneProvider.overrideWith((ref) => 'UTC'),
+      ],
+    );
+
+class _BinanceAdapter extends FakeExchangeAdapter {
+  _BinanceAdapter(this.client);
+  final BinanceClient client;
+  @override
+  MarketSource market(Ref ref) => BinanceMarket(client);
+}
+
+class _FractalFixtureClient extends BinanceClient {
+  _FractalFixtureClient({this.fail = false})
+    : super(coordinator: RequestCoordinator());
+  final bool fail;
+  final symbols = <String>[];
+  @override
+  Future<Response<dynamic>> get(
+    String path, {
+    Map<String, dynamic> queryParameters = const {},
+  }) async {
+    if (fail) throw StateError('transport failure');
+    symbols.add(queryParameters['symbol'] as String);
+    final rows =
+        queryParameters['interval'] == '1d' ||
+            queryParameters['interval'] == '1M'
+        ? [
+            [
+              DateTime.utc(2024, 1, 1).millisecondsSinceEpoch,
+              '10',
+              '15',
+              '8',
+              '12',
+              '99',
+            ],
+            [
+              DateTime.utc(2024, 1, 10).millisecondsSinceEpoch,
+              '20',
+              '25',
+              '18',
+              '22',
+              '99',
+            ],
+          ]
+        : <List<dynamic>>[];
+    return Response(
+      requestOptions: RequestOptions(path: path),
+      data: rows,
+    );
+  }
 }

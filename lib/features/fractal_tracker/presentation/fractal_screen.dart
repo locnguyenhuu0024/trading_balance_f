@@ -5,6 +5,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import '../../../core/exchange/exchange_registry.dart';
+import '../../../core/exchange/exchange_scope.dart';
 import '../../../core/formatting/adaptive_number_format.dart';
 import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/theme/app_theme.dart';
@@ -63,6 +65,12 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
   @override
   Widget build(BuildContext context) {
     final fractalAsync = ref.watch(fractalDataProvider);
+    final scope = ref.watch(exchangeScopeProvider);
+    final label = ref
+        .watch(exchangeRegistryProvider)
+        .firstWhere((entry) => entry.profile.connectionId == scope.connectionId)
+        .profile
+        .label;
     final selectedCoin = ref.watch(
       selectedCoinProvider,
     ); // THÊM MỚI: Lấy coin đang chọn
@@ -115,80 +123,104 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
         ],
       ),
       body: NavigationContentFrame(
-        child: fractalAsync.when(
-          // Rất quan trọng: Bỏ qua trạng thái Loading khi reload để app không bị chớp mỗi giây
-          skipLoadingOnReload: true,
-          loading: () => const Center(
-            child: FormPendingStatus(
-              label: 'Đang tải dữ liệu fractal…',
-              linear: false,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppTokens.space4,
+                vertical: AppTokens.space2,
+              ),
+              child: Text(
+                'Nguồn giá: $label',
+                style: TextStyle(color: palette.muted, fontSize: 12),
+              ),
             ),
-          ),
-          error: (err, stack) => Center(
-            child: Text('Lỗi tải dữ liệu', style: TextStyle(color: textColor)),
-          ),
-          data: (data) {
-            if (data.isEmpty)
-              return const Center(child: Text('Không có dữ liệu'));
+            Expanded(
+              child: fractalAsync.when(
+                // Rất quan trọng: Bỏ qua trạng thái Loading khi reload để app không bị chớp mỗi giây
+                skipLoadingOnReload: true,
+                loading: () => const Center(
+                  child: FormPendingStatus(
+                    label: 'Đang tải dữ liệu fractal…',
+                    linear: false,
+                  ),
+                ),
+                error: (err, stack) => Center(
+                  child: Text(
+                    'Lỗi tải dữ liệu',
+                    style: TextStyle(color: textColor),
+                  ),
+                ),
+                data: (data) {
+                  if (data.isEmpty)
+                    return const Center(child: Text('Không có dữ liệu'));
 
-            return RefreshIndicator(
-              color: palette.ink,
-              backgroundColor: palette.raised,
-              onRefresh: _refreshFractal,
-              child: ListView(
-                padding: const EdgeInsets.all(AppTokens.space4),
-                physics: const AlwaysScrollableScrollPhysics(),
-                children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: Text(
-                          'MA TRẬN ĐỒNG PHA (CONFLUENCE)',
-                          softWrap: true,
-                          style: TextStyle(
-                            color: palette.muted,
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
+                  return RefreshIndicator(
+                    color: palette.ink,
+                    backgroundColor: palette.raised,
+                    onRefresh: _refreshFractal,
+                    child: ListView(
+                      padding: const EdgeInsets.all(AppTokens.space4),
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      children: [
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'MA TRẬN ĐỒNG PHA (CONFLUENCE)',
+                                softWrap: true,
+                                style: TextStyle(
+                                  color: palette.muted,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: AppTokens.space2),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  width: 8,
+                                  height: 8,
+                                  decoration: BoxDecoration(
+                                    color: palette.positive,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  'LIVE',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                    color: palette.muted,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: AppTokens.space4),
+                        ...data.map(
+                          (fData) => _buildFractalRow(
+                            context,
+                            fData,
+                            isDark,
+                            timeZoneId,
                           ),
                         ),
-                      ),
-                      const SizedBox(width: AppTokens.space2),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Container(
-                            width: 8,
-                            height: 8,
-                            decoration: BoxDecoration(
-                              color: palette.positive,
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            'LIVE',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                              color: palette.muted,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: AppTokens.space4),
-                  ...data.map(
-                    (fData) =>
-                        _buildFractalRow(context, fData, isDark, timeZoneId),
-                  ),
-                  const SizedBox(height: 32),
-                  _buildLegend(isDark),
-                ],
+                        const SizedBox(height: 32),
+                        _buildLegend(isDark),
+                      ],
+                    ),
+                  );
+                },
               ),
-            );
-          },
+            ),
+          ],
         ),
       ),
     );

@@ -5,7 +5,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
-import 'package:trading_balance_f/core/network/okx_data_client.dart';
+import '../../../core/exchange/exchange_models.dart';
+import '../../../core/exchange/exchange_registry.dart';
+import '../../../core/exchange/exchange_scope.dart';
 import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/crypto_icon.dart';
@@ -18,12 +20,14 @@ class MarketTicker {
   final double last;
   final double open24h;
   final double vol24h;
+  final String? baseCurrency;
 
   MarketTicker({
     required this.instId,
     required this.last,
     required this.open24h,
     required this.vol24h,
+    this.baseCurrency,
   });
 
   factory MarketTicker.fromJson(Map<String, dynamic> json) {
@@ -39,39 +43,43 @@ class MarketTicker {
   // Công thức tính % biến động 24h
   double get changePercent =>
       open24h > 0 ? ((last - open24h) / open24h) * 100 : 0.0;
-  String get coinSymbol => instId.split('-').first;
+  String get coinSymbol => baseCurrency ?? instId.split('-').first;
 }
 
-// --- Provider lấy dữ liệu từ API Public của OKX ---
+final marketProductProvider = StateProvider<String>((ref) {
+  final scope = ref.watch(exchangeScopeProvider);
+  final registry = ref.watch(exchangeRegistryProvider);
+  final products = registry
+      .firstWhere((entry) => entry.profile.connectionId == scope.connectionId)
+      .adapter
+      .marketProducts;
+  return scope.exchange == ExchangeId.binance && products.contains('USD-M')
+      ? 'USD-M'
+      : products.first;
+});
+
 final marketListProvider = FutureProvider.autoDispose<List<MarketTicker>>((
   ref,
 ) async {
-  final client = ref.watch(okxDataClientProvider);
-
-  final response = await client.get(
-    '/api/v5/market/tickers',
-    queryParameters: {'instType': 'SPOT'},
-  );
-
-  if (response.data['code'] == '0') {
-    final List<dynamic> data = response.data['data'];
-    final tickers = data
-        .where(
-          (json) => (json['instId'] as String).endsWith('-USDT'),
-        ) // Chỉ lấy cặp USDT
-        .map((json) => MarketTicker.fromJson(json))
-        .where(
-          (t) => t.vol24h > 5000000,
-        ) // Lọc các coin thanh khoản cao (Volume > 5 triệu USD)
-        .toList();
-
-    // Sắp xếp theo volume giảm dần
-    tickers.sort((a, b) => b.vol24h.compareTo(a.vol24h));
-
-    return tickers.take(50).toList(); // Lấy Top 50
-  } else {
-    throw Exception(response.data['msg']);
-  }
+  final scope = ref.watch(exchangeScopeProvider);
+  final registry = ref.watch(exchangeRegistryProvider);
+  final adapter = registry
+      .firstWhere((entry) => entry.profile.connectionId == scope.connectionId)
+      .adapter;
+  final rows = await adapter
+      .market(ref)
+      .topTickers(ref.watch(marketProductProvider));
+  return rows
+      .map(
+        (row) => MarketTicker(
+          instId: row.instrumentId,
+          baseCurrency: row.baseCurrency,
+          last: row.last,
+          open24h: row.open24h,
+          vol24h: row.quoteVolume,
+        ),
+      )
+      .toList();
 });
 
 // --- Giao diện hiển thị (Screen) ---
@@ -102,6 +110,13 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
   Widget build(BuildContext context) {
     final isDark = ref.watch(isDarkModeProvider);
     final marketAsync = ref.watch(marketListProvider);
+    final scope = ref.watch(exchangeScopeProvider);
+    final registration = ref
+        .watch(exchangeRegistryProvider)
+        .firstWhere(
+          (entry) => entry.profile.connectionId == scope.connectionId,
+        );
+    final product = ref.watch(marketProductProvider);
 
     final palette = AppPalette.forBrightness(isDark);
     final bgColor = palette.background;
@@ -130,174 +145,217 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
         ],
       ),
       body: NavigationContentFrame(
-        child: RefreshIndicator(
-          color: palette.ink,
-          backgroundColor: palette.raised,
-          onRefresh: _refreshMarket,
-          child: marketAsync.when(
-            loading: () =>
-                Center(child: CircularProgressIndicator(color: textColor)),
-            error: (err, stack) => Center(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppTokens.space4,
+                vertical: AppTokens.space2,
+              ),
               child: Text(
-                'Lỗi tải dữ liệu:\n$err',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: palette.negative),
+                'Nguồn giá: ${registration.profile.label}',
+                style: TextStyle(color: palette.muted, fontSize: 12),
               ),
             ),
-            data: (tickers) {
-              return ListView.builder(
+            if (scope.exchange == ExchangeId.binance)
+              Padding(
                 padding: const EdgeInsets.symmetric(
                   horizontal: AppTokens.space4,
-                  vertical: AppTokens.space2,
                 ),
-                itemCount: tickers.length,
-                itemBuilder: (context, index) {
-                  final t = tickers[index];
-                  final currentPrice = t.last;
-
-                  // Tính toán lại % biến động dựa trên giá Live mới nhất
-                  final double currentChangePercent = t.open24h > 0
-                      ? ((currentPrice - t.open24h) / t.open24h) * 100
-                      : 0.0;
-
-                  final isPositive = currentChangePercent >= 0;
-                  final changeColor = isPositive
-                      ? palette.positive
-                      : palette.negative;
-                  final changeSign = isPositive ? '+' : '';
-                  final volFormatted =
-                      '\$${(t.vol24h / 1000000).toStringAsFixed(2)}M';
-
-                  // Thông minh hiển thị giá: Nếu coin rác (< $1) thì hiện nhiều số thập phân
-                  String priceFormatted;
-                  if (currentPrice < 1) {
-                    priceFormatted = NumberFormat(
-                      "#,##0.00####",
-                      "en_US",
-                    ).format(currentPrice);
-                  } else {
-                    priceFormatted = NumberFormat(
-                      "#,##0.00",
-                      "en_US",
-                    ).format(currentPrice);
-                  }
-
-                  return Card(
-                    elevation: 0,
-                    color: cardColor,
-                    margin: const EdgeInsets.only(bottom: AppTokens.space2),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(
-                        AppTokens.radiusMedium,
+                child: Wrap(
+                  spacing: AppTokens.space2,
+                  children: [
+                    for (final item in registration.adapter.marketProducts)
+                      ChoiceChip(
+                        label: Text(item),
+                        selected: item == product,
+                        onSelected: (_) =>
+                            ref.read(marketProductProvider.notifier).state =
+                                item,
                       ),
-                      side: BorderSide(color: borderColor),
+                  ],
+                ),
+              ),
+            Expanded(
+              child: RefreshIndicator(
+                color: palette.ink,
+                backgroundColor: palette.raised,
+                onRefresh: _refreshMarket,
+                child: marketAsync.when(
+                  loading: () => Center(
+                    child: CircularProgressIndicator(color: textColor),
+                  ),
+                  error: (err, stack) => Center(
+                    child: Text(
+                      'Lỗi tải dữ liệu:\n$err',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: palette.negative),
                     ),
-                    child: Padding(
+                  ),
+                  data: (tickers) {
+                    return ListView.builder(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: AppTokens.space3,
-                        vertical: AppTokens.space3,
+                        horizontal: AppTokens.space4,
+                        vertical: AppTokens.space2,
                       ),
-                      child: LayoutBuilder(
-                        builder: (context, constraints) {
-                          final coinIdentity = Row(
-                            children: [
-                              CryptoIcon(
-                                symbol: t.coinSymbol,
-                                size: 36,
-                                backgroundColor: iconBgColor,
-                                textColor: textColor,
-                                textSize: 14,
-                              ),
-                              const SizedBox(width: AppTokens.space3),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
+                      itemCount: tickers.length,
+                      itemBuilder: (context, index) {
+                        final t = tickers[index];
+                        final currentPrice = t.last;
+
+                        // Tính toán lại % biến động dựa trên giá Live mới nhất
+                        final double currentChangePercent = t.open24h > 0
+                            ? ((currentPrice - t.open24h) / t.open24h) * 100
+                            : 0.0;
+
+                        final isPositive = currentChangePercent >= 0;
+                        final changeColor = isPositive
+                            ? palette.positive
+                            : palette.negative;
+                        final changeSign = isPositive ? '+' : '';
+                        final volFormatted =
+                            '\$${(t.vol24h / 1000000).toStringAsFixed(2)}M';
+
+                        // Thông minh hiển thị giá: Nếu coin rác (< $1) thì hiện nhiều số thập phân
+                        String priceFormatted;
+                        if (currentPrice < 1) {
+                          priceFormatted = NumberFormat(
+                            "#,##0.00####",
+                            "en_US",
+                          ).format(currentPrice);
+                        } else {
+                          priceFormatted = NumberFormat(
+                            "#,##0.00",
+                            "en_US",
+                          ).format(currentPrice);
+                        }
+
+                        return Card(
+                          elevation: 0,
+                          color: cardColor,
+                          margin: const EdgeInsets.only(
+                            bottom: AppTokens.space2,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(
+                              AppTokens.radiusMedium,
+                            ),
+                            side: BorderSide(color: borderColor),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: AppTokens.space3,
+                              vertical: AppTokens.space3,
+                            ),
+                            child: LayoutBuilder(
+                              builder: (context, constraints) {
+                                final coinIdentity = Row(
+                                  children: [
+                                    CryptoIcon(
+                                      symbol: t.coinSymbol,
+                                      size: 36,
+                                      backgroundColor: iconBgColor,
+                                      textColor: textColor,
+                                      textSize: 14,
+                                    ),
+                                    const SizedBox(width: AppTokens.space3),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            t.coinSymbol,
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 15,
+                                              color: textColor,
+                                            ),
+                                          ),
+                                          const SizedBox(
+                                            height: AppTokens.space1,
+                                          ),
+                                          Text(
+                                            'Vol 24h: $volFormatted',
+                                            style: TextStyle(
+                                              color: palette.muted,
+                                              fontSize: 12,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                );
+                                final quote = Column(
+                                  crossAxisAlignment: CrossAxisAlignment.end,
                                   children: [
                                     Text(
-                                      t.coinSymbol,
+                                      '\$$priceFormatted',
                                       style: TextStyle(
                                         fontWeight: FontWeight.bold,
                                         fontSize: 15,
                                         color: textColor,
                                       ),
                                     ),
-                                    const SizedBox(height: AppTokens.space1),
-                                    Text(
-                                      'Vol 24h: $volFormatted',
-                                      style: TextStyle(
-                                        color: palette.muted,
-                                        fontSize: 12,
+                                    const SizedBox(height: AppTokens.space2),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: AppTokens.space2,
+                                        vertical: AppTokens.space1,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: changeColor,
+                                        borderRadius: BorderRadius.circular(
+                                          AppTokens.radiusSmall,
+                                        ),
+                                      ),
+                                      child: Text(
+                                        '$changeSign${currentChangePercent.toStringAsFixed(2)}%',
+                                        style: TextStyle(
+                                          color: palette.onStrong,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 12,
+                                        ),
                                       ),
                                     ),
                                   ],
-                                ),
-                              ),
-                            ],
-                          );
-                          final quote = Column(
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              Text(
-                                '\$$priceFormatted',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 15,
-                                  color: textColor,
-                                ),
-                              ),
-                              const SizedBox(height: AppTokens.space2),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: AppTokens.space2,
-                                  vertical: AppTokens.space1,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: changeColor,
-                                  borderRadius: BorderRadius.circular(
-                                    AppTokens.radiusSmall,
-                                  ),
-                                ),
-                                child: Text(
-                                  '$changeSign${currentChangePercent.toStringAsFixed(2)}%',
-                                  style: TextStyle(
-                                    color: palette.onStrong,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          );
+                                );
 
-                          if (constraints.maxWidth < 400) {
-                            return Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                coinIdentity,
-                                const SizedBox(height: AppTokens.space2),
-                                Align(
-                                  alignment: Alignment.centerRight,
-                                  child: quote,
-                                ),
-                              ],
-                            );
-                          }
+                                if (constraints.maxWidth < 400) {
+                                  return Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: [
+                                      coinIdentity,
+                                      const SizedBox(height: AppTokens.space2),
+                                      Align(
+                                        alignment: Alignment.centerRight,
+                                        child: quote,
+                                      ),
+                                    ],
+                                  );
+                                }
 
-                          return Row(
-                            children: [
-                              Expanded(child: coinIdentity),
-                              const SizedBox(width: AppTokens.space3),
-                              quote,
-                            ],
-                          );
-                        },
-                      ),
-                    ),
-                  );
-                },
-              );
-            },
-          ),
+                                return Row(
+                                  children: [
+                                    Expanded(child: coinIdentity),
+                                    const SizedBox(width: AppTokens.space3),
+                                    quote,
+                                  ],
+                                );
+                              },
+                            ),
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

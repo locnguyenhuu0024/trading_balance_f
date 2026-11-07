@@ -28,9 +28,14 @@ Observed Effective Effort: unavailable
 
 ## Stage instruction (current)
 
-This task runs in stages because long runs have ended early. Stages 1 and 2 are committed: fractal errors surface, `MarketSource`, `BinanceClient`, `BinanceMarket` and the adapter members exist and are tested.
+This task runs in stages because long runs have ended early. Stages 1 to 3 are committed: Market and BMAG follow the selected exchange.
 
-**Current stage 3 of 4, do only this:** the Market and BMAG parts of steps 5 and 7 of section 6. `market_screen.dart` and `fractal_provider.dart` select the source through the registry using `ref.watch(exchangeScopeProvider)`. Add `Nguồn giá: <exchange label>` to both screens, and Binance product chips on Market from `marketProducts`, default USD-M. OKX queries and results stay identical. Stage tests: with Binance registered by override, Market lists fixture rows and shows the source; BMAG computes from fixture klines with hand-derived values; a Binance candle failure gives an error state; OKX tests unchanged. Finish by returning the structured report.
+**Current stage 4 of 4, do only these two things:**
+
+1. BMAG audit finding AUD-118-01: `fractal_screen.dart` uses `skipLoadingOnReload: true` on `fractalDataProvider`, and that provider rebuilds in place on a scope change, so the former exchange's fractal data stays visible while the new read loads. Key `fractalDataProvider` by `ExchangeScope` as a family, so a switch shows loading and never former data. Keep the same-scope reload behavior. Add a test: with Binance selected after OKX and the new read pending, no OKX value is visible.
+2. The Support/Resistance parts of steps 5, 6 and 7 of section 6: `supportResistanceMarketRepositoryProvider` returns the selected exchange's `MarketSource`, levels and watchlist providers follow scope, watchlists are stored per exchange with the exact keys given, identifier validation is per exchange, and the screen shows `Nguồn giá: <exchange label>`. OKX watchlist value and behavior stay identical. Tests: an OKX watchlist already stored survives selecting Binance and back; `BTCUSDT` is accepted for Binance and not validated by the OKX patterns; levels from fixture klines with hand-derived values.
+
+Finish by returning the structured report.
 
 ## 2. Objective
 
