@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import '../../../core/exchange/exchange_models.dart';
 import '../domain/models.dart';
 
 /// Storage boundary for the single watchlist snapshot.
@@ -68,10 +69,16 @@ class WatchlistSnapshot {
 }
 
 class WatchlistStore {
-  WatchlistStore({required WatchlistStorage storage}) : _storage = storage;
+  WatchlistStore({
+    required WatchlistStorage storage,
+    this.exchange = ExchangeId.okx,
+  }) : _storage = storage;
 
   static const String storageKey = 'support_resistance_watchlist_snapshot';
+  static const String binanceStorageKey =
+      'support_resistance_watchlist_snapshot_binance';
   static const int schemaVersion = 1;
+  final ExchangeId exchange;
 
   final WatchlistStorage _storage;
 
@@ -120,10 +127,13 @@ class WatchlistStore {
     }
   }
 
-  static bool hasValidInstrumentId(
+  bool hasValidInstrumentId(
     SupportResistanceMarketMode mode,
     String instrumentId,
   ) {
+    if (exchange == ExchangeId.binance) {
+      return RegExp(r'^[A-Z0-9]+USDT$').hasMatch(instrumentId);
+    }
     final pattern = mode == SupportResistanceMarketMode.spot
         ? RegExp(r'^[A-Z0-9]+-USDT$')
         : RegExp(r'^[A-Z0-9]+-USDT-SWAP$');
@@ -144,7 +154,7 @@ class WatchlistStore {
     return SupportResistanceTimeframe.h6;
   }
 
-  static List<String> _sanitizeInstrumentIds(
+  List<String> _sanitizeInstrumentIds(
     Object? raw,
     SupportResistanceMarketMode mode,
   ) {

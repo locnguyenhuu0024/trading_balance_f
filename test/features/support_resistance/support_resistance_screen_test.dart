@@ -3,6 +3,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:trading_balance_f/core/exchange/exchange_models.dart';
+import 'package:trading_balance_f/core/exchange/exchange_scope.dart';
+import 'package:trading_balance_f/core/exchange/exchange_registry.dart';
+import 'package:trading_balance_f/exchanges/okx/okx_adapter.dart';
+import '../../support/fake_exchange_adapter.dart';
 import 'package:trading_balance_f/features/support_resistance/data/watchlist_store.dart';
 import 'package:trading_balance_f/features/support_resistance/domain/models.dart';
 import 'package:trading_balance_f/features/support_resistance/presentation/providers/watchlist_provider.dart';
@@ -10,6 +15,53 @@ import 'package:trading_balance_f/features/support_resistance/presentation/provi
 import 'package:trading_balance_f/features/support_resistance/presentation/support_resistance_screen.dart';
 
 void main() {
+  testWidgets('Support Resistance displays Binance as the price source', (
+    tester,
+  ) async {
+    final watchlist = await _watchlistController(instruments: []);
+    final levels = SupportResistanceLevelsController(
+      loadLevels:
+          ({
+            required marketMode,
+            required instrumentId,
+            required timeframe,
+          }) async => throw StateError('unexpected'),
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          exchangeRegistryProvider.overrideWith(
+            (ref) => [
+              const ExchangeRegistration(
+                profile: ConnectionProfile(
+                  connectionId: 'okx-default',
+                  exchange: ExchangeId.okx,
+                  label: 'OKX',
+                ),
+                adapter: OkxAdapter(),
+              ),
+              ExchangeRegistration(
+                profile: const ConnectionProfile(
+                  connectionId: 'binance',
+                  exchange: ExchangeId.binance,
+                  label: 'Binance',
+                ),
+                adapter: FakeExchangeAdapter(),
+              ),
+            ],
+          ),
+          selectedConnectionIdProvider.overrideWith((ref) => 'binance'),
+          supportResistanceWatchlistProvider.overrideWith((ref) => watchlist),
+          supportResistanceLevelsProvider.overrideWith((ref) => levels),
+        ],
+        child: const MaterialApp(home: SupportResistanceScreen()),
+      ),
+    );
+    await tester.pump();
+    expect(find.text('Nguồn giá: Binance'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   test(
     'RED-30 ignores obsolete responses and isolates one coin failure',
     () async {

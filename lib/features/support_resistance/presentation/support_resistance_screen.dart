@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/exchange/exchange_registry.dart';
+import '../../../core/exchange/exchange_scope.dart';
 import '../../../core/formatting/adaptive_number_format.dart';
 import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/widgets/manual_refresh_button.dart';
@@ -37,6 +39,12 @@ class _SupportResistanceScreenState
 
   @override
   Widget build(BuildContext context) {
+    final scope = ref.watch(exchangeScopeProvider);
+    final label = ref
+        .watch(exchangeRegistryProvider)
+        .firstWhere((entry) => entry.profile.connectionId == scope.connectionId)
+        .profile
+        .label;
     final watchlist = ref.watch(supportResistanceWatchlistProvider);
     final levels = ref.watch(supportResistanceLevelsProvider);
     final selection = watchlist.snapshot;
@@ -51,6 +59,7 @@ class _SupportResistanceScreenState
         )
         .toList(growable: false);
     final signature = <Object>[
+      scope,
       selection.marketMode,
       selection.timeframe,
       ...instrumentIds,
@@ -102,6 +111,7 @@ class _SupportResistanceScreenState
                       ),
                     ],
                   ),
+                  Text('Nguồn giá: $label', style: theme.textTheme.bodySmall),
                   const SizedBox(height: 12),
                   Semantics(
                     label: 'Thị trường',

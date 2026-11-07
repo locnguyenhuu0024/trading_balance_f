@@ -1,6 +1,6 @@
 # Task 118 — Analysis screens and Binance public market
 
-Status: PENDING
+Status: PASS
 Agent Role: implementation_executor
 Executor Class: E3
 Target Model: gpt-6.1-terra
@@ -183,4 +183,10 @@ Return `BLOCKED` when repository evidence contradicts this contract, a design de
 
 ## 12. Coordinator Audit
 
-Verdict: PENDING
+Attempt: bf65953abd5b4dd4a524fd4c4ad29745
+Dispatch route compliance: UNVERIFIABLE (requested gpt-6.1-terra/high, explicit).
+Parent route inheritance: NO
+RED and GREEN executed by the coordinator on the host, RED first (VAL-005): candle transport failure, separate OKX and Binance watchlists with BTCUSDT, Binance 429 lane isolation; then fixture rows, BMAG, S/R levels, source labels, pending scope switch
+Regression and buildability, coordinator-observed: 223 tests passed in fractal, S/R, market, tools, Binance, exchange, portfolio, orders, widget, Strategy market repository; analyzer 0 errors; web build pass. Delivered over four stages because long runs ended early; AUD-118-01 (former BMAG data visible during a switch) found and fixed at stage 4.
+Task buildability gate: PASS
+Verdict: PASS

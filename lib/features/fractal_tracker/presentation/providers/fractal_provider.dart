@@ -4,6 +4,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/exchange/exchange_registry.dart';
+import '../../../../core/exchange/exchange_models.dart';
 import '../../../../core/exchange/market_source.dart';
 import '../../../../core/exchange/exchange_scope.dart';
 import '../../../../core/timezone/app_time_zone.dart';
@@ -133,62 +134,62 @@ int _yearMonthlyCandleMidpointMs(int candleTimestampMs) {
           2;
 }
 
-final fractalDataProvider = FutureProvider.autoDispose<List<FractalData>>((
-  ref,
-) async {
-  final scope = ref.watch(exchangeScopeProvider);
-  final registry = ref.watch(exchangeRegistryProvider);
-  final source = registry
-      .firstWhere((entry) => entry.profile.connectionId == scope.connectionId)
-      .adapter
-      .market(ref);
+final fractalDataProvider = FutureProvider.autoDispose
+    .family<List<FractalData>, ExchangeScope>((ref, scope) async {
+      final registry = ref.watch(exchangeRegistryProvider);
+      final source = registry
+          .firstWhere(
+            (entry) => entry.profile.connectionId == scope.connectionId,
+          )
+          .adapter
+          .market(ref);
 
-  final targetMonth = ref.watch(selectedMonthProvider);
-  final targetYear = ref.watch(selectedYearProvider);
-  final targetCoin = ref.watch(selectedCoinProvider); // THÊM MỚI
-  final timeZoneId = ref.watch(appTimeZoneProvider);
+      final targetMonth = ref.watch(selectedMonthProvider);
+      final targetYear = ref.watch(selectedYearProvider);
+      final targetCoin = ref.watch(selectedCoinProvider); // THÊM MỚI
+      final timeZoneId = ref.watch(appTimeZoneProvider);
 
-  final results = await Future.wait([
-    _fetchAndProcess(
-      source,
-      'D1',
-      fractalBarForTimeframe('D1'),
-      24,
-      null,
-      targetCoin,
-      timeZoneId,
-    ),
-    _fetchAndProcess(
-      source,
-      'W1',
-      fractalBarForTimeframe('W1'),
-      42,
-      null,
-      targetCoin,
-      timeZoneId,
-    ),
-    _fetchAndProcess(
-      source,
-      'M1',
-      fractalBarForTimeframe('M1'),
-      31,
-      targetMonth,
-      targetCoin,
-      timeZoneId,
-    ),
-    _fetchAndProcess(
-      source,
-      'Y1',
-      fractalBarForTimeframe('Y1'),
-      12,
-      DateTime(targetYear),
-      targetCoin,
-      timeZoneId,
-    ),
-  ]);
+      final results = await Future.wait([
+        _fetchAndProcess(
+          source,
+          'D1',
+          fractalBarForTimeframe('D1'),
+          24,
+          null,
+          targetCoin,
+          timeZoneId,
+        ),
+        _fetchAndProcess(
+          source,
+          'W1',
+          fractalBarForTimeframe('W1'),
+          42,
+          null,
+          targetCoin,
+          timeZoneId,
+        ),
+        _fetchAndProcess(
+          source,
+          'M1',
+          fractalBarForTimeframe('M1'),
+          31,
+          targetMonth,
+          targetCoin,
+          timeZoneId,
+        ),
+        _fetchAndProcess(
+          source,
+          'Y1',
+          fractalBarForTimeframe('Y1'),
+          12,
+          DateTime(targetYear),
+          targetCoin,
+          timeZoneId,
+        ),
+      ]);
 
-  return results.whereType<FractalData>().toList();
-});
+      return results.whereType<FractalData>().toList();
+    });
 
 Future<FractalData?> _fetchAndProcess(
   MarketSource source,

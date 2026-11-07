@@ -50,7 +50,9 @@ void main() {
           secureStorageProvider.overrideWithValue(
             WebStorageHelper(preferences),
           ),
-          fractalDataProvider.overrideWith((ref) async => <FractalData>[]),
+          fractalDataProvider.overrideWith(
+            (ref, scope) async => <FractalData>[],
+          ),
           supportResistanceWatchlistProvider.overrideWith((ref) => watchlist),
           supportResistanceLevelsProvider.overrideWith((ref) => levels),
           vndExchangeRateProvider.overrideWith((ref) async => 25400),

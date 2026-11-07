@@ -33,21 +33,29 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
     super.initState();
     // THÊM MỚI: Tự động invalidate (làm mới) provider mỗi 1 giây
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (_manualRefreshInFlight || ref.read(fractalDataProvider).isLoading) {
+      if (_manualRefreshInFlight ||
+          ref
+              .read(fractalDataProvider(ref.read(exchangeScopeProvider)))
+              .isLoading) {
         return;
       }
-      ref.invalidate(fractalDataProvider);
+      ref.invalidate(fractalDataProvider(ref.read(exchangeScopeProvider)));
     });
   }
 
   Future<void> _refreshFractal() async {
-    if (_manualRefreshInFlight || ref.read(fractalDataProvider).isLoading) {
+    if (_manualRefreshInFlight ||
+        ref
+            .read(fractalDataProvider(ref.read(exchangeScopeProvider)))
+            .isLoading) {
       return;
     }
     setState(() => _manualRefreshInFlight = true);
     try {
-      ref.invalidate(fractalDataProvider);
-      await ref.read(fractalDataProvider.future);
+      ref.invalidate(fractalDataProvider(ref.read(exchangeScopeProvider)));
+      await ref.read(
+        fractalDataProvider(ref.read(exchangeScopeProvider)).future,
+      );
     } catch (_) {
       // The watched provider renders the read error.
     } finally {
@@ -64,8 +72,8 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final fractalAsync = ref.watch(fractalDataProvider);
     final scope = ref.watch(exchangeScopeProvider);
+    final fractalAsync = ref.watch(fractalDataProvider(scope));
     final label = ref
         .watch(exchangeRegistryProvider)
         .firstWhere((entry) => entry.profile.connectionId == scope.connectionId)

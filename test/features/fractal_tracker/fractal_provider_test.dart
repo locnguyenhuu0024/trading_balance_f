@@ -19,7 +19,9 @@ void main() {
     final client = _FractalFixtureClient();
     final container = _binanceContainer(client);
     addTearDown(container.dispose);
-    final data = await container.read(fractalDataProvider.future);
+    final data = await container.read(
+      fractalDataProvider(container.read(exchangeScopeProvider)).future,
+    );
     final month = data.firstWhere((item) => item.timeframeLabel == 'M1');
     expect(month.quarters[0].open, 10);
     expect(month.quarters[0].close, 12);
@@ -34,7 +36,9 @@ void main() {
     final container = _binanceContainer(_FractalFixtureClient(fail: true));
     addTearDown(container.dispose);
     await expectLater(
-      container.read(fractalDataProvider.future),
+      container.read(
+        fractalDataProvider(container.read(exchangeScopeProvider)).future,
+      ),
       throwsStateError,
     );
   });
@@ -59,7 +63,9 @@ void main() {
     );
     addTearDown(container.dispose);
     await expectLater(
-      container.read(fractalDataProvider.future),
+      container.read(
+        fractalDataProvider(container.read(exchangeScopeProvider)).future,
+      ),
       throwsStateError,
     );
   });

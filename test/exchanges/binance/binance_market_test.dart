@@ -44,8 +44,14 @@ class FixtureAdapter implements HttpClientAdapter {
       };
     } else if (options.path.endsWith('klines')) {
       data = [
-        [1704067200000, '10', '15', '8', '12', '99'],
+        [1704067200000, '10', '13', '9', '12', '99'],
+        [1704153600000, '10', '14', '8', '12', '99'],
+        [1704240000000, '10', '20', '5', '12', '99'],
+        [1704326400000, '10', '14', '8', '12', '99'],
+        [1704412800000, '10', '13', '9', '12', '99'],
       ];
+    } else if (options.queryParameters.containsKey('symbol')) {
+      data = {'symbol': 'BTCUSDT', 'lastPrice': '12'};
     } else {
       data = [
         for (var i = 0; i < 55; i++)
@@ -104,7 +110,7 @@ void main() {
           coordinator: RequestCoordinator(minimumSpacing: Duration.zero),
           dio: Dio()..httpClientAdapter = fixture,
         ),
-        clock: () => DateTime.utc(2024, 1, 3),
+        clock: () => DateTime.utc(2024, 1, 10),
       );
       expect(
         (await market.getInstruments(
@@ -127,18 +133,25 @@ void main() {
         marketMode: SupportResistanceMarketMode.spot,
         instrumentId: 'BTCUSDT',
         timeframe: SupportResistanceTimeframe.d1,
-      )).single;
+      ))[2];
       expect(
         [candle.open, candle.high, candle.low, candle.close],
-        [10, 15, 8, 12],
+        [10, 20, 5, 12],
       );
+      final levels = await market.loadLevels(
+        marketMode: SupportResistanceMarketMode.spot,
+        instrumentId: 'BTCUSDT',
+        timeframe: SupportResistanceTimeframe.d1,
+      );
+      expect(levels.analysis.supports.map((e) => e.price), [5]);
+      expect(levels.analysis.resistances.map((e) => e.price), [20]);
       final raw = (await market.fractalCandles(
         coin: 'BTC',
         bar: '1Dutc',
         limit: 1,
         endTime: 1704153600000,
-      )).single;
-      expect(raw.sublist(0, 6), ['1704067200000', '10', '15', '8', '12', '99']);
+      )).last;
+      expect(raw.sublist(0, 6), ['1704067200000', '10', '13', '9', '12', '99']);
       expect(fixture.paths.any((p) => p.contains('/fapi/v1/')), isTrue);
       expect(fixture.paths.any((p) => p.contains('/api/v3/')), isTrue);
     },
