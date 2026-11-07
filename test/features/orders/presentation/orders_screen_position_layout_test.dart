@@ -208,13 +208,10 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    expect(find.text('Quản lý Giao dịch'), findsOneWidget);
+    expect(find.text('Lệnh'), findsOneWidget);
     expect(find.bySemanticsLabel(RegExp('Chưa đăng nhập')), findsOneWidget);
     final titleRow = find
-        .ancestor(
-          of: find.text('Quản lý Giao dịch'),
-          matching: find.byType(Row),
-        )
+        .ancestor(of: find.text('Lệnh'), matching: find.byType(Row))
         .first;
     expect(
       find.descendant(of: titleRow, matching: find.byType(Tooltip)),

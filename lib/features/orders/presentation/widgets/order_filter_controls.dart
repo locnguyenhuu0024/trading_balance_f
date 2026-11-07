@@ -101,6 +101,33 @@ class OrderFilterControls extends StatelessWidget {
       ),
     );
 
+    final tabRow = SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          for (final option in _tabs)
+            TextButton(
+              onPressed: () => onTabChanged(option.$1),
+              style: TextButton.styleFrom(
+                minimumSize: const Size(48, 48),
+                foregroundColor: textColor,
+              ),
+              child: Text(
+                option.$1 == OrderTab.pending ? 'Chờ khớp' : option.$2,
+                style: TextStyle(
+                  fontWeight: currentTab == option.$1
+                      ? FontWeight.bold
+                      : FontWeight.normal,
+                  decoration: currentTab == option.$1
+                      ? TextDecoration.underline
+                      : TextDecoration.none,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+
     if (binanceProducts != null) {
       final options = <(String, String)>[
         ('ALL', 'Tất cả'),
@@ -111,6 +138,7 @@ class OrderFilterControls extends StatelessWidget {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          tabRow,
           SizedBox(width: 140, child: tabSelect),
           Wrap(
             spacing: 6,
@@ -188,15 +216,21 @@ class OrderFilterControls extends StatelessWidget {
       ),
     );
 
-    return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 286),
-      child: Row(
-        children: [
-          Expanded(child: tabSelect),
-          const SizedBox(width: 6),
-          Expanded(child: filterSelect),
-        ],
-      ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        tabRow,
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 286),
+          child: Row(
+            children: [
+              Expanded(child: tabSelect),
+              const SizedBox(width: 6),
+              Expanded(child: filterSelect),
+            ],
+          ),
+        ),
+      ],
     );
   }
 

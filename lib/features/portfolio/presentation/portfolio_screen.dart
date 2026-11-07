@@ -192,88 +192,102 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
 
     return Scaffold(
       backgroundColor: bgColor,
-      appBar: AppBar(
-        backgroundColor: bgColor,
-        foregroundColor: textColor,
-        elevation: 0,
-        centerTitle: true,
-        actions: [
-          ManualRefreshButton(
-            buttonKey: const Key('portfolio-manual-refresh'),
-            onRefresh: _refreshPortfolioAndRate,
-            isBusy:
-                _pageRefreshInFlight ||
-                _portfolioRefreshInFlight ||
-                portfolioAsyncValue.isLoading ||
-                exchangeRateAsync.isLoading,
-          ),
-          IconButton(
-            icon: Icon(
-              isBalanceHidden ? Icons.visibility_off : Icons.visibility,
-              size: 22,
-            ),
-            tooltip: isBalanceHidden ? 'Hiện số dư' : 'Ẩn số dư',
-            onPressed: () {
-              ref.read(hideBalanceProvider.notifier).state = !isBalanceHidden;
-            },
-          ),
-        ],
-      ),
-      body: NavigationContentFrame(
-        child: Column(
-          children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(16, 12, 16, 0),
-              child: ScopeBar(),
-            ),
-            Expanded(
-              child: RefreshIndicator(
-                color: palette.ink,
-                backgroundColor: palette.raised,
-                onRefresh: _refreshPortfolioAndRate,
-                child:
-                    !portfolioAsyncValue.hasValue &&
-                        portfolioAsyncValue.isLoading
-                    ? Center(child: CircularProgressIndicator(color: textColor))
-                    : portfolioAsyncValue.when(
-                        skipLoadingOnReload: false,
-                        loading: () => Center(
-                          child: CircularProgressIndicator(color: textColor),
+      body: SafeArea(
+        child: NavigationContentFrame(
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
+                child: Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'Tài sản',
+                        style: TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
                         ),
-                        error: (error, stack) {
-                          _syncTickerSubscription(const <String>[]);
-                          return AccountStateView.fromError(
-                            error: error,
-                            registration: ref
-                                .read(exchangeRegistryProvider)
-                                .firstWhere(
-                                  (entry) =>
-                                      entry.profile.connectionId ==
-                                      scope.connectionId,
-                                ),
-                            onRetry: _refreshPortfolioAndRate,
-                          );
-                        },
-                        data: (data) {
-                          _syncTickerSubscription(
-                            isOkx
-                                ? data.balances.map((e) => e.asset).toList()
-                                : const <String>[],
-                          );
-                          return _buildPortfolioData(
-                            data,
-                            isOkx,
-                            livePrices,
-                            isBalanceHidden,
-                            isDark,
-                            currency,
-                            exchangeRate,
-                          );
-                        },
                       ),
+                    ),
+                    ManualRefreshButton(
+                      buttonKey: const Key('portfolio-manual-refresh'),
+                      onRefresh: _refreshPortfolioAndRate,
+                      isBusy:
+                          _pageRefreshInFlight ||
+                          _portfolioRefreshInFlight ||
+                          portfolioAsyncValue.isLoading ||
+                          exchangeRateAsync.isLoading,
+                    ),
+                    IconButton(
+                      icon: Icon(
+                        isBalanceHidden
+                            ? Icons.visibility_off
+                            : Icons.visibility,
+                        size: 22,
+                      ),
+                      tooltip: isBalanceHidden ? 'Hiện số dư' : 'Ẩn số dư',
+                      onPressed: () =>
+                          ref.read(hideBalanceProvider.notifier).state =
+                              !isBalanceHidden,
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+              const Padding(
+                padding: EdgeInsets.fromLTRB(24, 8, 24, 0),
+                child: ScopeBar(),
+              ),
+              Expanded(
+                child: RefreshIndicator(
+                  color: palette.ink,
+                  backgroundColor: palette.raised,
+                  onRefresh: _refreshPortfolioAndRate,
+                  child:
+                      !portfolioAsyncValue.hasValue &&
+                          portfolioAsyncValue.isLoading
+                      ? Center(
+                          child: CircularProgressIndicator(color: textColor),
+                        )
+                      : portfolioAsyncValue.when(
+                          skipLoadingOnReload: false,
+                          loading: () => Center(
+                            child: CircularProgressIndicator(color: textColor),
+                          ),
+                          error: (error, stack) {
+                            _syncTickerSubscription(const <String>[]);
+                            return AccountStateView.fromError(
+                              error: error,
+                              registration: ref
+                                  .read(exchangeRegistryProvider)
+                                  .firstWhere(
+                                    (entry) =>
+                                        entry.profile.connectionId ==
+                                        scope.connectionId,
+                                  ),
+                              onRetry: _refreshPortfolioAndRate,
+                            );
+                          },
+                          data: (data) {
+                            _syncTickerSubscription(
+                              isOkx
+                                  ? data.balances.map((e) => e.asset).toList()
+                                  : const <String>[],
+                            );
+                            return _buildPortfolioData(
+                              data,
+                              isOkx,
+                              livePrices,
+                              isBalanceHidden,
+                              isDark,
+                              currency,
+                              exchangeRate,
+                            );
+                          },
+                        ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -326,13 +340,11 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
 
     final palette = AppPalette.forBrightness(isDark);
     final textColor = palette.ink;
-    final cardColor = palette.raised;
-    final borderColor = palette.border;
     final subtitleColor = palette.muted;
     final iconBgColor = palette.surface;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
       children: [
         _buildAssetSummary(
           totalMissing: !isOkx && accountData.total == null,
@@ -346,6 +358,21 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
           exchangeRate: exchangeRate,
         ),
 
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+          child: Column(
+            children: [
+              _infoRow(
+                'Phạm vi dữ liệu',
+                '${ref.watch(exchangeRegistryProvider).firstWhere((entry) => entry.profile.connectionId == ref.watch(exchangeScopeProvider).connectionId).profile.label} / Chính',
+              ),
+              _infoRow(
+                'Tiền tệ hiển thị',
+                CurrencyDisplayMode.labelFor(currency),
+              ),
+            ],
+          ),
+        ),
         if (!isOkx)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -369,60 +396,53 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
         ),
 
         // DANH SÁCH COIN
-        Expanded(
-          child: accountData.balances.isEmpty
-              ? Center(
-                  child: Text(
-                    'Không có tài sản nào.',
-                    style: TextStyle(color: subtitleColor, fontSize: 12),
-                  ),
-                )
-              : ListView.builder(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 4,
-                  ),
-                  itemCount: accountData.balances.length,
-                  itemBuilder: (context, index) {
-                    final coin = accountData.balances[index];
-                    final double eq = double.tryParse(coin.total ?? '') ?? 0.0;
-                    final String? realtimePriceStr = livePrices[coin.asset];
+        accountData.balances.isEmpty
+            ? Center(
+                child: Text(
+                  'Không có tài sản nào.',
+                  style: TextStyle(color: subtitleColor, fontSize: 12),
+                ),
+              )
+            : ListView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 4,
+                ),
+                itemCount: accountData.balances.length,
+                itemBuilder: (context, index) {
+                  final coin = accountData.balances[index];
+                  final double eq = double.tryParse(coin.total ?? '') ?? 0.0;
+                  final String? realtimePriceStr = livePrices[coin.asset];
 
-                    double currentUsdValue = 0.0;
-                    if (realtimePriceStr != null) {
-                      currentUsdValue =
-                          eq * (double.tryParse(realtimePriceStr) ?? 0.0);
-                    } else {
-                      currentUsdValue =
-                          double.tryParse(coin.valueUsdt ?? '') ?? 0.0;
-                    }
+                  double currentUsdValue = 0.0;
+                  if (realtimePriceStr != null) {
+                    currentUsdValue =
+                        eq * (double.tryParse(realtimePriceStr) ?? 0.0);
+                  } else {
+                    currentUsdValue =
+                        double.tryParse(coin.valueUsdt ?? '') ?? 0.0;
+                  }
 
-                    // Ẩn các loại coin có giá trị nhỏ hơn $0.01 (dust)
-                    final unpriced =
-                        !isOkx &&
-                        realtimePriceStr == null &&
-                        coin.valueUsdt == null;
-                    if (!unpriced && currentUsdValue < 0.01)
-                      return const SizedBox.shrink();
+                  // Ẩn các loại coin có giá trị nhỏ hơn $0.01 (dust)
+                  final unpriced =
+                      !isOkx &&
+                      realtimePriceStr == null &&
+                      coin.valueUsdt == null;
+                  if (!unpriced && currentUsdValue < 0.01)
+                    return const SizedBox.shrink();
 
-                    return Card(
-                      elevation: 0,
-                      color: cardColor,
-                      margin: const EdgeInsets.only(bottom: 6),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(
-                          AppTokens.radiusMedium,
-                        ),
-                        side: BorderSide(color: borderColor),
-                      ),
-                      child: ListTile(
+                  return Column(
+                    children: [
+                      ListTile(
                         contentPadding: const EdgeInsets.symmetric(
                           horizontal: 12,
                           vertical: 2,
                         ),
                         leading: CryptoIcon(
                           symbol: coin.asset,
-                          size: 34,
+                          size: 40,
                           backgroundColor: iconBgColor,
                           textColor: textColor,
                           textSize: 14,
@@ -483,13 +503,25 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
                                 ),
                               ),
                       ),
-                    );
-                  },
-                ),
-        ),
+                      Divider(height: 1, color: palette.border),
+                    ],
+                  );
+                },
+              ),
       ],
     );
   }
+
+  Widget _infoRow(String label, String value) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 8),
+    child: Row(
+      children: [
+        Expanded(child: Text(label)),
+        const SizedBox(width: 12),
+        Flexible(child: Text(value, textAlign: TextAlign.right)),
+      ],
+    ),
+  );
 
   Widget _buildAssetSummary({
     required bool totalMissing,
@@ -649,43 +681,51 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
 
     return Padding(
       key: const Key('portfolio-asset-summary'),
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          if (constraints.maxWidth >= 640) {
-            return Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Expanded(flex: 2, child: totalBlock),
-                Container(
-                  width: 1,
-                  height: 56,
-                  margin: const EdgeInsets.symmetric(horizontal: 20),
-                  color: palette.border,
-                ),
-                Expanded(child: capitalBlock),
-                const SizedBox(width: 20),
-                Expanded(child: pnlBlock),
-              ],
-            );
-          }
-
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              totalBlock,
-              const SizedBox(height: 14),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.fromLTRB(24, 8, 24, 12),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: palette.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: palette.border),
+        ),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            if (constraints.maxWidth >= 640) {
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
+                  Expanded(flex: 2, child: totalBlock),
+                  Container(
+                    width: 1,
+                    height: 56,
+                    margin: const EdgeInsets.symmetric(horizontal: 20),
+                    color: palette.border,
+                  ),
                   Expanded(child: capitalBlock),
-                  const SizedBox(width: 16),
+                  const SizedBox(width: 20),
                   Expanded(child: pnlBlock),
                 ],
-              ),
-            ],
-          );
-        },
+              );
+            }
+
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                totalBlock,
+                const SizedBox(height: 14),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(child: capitalBlock),
+                    const SizedBox(width: 16),
+                    Expanded(child: pnlBlock),
+                  ],
+                ),
+              ],
+            );
+          },
+        ),
       ),
     );
   }

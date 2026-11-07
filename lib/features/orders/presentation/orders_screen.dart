@@ -173,11 +173,6 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     final palette = AppPalette.of(context);
     final bgColor = palette.background;
     final textColor = palette.ink;
-    final textScale = MediaQuery.textScalerOf(context).scale(1.0);
-    final toolbarHeight =
-        MediaQuery.sizeOf(context).width <= 400 && textScale > 1
-        ? kToolbarHeight + (textScale - 1) * 24
-        : kToolbarHeight;
     final filterControls = OrderFilterControls(
       binanceProducts: scope.exchange == ExchangeId.binance
           ? ref
@@ -209,98 +204,101 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
 
     return Scaffold(
       backgroundColor: bgColor,
-      appBar: AppBar(
-        backgroundColor: bgColor,
-        foregroundColor: textColor,
-        elevation: 0,
-        centerTitle: true,
-        toolbarHeight: toolbarHeight,
-        title: backendFeaturesEnabled
-            ? Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Flexible(
-                    child: Text(
-                      'Quản lý Giao dịch',
-                      maxLines: 2,
-                      softWrap: true,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 16,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Tooltip(
-                    message: isTradeAuthenticated
-                        ? 'Đã đăng nhập'
-                        : 'Chưa đăng nhập',
-                    child: Semantics(
-                      label: isTradeAuthenticated
-                          ? 'Đã đăng nhập'
-                          : 'Chưa đăng nhập',
-                      child: Icon(
-                        isTradeAuthenticated
-                            ? Icons.verified_user_outlined
-                            : Icons.lock_outline,
-                        size: 18,
-                        color: isTradeAuthenticated
-                            ? palette.positive
-                            : Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-                ],
-              )
-            : const Text(
-                'Quản lý Giao dịch',
-                maxLines: 2,
-                softWrap: true,
-                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
-              ),
-        actions: [
-          ManualRefreshButton(
-            buttonKey: const Key('orders-manual-refresh'),
-            onRefresh:
-                currentTab == OrderTab.positions && currentFilter == 'SPOT'
-                ? null
-                : _refreshCurrentRead,
-            isBusy: _manualRefreshInFlight || isCurrentReadLoading,
-          ),
-        ],
-      ),
-      body: NavigationContentFrame(
-        child: Column(
-          children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(16, 12, 16, 0),
-              child: ScopeBar(),
-            ),
-            if (currentTab == OrderTab.positions && backendFeaturesEnabled)
-              TradeAccountControls(filterControls: filterControls)
-            else
+      body: SafeArea(
+        child: NavigationContentFrame(
+          child: Column(
+            children: [
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-                child: filterControls,
+                padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
+                child: Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'Lệnh',
+                        style: TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    if (backendFeaturesEnabled)
+                      Tooltip(
+                        message: isTradeAuthenticated
+                            ? 'Đã đăng nhập'
+                            : 'Chưa đăng nhập',
+                        child: Semantics(
+                          label: isTradeAuthenticated
+                              ? 'Đã đăng nhập'
+                              : 'Chưa đăng nhập',
+                          child: Icon(
+                            isTradeAuthenticated
+                                ? Icons.verified_user_outlined
+                                : Icons.lock_outline,
+                            size: 18,
+                            color: isTradeAuthenticated
+                                ? palette.positive
+                                : Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                    ManualRefreshButton(
+                      buttonKey: const Key('orders-manual-refresh'),
+                      onRefresh:
+                          currentTab == OrderTab.positions &&
+                              currentFilter == 'SPOT'
+                          ? null
+                          : _refreshCurrentRead,
+                      isBusy: _manualRefreshInFlight || isCurrentReadLoading,
+                    ),
+                  ],
+                ),
               ),
-
-            Divider(height: 16, color: palette.border),
-
-            // --- Nội dung chính ---
-            Expanded(
-              child: _buildBodyContent(
-                context,
-                currentTab,
-                currentFilter,
-                isDark,
-                currency,
-                exchangeRate,
-                isBalanceHidden,
-                timeZoneId,
-                backendFeaturesEnabled,
+              const Padding(
+                padding: EdgeInsets.fromLTRB(24, 8, 24, 0),
+                child: ScopeBar(),
               ),
-            ),
-          ],
+              if (currentTab == OrderTab.positions && backendFeaturesEnabled)
+                TradeAccountControls(filterControls: filterControls)
+              else
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                  child: filterControls,
+                ),
+
+              if (currentTab == OrderTab.positions)
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 24,
+                    vertical: 8,
+                  ),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Vị thế của ${ref.watch(exchangeRegistryProvider).firstWhere((entry) => entry.profile.connectionId == scope.connectionId).profile.label} / Chính',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ),
+              Divider(height: 16, color: palette.border),
+
+              // --- Nội dung chính ---
+              Expanded(
+                child: _buildBodyContent(
+                  context,
+                  currentTab,
+                  currentFilter,
+                  isDark,
+                  currency,
+                  exchangeRate,
+                  isBalanceHidden,
+                  timeZoneId,
+                  backendFeaturesEnabled,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

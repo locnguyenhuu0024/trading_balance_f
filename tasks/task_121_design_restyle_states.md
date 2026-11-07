@@ -28,17 +28,20 @@ Observed Effective Effort: unavailable
 
 ## Stage instruction (current)
 
-This task runs in stages. Stage 1 (shell, navigation, scope bar, picker, Tools) is committed and reviewed from rendered screenshots.
+This task runs in stages. Stage 2 is committed as work in progress and reviewed from rendered screenshots. The layout is close to the design.
 
-**Current stage 2 of 3: Tài sản and Lệnh.**
+**Current stage 2b, do exactly this:**
 
-`portfolio_screen.dart`: title `Tài sản` Bold 24 in the body with the existing hide and refresh actions on the same row, then the scope bar, then a 16-radius `surface` card with the existing total label and amount, the visibility action in the card if that keeps existing keys and behavior, and `Lãi / lỗ chưa thực hiện`. Then rows `Phạm vi dữ liệu` showing `<exchange> / <account>` and `Tiền tệ hiển thị` showing the current currency. Then `Tài sản chi tiết` with flat rows split by thin dividers, not boxed cards: 40 coin badge, symbol and quantity, right-aligned value. Keep existing total, currency, masking and PnL color logic exactly.
+1. `orders_screen.dart` shows the order tabs twice: the new tab row and the old `Vị thế` dropdown. Keep only the tab row. Give each tab semantics as a selected button and a 48 target. Keep the old dropdown's `Key` on the tab row container if tests look it up, and update tests that opened the dropdown to tap the tab instead, with the same behavioral assertions.
+2. `order_filter_controls.dart`: use chips for OKX too, with labels `Tất cả`, `Spot`, `Margin`, `Perpetual`, `Futures` and the same values. Chips scroll horizontally rather than overflow, with hit areas at least 48.
+3. Binance position and order cards show `USDⓈ-M` instead of `SWAP` in their product badge and detail line.
+4. `portfolio_screen.dart`: the `Tài sản chi tiết` heading and divider use the same 24 inset as the other sections.
+5. Coordinator-observed failures to fix:
+   - `orders_screen_position_layout_test: shows an accessible signed-out status` expects one `Tooltip` in the title row, but the refresh button now adds another. Find the status with `find.byTooltip('Chưa đăng nhập')`, keeping the semantics assertion.
+   - `orders_screen_refresh_test: positions filters stay compact beside close-all` measures the removed dropdown (expected 146, actual 170). Assert instead that the chips row and close-all do not overflow at the same widths.
+   - `backend_position_actions_dialog_test: loads only explicit backend targets` finds no `BTCUSDT` text, because the fuller title area pushes the card below its small test viewport. Make the Orders body scrollable as one list if it is not, so the card can be reached, and scroll to it in the test. Keep the test's assertions.
 
-`orders_screen.dart`: title `Lệnh` Bold 24 in the body with the existing refresh action, replacing `Quản lý Giao dịch`; scope bar; tabs `Vị thế`, `Chờ khớp`, `Lịch sử` as an underlined or selected-weight row; filter chips; a label `Vị thế của <exchange> / <account>`. Cards use the common rules. Keep every existing `Key` and all row content.
-
-`okx_adapter.dart`: map neutral `size` to `OkxPosition.size` when non-empty, otherwise `pos`, so direct OKX reads show the quantity.
-
-Existing test assertions on titles may change only where they named `Quản lý Giao dịch` or `Tổng tài sản` styling; behavior assertions stay. Update the adapter test for the empty-size case. Finish by returning the structured report.
+Finish by returning the structured report.
 
 ## 2. Objective
 

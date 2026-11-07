@@ -60,7 +60,7 @@ class OkxAdapter implements ExchangeAdapter {
           productLabel: p.instType,
           side: p.posSide,
           direction: p.direction,
-          size: p.size,
+          size: p.size.isNotEmpty ? p.size : p.pos,
           entry: p.avgPx,
           mark: p.markPx,
           liquidation: p.liqPx,

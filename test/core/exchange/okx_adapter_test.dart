@@ -27,7 +27,7 @@ void main() {
       instType: 'SWAP',
       posSide: 'long',
       pos: '0.10',
-      size: '0.10',
+      size: '',
       avgPx: '10.00',
       markPx: '11.00',
       liqPx: '3',
