@@ -1,6 +1,6 @@
 # Task 116 — View-only mode and fixed navigation
 
-Status: REWORK
+Status: PASS (via T122 remediation, 2026-11-07)
 Route Note: dispatched under pre-v1.4 rules as legacy E1 gpt-6-luna/xhigh; kept as the user excluded this task from reclassification.
 Agent Role: implementation_executor
 Executor Class: E1
@@ -150,4 +150,4 @@ Findings:
 - AUD-116-01 Must fix: `settings_screen.dart:555` gates the `Ẩn số dư mặc định` and biometric card on `backendFeaturesEnabled`. With the gate false the user loses both, and the section title stays above nothing. Violates REQ-012 and handoff section 7. The test suite does not catch it.
 - AUD-116-02 Must fix: `test/core/backend_features_test.dart` asserts zero cancel controls against empty order lists, so that part of AC-002 is unproven. Needs an active limit order row and a position row, with and without the gate.
 
-Verdict: REWORK. Remediation: `tasks/task_122_t116_settings_gate_remediation.md`.
+Verdict on this attempt: REWORK. Remediation: `tasks/task_122_t116_settings_gate_remediation.md`, verdict PASS, closes both findings, so the task is PASS.

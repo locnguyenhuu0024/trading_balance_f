@@ -8,6 +8,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:trading_balance_f/core/backend_features.dart';
 import 'package:trading_balance_f/core/security/secure_storage_helper.dart';
+import 'package:trading_balance_f/features/orders/data/okx_order_model.dart';
+import 'package:trading_balance_f/features/orders/data/okx_position_model.dart';
 import 'package:trading_balance_f/features/orders/data/trade_api_client.dart';
 import 'package:trading_balance_f/features/orders/presentation/orders_screen.dart';
 import 'package:trading_balance_f/features/orders/presentation/providers/order_provider.dart';
@@ -81,6 +83,79 @@ void main() {
       );
       expect(find.text('Ẩn số dư mặc định'), findsOneWidget);
       expect(find.text('Khoá sinh trắc học'), findsOneWidget);
+    }
+  });
+
+  testWidgets('Orders keeps rows while gating trade controls', (tester) async {
+    const order = OkxOrder(
+      instId: 'BTC-USDT-SWAP',
+      instType: 'SWAP',
+      ordId: 'order-99',
+      ordType: 'limit',
+      side: 'buy',
+      px: '10.5',
+      sz: '2',
+      state: 'live',
+    );
+    const position = OkxPosition(
+      instId: 'BTC-USDT-SWAP',
+      instType: 'SWAP',
+      posSide: 'net',
+      pos: '2',
+      size: '2',
+      signedSize: '2',
+      direction: 'long',
+      mgnMode: 'isolated',
+      identity: {
+        'instrumentType': 'SWAP',
+        'instrumentId': 'BTC-USDT-SWAP',
+        'positionId': 'position-1',
+        'positionSide': 'net',
+        'marginMode': 'isolated',
+      },
+    );
+
+    for (final enabled in [false, true]) {
+      final container = ProviderContainer(
+        overrides: [
+          backendFeaturesEnabledProvider.overrideWith((ref) => enabled),
+          orderFilterProvider.overrideWith((ref) => 'SWAP'),
+          orderTabProvider.overrideWith((ref) => OrderTab.pending),
+          ordersFutureProvider.overrideWith((ref) async => [order]),
+          positionsFutureProvider.overrideWith((ref) async => [position]),
+          vndExchangeRateProvider.overrideWith((ref) async => 25400),
+          themeModeProvider.overrideWith((ref) => ThemeMode.light),
+        ],
+      );
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const MaterialApp(home: OrdersScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('pending-order-header')), findsOneWidget);
+      expect(
+        find.byType(OrderCancellationControl),
+        enabled ? findsOneWidget : findsNothing,
+      );
+      expect(
+        find.byType(TradeAccountControls),
+        enabled ? findsOneWidget : findsNothing,
+      );
+
+      container.read(orderTabProvider.notifier).state = OrderTab.positions;
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('position-card-header')), findsOneWidget);
+      expect(find.byType(OrderCancellationControl), findsNothing);
+      expect(
+        find.byType(TradeAccountControls),
+        enabled ? findsOneWidget : findsNothing,
+      );
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      container.dispose();
     }
   });
 

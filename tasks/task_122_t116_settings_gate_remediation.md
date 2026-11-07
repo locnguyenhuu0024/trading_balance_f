@@ -1,6 +1,6 @@
 # Task 122 — T116 remediation R01: Settings gate and proof of hidden actions
 
-Status: PENDING
+Status: PASS
 Agent Role: implementation_executor
 Executor Class: E1
 Target Model: gpt-6.1-terra
@@ -108,4 +108,8 @@ Attempt 7872ecba73cf4370806f91f3cdfb7ce2: REWORK. Step 1 and the Settings part o
 
 Remaining for the next attempt: step 3 only. Do not redo steps 1 and 2.
 
-Verdict: PENDING
+Attempt b176ff4524174194bdb75d2d963b4972: dispatcher REVIEW_REQUIRED, write surface in scope. The test renders a real active limit order and a real position in `OrdersScreen`, for gate false and true, and both rows stay visible. The executor reported the inverted assertion failing with the gate true (RED) before the final test passed; the test structure is consistent with that, and coordinator-observed tests pass. Coordinator-observed: V3 set 251 passed, analyzer 0 errors, web build pass.
+Dispatch route compliance: UNVERIFIABLE (requested gpt-6.1-terra/low, explicit).
+Parent route inheritance: NO
+Task buildability gate: PASS
+Verdict: PASS. AUD-116-01 and AUD-116-02 closed.
