@@ -125,7 +125,7 @@ Neutral types are plain Dart in new files. All numeric fields are the exchange's
 |---|---|
 | `ExchangeId` | `okx`, `binance` value identity |
 | `ConnectionProfile` | `connectionId` (`okx-default`, `binance-default`), `exchange`, `label`, `products` |
-| `ExchangeScope` | `connectionId`, `exchange`, `credentialGeneration`, equality on all |
+| `ExchangeScope` | `connectionId`, `exchange`, `credentialGeneration`, `switchEpoch`, equality on all |
 | `ExchangeCapabilities` | readable products, unavailable-on-this-platform products |
 | `InstrumentKey` | `exchange`, `product`, `nativeId`; base and quote from exchange metadata; never parsed from a display label |
 | `AccountSnapshot` | total, total currency, `isPartial`, balances, wallet results, issues |
@@ -167,7 +167,7 @@ lib/exchanges/binance/              ──> binance_client, signer, reader, mark
 
 Scope and late responses:
 1. `selectedConnectionProvider` holds the id, persisted, loaded at startup like other settings.
-2. `exchangeScopeProvider` composes it with that connection's credential generation.
+2. `exchangeScopeProvider` composes it with that connection's credential generation and a switch epoch incremented by every selection, so returning to a connection within one frame still makes a new key; selection also invalidates adapter providers, cancelling in-flight reads (VAL-006).
 3. Read providers are `autoDispose.family<_, ExchangeScope>`. A former scope's element is disposed, its `CancelToken` cancelled, and a late result has no listener. This is structural rather than a check at each call site.
 4. `ScopeSwitchGate` keys the screen subtree by connectionId, shows `Đang tải <account>` until the first read settles, then lands on `Tài sản`. Pushed tool routes are popped first.
 5. `RequestCoordinator` and `ForegroundReadGate` are unchanged classes, instantiated per exchange through `Provider.family`.
