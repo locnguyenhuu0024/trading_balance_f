@@ -69,7 +69,13 @@ Impacts: `docs/agents/plans/2026-11-07-binance-web-proxy.md`.
 ### D-014 — Proxy host and allowed origin
 Decision: nginx on the VPS; web origin `https://app.tradingbalancef.com`.
 
+### D-015 — Estimated profit is planned
+Decision: "Sửa nhãn, lập kế hoạch PnL". Labels and percentage are T127. Profit from trade history is `docs/agents/plans/2026-11-07-binance-estimated-pnl.md`.
+
 ## Coordinator Proposals For Approval
+
+### P-007 — Estimated profit method (accepted by plan approval, "Duyệt, làm đi")
+Moving average cost, USDT pairs only, unrealized only, fees in other assets ignored, unpaid interest only. Figures stay separate from USDⓈ-M.
 
 ### P-006 — Reuse `api.tradingbalancef.com`
 The location goes in the existing server block under `/binance-proxy/`, so no new DNS or certificate is needed.
