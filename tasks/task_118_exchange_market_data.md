@@ -30,22 +30,47 @@ Observed Effective Effort: unavailable
 
 Market, BMAG and Support/Resistance read the selected exchange with Binance public data and per-exchange watchlists.
 
-Done when: With scope set to Binance by provider override, these screens show Binance data and source copy, and OKX behavior is unchanged.
+Done when: with scope set to Binance by provider override, these screens show Binance data and source copy, and OKX behavior is unchanged.
+
+Complete the work in this run. Expect to write every needed file; a long run is normal. Ending without file changes is a failed attempt.
 
 ## 3. Preconditions
 
-Predecessors: T117 = PASS. Decisions: D-005.
+Predecessors: T117, T123, T124 = PASS. Decisions: D-005.
 Required state: clean checkout on branch `codex/multi-platform-view-only`. Plan revision 2 approved.
 
 ## 4. Allowed Scope
 
-- `lib/exchanges/binance/binance_client.dart` (new, public GET allowlist only)
-- `lib/exchanges/binance/binance_market.dart` (new)
+Exact write list (new files use exactly these names). Read access covers all non-protected source and tests.
+
+- `lib/exchanges/binance/binance_client.dart`
+- `lib/exchanges/binance/binance_market.dart`
 - `lib/exchanges/okx/okx_adapter.dart`
-- `lib/core/exchange/*` (market contract additions)
-- `lib/features/market/**`, `lib/features/fractal_tracker/**`, `lib/features/support_resistance/**`
-- `lib/core/network/okx_websocket_service.dart` only if a neutral ticker seam requires it
-- Related tests under `test/features/{market,fractal_tracker,support_resistance}`, `test/exchanges/binance/*` (new)
+- `lib/core/exchange/exchange_adapter.dart`
+- `lib/core/exchange/exchange_models.dart`
+- `lib/core/exchange/market_source.dart`
+- `lib/features/market/presentation/market_screen.dart`
+- `lib/features/fractal_tracker/presentation/providers/fractal_provider.dart`
+- `lib/features/fractal_tracker/presentation/fractal_screen.dart`
+- `lib/features/support_resistance/data/market_repository.dart`
+- `lib/features/support_resistance/data/watchlist_store.dart`
+- `lib/features/support_resistance/domain/models.dart`
+- `lib/features/support_resistance/presentation/providers/levels_provider.dart`
+- `lib/features/support_resistance/presentation/providers/watchlist_provider.dart`
+- `lib/features/support_resistance/presentation/support_resistance_screen.dart`
+- `test/exchanges/binance/binance_client_test.dart`
+- `test/exchanges/binance/binance_market_test.dart`
+- `test/support/fake_exchange_adapter.dart`
+- `test/features/market/market_screen_test.dart`
+- `test/features/fractal_tracker/fractal_provider_test.dart`
+- `test/features/fractal_tracker/fractal_screen_price_formatting_test.dart`
+- `test/features/support_resistance/market_repository_test.dart`
+- `test/features/support_resistance/support_resistance_screen_test.dart`
+- `test/features/support_resistance/watchlist_provider_test.dart`
+- `test/features/tools/tools_screen_test.dart`
+- `test/features/portfolio/portfolio_scope_test.dart`
+- `test/features/orders/orders_scope_test.dart`
+- `test/core/exchange/exchange_scope_test.dart`
 
 ## 5. Forbidden Scope
 
@@ -60,13 +85,17 @@ If required work exceeds Allowed Scope, return `BLOCKED`.
 
 ## 6. Executor Contract
 
-1. Add catalog, ticker and candle methods; Binance uses `/fapi/v1/exchangeInfo`, `/api/v3/exchangeInfo`, `/fapi/v1/ticker/24hr`, `/api/v3/ticker/24hr`, `/fapi/v1/klines`, `/api/v3/klines`, with no API key header.
-2. Move symbol shapes behind `InstrumentKey`; OKX parsing stays in the OKX adapter.
-3. Page Binance candles with `startTime` and `endTime` for BMAG ranges.
-4. Keep `support_resistance_watchlist_snapshot` for OKX; add a separate Binance key; provider keyed by exchange.
-5. Replace the swallowed catch in `fractal_provider.dart` with a surfaced failure state.
-6. Add `Nguồn giá: <exchange>` to the three screens using existing layouts.
-7. Binance candle arrays parse by documented index: open time, open, high, low, close, volume.
+Design is fixed; mechanism details below it are yours if they satisfy the invariants and tests. Report what you chose. Stop only for a conflict about product behavior.
+
+1. `market_source.dart`: `abstract class MarketSource` with `Future<List<MarketRow>> topTickers(String product)`, `Future<List<SupportResistanceInstrument>> instruments(SupportResistanceMarketMode)`, `Future<SupportResistanceTicker> ticker(...)`, `Future<List<SupportResistanceCandle>> candles(...)`, `Future<SupportResistanceMarketSnapshot> loadLevels(...)`, and `Future<List<RawCandle>> fractalCandles({coin, bar, limit, endTime})`. Match the signatures that exist on `SupportResistanceRepository`. Add `MarketSource market(Ref ref)` and `List<String> marketProducts` to `ExchangeAdapter`.
+2. OKX: `SupportResistanceRepository` implements `MarketSource`, unchanged endpoints and behavior, so existing tests keep working. `topTickers` keeps today's query, filter and Top 50 in `marketListProvider`.
+3. `binance_client.dart`: unsigned GET allowlist only: `/fapi/v1/exchangeInfo`, `/api/v3/exchangeInfo`, `/fapi/v1/ticker/24hr`, `/api/v3/ticker/24hr`, `/fapi/v1/klines`, `/api/v3/klines`. Hosts `https://fapi.binance.com` and `https://api.binance.com`. Never send `X-MBX-APIKEY`. Route through `exchangeRequestCoordinatorProvider(ExchangeId.binance)` on the public lane, applying 429 and `Retry-After` handling as the OKX client does.
+4. `binance_market.dart`: spot mode maps to `/api/v3`, perpetual mode to `/fapi/v1`. Keep status `TRADING`, quote `USDT`; USD-M also requires contract type `PERPETUAL`. Top list: `^[A-Z0-9]+USDT$`, `quoteVolume` above 5,000,000, sort descending, take 50; base asset is the symbol without `USDT`, for display only. Kline row indexes: 0 open time, 1 open, 2 high, 3 low, 4 close, 5 volume. Fractal bars map to `1d`, `1w`, `1M`, using `endTime` paging. Levels reuse `SupportResistanceCalculator`.
+5. `market_screen.dart`, `fractal_provider.dart`, `levels_provider.dart`, `watchlist_provider.dart`: select the source through the registry with `ref.watch(exchangeScopeProvider)`; each provider rebuilds on scope change, and `selectedCoinProvider` resets on selection in the same way as `orderFilterProvider`. In `fractal_provider.dart` a transport failure now surfaces as a provider error; a successful response with no rows stays empty data.
+6. Watchlist: OKX keeps `WatchlistStore.storageKey`. Binance uses `support_resistance_watchlist_snapshot_binance`. The store receives the exchange and validates identifiers with that exchange's rule; the OKX `-USDT` and `-USDT-SWAP` patterns stay for OKX only.
+7. Add `Nguồn giá: <exchange label>` to Market, BMAG and Support/Resistance using existing text styles. For Binance add product chips on Market from `marketProducts`, default USD-M. Do not restyle otherwise; T121 does that.
+8. Do not register Binance in `exchangeRegistryProvider`; T120 does. Tests register it by override.
+9. Update `FakeExchangeAdapter` for the new members. Change existing tests for wiring only.
 
 Required invariants and edges: INV-002, INV-006; OKX REQ-012.
 Apply reuse-first, minimal complete changes. Do not invent product semantics. If the contract is insufficient, return `BLOCKED`.
@@ -85,9 +114,9 @@ Blocks verification until user applies: NO
 ## 9. Mandatory Verification
 
 ### RED — RED-118a/b
-Scenario: (a) Candle read fails on fractal provider. (b) Binance `BTCUSDT` through S/R with an OKX watchlist already stored.
+Scenario: (a) A candle transport failure in the fractal provider. (b) Binance `BTCUSDT` through S/R with an OKX watchlist already stored. (c) A Binance 429 with OKX public reads idle.
 Command/method: `rtk flutter test --no-pub <file> --plain-name '<name>'`
-Expected: (a) Error state, not empty data. (b) No `-USDT` parsing used, no public request has an API key header, OKX watchlist bytes unchanged.
+Expected: (a) Provider error, not empty data. (b) No `-USDT` parsing used, no public request has an API key header, OKX watchlist value unchanged. (c) OKX lane stays open.
 Actual: PENDING
 Status: PENDING
 
