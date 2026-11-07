@@ -10,9 +10,11 @@ import '../../../core/widgets/crypto_icon.dart';
 import '../../../core/widgets/manual_refresh_button.dart';
 import '../../market/presentation/providers/market_provider.dart';
 import '../../settings/presentation/settings_screen.dart';
-import '../data/okx_balance_model.dart';
+import '../../../core/exchange/exchange_models.dart';
+import '../../../core/exchange/exchange_registry.dart';
+import '../../../core/exchange/exchange_scope.dart';
+import '../../../core/exchange/scoped_read.dart';
 import '../presentation/widgets/portfolio_currency_amount.dart';
-import 'providers/portfolio_provider.dart';
 import 'portfolio_screen.dart';
 
 /// Opt-in balance view. Portfolio Home intentionally does not render PnL;
@@ -32,15 +34,24 @@ class _PortfolioDetailsScreenState
   bool _isRefreshInFlight = false;
 
   Future<void> _refreshPortfolio() async {
-    if (!mounted ||
-        _isRefreshInFlight ||
-        ref.read(portfolioFutureProvider).isLoading) {
+    final scope = ref.read(exchangeScopeProvider);
+    final provider = scopedAccountProvider(scope);
+    if (!mounted || _isRefreshInFlight || ref.read(provider).isLoading) {
       return;
     }
     setState(() => _isRefreshInFlight = true);
     try {
-      ref.invalidate(portfolioFutureProvider);
-      await ref.read(portfolioFutureProvider.future);
+      ref
+          .read(exchangeRegistryProvider)
+          .firstWhere(
+            (entry) =>
+                entry.profile.connectionId == scope.connectionId &&
+                entry.profile.exchange == scope.exchange,
+          )
+          .adapter
+          .invalidateAccount(ref.invalidate);
+      ref.invalidate(provider);
+      await ref.read(provider.future);
     } catch (_) {
       // The watched provider displays the read error.
     } finally {
@@ -50,7 +61,9 @@ class _PortfolioDetailsScreenState
 
   @override
   Widget build(BuildContext context) {
-    final async = ref.watch(portfolioFutureProvider);
+    final scope = ref.watch(exchangeScopeProvider);
+    final isOkx = scope.exchange == ExchangeId.okx;
+    final async = ref.watch(scopedAccountProvider(scope));
     final hidden = ref.watch(hideBalanceProvider);
     final currency = ref.watch(currencyProvider);
     final rate = ref.watch(vndExchangeRateProvider).value ?? 25400.0;
@@ -87,7 +100,8 @@ class _PortfolioDetailsScreenState
           ),
           data: (account) => _DetailsContent(
             account: account,
-            livePrices: ref.watch(livePriceProvider),
+            isOkx: isOkx,
+            livePrices: isOkx ? ref.watch(livePriceProvider) : const {},
             currency: currency,
             exchangeRate: rate,
             hidden: hidden,
@@ -104,6 +118,7 @@ class _PortfolioDetailsScreenState
 class _DetailsContent extends StatelessWidget {
   const _DetailsContent({
     required this.account,
+    required this.isOkx,
     required this.livePrices,
     required this.currency,
     required this.exchangeRate,
@@ -113,7 +128,8 @@ class _DetailsContent extends StatelessWidget {
     required this.onRefresh,
   });
 
-  final OkxAccountData account;
+  final AccountSnapshot account;
+  final bool isOkx;
   final Map<String, String> livePrices;
   final String currency;
   final double exchangeRate;
@@ -126,11 +142,11 @@ class _DetailsContent extends StatelessWidget {
   Widget build(BuildContext context) {
     var total = 0.0;
     var pnl = 0.0;
-    final values = <OkxCoinDetail, double>{};
-    for (final coin in account.details) {
-      final eq = double.tryParse(coin.eq);
-      final live = double.tryParse(livePrices[coin.ccy] ?? '');
-      final reportedValue = double.tryParse(coin.eqUsd);
+    final values = <AssetBalance, double>{};
+    for (final coin in account.balances) {
+      final eq = double.tryParse(coin.total ?? '');
+      final live = double.tryParse(livePrices[coin.asset] ?? '');
+      final reportedValue = double.tryParse(coin.valueUsdt ?? '');
       final fallbackPrice = eq != null && eq > 0 && reportedValue != null
           ? reportedValue / eq
           : null;
@@ -140,12 +156,13 @@ class _DetailsContent extends StatelessWidget {
       if (value.isFinite) {
         values[coin] = value;
         total += value;
-        final upl = double.tryParse(coin.upl);
+        final upl = double.tryParse(coin.unrealizedPnl ?? '');
         if (upl != null && upl.isFinite) {
           pnl += upl * (live ?? fallbackPrice ?? 1);
         }
       }
     }
+    if (!isOkx) total = double.tryParse(account.total ?? '') ?? 0.0;
     final base = total - pnl;
     final ratio = base > 0 ? pnl / base : null;
     final palette = AppPalette.of(context);
@@ -258,10 +275,10 @@ class _DetailsContent extends StatelessWidget {
             ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 8),
-          if (account.details.isEmpty)
+          if (account.balances.isEmpty)
             const _DetailsState(message: 'No balances available.')
           else
-            for (final coin in account.details)
+            for (final coin in account.balances)
               _BalanceTile(
                 coin: coin,
                 value: values[coin],
@@ -349,7 +366,7 @@ class _BalanceTile extends StatelessWidget {
     required this.hidden,
   });
 
-  final OkxCoinDetail coin;
+  final AssetBalance coin;
   final double? value;
   final String currency;
   final double exchangeRate;
@@ -360,7 +377,7 @@ class _BalanceTile extends StatelessWidget {
     final palette = AppPalette.of(context);
     final subtitle = palette.muted;
     final color = palette.ink;
-    final eq = double.tryParse(coin.eq);
+    final eq = double.tryParse(coin.total ?? '');
     return Card(
       elevation: 0,
       margin: const EdgeInsets.only(bottom: 7),
@@ -370,14 +387,14 @@ class _BalanceTile extends StatelessWidget {
       ),
       child: ListTile(
         leading: CryptoIcon(
-          symbol: coin.ccy,
+          symbol: coin.asset,
           size: 32,
           backgroundColor: palette.surface,
           textColor: color,
           textSize: 13,
         ),
         title: Text(
-          coin.ccy,
+          coin.asset,
           style: TextStyle(color: color, fontWeight: FontWeight.w700),
         ),
         subtitle: Text(

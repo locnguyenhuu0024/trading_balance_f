@@ -1,6 +1,6 @@
 # Task 123 — Portfolio on the neutral scope
 
-Status: PENDING
+Status: PASS
 Agent Role: implementation_executor
 Executor Class: E3
 Target Model: gpt-6.1-terra
@@ -147,4 +147,10 @@ Return `BLOCKED` when repository evidence contradicts this contract, a design de
 
 ## 12. Coordinator Audit
 
-Verdict: PENDING
+Attempt: 082acd74d2f04417b456f19d1283d988
+Dispatch route compliance: UNVERIFIABLE (requested gpt-6.1-terra/high, explicit).
+Parent route inheritance: NO
+RED and GREEN executed by the coordinator on the host, RED first (VAL-005): late OKX response never renders under fake exchange on both screens; then existing portfolio tests
+Regression and buildability, coordinator-observed: 54 tests passed in portfolio, exchange, widget, backend gate, navigation; analyzer 0 errors; web build pass. Follow-up for T120: non-OKX absent amounts and terminal-failure refresh checks use the adapter.
+Task buildability gate: PASS
+Verdict: PASS

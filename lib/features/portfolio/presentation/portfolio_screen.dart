@@ -13,11 +13,13 @@ import '../../../core/theme/platform_brightness_provider.dart';
 import '../../../core/theme/pnl_color.dart';
 import '../../../core/widgets/crypto_icon.dart';
 import '../../../core/widgets/manual_refresh_button.dart';
-import 'providers/portfolio_provider.dart';
+import '../../../core/exchange/exchange_models.dart';
+import '../../../core/exchange/exchange_registry.dart';
+import '../../../core/exchange/exchange_scope.dart';
+import '../../../core/exchange/scoped_read.dart';
 import '../../settings/presentation/settings_screen.dart';
 import '../../market/presentation/providers/market_provider.dart';
 import '../../../core/network/okx_websocket_service.dart';
-import '../data/okx_balance_model.dart';
 import 'widgets/portfolio_currency_amount.dart';
 
 final hideBalanceProvider = StateProvider<bool>((ref) => false);
@@ -56,17 +58,30 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
   }
 
   Future<void> _refreshPortfolio({bool automatic = false}) async {
-    final currentRead = ref.read(portfolioFutureProvider);
+    final scope = ref.read(exchangeScopeProvider);
+    final provider = scopedAccountProvider(scope);
+    final currentRead = ref.read(provider);
     if (!mounted ||
         _portfolioRefreshInFlight ||
         currentRead.isLoading ||
-        (automatic && isTerminalOkxReadFailure(currentRead.asError?.error))) {
+        (automatic &&
+            scope.exchange == ExchangeId.okx &&
+            isTerminalOkxReadFailure(currentRead.asError?.error))) {
       return;
     }
     _portfolioRefreshInFlight = true;
-    ref.invalidate(portfolioFutureProvider);
+    ref
+        .read(exchangeRegistryProvider)
+        .firstWhere(
+          (entry) =>
+              entry.profile.connectionId == scope.connectionId &&
+              entry.profile.exchange == scope.exchange,
+        )
+        .adapter
+        .invalidateAccount(ref.invalidate);
+    ref.invalidate(provider);
     try {
-      await ref.read(portfolioFutureProvider.future);
+      await ref.read(provider.future);
     } catch (_) {
       // The watched provider renders refresh errors in the screen.
     } finally {
@@ -78,7 +93,9 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
     if (!mounted ||
         _portfolioRefreshInFlight ||
         _pageRefreshInFlight ||
-        ref.read(portfolioFutureProvider).isLoading) {
+        ref
+            .read(scopedAccountProvider(ref.read(exchangeScopeProvider)))
+            .isLoading) {
       return;
     }
     setState(() => _pageRefreshInFlight = true);
@@ -124,7 +141,9 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
       _pendingCoins = null;
       if (_sameCoins(_subscribedCoins, requestedCoins)) return;
       _subscribedCoins = requestedCoins;
-      final service = ref.read(okxWebsocketProvider);
+      if (requestedCoins.isEmpty && _tickerService == null) return;
+      final OkxWebsocketService service =
+          _tickerService ?? ref.read<OkxWebsocketService>(okxWebsocketProvider);
       _tickerService = service;
       if (requestedCoins.isEmpty) {
         service.clearLegacySubscription();
@@ -144,8 +163,13 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final portfolioAsyncValue = ref.watch(portfolioFutureProvider);
-    final livePrices = ref.watch(livePriceProvider);
+    final scope = ref.watch(exchangeScopeProvider);
+    final isOkx = scope.exchange == ExchangeId.okx;
+    final portfolioAsyncValue = ref.watch(scopedAccountProvider(scope));
+    final livePrices = isOkx
+        ? ref.watch(livePriceProvider)
+        : <String, String>{};
+    if (!isOkx) _syncTickerSubscription(const <String>[]);
 
     final isBalanceHidden = ref.watch(hideBalanceProvider);
     final isDark = ref.watch(isDarkModeProvider);
@@ -205,10 +229,13 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
                   },
                   data: (data) {
                     _syncTickerSubscription(
-                      data.details.map((e) => e.ccy).toList(),
+                      isOkx
+                          ? data.balances.map((e) => e.asset).toList()
+                          : const <String>[],
                     );
                     return _buildPortfolioData(
                       data,
+                      isOkx,
                       livePrices,
                       isBalanceHidden,
                       isDark,
@@ -227,7 +254,8 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
   }
 
   Widget _buildPortfolioData(
-    OkxAccountData accountData,
+    AccountSnapshot accountData,
+    bool isOkx,
     Map<String, String> livePrices,
     bool isHidden,
     bool isDark,
@@ -237,17 +265,18 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
     double dynamicTotalEquity = 0.0;
     double totalUnrealizedPnl = 0.0;
 
-    for (var coin in accountData.details) {
-      final double eq = double.tryParse(coin.eq) ?? 0.0;
-      final double totalCoinUpl = double.tryParse(coin.upl) ?? 0.0;
+    for (var coin in accountData.balances) {
+      final double eq = double.tryParse(coin.total ?? '') ?? 0.0;
+      final double totalCoinUpl =
+          double.tryParse(coin.unrealizedPnl ?? '') ?? 0.0;
 
-      final String? realtimePriceStr = livePrices[coin.ccy];
+      final String? realtimePriceStr = livePrices[coin.asset];
       double priceToUsd = 0.0;
 
       if (realtimePriceStr != null) {
         priceToUsd = double.tryParse(realtimePriceStr) ?? 0.0;
       } else {
-        final double eqUsd = double.tryParse(coin.eqUsd) ?? 0.0;
+        final double eqUsd = double.tryParse(coin.valueUsdt ?? '') ?? 0.0;
         if (eq > 0) {
           priceToUsd = eqUsd / eq;
         }
@@ -257,6 +286,9 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
       totalUnrealizedPnl += totalCoinUpl * priceToUsd;
     }
 
+    if (!isOkx) {
+      dynamicTotalEquity = double.tryParse(accountData.total ?? '') ?? 0.0;
+    }
     final double baseEquity = dynamicTotalEquity - totalUnrealizedPnl;
     final double pnlRatio = baseEquity > 0
         ? (totalUnrealizedPnl / baseEquity) * 100
@@ -299,7 +331,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
 
         // DANH SÁCH COIN
         Expanded(
-          child: accountData.details.isEmpty
+          child: accountData.balances.isEmpty
               ? Center(
                   child: Text(
                     'Không có tài sản nào.',
@@ -311,18 +343,19 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
                     horizontal: 16,
                     vertical: 4,
                   ),
-                  itemCount: accountData.details.length,
+                  itemCount: accountData.balances.length,
                   itemBuilder: (context, index) {
-                    final coin = accountData.details[index];
-                    final double eq = double.tryParse(coin.eq) ?? 0.0;
-                    final String? realtimePriceStr = livePrices[coin.ccy];
+                    final coin = accountData.balances[index];
+                    final double eq = double.tryParse(coin.total ?? '') ?? 0.0;
+                    final String? realtimePriceStr = livePrices[coin.asset];
 
                     double currentUsdValue = 0.0;
                     if (realtimePriceStr != null) {
                       currentUsdValue =
                           eq * (double.tryParse(realtimePriceStr) ?? 0.0);
                     } else {
-                      currentUsdValue = double.tryParse(coin.eqUsd) ?? 0.0;
+                      currentUsdValue =
+                          double.tryParse(coin.valueUsdt ?? '') ?? 0.0;
                     }
 
                     // Ẩn các loại coin có giá trị nhỏ hơn $0.01 (dust)
@@ -344,14 +377,14 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
                           vertical: 2,
                         ),
                         leading: CryptoIcon(
-                          symbol: coin.ccy,
+                          symbol: coin.asset,
                           size: 34,
                           backgroundColor: iconBgColor,
                           textColor: textColor,
                           textSize: 14,
                         ),
                         title: Text(
-                          coin.ccy,
+                          coin.asset,
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
                             fontSize: 14,
