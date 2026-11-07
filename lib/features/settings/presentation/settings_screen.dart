@@ -4,12 +4,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import '../../../core/backend_features.dart';
 import '../../../core/currency/coingecko_vnd_rate_client.dart';
 import '../../../core/currency/currency_display_mode.dart';
 import '../../../core/navigation/navigation_content_frame.dart';
-import '../../../core/navigation/navigation_destination_data.dart';
-import '../../../core/navigation/navigation_preferences.dart';
-import '../../../core/navigation/navigation_preferences_provider.dart';
 import '../../../core/security/secure_storage_helper.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/timezone/app_time_zone.dart';
@@ -192,20 +190,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
-  void _showNavigationVisibilityDialog() {
-    showDialog<void>(
-      context: context,
-      builder: (_) => const _NavigationVisibilityDialog(),
-    );
-  }
-
-  void _showNavigationAppearanceDialog() {
-    showDialog<void>(
-      context: context,
-      builder: (_) => const _NavigationAppearanceDialog(),
-    );
-  }
-
   Widget _buildTimeZoneTile({
     required String timeZoneId,
     required Color textColor,
@@ -297,7 +281,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final bioAuth = ref.watch(biometricAuthProvider);
     final timeZoneId = ref.watch(appTimeZoneProvider);
     final appTextScale = ref.watch(appTextScaleProvider);
-    final navigationState = ref.watch(navigationPreferencesProvider);
+    final backendFeaturesEnabled = ref.watch(backendFeaturesEnabledProvider);
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final palette = AppPalette.forBrightness(isDark);
@@ -534,76 +518,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         indent: 52,
                       ),
                       ListTile(
-                        key: const Key('settings-navigation-appearance'),
-                        leading: Icon(
-                          Icons.space_dashboard_outlined,
-                          color: textColor,
-                          size: 22,
-                        ),
-                        title: Text(
-                          'Giao diện điều hướng',
-                          style: TextStyle(
-                            color: textColor,
-                            fontWeight: FontWeight.w500,
-                            fontSize: 14,
-                          ),
-                        ),
-                        subtitle: Text(
-                          'Kiểu hiển thị, vị trí, kích thước và độ trong suốt.',
-                          style: TextStyle(
-                            color: sectionTitleColor,
-                            fontSize: 12,
-                          ),
-                        ),
-                        trailing: Icon(
-                          Icons.chevron_right_rounded,
-                          color: sectionTitleColor,
-                        ),
-                        onTap: navigationState.isSaving
-                            ? null
-                            : _showNavigationAppearanceDialog,
-                      ),
-                      Divider(
-                        height: 1,
-                        color: isDark ? palette.border : palette.surface,
-                        indent: 52,
-                      ),
-                      ListTile(
-                        key: const Key('settings-navigation-visibility'),
-                        leading: Icon(
-                          Icons.tune_rounded,
-                          color: textColor,
-                          size: 22,
-                        ),
-                        title: Text(
-                          'Trang điều hướng',
-                          style: TextStyle(
-                            color: textColor,
-                            fontWeight: FontWeight.w500,
-                            fontSize: 14,
-                          ),
-                        ),
-                        subtitle: Text(
-                          'Chọn những trang xuất hiện trong điều hướng chính.',
-                          style: TextStyle(
-                            color: sectionTitleColor,
-                            fontSize: 12,
-                          ),
-                        ),
-                        trailing: Icon(
-                          Icons.chevron_right_rounded,
-                          color: sectionTitleColor,
-                        ),
-                        onTap: navigationState.isSaving
-                            ? null
-                            : _showNavigationVisibilityDialog,
-                      ),
-                      Divider(
-                        height: 1,
-                        color: isDark ? palette.border : palette.border,
-                        indent: 52,
-                      ),
-                      ListTile(
                         leading: Icon(
                           Icons.text_fields_rounded,
                           color: textColor,
@@ -620,19 +534,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         subtitle: compactSettings ? appTextScaleSelector : null,
                         trailing: compactSettings ? null : appTextScaleSelector,
                       ),
-                      if (navigationState.errorMessage != null)
-                        Padding(
-                          key: const Key('settings-navigation-save-error'),
-                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                          child: Text(
-                            navigationState.errorMessage!,
-                            style: TextStyle(
-                              color: palette.negative,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
                     ],
                   ),
                 ),
@@ -651,375 +552,123 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ),
                   ),
                 ),
-                Card(
-                  elevation: 0,
-                  color: cardColor,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                    side: BorderSide(color: palette.border),
-                  ),
-                  child: Column(
-                    children: [
-                      SwitchListTile(
-                        secondary: Icon(
-                          Icons.visibility_off,
-                          color: textColor,
-                          size: 22,
-                        ),
-                        title: Text(
-                          'Ẩn số dư mặc định',
-                          style: TextStyle(
+                if (backendFeaturesEnabled)
+                  Card(
+                    elevation: 0,
+                    color: cardColor,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      side: BorderSide(color: palette.border),
+                    ),
+                    child: Column(
+                      children: [
+                        SwitchListTile(
+                          secondary: Icon(
+                            Icons.visibility_off,
                             color: textColor,
-                            fontWeight: FontWeight.w500,
-                            fontSize: 14,
+                            size: 22,
                           ),
-                        ),
-                        subtitle: Text(
-                          'Che tài sản khi vừa mở ứng dụng',
-                          style: TextStyle(
-                            color: sectionTitleColor,
-                            fontSize: 12,
+                          title: Text(
+                            'Ẩn số dư mặc định',
+                            style: TextStyle(
+                              color: textColor,
+                              fontWeight: FontWeight.w500,
+                              fontSize: 14,
+                            ),
                           ),
+                          subtitle: Text(
+                            'Che tài sản khi vừa mở ứng dụng',
+                            style: TextStyle(
+                              color: sectionTitleColor,
+                              fontSize: 12,
+                            ),
+                          ),
+                          value: hideBalanceDefault,
+                          onChanged: (val) {
+                            ref
+                                    .read(defaultHideBalanceProvider.notifier)
+                                    .state =
+                                val;
+                            ref.read(hideBalanceProvider.notifier).state =
+                                val; // Cập nhật luôn màn chính
+                            _saveAllPreferences();
+                          },
                         ),
-                        value: hideBalanceDefault,
-                        onChanged: (val) {
-                          ref.read(defaultHideBalanceProvider.notifier).state =
-                              val;
-                          ref.read(hideBalanceProvider.notifier).state =
-                              val; // Cập nhật luôn màn chính
-                          _saveAllPreferences();
-                        },
-                      ),
-                      Divider(
-                        height: 1,
-                        color: isDark ? palette.border : palette.surface,
-                        indent: 52,
-                      ),
-                      SwitchListTile(
-                        secondary: Icon(
-                          Icons.fingerprint,
-                          color: textColor,
-                          size: 22,
+                        Divider(
+                          height: 1,
+                          color: isDark ? palette.border : palette.surface,
+                          indent: 52,
                         ),
-                        title: Text(
-                          'Khoá sinh trắc học',
-                          style: TextStyle(
+                        SwitchListTile(
+                          secondary: Icon(
+                            Icons.fingerprint,
                             color: textColor,
-                            fontWeight: FontWeight.w500,
-                            fontSize: 14,
+                            size: 22,
                           ),
-                        ),
-                        subtitle: Text(
-                          'Yêu cầu vân tay / FaceID khi mở app',
-                          style: TextStyle(
-                            color: sectionTitleColor,
-                            fontSize: 12,
+                          title: Text(
+                            'Khoá sinh trắc học',
+                            style: TextStyle(
+                              color: textColor,
+                              fontWeight: FontWeight.w500,
+                              fontSize: 14,
+                            ),
                           ),
+                          subtitle: Text(
+                            'Yêu cầu vân tay / FaceID khi mở app',
+                            style: TextStyle(
+                              color: sectionTitleColor,
+                              fontSize: 12,
+                            ),
+                          ),
+                          value: bioAuth,
+                          onChanged: (val) {
+                            ref.read(biometricAuthProvider.notifier).state =
+                                val;
+                            _saveAllPreferences();
+                          },
                         ),
-                        value: bioAuth,
-                        onChanged: (val) {
-                          ref.read(biometricAuthProvider.notifier).state = val;
-                          _saveAllPreferences();
-                        },
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
 
                 const SizedBox(height: 24),
 
-                Card(
-                  elevation: 0,
-                  color: cardColor,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                    side: BorderSide(color: palette.border),
-                  ),
-                  child: ListTile(
-                    key: const Key('settings-trade-access-button'),
-                    leading: Icon(Icons.key_rounded, color: textColor),
-                    title: Text(
-                      'API và giao dịch',
-                      style: TextStyle(
-                        color: textColor,
-                        fontWeight: FontWeight.w600,
+                if (backendFeaturesEnabled)
+                  Card(
+                    elevation: 0,
+                    color: cardColor,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      side: BorderSide(color: palette.border),
+                    ),
+                    child: ListTile(
+                      key: const Key('settings-trade-access-button'),
+                      leading: Icon(Icons.key_rounded, color: textColor),
+                      title: Text(
+                        'API và giao dịch',
+                        style: TextStyle(
+                          color: textColor,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
-                    ),
-                    subtitle: Text(
-                      'Cấu hình khóa OKX và quản lý phiên giao dịch',
-                      style: TextStyle(color: sectionTitleColor, fontSize: 12),
-                    ),
-                    trailing: Icon(
-                      Icons.chevron_right_rounded,
-                      color: sectionTitleColor,
-                    ),
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => const SettingsTradeAccessPage(),
+                      subtitle: Text(
+                        'Cấu hình khóa OKX và quản lý phiên giao dịch',
+                        style: TextStyle(
+                          color: sectionTitleColor,
+                          fontSize: 12,
                         ),
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _NavigationVisibilityDialog extends ConsumerWidget {
-  const _NavigationVisibilityDialog();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final state = ref.watch(navigationPreferencesProvider);
-    final enabledIds = state.preferences.enabledDestinationIds;
-    final orderedIds = NavigationPreferences.normalizeDestinationOrderIds(
-      state.preferences.destinationOrderIds,
-    );
-    final destinationsById = {
-      for (final destination in navigationItems) destination.id: destination,
-    };
-    final destinations = orderedIds
-        .map((id) => destinationsById[id]!)
-        .toList(growable: false);
-
-    return AlertDialog(
-      title: const Text('Trang điều hướng'),
-      scrollable: true,
-      content: ResponsiveFormContent(
-        maxWidth: 560,
-        padding: EdgeInsets.zero,
-        child: SizedBox(
-          width: double.maxFinite,
-          height: MediaQuery.sizeOf(context).height * 0.55,
-          child: Column(
-            children: [
-              Expanded(
-                child: ReorderableListView(
-                  buildDefaultDragHandles: false,
-                  padding: EdgeInsets.zero,
-                  onReorderItem: (oldIndex, newIndex) {
-                    if (state.isSaving) return;
-
-                    final nextOrder = [...orderedIds];
-                    final movedId = nextOrder.removeAt(oldIndex);
-                    nextOrder.insert(newIndex, movedId);
-                    ref
-                        .read(navigationPreferencesProvider.notifier)
-                        .setDestinationOrderIds(nextOrder);
-                  },
-                  children: [
-                    for (var index = 0; index < destinations.length; index++)
-                      CheckboxListTile(
-                        key: Key(
-                          'settings-navigation-visible-${destinations[index].id}',
-                        ),
-                        value: enabledIds.contains(destinations[index].id),
-                        title: Text(destinations[index].label),
-                        controlAffinity: ListTileControlAffinity.leading,
-                        contentPadding: EdgeInsets.zero,
-                        secondary: ReorderableDragStartListener(
-                          key: Key(
-                            'settings-navigation-drag-${destinations[index].id}',
+                      ),
+                      trailing: Icon(
+                        Icons.chevron_right_rounded,
+                        color: sectionTitleColor,
+                      ),
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => const SettingsTradeAccessPage(),
                           ),
-                          index: index,
-                          enabled: !state.isSaving,
-                          child: Icon(
-                            Icons.drag_handle_rounded,
-                            color: state.isSaving
-                                ? AppPalette.of(context).border
-                                : AppPalette.of(context).muted,
-                          ),
-                        ),
-                        onChanged:
-                            state.isSaving ||
-                                destinations[index].id == navigationSettingsId
-                            ? null
-                            : (isEnabled) {
-                                if (isEnabled == null) return;
-                                final nextIds = enabledIds.toSet();
-                                if (isEnabled) {
-                                  nextIds.add(destinations[index].id);
-                                } else {
-                                  nextIds.remove(destinations[index].id);
-                                }
-                                ref
-                                    .read(
-                                      navigationPreferencesProvider.notifier,
-                                    )
-                                    .setEnabledDestinationIds(
-                                      navigationDestinationIds
-                                          .where(nextIds.contains)
-                                          .toList(growable: false),
-                                    );
-                              },
-                      ),
-                  ],
-                ),
-              ),
-              if (state.errorMessage != null)
-                Padding(
-                  key: const Key('settings-navigation-dialog-save-error'),
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Text(
-                    state.errorMessage!,
-                    style: TextStyle(
-                      color: AppPalette.of(context).negative,
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Đóng'),
-        ),
-      ],
-    );
-  }
-}
-
-class _NavigationAppearanceDialog extends ConsumerWidget {
-  const _NavigationAppearanceDialog();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final state = ref.watch(navigationPreferencesProvider);
-    final preferences = state.preferences;
-    final theme = Theme.of(context);
-
-    Widget selector<T>({
-      required String label,
-      required Key key,
-      required T value,
-      required List<DropdownMenuItem<T>> items,
-      required ValueChanged<T?> onChanged,
-    }) {
-      return ListTile(
-        contentPadding: EdgeInsets.zero,
-        title: Text(label),
-        trailing: DropdownButtonHideUnderline(
-          child: DropdownButton<T>(
-            key: key,
-            value: value,
-            isDense: true,
-            dropdownColor: theme.cardColor,
-            items: items,
-            onChanged: state.isSaving ? null : onChanged,
-          ),
-        ),
-      );
-    }
-
-    final controller = ref.read(navigationPreferencesProvider.notifier);
-
-    return AlertDialog(
-      title: const Text('Giao diện điều hướng'),
-      content: ResponsiveFormContent(
-        maxWidth: 560,
-        padding: EdgeInsets.zero,
-        child: SizedBox(
-          width: double.maxFinite,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                selector<NavigationDisplayMode>(
-                  label: 'Kiểu hiển thị',
-                  key: const Key('settings-navigation-mode-select'),
-                  value: preferences.displayMode,
-                  items: const [
-                    DropdownMenuItem(
-                      value: NavigationDisplayMode.bar,
-                      child: Text('Thanh cố định'),
-                    ),
-                    DropdownMenuItem(
-                      value: NavigationDisplayMode.floating,
-                      child: Text('Nút nổi'),
-                    ),
-                  ],
-                  onChanged: (value) {
-                    if (value != null) controller.setDisplayMode(value);
-                  },
-                ),
-                if (preferences.displayMode == NavigationDisplayMode.floating)
-                  selector<NavigationEdge>(
-                    label: 'Vị trí nút nổi',
-                    key: const Key('settings-floating-edge-select'),
-                    value: preferences.floatingEdge,
-                    items: const [
-                      DropdownMenuItem(
-                        value: NavigationEdge.top,
-                        child: Text('Trên'),
-                      ),
-                      DropdownMenuItem(
-                        value: NavigationEdge.bottom,
-                        child: Text('Dưới'),
-                      ),
-                      DropdownMenuItem(
-                        value: NavigationEdge.left,
-                        child: Text('Trái'),
-                      ),
-                      DropdownMenuItem(
-                        value: NavigationEdge.right,
-                        child: Text('Phải'),
-                      ),
-                    ],
-                    onChanged: (value) {
-                      if (value != null) controller.setFloatingEdge(value);
-                    },
-                  ),
-                selector<double>(
-                  label: 'Kích thước nút',
-                  key: const Key('settings-navigation-size-select'),
-                  value: preferences.buttonScale,
-                  items: NavigationPreferences.buttonScaleOptions
-                      .map(
-                        (option) => DropdownMenuItem<double>(
-                          value: option.value,
-                          child: Text(option.label),
-                        ),
-                      )
-                      .toList(growable: false),
-                  onChanged: (value) {
-                    if (value != null) controller.setButtonScale(value);
-                  },
-                ),
-                selector<double>(
-                  label: 'Độ trong suốt nút',
-                  key: const Key('settings-navigation-opacity-select'),
-                  value: preferences.buttonOpacity,
-                  items: NavigationPreferences.buttonOpacityOptions
-                      .map(
-                        (option) => DropdownMenuItem<double>(
-                          value: option.value,
-                          child: Text(option.label),
-                        ),
-                      )
-                      .toList(growable: false),
-                  onChanged: (value) {
-                    if (value != null) controller.setButtonOpacity(value);
-                  },
-                ),
-                if (state.errorMessage != null)
-                  Padding(
-                    key: const Key('settings-navigation-dialog-save-error'),
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Text(
-                      state.errorMessage!,
-                      style: TextStyle(
-                        color: AppPalette.of(context).negative,
-                        fontSize: 12,
-                      ),
+                        );
+                      },
                     ),
                   ),
               ],
@@ -1027,12 +676,6 @@ class _NavigationAppearanceDialog extends ConsumerWidget {
           ),
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Đóng'),
-        ),
-      ],
     );
   }
 }

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import '../../support/backend_features_override.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -389,6 +390,7 @@ Widget _tradeApp({
 }) {
   return ProviderScope(
     overrides: [
+      backendFeaturesEnabledTestOverride,
       tradeApiProvider.overrideWithValue(api),
       if (storage != null) secureStorageProvider.overrideWithValue(storage),
       tradeSessionProvider.overrideWith((ref) {

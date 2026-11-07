@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import '../../support/backend_features_override.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -236,6 +237,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          backendFeaturesEnabledTestOverride,
           orderFilterProvider.overrideWith((ref) => 'ALL'),
           orderTabProvider.overrideWith((ref) => OrderTab.positions),
           tradeApiProvider.overrideWithValue(api),
@@ -280,6 +282,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          backendFeaturesEnabledTestOverride,
           orderFilterProvider.overrideWith((ref) => 'MARGIN'),
           orderTabProvider.overrideWith((ref) => OrderTab.positions),
           tradeApiProvider.overrideWithValue(api),
@@ -322,6 +325,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          backendFeaturesEnabledTestOverride,
           orderFilterProvider.overrideWith((ref) => 'MARGIN'),
           orderTabProvider.overrideWith((ref) => OrderTab.pending),
           tradeApiProvider.overrideWithValue(api),
@@ -361,6 +365,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          backendFeaturesEnabledTestOverride,
           orderFilterProvider.overrideWith((ref) => 'ALL'),
           orderTabProvider.overrideWith((ref) => OrderTab.positions),
           tradeApiProvider.overrideWithValue(api),
@@ -417,6 +422,7 @@ Widget _ordersScreen({
   final api = TradeApiClient(baseUrl: 'https://trade.example');
   return ProviderScope(
     overrides: [
+      backendFeaturesEnabledTestOverride,
       orderFilterProvider.overrideWith((ref) => filter),
       orderTabProvider.overrideWith((ref) => OrderTab.pending),
       tradeApiProvider.overrideWithValue(api),
@@ -442,6 +448,7 @@ Widget _positionsOrdersScreen({double textScale = 1.0}) {
   final api = TradeApiClient(baseUrl: 'https://trade.example');
   return ProviderScope(
     overrides: [
+      backendFeaturesEnabledTestOverride,
       orderFilterProvider.overrideWith((ref) => 'FUTURES'),
       orderTabProvider.overrideWith((ref) => OrderTab.positions),
       tradeApiProvider.overrideWithValue(api),

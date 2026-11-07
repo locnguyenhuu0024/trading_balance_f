@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/backend_features.dart';
 import '../../orders/data/trade_api_client.dart';
 import '../../orders/data/trade_api_browser_adapter_stub.dart'
     if (dart.library.html) '../../orders/data/trade_api_browser_adapter.dart'
@@ -550,4 +551,88 @@ String _validatedSubmissionMode(Object? value) {
   );
 }
 
-final strategyApiProvider = Provider<StrategyApi>((ref) => StrategyApiClient());
+final strategyApiProvider = Provider<StrategyApi>((ref) {
+  if (!ref.watch(backendFeaturesEnabledProvider)) return DisabledStrategyApi();
+  return StrategyApiClient();
+});
+
+class DisabledStrategyApi implements StrategyApi {
+  Never _disabled() => throw const StrategyApiException(
+    code: 'backend_disabled',
+    message: 'Backend strategy features are disabled.',
+  );
+
+  @override
+  Future<Map<String, dynamic>> preview(
+    String bearerToken,
+    Map<String, dynamic> body,
+  ) async => _disabled();
+
+  @override
+  Future<Map<String, dynamic>> saveDraft(
+    String bearerToken,
+    Map<String, dynamic> body,
+  ) async => _disabled();
+
+  @override
+  Future<StrategyRetryCandidates> getRetryCandidates(
+    String bearerToken,
+    String sourceStrategyId,
+  ) async => _disabled();
+
+  @override
+  Future<StrategyRetryPreview> previewRetry(
+    String bearerToken,
+    String sourceStrategyId, {
+    required String sourceRevision,
+    required List<String> sourceClientOrderIds,
+  }) async => _disabled();
+
+  @override
+  Future<StrategyRetryDraft> createRetryDraft(
+    String bearerToken,
+    String sourceStrategyId, {
+    required String sourceRevision,
+    required List<String> sourceClientOrderIds,
+    required String previewHash,
+    required String retryRequestId,
+  }) async => _disabled();
+
+  @override
+  Future<List<Map<String, dynamic>>> listStrategies(String bearerToken) async =>
+      _disabled();
+
+  @override
+  Future<Map<String, dynamic>> prepareApply(
+    String bearerToken,
+    String id,
+  ) async => _disabled();
+
+  @override
+  Future<Map<String, dynamic>> executeApply(
+    String bearerToken,
+    String id,
+    String confirmationToken,
+  ) async => _disabled();
+
+  @override
+  Future<Map<String, dynamic>> getResult(String bearerToken, String id) async =>
+      _disabled();
+
+  @override
+  Future<Map<String, dynamic>> getQuote(String bearerToken, String id) async =>
+      _disabled();
+
+  @override
+  Future<String> getLimitOrderSubmissionMode(String bearerToken) async =>
+      _disabled();
+
+  @override
+  Future<String> saveLimitOrderSubmissionMode(
+    String bearerToken,
+    String mode,
+  ) async => _disabled();
+
+  @override
+  Future<void> deleteDraft(String bearerToken, String id) async => _disabled();
+}

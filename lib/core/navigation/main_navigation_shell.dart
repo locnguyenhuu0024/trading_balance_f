@@ -8,12 +8,12 @@ import '../../features/portfolio/presentation/portfolio_screen.dart';
 import '../../features/settings/presentation/settings_screen.dart';
 import '../../features/support_resistance/presentation/support_resistance_screen.dart';
 import '../../features/strategy/presentation/strategy_screen.dart';
+import '../../features/tools/tools_screen.dart';
+import '../backend_features.dart';
 import '../theme/app_theme.dart';
-import 'navigation_destination_data.dart';
-import 'navigation_preferences.dart';
-import 'navigation_preferences_provider.dart';
-import 'navigation_presentation_host.dart';
 import '../widgets/app_page_transition.dart';
+import 'navigation_destination_data.dart';
+import 'navigation_presentation_host.dart';
 
 typedef NavigationDestinationBodyBuilder =
     Widget Function(BuildContext context, int index);
@@ -31,95 +31,48 @@ class MainNavigationShell extends ConsumerStatefulWidget {
 class _MainNavigationShellState extends ConsumerState<MainNavigationShell> {
   int _selectedIndex = 0;
 
-  Widget _buildSelectedScreen(BuildContext context, int selectedIndex) {
+  Widget _buildSelectedScreen(
+    BuildContext context,
+    int selectedIndex,
+    int selectedVisibleIndex,
+  ) {
     final destinationBuilder = widget.destinationBuilder;
     if (destinationBuilder != null) {
-      return destinationBuilder(context, selectedIndex);
+      return destinationBuilder(context, selectedVisibleIndex);
     }
 
-    switch (selectedIndex) {
-      case 1:
-        return const FractalScreen();
-      case 2:
-        return const OrdersScreen();
-      case 3:
-        return const MarketScreen();
-      case 4:
-        return const SettingsScreen();
-      case 6:
-        return const SupportResistanceScreen();
-      case 7:
-        return const StrategyScreen();
-      case 0:
-      default:
-        return const PortfolioScreen();
-    }
-  }
-
-  int _screenIndexForDestinationId(String id) {
-    return navigationItems
-        .firstWhere((destination) => destination.id == id)
-        .screenIndex;
-  }
-
-  int _fallbackScreenIndex(List<String> enabledIds) {
-    return enabledIds.contains(navigationHomeId)
-        ? _screenIndexForDestinationId(navigationHomeId)
-        : _screenIndexForDestinationId(navigationSettingsId);
+    return switch (selectedIndex) {
+      1 => const FractalScreen(),
+      2 => const OrdersScreen(),
+      3 => const MarketScreen(),
+      4 => const SettingsScreen(),
+      6 => const SupportResistanceScreen(),
+      7 => const StrategyScreen(),
+      8 => const ToolsScreen(),
+      _ => const PortfolioScreen(),
+    };
   }
 
   @override
   Widget build(BuildContext context) {
+    final backendFeaturesEnabled = ref.watch(backendFeaturesEnabledProvider);
+    final destinations = navigationItemsForBackendFeatures(
+      backendFeaturesEnabled,
+    );
     final isDark = ref.watch(isDarkModeProvider);
-    final backgroundColor = AppPalette.forBrightness(isDark).background;
-    final navigationPreferences = ref.watch(
-      navigationPreferencesProvider.select((state) => state.preferences),
+    final selectedDestinationIndex = destinations.indexWhere(
+      (destination) => destination.screenIndex == _selectedIndex,
     );
-    ref.listen<List<String>>(
-      navigationPreferencesProvider.select(
-        (state) => state.preferences.enabledDestinationIds,
-      ),
-      (previous, enabledIds) {
-        final selectedId = navigationItems
-            .firstWhere(
-              (destination) => destination.screenIndex == _selectedIndex,
-            )
-            .id;
-        if (!enabledIds.contains(selectedId)) {
-          setState(() => _selectedIndex = _fallbackScreenIndex(enabledIds));
-        }
-      },
-    );
-
-    final enabledIds = navigationPreferences.enabledDestinationIds;
-    final destinationsById = {
-      for (final destination in navigationItems) destination.id: destination,
-    };
-    final orderedIds = NavigationPreferences.normalizeDestinationOrderIds(
-      navigationPreferences.destinationOrderIds,
-    );
-    final destinations = orderedIds
-        .where(enabledIds.contains)
-        .map((id) => destinationsById[id]!)
-        .toList(growable: false);
-    final selectedScreenIndex =
-        enabledIds.contains(
-          navigationItems
-              .firstWhere(
-                (destination) => destination.screenIndex == _selectedIndex,
-              )
-              .id,
-        )
-        ? _selectedIndex
-        : _fallbackScreenIndex(enabledIds);
+    final selectedScreenIndex = selectedDestinationIndex < 0
+        ? destinations.first.screenIndex
+        : _selectedIndex;
     final selectedVisibleIndex = destinations.indexWhere(
       (destination) => destination.screenIndex == selectedScreenIndex,
     );
 
     return Material(
-      color: backgroundColor,
+      color: AppPalette.forBrightness(isDark).background,
       child: NavigationPresentationHost(
-        preferences: navigationPreferences,
         destinations: destinations,
         selectedIndex: selectedVisibleIndex,
         isDark: isDark,
@@ -135,7 +88,11 @@ class _MainNavigationShellState extends ConsumerState<MainNavigationShell> {
           destinationId: selectedScreenIndex,
           child: KeyedSubtree(
             key: ValueKey<int>(selectedScreenIndex),
-            child: _buildSelectedScreen(context, selectedScreenIndex),
+            child: _buildSelectedScreen(
+              context,
+              selectedScreenIndex,
+              selectedVisibleIndex,
+            ),
           ),
         ),
       ),

@@ -8,7 +8,6 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../navigation/navigation_preferences.dart';
 import '../timezone/app_time_zone.dart';
 import '../typography/app_text_scale.dart';
 
@@ -108,7 +107,6 @@ class SecureStorageHelper {
   // THÊM MỚI: Keys cho Theme và Tiền tệ
   static const String _themeMode = 'THEME_MODE';
   static const String _currency = 'CURRENCY';
-  static const String _navigationPreferences = 'NAVIGATION_PREFERENCES';
   static const String _timeZoneId = 'TIME_ZONE_ID';
   static const String _appTextScale = 'APP_TEXT_SCALE';
   static const String _rememberedTradePasswordPrefix =
@@ -279,20 +277,6 @@ class SecureStorageHelper {
     return _storage.write(
       key: _appTextScale,
       value: AppTextScale.normalize(scale).toString(),
-    );
-  }
-
-  /// Returns a safe default for missing, corrupt, or future records.
-  Future<NavigationPreferences> getNavigationPreferences() async {
-    final value = await _storage.read(key: _navigationPreferences);
-    return NavigationPreferences.decode(value);
-  }
-
-  /// Persists navigation independently from the pre-existing app settings.
-  Future<void> saveNavigationPreferences(NavigationPreferences preferences) {
-    return _storage.write(
-      key: _navigationPreferences,
-      value: preferences.encode(),
     );
   }
 

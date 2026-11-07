@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import '../../support/backend_features_override.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -265,6 +266,7 @@ class _Fixture {
        ) {
     container = ProviderContainer(
       overrides: [
+        backendFeaturesEnabledTestOverride,
         tradeApiProvider.overrideWithValue(api),
         tradeSessionProvider.overrideWith((ref) => sessionController),
         ordersFutureProvider.overrideWith((ref) {

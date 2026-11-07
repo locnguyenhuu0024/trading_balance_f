@@ -1,3 +1,4 @@
+import '../../../support/backend_features_override.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -13,6 +14,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          backendFeaturesEnabledTestOverride,
           orderFilterProvider.overrideWith((ref) => 'SWAP'),
           orderTabProvider.overrideWith((ref) => OrderTab.positions),
           positionsFutureProvider.overrideWith(

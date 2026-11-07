@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/backend_features.dart';
 import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/security/secure_storage_helper.dart';
 import '../../../core/theme/app_theme.dart';
@@ -282,6 +283,7 @@ class _SettingsTradeAccessPageState
 
   @override
   Widget build(BuildContext context) {
+    final backendFeaturesEnabled = ref.watch(backendFeaturesEnabledProvider);
     final theme = Theme.of(context);
     final mutedColor = theme.colorScheme.onSurfaceVariant;
 
@@ -335,8 +337,10 @@ class _SettingsTradeAccessPageState
                     _savedSummaryCard()
                   else
                     _credentialEditorCard(mutedColor),
-                  const SizedBox(height: 24),
-                  const TradeSessionControls(),
+                  if (backendFeaturesEnabled) ...[
+                    const SizedBox(height: 24),
+                    const TradeSessionControls(),
+                  ],
                 ],
               ),
             ),

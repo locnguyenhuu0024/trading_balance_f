@@ -12,8 +12,6 @@ import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/navigation/main_navigation_shell.dart';
-import 'core/navigation/navigation_preferences.dart';
-import 'core/navigation/navigation_preferences_provider.dart';
 import 'core/security/secure_storage_helper.dart';
 import 'core/services/background_service.dart';
 import 'core/theme/app_theme.dart';
@@ -35,7 +33,6 @@ class AppStartupData {
     required this.currency,
     required this.timeZoneId,
     required this.appTextScale,
-    required this.navigationPreferences,
   });
 
   final SecureStorageHelper secureStorage;
@@ -45,7 +42,6 @@ class AppStartupData {
   final String currency;
   final String timeZoneId;
   final double appTextScale;
-  final NavigationPreferences navigationPreferences;
 }
 
 Future<AppStartupData> initializeAppStartup({
@@ -85,7 +81,6 @@ Future<AppStartupData> initializeAppStartup({
   String currencyStr = 'USD';
   String timeZoneId = AppTimeZone.defaultId;
   var appTextScale = AppTextScale.defaultScale;
-  var navigationPreferences = NavigationPreferences.defaults;
 
   try {
     bioAuth = await helper.getBiometricAuth();
@@ -103,12 +98,6 @@ Future<AppStartupData> initializeAppStartup({
     debugPrint('App text-scale restoration failed; using the default.');
   }
 
-  try {
-    navigationPreferences = await helper.getNavigationPreferences();
-  } catch (_) {
-    debugPrint('Navigation preference restoration failed; using defaults.');
-  }
-
   final initialThemeMode = themeModeStr == 'dark'
       ? ThemeMode.dark
       : (themeModeStr == 'light' ? ThemeMode.light : ThemeMode.system);
@@ -122,7 +111,6 @@ Future<AppStartupData> initializeAppStartup({
     currency: currencyStr,
     timeZoneId: initialTimeZoneId,
     appTextScale: appTextScale,
-    navigationPreferences: navigationPreferences,
   );
 }
 
@@ -143,9 +131,6 @@ Widget buildInitializedApp(AppStartupData startup, {Widget? home}) {
       currencyProvider.overrideWith((ref) => startup.currency),
       appTimeZoneProvider.overrideWith((ref) => startup.timeZoneId),
       appTextScaleProvider.overrideWith((ref) => startup.appTextScale),
-      navigationPreferencesInitialProvider.overrideWithValue(
-        startup.navigationPreferences,
-      ),
     ],
     child: TradingBalanceApp(
       requireBiometrics: startup.requireBiometrics,
@@ -434,26 +419,6 @@ class WebStorageHelper extends SecureStorageHelper {
     );
     if (!didSave) {
       throw StateError('Không thể lưu cỡ chữ ứng dụng trên Web.');
-    }
-  }
-
-  @override
-  Future<NavigationPreferences> getNavigationPreferences() async {
-    return NavigationPreferences.decode(
-      _prefs.getString('NAVIGATION_PREFERENCES'),
-    );
-  }
-
-  @override
-  Future<void> saveNavigationPreferences(
-    NavigationPreferences preferences,
-  ) async {
-    final didSave = await _prefs.setString(
-      'NAVIGATION_PREFERENCES',
-      preferences.encode(),
-    );
-    if (!didSave) {
-      throw StateError('Không thể lưu tùy chọn điều hướng trên Web.');
     }
   }
 

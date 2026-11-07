@@ -1,109 +1,46 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/navigation/main_navigation_shell.dart';
-import 'package:trading_balance_f/core/navigation/navigation_preferences.dart';
-import 'package:trading_balance_f/core/navigation/navigation_preferences_provider.dart';
-import 'package:trading_balance_f/core/security/secure_storage_helper.dart';
-import 'package:trading_balance_f/features/settings/presentation/settings_screen.dart';
+import 'package:trading_balance_f/core/navigation/navigation_destination_data.dart';
+import 'package:trading_balance_f/core/navigation/navigation_presentation_host.dart';
+import 'package:trading_balance_f/core/navigation/trading_navigation_bar.dart';
 
-class _MemoryNavigationStorage extends SecureStorageHelper {
-  _MemoryNavigationStorage() : super(const FlutterSecureStorage());
+class _TapDestination extends StatelessWidget {
+  const _TapDestination({required this.onTap});
 
-  @override
-  Future<void> saveNavigationPreferences(
-    NavigationPreferences preferences,
-  ) async {}
-}
-
-class _PersistentDestination extends StatefulWidget {
-  const _PersistentDestination({required this.onPageTap});
-
-  final VoidCallback onPageTap;
+  final VoidCallback onTap;
 
   @override
-  State<_PersistentDestination> createState() => _PersistentDestinationState();
-}
-
-class _PersistentDestinationState extends State<_PersistentDestination> {
-  final _controller = TextEditingController();
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: widget.onPageTap,
-      child: ColoredBox(
-        color: Colors.amber,
-        child: Center(
-          child: TextField(
-            key: const Key('persistent-navigation-input'),
-            controller: _controller,
-          ),
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => GestureDetector(
+    behavior: HitTestBehavior.opaque,
+    onTap: onTap,
+    child: const ColoredBox(color: Colors.amber, child: SizedBox.expand()),
+  );
 }
 
 void main() {
-  ProviderContainer createContainer() {
-    final container = ProviderContainer(
-      overrides: [
-        secureStorageProvider.overrideWithValue(_MemoryNavigationStorage()),
-        navigationPreferencesInitialProvider.overrideWithValue(
-          NavigationPreferences.defaults,
-        ),
-        themeModeProvider.overrideWith((ref) => ThemeMode.light),
-      ],
-    );
-    addTearDown(container.dispose);
-    return container;
-  }
-
-  testWidgets('keeps the active page state when its presentation changes', (
+  testWidgets('presentation host always uses the fixed navigation bar', (
     tester,
   ) async {
-    final container = createContainer();
     await tester.pumpWidget(
-      UncontrolledProviderScope(
-        container: container,
-        child: MaterialApp(
-          home: MainNavigationShell(
-            destinationBuilder: (context, index) =>
-                _PersistentDestination(onPageTap: () {}),
-          ),
+      MaterialApp(
+        home: NavigationPresentationHost(
+          destinations: navigationItems,
+          selectedIndex: 0,
+          isDark: false,
+          onDestinationSelected: (_) {},
+          child: const SizedBox.expand(),
         ),
       ),
     );
-
-    await tester.enterText(
-      find.byKey(const Key('persistent-navigation-input')),
-      'draft API value',
-    );
-    await tester.pump();
-
-    await container
-        .read(navigationPreferencesProvider.notifier)
-        .setDisplayMode(NavigationDisplayMode.floating);
     await tester.pumpAndSettle();
 
-    expect(find.text('draft API value'), findsOneWidget);
-    expect(
-      find.byKey(const Key('floating-navigation-destination-5')),
-      findsOneWidget,
-    );
-    expect(find.byKey(const Key('navigation-bar-surface')), findsNothing);
+    expect(find.byType(TradingNavigationBar), findsOneWidget);
+    expect(find.byKey(const Key('floating-navigation-group')), findsNothing);
   });
 
-  testWidgets('keeps raised button hits separate from transparent page space', (
+  testWidgets('raised button hits do not fall through to page content', (
     tester,
   ) async {
     addTearDown(tester.view.resetPhysicalSize);
@@ -111,15 +48,13 @@ void main() {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(390, 844);
 
-    final container = createContainer();
     var pageTapCount = 0;
     await tester.pumpWidget(
-      UncontrolledProviderScope(
-        container: container,
+      ProviderScope(
         child: MaterialApp(
           home: MainNavigationShell(
             destinationBuilder: (context, index) =>
-                _PersistentDestination(onPageTap: () => pageTapCount++),
+                _TapDestination(onTap: () => pageTapCount++),
           ),
         ),
       ),

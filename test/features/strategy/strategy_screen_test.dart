@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import '../../support/backend_features_override.dart';
 import 'package:dio/dio.dart';
 import 'package:trading_balance_f/core/network/okx_data_client.dart';
 import 'package:flutter/material.dart';
@@ -149,6 +150,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          backendFeaturesEnabledTestOverride,
           tradeSessionProvider.overrideWith(
             (ref) => _AuthenticatedSessionController(),
           ),
@@ -193,6 +195,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          backendFeaturesEnabledTestOverride,
           tradeSessionProvider.overrideWith(
             (ref) => _AuthenticatedSessionController(),
           ),
@@ -246,6 +249,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          backendFeaturesEnabledTestOverride,
           tradeSessionProvider.overrideWith(
             (ref) => _AuthenticatedSessionController(),
           ),
@@ -289,6 +293,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+            backendFeaturesEnabledTestOverride,
             tradeSessionProvider.overrideWith(
               (ref) => _AuthenticatedSessionController(),
             ),
@@ -329,6 +334,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          backendFeaturesEnabledTestOverride,
           tradeSessionProvider.overrideWith(
             (ref) => _AuthenticatedSessionController(),
           ),
@@ -390,6 +396,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+            backendFeaturesEnabledTestOverride,
             tradeApiProvider.overrideWithValue(api),
             tradeSessionProvider.overrideWith(
               (ref) => TradeSessionController(api),
@@ -425,6 +432,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          backendFeaturesEnabledTestOverride,
           tradeSessionProvider.overrideWith(
             (ref) => _AuthenticatedSessionController(),
           ),
@@ -455,6 +463,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+            backendFeaturesEnabledTestOverride,
             tradeSessionProvider.overrideWith(
               (ref) => _AuthenticatedSessionController(),
             ),
@@ -566,6 +575,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+            backendFeaturesEnabledTestOverride,
             tradeSessionProvider.overrideWith(
               (ref) => _AuthenticatedSessionController(),
             ),
@@ -648,6 +658,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+            backendFeaturesEnabledTestOverride,
             tradeSessionProvider.overrideWith(
               (ref) => _AuthenticatedSessionController(),
             ),
@@ -748,6 +759,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+            backendFeaturesEnabledTestOverride,
             tradeSessionProvider.overrideWith(
               (ref) => _AuthenticatedSessionController(),
             ),
@@ -793,6 +805,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          backendFeaturesEnabledTestOverride,
           tradeSessionProvider.overrideWith(
             (ref) => _AuthenticatedSessionController(),
           ),
@@ -842,6 +855,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+            backendFeaturesEnabledTestOverride,
             tradeSessionProvider.overrideWith(
               (ref) => _AuthenticatedSessionController(),
             ),
@@ -963,6 +977,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          backendFeaturesEnabledTestOverride,
           tradeSessionProvider.overrideWith((ref) => session),
           strategyApiProvider.overrideWithValue(api),
           strategyMarketRepositoryProvider.overrideWithValue(
@@ -1031,6 +1046,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          backendFeaturesEnabledTestOverride,
           tradeSessionProvider.overrideWith(
             (ref) => _AuthenticatedSessionController(),
           ),
@@ -1076,6 +1092,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          backendFeaturesEnabledTestOverride,
           tradeSessionProvider.overrideWith(
             (ref) => _AuthenticatedSessionController(),
           ),
@@ -1114,6 +1131,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          backendFeaturesEnabledTestOverride,
           tradeSessionProvider.overrideWith(
             (ref) => _AuthenticatedSessionController(),
           ),
@@ -1150,6 +1168,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          backendFeaturesEnabledTestOverride,
           tradeSessionProvider.overrideWith((ref) => session),
           strategyApiProvider.overrideWithValue(api),
           strategyMarketRepositoryProvider.overrideWithValue(
@@ -1271,6 +1290,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+            backendFeaturesEnabledTestOverride,
             tradeSessionProvider.overrideWith((ref) => session),
             strategyApiProvider.overrideWithValue(api),
             strategyMarketRepositoryProvider.overrideWithValue(
@@ -1358,6 +1378,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          backendFeaturesEnabledTestOverride,
           tradeSessionProvider.overrideWith(
             (ref) => _AuthenticatedSessionController(),
           ),
@@ -1408,6 +1429,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          backendFeaturesEnabledTestOverride,
           tradeSessionProvider.overrideWith(
             (ref) => _AuthenticatedSessionController(),
           ),
@@ -1457,6 +1479,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          backendFeaturesEnabledTestOverride,
           tradeSessionProvider.overrideWith(
             (ref) => _AuthenticatedSessionController(),
           ),
@@ -1517,6 +1540,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+            backendFeaturesEnabledTestOverride,
             tradeSessionProvider.overrideWith(
               (ref) => _AuthenticatedSessionController(),
             ),
@@ -1572,6 +1596,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+            backendFeaturesEnabledTestOverride,
             tradeSessionProvider.overrideWith((ref) => session),
             strategyApiProvider.overrideWithValue(api),
             strategyMarketRepositoryProvider.overrideWithValue(
@@ -1624,6 +1649,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          backendFeaturesEnabledTestOverride,
           tradeSessionProvider.overrideWith(
             (ref) => _AuthenticatedSessionController(),
           ),
@@ -1697,6 +1723,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          backendFeaturesEnabledTestOverride,
           tradeSessionProvider.overrideWith(
             (ref) => _AuthenticatedSessionController(),
           ),
@@ -1796,6 +1823,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+            backendFeaturesEnabledTestOverride,
             tradeSessionProvider.overrideWith((ref) => session),
             strategyApiProvider.overrideWithValue(api),
             strategyMarketRepositoryProvider.overrideWithValue(
@@ -1913,6 +1941,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+            backendFeaturesEnabledTestOverride,
             tradeSessionProvider.overrideWith(
               (ref) => _AuthenticatedSessionController(),
             ),
@@ -1983,6 +2012,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          backendFeaturesEnabledTestOverride,
           tradeSessionProvider.overrideWith(
             (ref) => _AuthenticatedSessionController(),
           ),
@@ -2024,6 +2054,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          backendFeaturesEnabledTestOverride,
           tradeSessionProvider.overrideWith(
             (ref) => _AuthenticatedSessionController(),
           ),
@@ -2227,6 +2258,7 @@ Future<void> _pumpStrategyPreview(
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
+        backendFeaturesEnabledTestOverride,
         tradeSessionProvider.overrideWith(
           (ref) => _AuthenticatedSessionController(),
         ),

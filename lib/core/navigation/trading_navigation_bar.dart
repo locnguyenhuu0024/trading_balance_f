@@ -12,8 +12,6 @@ class TradingNavigationBar extends StatefulWidget {
     required this.isDark,
     required this.onDestinationSelected,
     this.destinations = navigationItems,
-    this.buttonScale = 1,
-    this.buttonOpacity = 0.5,
     this.bottomInset = 0,
   });
 
@@ -28,8 +26,6 @@ class TradingNavigationBar extends StatefulWidget {
   final bool isDark;
   final ValueChanged<int> onDestinationSelected;
   final List<NavigationItemData> destinations;
-  final double buttonScale;
-  final double buttonOpacity;
   final double bottomInset;
 
   @override
@@ -107,7 +103,7 @@ class _TradingNavigationBarState extends State<TradingNavigationBar>
           child: LayoutBuilder(
             builder: (context, constraints) {
               const barTop = TradingNavigationBar.crestHeight;
-              final buttonScale = _normalizeScale(widget.buttonScale);
+              const buttonScale = 1.0;
               final contentWidth = math
                   .max(constraints.maxWidth, 48.0 * widget.destinations.length)
                   .toDouble();
@@ -118,7 +114,7 @@ class _TradingNavigationBarState extends State<TradingNavigationBar>
               final effectiveScale = math
                   .min(buttonScale, targetSize / 52.0)
                   .toDouble();
-              final buttonOpacity = _normalizeOpacity(widget.buttonOpacity);
+              const buttonOpacity = 0.5;
 
               final content = SizedBox(
                 width: contentWidth,
@@ -207,11 +203,6 @@ class _TradingNavigationBarState extends State<TradingNavigationBar>
     );
   }
 
-  static double _normalizeScale(double value) {
-    if (!value.isFinite) return 1;
-    return value.clamp(0.9, 1.1).toDouble();
-  }
-
   static bool _sameDestinationOrder(
     List<NavigationItemData> first,
     List<NavigationItemData> second,
@@ -221,11 +212,6 @@ class _TradingNavigationBarState extends State<TradingNavigationBar>
       if (first[index].id != second[index].id) return false;
     }
     return true;
-  }
-
-  static double _normalizeOpacity(double value) {
-    if (!value.isFinite) return 0.5;
-    return value.clamp(0.35, 1.0).toDouble();
   }
 }
 

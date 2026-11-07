@@ -41,6 +41,58 @@ abstract class TradeApi {
   );
 }
 
+class DisabledTradeApi implements TradeApi {
+  @override
+  bool get isConfigured => false;
+
+  @override
+  bool get supportsSessionRestoration => false;
+
+  Never _disabled() => throw const TradeApiException(
+    code: 'backend_disabled',
+    message: 'Backend trading features are disabled.',
+  );
+
+  @override
+  Future<TradeSession> login({
+    required String password,
+    required String totp,
+  }) async => _disabled();
+
+  @override
+  Future<TradeSession> restoreSession() async => _disabled();
+
+  @override
+  Future<void> logout(String bearerToken) async => _disabled();
+
+  @override
+  Future<TradePositionsSnapshot> getPositions(String bearerToken) async =>
+      _disabled();
+
+  @override
+  Future<PreparedTradeAction> prepare(
+    String bearerToken, {
+    required String action,
+    Map<String, dynamic>? targetIdentity,
+    String? amount,
+    String? size,
+    String? percentage,
+  }) async => _disabled();
+
+  @override
+  Future<TradeOperationResult> execute(
+    String bearerToken, {
+    required String operationId,
+    required String confirmationToken,
+  }) async => _disabled();
+
+  @override
+  Future<TradeOperationResult> getResult(
+    String bearerToken,
+    String operationId,
+  ) async => _disabled();
+}
+
 /// Optional transport capability that lets foreground readers cancel a GET
 /// after every provider that owns it has been disposed.
 abstract interface class CancellableTradePositionsApi {

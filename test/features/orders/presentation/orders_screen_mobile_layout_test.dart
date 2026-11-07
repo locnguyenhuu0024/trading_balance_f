@@ -1,3 +1,4 @@
+import '../../../support/backend_features_override.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -45,6 +46,7 @@ ProviderContainer _container({
 }) {
   return ProviderContainer(
     overrides: [
+      backendFeaturesEnabledTestOverride,
       orderFilterProvider.overrideWith((ref) => 'SWAP'),
       orderTabProvider.overrideWith((ref) => OrderTab.pending),
       ordersFutureProvider.overrideWith((ref) async => [order]),
@@ -312,9 +314,7 @@ void main() {
         closeTo(tester.getRect(desktopHeader).left, 1),
       );
       expect(
-        tester
-            .getRect(find.byKey(const Key('pending-order-leverage')))
-            .right,
+        tester.getRect(find.byKey(const Key('pending-order-leverage'))).right,
         closeTo(tester.getRect(desktopHeader).right, 1),
       );
       expect(tester.takeException(), isNull);

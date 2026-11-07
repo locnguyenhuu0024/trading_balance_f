@@ -2,8 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/navigation/main_navigation_shell.dart';
-import 'package:trading_balance_f/core/navigation/navigation_preferences.dart';
-import 'package:trading_balance_f/core/navigation/navigation_preferences_provider.dart';
 import 'package:trading_balance_f/core/navigation/trading_navigation_bar.dart';
 import 'package:trading_balance_f/features/orders/presentation/providers/order_provider.dart';
 import 'package:trading_balance_f/features/orders/presentation/widgets/order_filter_controls.dart';
@@ -11,65 +9,55 @@ import 'package:trading_balance_f/features/orders/presentation/widgets/responsiv
 import 'package:trading_balance_f/features/settings/presentation/settings_screen.dart';
 
 void main() {
-  Widget shellApp({
-    ThemeMode themeMode = ThemeMode.light,
-    NavigationPreferences navigationPreferences =
-        NavigationPreferences.defaults,
-  }) {
+  Widget shellApp({ThemeMode themeMode = ThemeMode.light}) {
+    const destinationScreenIndices = [0, 2, 3, 8];
     return ProviderScope(
       key: ValueKey(themeMode),
-      overrides: [
-        themeModeProvider.overrideWith((ref) => themeMode),
-        navigationPreferencesInitialProvider.overrideWithValue(
-          navigationPreferences,
-        ),
-      ],
+      overrides: [themeModeProvider.overrideWith((ref) => themeMode)],
       child: MaterialApp(
         home: MainNavigationShell(
-          destinationBuilder: (context, index) => Center(
-            child: Text('Màn hình $index', key: Key('destination-body-$index')),
-          ),
+          destinationBuilder: (context, index) {
+            final screenIndex = destinationScreenIndices[index];
+            return Center(
+              child: Text(
+                'Màn hình $screenIndex',
+                key: Key('destination-body-$screenIndex'),
+              ),
+            );
+          },
         ),
       ),
     );
   }
 
-  testWidgets('root navigation exposes seven destinations and selected label', (
+  testWidgets('root navigation exposes four fixed destinations', (
     tester,
   ) async {
     await tester.pumpWidget(shellApp());
 
     expect(TradingNavigationBar.items.map((item) => item.id), [
       'home',
-      'bmag',
       'orders',
       'market',
-      'settings',
-      'support',
-      'strategy',
+      'tools',
     ]);
     expect(find.byKey(const Key('destination-body-0')), findsOneWidget);
-    expect(find.text('Trang chủ'), findsOneWidget);
+    expect(find.byTooltip('Tài sản'), findsOneWidget);
+    expect(find.byTooltip('Lệnh'), findsOneWidget);
+    expect(find.byTooltip('Thị trường'), findsOneWidget);
+    expect(find.byTooltip('Thêm'), findsOneWidget);
     expect(find.text('Thị trường'), findsNothing);
 
-    await tester.tap(find.byKey(const Key('navigation-destination-3')));
+    await tester.tap(find.byKey(const Key('navigation-destination-2')));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('destination-body-3')), findsOneWidget);
-    expect(find.text('Trang chủ'), findsNothing);
     expect(find.text('Thị trường'), findsOneWidget);
-    expect(find.byKey(const Key('navigation-destination-4')), findsOneWidget);
-    expect(find.byKey(const Key('navigation-destination-5')), findsOneWidget);
 
-    await tester.tap(find.byKey(const Key('navigation-destination-5')));
+    await tester.tap(find.byKey(const Key('navigation-destination-3')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('destination-body-6')), findsOneWidget);
-    expect(find.text('Hỗ trợ'), findsOneWidget);
-
-    await tester.tap(find.byKey(const Key('navigation-destination-6')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('destination-body-7')), findsOneWidget);
-    expect(find.text('Chiến Thuật'), findsOneWidget);
+    expect(find.byKey(const Key('destination-body-8')), findsOneWidget);
+    expect(find.text('Thêm'), findsOneWidget);
   });
 
   testWidgets(
@@ -136,42 +124,6 @@ void main() {
       );
     },
   );
-
-  testWidgets('scales fixed navigation controls and applies custom opacity', (
-    tester,
-  ) async {
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    tester.view.devicePixelRatio = 1;
-    const cases = <(double, double)>[(390, 50.6), (800, 50.6)];
-
-    for (final testCase in cases) {
-      tester.view.physicalSize = Size(testCase.$1, 844);
-      await tester.pumpWidget(
-        shellApp(
-          navigationPreferences: const NavigationPreferences(
-            displayMode: NavigationDisplayMode.bar,
-            floatingEdge: NavigationEdge.bottom,
-            buttonScale: 1.1,
-            buttonOpacity: 0.75,
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      final indicator = tester.widget<AnimatedContainer>(
-        find.byKey(const Key('navigation-indicator-0')),
-      );
-      final indicatorRect = tester.getRect(
-        find.byKey(const Key('navigation-indicator-0')),
-      );
-      expect(
-        (indicator.decoration! as BoxDecoration).color!.a,
-        closeTo(0.75, 0.001),
-      );
-      expect(indicatorRect.width, closeTo(testCase.$2, 0.1));
-    }
-  });
 
   testWidgets('order select controls update their selected values', (
     tester,

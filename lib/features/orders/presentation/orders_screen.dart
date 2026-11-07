@@ -5,6 +5,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/backend_features.dart';
 import '../../../core/formatting/adaptive_number_format.dart';
 import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/network/okx_read_scope.dart';
@@ -114,8 +115,11 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     final timeZoneId = ref.watch(appTimeZoneProvider);
     final exchangeRate = ref.watch(vndExchangeRateProvider).value ?? 25400.0;
     final isBalanceHidden = ref.watch(hideBalanceProvider);
-    final tradeSessionState = ref.watch(tradeSessionProvider);
-    final isTradeAuthenticated = tradeSessionState.isAuthenticated;
+    final backendFeaturesEnabled = ref.watch(backendFeaturesEnabledProvider);
+    final tradeSessionState = backendFeaturesEnabled
+        ? ref.watch(tradeSessionProvider)
+        : null;
+    final isTradeAuthenticated = tradeSessionState?.isAuthenticated ?? false;
     final isCurrentReadLoading = switch (currentTab) {
       OrderTab.positions when currentFilter == 'SPOT' => false,
       OrderTab.positions => ref.watch(positionsFutureProvider).isLoading,
@@ -150,35 +154,49 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
         elevation: 0,
         centerTitle: true,
         toolbarHeight: toolbarHeight,
-        title: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Flexible(
-              child: Text(
+        title: backendFeaturesEnabled
+            ? Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Flexible(
+                    child: Text(
+                      'Quản lý Giao dịch',
+                      maxLines: 2,
+                      softWrap: true,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 16,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Tooltip(
+                    message: isTradeAuthenticated
+                        ? 'Đã đăng nhập'
+                        : 'Chưa đăng nhập',
+                    child: Semantics(
+                      label: isTradeAuthenticated
+                          ? 'Đã đăng nhập'
+                          : 'Chưa đăng nhập',
+                      child: Icon(
+                        isTradeAuthenticated
+                            ? Icons.verified_user_outlined
+                            : Icons.lock_outline,
+                        size: 18,
+                        color: isTradeAuthenticated
+                            ? palette.positive
+                            : Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ],
+              )
+            : const Text(
                 'Quản lý Giao dịch',
                 maxLines: 2,
                 softWrap: true,
                 style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
               ),
-            ),
-            const SizedBox(width: 6),
-            Tooltip(
-              message: isTradeAuthenticated ? 'Đã đăng nhập' : 'Chưa đăng nhập',
-              child: Semantics(
-                label: isTradeAuthenticated ? 'Đã đăng nhập' : 'Chưa đăng nhập',
-                child: Icon(
-                  isTradeAuthenticated
-                      ? Icons.verified_user_outlined
-                      : Icons.lock_outline,
-                  size: 18,
-                  color: isTradeAuthenticated
-                      ? palette.positive
-                      : Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ),
-          ],
-        ),
         actions: [
           ManualRefreshButton(
             buttonKey: const Key('orders-manual-refresh'),
@@ -193,7 +211,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       body: NavigationContentFrame(
         child: Column(
           children: [
-            if (currentTab == OrderTab.positions)
+            if (currentTab == OrderTab.positions && backendFeaturesEnabled)
               TradeAccountControls(filterControls: filterControls)
             else
               Padding(
@@ -214,6 +232,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                 exchangeRate,
                 isBalanceHidden,
                 timeZoneId,
+                backendFeaturesEnabled,
               ),
             ),
           ],
@@ -231,6 +250,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     double exchangeRate,
     bool isBalanceHidden,
     String timeZoneId,
+    bool backendFeaturesEnabled,
   ) {
     final palette = AppPalette.forBrightness(isDark);
     if (currentTab == OrderTab.positions) {
@@ -332,6 +352,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                       exchangeRate,
                       isBalanceHidden,
                       timeZoneId,
+                      backendFeaturesEnabled,
                     ),
                   )
                   .toList(),
@@ -342,7 +363,8 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       if (currentTab == OrderTab.pending) {
         return Column(
           children: [
-            const TradeAccountControls(showCloseAll: false),
+            if (backendFeaturesEnabled)
+              const TradeAccountControls(showCloseAll: false),
             Expanded(child: orderList),
           ],
         );
@@ -853,6 +875,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     double exchangeRate,
     bool isBalanceHidden,
     String timeZoneId,
+    bool backendFeaturesEnabled,
   ) {
     final palette = AppPalette.forBrightness(isDark);
     final isBuy = order.side.toLowerCase() == 'buy';
@@ -1102,7 +1125,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
               labelColor: subtitleColor,
               crossAxisAlignment: CrossAxisAlignment.start,
             ),
-            if (isActiveLimitOrder(order))
+            if (backendFeaturesEnabled && isActiveLimitOrder(order))
               OrderCancellationControl(order: order),
           ],
         ),
@@ -1119,6 +1142,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     double exchangeRate,
     bool isBalanceHidden,
     String timeZoneId,
+    bool backendFeaturesEnabled,
   ) {
     if (currentTab == OrderTab.pending) {
       return _buildPendingOrderCard(
@@ -1128,6 +1152,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
         exchangeRate,
         isBalanceHidden,
         timeZoneId,
+        backendFeaturesEnabled,
       );
     }
 
@@ -1330,7 +1355,9 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
               textColor: textColor,
               subtitleColor: subtitleColor,
             ),
-            if (currentTab == OrderTab.pending && isActiveLimitOrder(order))
+            if (backendFeaturesEnabled &&
+                currentTab == OrderTab.pending &&
+                isActiveLimitOrder(order))
               OrderCancellationControl(order: order),
           ],
         ),

@@ -2,12 +2,16 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/backend_features.dart';
 import '../../../../core/network/backend_data_client.dart';
 import '../../../../core/network/backend_data_session.dart';
 import '../../../../core/network/foreground_read_gate.dart';
 import '../../data/trade_api_client.dart';
 
-final tradeApiProvider = Provider<TradeApi>((ref) => TradeApiClient());
+final tradeApiProvider = Provider<TradeApi>((ref) {
+  if (!ref.watch(backendFeaturesEnabledProvider)) return DisabledTradeApi();
+  return TradeApiClient();
+});
 
 final foregroundReadGateProvider = Provider<ForegroundReadGate>((ref) {
   final gate = ForegroundReadGate();
