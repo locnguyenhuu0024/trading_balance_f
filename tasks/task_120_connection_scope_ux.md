@@ -28,16 +28,16 @@ Observed Effective Effort: unavailable
 
 ## Stage instruction (current)
 
-This task runs in stages because long runs have ended early. Stage A code is committed as work in progress and reviewed by the coordinator.
+This task runs in stages. Stage A2 is committed as work in progress.
 
-**Current stage A2, finish stage A with exactly these fixes:**
+**Current stage A3, fix exactly these coordinator-observed failures. You cannot run tests in the sandbox, so the causes are given:**
 
-1. AUD-120-01: `ScopeSwitchGate` replaces the whole screen on any reload because it tests `account.isLoading`, so a manual refresh hides the screen. Show the gate only when the new scope has no value yet: `account.isLoading && !account.hasValue`.
-2. AUD-120-02: the shell puts `ScopeBar` above each screen's `AppBar`, so it can sit under the status bar, and pushed tool screens have no bar. Remove it from the shell. Per step 6, put `ScopeBar` at the top of the body of Tài sản, Lệnh, Thị trường, Công cụ, BMAG, Hỗ trợ / kháng cự and Cài đặt, inside each screen's existing safe layout.
-3. Coordinator-observed test failures, which you cannot see because the sandbox cannot run tests: `scope_bar_test` finds no `Đang xem` text in the picker, so make the active row show it as its own text widget. `scope_switch_test: removed selected Binance keys fall back to OKX` fails with pending timers, because the real `OkxDataClient` starts; override the read providers with fakes as the other test does.
-4. Add the missing scenarios: selection survives a restart through storage; after a switch the shell is on Tài sản with filter and tab at defaults, including when a tool route was pushed; a manual refresh does not show the gate.
+1. AUD-120-03, a real defect: `ScopeBar` uses a fixed `SizedBox(height: 54)`, so with enlarged text it overflows at the bottom, breaking REQ-011 and eight existing tests in `orders_screen_mobile_layout_test`, `orders_screen_position_layout_test`, `orders_screen_history_layout_test` and `fractal_screen_price_formatting_test`. Use a minimum height of 54 with content-driven growth, and let both text lines wrap or ellipsize. The bar must not overflow at 320 wide at the app's largest text scale. Do not weaken or change those existing tests.
+2. Those tests have fixed-height screens. If, after fix 1, the body still overflows because of the added bar, make that screen's body scrollable in the existing layout, not the test.
+3. `scope_bar_test`: `semantics.dispose` runs too late through `addTearDown`. Call `semantics.dispose()` at the end of the test body.
+4. `scope_switch_test: selection survives restart through storage` hangs: `initializeAppStartup` does real async work inside a fake-async test. Wrap that call in `tester.runAsync`.
 
-The picker's `Quản lý kết nối` stays a no-op until stage B. That is expected, not a blocker. Finish by returning the structured report.
+Finish by returning the structured report.
 
 ## 2. Objective
 

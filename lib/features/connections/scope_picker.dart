@@ -37,8 +37,14 @@ class ScopePicker extends ConsumerWidget {
                     ),
                     child: ListTile(
                       title: Text('${entry.profile.label} / Chính'),
-                      subtitle: Text(
-                        '${scopeProductLine(entry.profile.exchange)}\n${active ? 'Đang xem' : 'Chuyển sang tài khoản này'}',
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(scopeProductLine(entry.profile.exchange)),
+                          Text(
+                            active ? 'Đang xem' : 'Chuyển sang tài khoản này',
+                          ),
+                        ],
                       ),
                       onTap: () {
                         Navigator.of(context).pop();

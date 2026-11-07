@@ -1,3 +1,4 @@
+import '../../core/widgets/scope_bar.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/navigation/navigation_content_frame.dart';
@@ -17,6 +18,8 @@ class ToolsScreen extends StatelessWidget {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
+            const ScopeBar(),
+            const SizedBox(height: 12),
             _ToolCard(
               icon: Icons.donut_small_outlined,
               title: 'BMAG',

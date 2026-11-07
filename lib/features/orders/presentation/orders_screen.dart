@@ -1,3 +1,4 @@
+import '../../../core/widgets/scope_bar.dart';
 // File Name: orders_screen.dart
 // File Path: lib/features/orders/presentation/orders_screen.dart
 
@@ -234,6 +235,10 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       body: NavigationContentFrame(
         child: Column(
           children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: ScopeBar(),
+            ),
             if (currentTab == OrderTab.positions && backendFeaturesEnabled)
               TradeAccountControls(filterControls: filterControls)
             else

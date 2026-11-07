@@ -11,7 +11,6 @@ import '../../features/strategy/presentation/strategy_screen.dart';
 import '../../features/tools/tools_screen.dart';
 import '../backend_features.dart';
 import '../exchange/exchange_scope.dart';
-import '../widgets/scope_bar.dart';
 import '../../features/connections/scope_switch_gate.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_page_transition.dart';
@@ -100,22 +99,10 @@ class _MainNavigationShellState extends ConsumerState<MainNavigationShell> {
               key: ValueKey(
                 '${scope.connectionId}:${scope.switchEpoch}:$selectedScreenIndex',
               ),
-              child: Column(
-                children: [
-                  if (widget.destinationBuilder == null &&
-                      selectedScreenIndex != 7)
-                    const Padding(
-                      padding: EdgeInsets.fromLTRB(16, 12, 16, 0),
-                      child: ScopeBar(),
-                    ),
-                  Expanded(
-                    child: _buildSelectedScreen(
-                      context,
-                      selectedScreenIndex,
-                      selectedVisibleIndex,
-                    ),
-                  ),
-                ],
+              child: _buildSelectedScreen(
+                context,
+                selectedScreenIndex,
+                selectedVisibleIndex,
               ),
             ),
           ),

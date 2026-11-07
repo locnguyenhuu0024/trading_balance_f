@@ -1,3 +1,4 @@
+import '../../../core/widgets/scope_bar.dart';
 // File Name: settings_screen.dart
 // File Path: lib/features/settings/presentation/settings_screen.dart
 
@@ -434,6 +435,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                const ScopeBar(),
+                const SizedBox(height: 12),
                 // ================= SECTION 1: GIAO DIỆN =================
                 Padding(
                   padding: const EdgeInsets.only(left: 8, bottom: 8),

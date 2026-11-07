@@ -1,3 +1,4 @@
+import '../../../core/widgets/scope_bar.dart';
 // File Name: portfolio_screen.dart
 // File Path: lib/features/portfolio/presentation/portfolio_screen.dart
 
@@ -212,38 +213,54 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
         ],
       ),
       body: NavigationContentFrame(
-        child: RefreshIndicator(
-          color: palette.ink,
-          backgroundColor: palette.raised,
-          onRefresh: _refreshPortfolioAndRate,
-          child: !portfolioAsyncValue.hasValue && portfolioAsyncValue.isLoading
-              ? Center(child: CircularProgressIndicator(color: textColor))
-              : portfolioAsyncValue.when(
-                  skipLoadingOnReload: false,
-                  loading: () => Center(
-                    child: CircularProgressIndicator(color: textColor),
-                  ),
-                  error: (error, stack) {
-                    _syncTickerSubscription(const <String>[]);
-                    return _buildErrorState(context, error.toString(), isDark);
-                  },
-                  data: (data) {
-                    _syncTickerSubscription(
-                      isOkx
-                          ? data.balances.map((e) => e.asset).toList()
-                          : const <String>[],
-                    );
-                    return _buildPortfolioData(
-                      data,
-                      isOkx,
-                      livePrices,
-                      isBalanceHidden,
-                      isDark,
-                      currency,
-                      exchangeRate,
-                    );
-                  },
-                ),
+        child: Column(
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: ScopeBar(),
+            ),
+            Expanded(
+              child: RefreshIndicator(
+                color: palette.ink,
+                backgroundColor: palette.raised,
+                onRefresh: _refreshPortfolioAndRate,
+                child:
+                    !portfolioAsyncValue.hasValue &&
+                        portfolioAsyncValue.isLoading
+                    ? Center(child: CircularProgressIndicator(color: textColor))
+                    : portfolioAsyncValue.when(
+                        skipLoadingOnReload: false,
+                        loading: () => Center(
+                          child: CircularProgressIndicator(color: textColor),
+                        ),
+                        error: (error, stack) {
+                          _syncTickerSubscription(const <String>[]);
+                          return _buildErrorState(
+                            context,
+                            error.toString(),
+                            isDark,
+                          );
+                        },
+                        data: (data) {
+                          _syncTickerSubscription(
+                            isOkx
+                                ? data.balances.map((e) => e.asset).toList()
+                                : const <String>[],
+                          );
+                          return _buildPortfolioData(
+                            data,
+                            isOkx,
+                            livePrices,
+                            isBalanceHidden,
+                            isDark,
+                            currency,
+                            exchangeRate,
+                          );
+                        },
+                      ),
+              ),
+            ),
+          ],
         ),
       ),
     );

@@ -1,3 +1,4 @@
+import '../../../core/widgets/scope_bar.dart';
 // File Name: fractal_screen.dart
 // File Path: lib/features/fractal_tracker/presentation/fractal_screen.dart
 
@@ -134,6 +135,10 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: ScopeBar(),
+            ),
             Padding(
               padding: const EdgeInsets.symmetric(
                 horizontal: AppTokens.space4,

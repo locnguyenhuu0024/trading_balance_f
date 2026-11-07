@@ -1,3 +1,4 @@
+import '../../../core/widgets/scope_bar.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -86,6 +87,8 @@ class _SupportResistanceScreenState
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  const ScopeBar(),
+                  const SizedBox(height: 12),
                   Row(
                     children: [
                       Expanded(

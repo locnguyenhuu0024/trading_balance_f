@@ -37,31 +37,33 @@ class ScopeSwitchGate extends ConsumerWidget {
     }
     if (scope.switchEpoch == 0) return child;
     final account = ref.watch(scopedAccountProvider(scope));
-    if (!account.isLoading) return child;
+    if (!account.isLoading || account.hasValue) return child;
     final name = scope.exchange.name == 'okx' ? 'OKX' : 'Binance';
     final reducedMotion = MediaQuery.disableAnimationsOf(context);
-    return Column(
-      children: [
-        const Padding(padding: EdgeInsets.all(16), child: ScopeBar()),
-        Expanded(
-          child: Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Semantics(
-                  liveRegion: true,
-                  child: Text('Đang tải $name / Chính'),
-                ),
-                const SizedBox(height: 16),
-                if (reducedMotion)
-                  const Icon(Icons.hourglass_empty)
-                else
-                  const CircularProgressIndicator(),
-              ],
+    return SafeArea(
+      child: Column(
+        children: [
+          const Padding(padding: EdgeInsets.all(16), child: ScopeBar()),
+          Expanded(
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Semantics(
+                    liveRegion: true,
+                    child: Text('Đang tải $name / Chính'),
+                  ),
+                  const SizedBox(height: 16),
+                  if (reducedMotion)
+                    const Icon(Icons.hourglass_empty)
+                  else
+                    const CircularProgressIndicator(),
+                ],
+              ),
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }

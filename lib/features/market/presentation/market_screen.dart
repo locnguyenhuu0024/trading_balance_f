@@ -1,3 +1,4 @@
+import '../../../core/widgets/scope_bar.dart';
 // File Name: market_screen.dart
 // File Path: lib/features/market/presentation/market_screen.dart
 // Note: Màn hình hiển thị Top 50 các đồng coin giao dịch SPOT có Volume lớn nhất
@@ -148,6 +149,10 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: ScopeBar(),
+            ),
             Padding(
               padding: const EdgeInsets.symmetric(
                 horizontal: AppTokens.space4,
