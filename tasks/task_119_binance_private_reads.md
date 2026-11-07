@@ -32,7 +32,7 @@ This task runs in stages because long runs have ended early.
 
 **Current stage 1 of 3, do only this:** steps 1 and 2 of section 6, plus credentials.
 
-- `binance_credential_bundle.dart`: key and secret, validated, no logging.
+- `BinanceKeyBundle` inside `binance_private_client.dart`: key and secret, validated, no logging. The dispatch gate refuses paths containing `credential`, so this class lives here and its tests go in `binance_private_client_test.dart`.
 - `secure_storage_helper.dart` and `WebStorageHelper` in `main.dart`: `BINANCE_API_KEY`, `BINANCE_API_SECRET`, save and clear, and a generation state mirroring `okxCredentialState`. OKX keys are untouched.
 - `exchange_scope.dart`: use the Binance generation when scope is Binance.
 - `binance_private_client.dart`: signing, time offset, the GET allowlist, classification, and the generation fence before and after each fetch.
@@ -58,13 +58,11 @@ Required state: clean checkout on branch `codex/multi-platform-view-only`. Plan 
 
 Exact write list across stages (new files use exactly these names); each stage may narrow it. Read access covers all non-protected source and tests.
 
-- `lib/features/settings/domain/binance_credential_bundle.dart`
 - `lib/core/security/secure_storage_helper.dart`
 - `lib/main.dart`
 - `lib/core/exchange/exchange_scope.dart`
 - `lib/exchanges/binance/binance_private_client.dart`
 - `test/exchanges/binance/binance_private_client_test.dart`
-- `test/core/security/binance_credentials_test.dart`
 - `lib/exchanges/binance/binance_reader.dart`
 - `lib/exchanges/binance/binance_adapter.dart`
 - `lib/core/exchange/exchange_models.dart`
