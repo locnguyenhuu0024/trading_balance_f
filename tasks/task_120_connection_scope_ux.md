@@ -26,11 +26,19 @@ Requested Effort: high
 Observed Effective Model: unavailable
 Observed Effective Effort: unavailable
 
+## Stage instruction (current)
+
+This task runs in stages because long runs have ended early.
+
+**Current stage A of 3, do only steps 1 to 6 of section 6.** Tests in `scope_bar_test.dart` and `scope_switch_test.dart`: OKX to Binance with fake transports shows target loading, no former data, lands on Tài sản with filters at defaults; selection survives restart; picker lists configured connections only; Binance keys removed while selected falls back to OKX with no crash; bar is at least 48 high with the semantic label. Existing tests change for wiring only. Finish by returning the structured report.
+
 ## 2. Objective
 
 A user can connect Binance, switch between connections, manage them, and see correct state for each.
 
 Done when: OKX and Binance are both registered and selectable, and switching follows the design with fake transports.
+
+Complete the work in this run; a long run is normal. Ending without file changes is a failed attempt.
 
 ## 3. Preconditions
 
@@ -39,13 +47,7 @@ Required state: clean checkout on branch `codex/multi-platform-view-only`. Plan 
 
 ## 4. Allowed Scope
 
-- `lib/core/widgets/scope_bar.dart`, `lib/features/connections/**` (new)
-- `lib/core/exchange/exchange_registry.dart` (register Binance)
-- `lib/core/navigation/main_navigation_shell.dart`
-- `lib/features/tools/tools_screen.dart`
-- `lib/features/settings/presentation/settings_trade_access_page.dart` (extract `OkxCredentialForm`, keep every `settings-okx-*` key)
-- `lib/features/portfolio/presentation/**`, `lib/features/orders/presentation/orders_screen.dart`, `lib/features/market/presentation/**`, `lib/features/fractal_tracker/presentation/**`, `lib/features/support_resistance/presentation/**` (insert bar, states, margin section, app-only notice, history coverage copy)
-- Related tests, `test/features/connections/*` (new)
+Each stage below gives the exact write list. New files use exactly those names. Read access covers all non-protected source and tests.
 
 ## 5. Forbidden Scope
 
@@ -60,13 +62,28 @@ If required work exceeds Allowed Scope, return `BLOCKED`.
 
 ## 6. Executor Contract
 
-1. Add `ScopeBar` with no locked mode, 48-minimum hit area and a button semantic label naming exchange and account.
-2. Add picker with `Đang xem`, `Chuyển sang tài khoản này`, `Quản lý kết nối`, listing configured connections only.
-3. Add `ScopeSwitchGate`: pop pushed routes, key subtree by connectionId, show target loading from frame 08 without the prototype button, then land on Tài sản with a live region.
-4. Add `Sàn & tài khoản`, catalog with disabled `Sàn khác`, OKX form using the extracted form, and Binance form with key and secret, read-only guidance and `Kiểm tra kết nối`. A test succeeds if any platform-available wallet read succeeds.
-5. Add states: expired, empty, partial, app-only, retry card; replace raw errors at orders_screen near lines 266 and 309.
-6. Add Margin section under Lệnh with cross and isolated cards, using `—` for unavailable. Spot stays in Tài sản.
-7. Show coverage copy on Binance history.
+Design is fixed; mechanism details are yours if they satisfy the invariants and tests. Report what you chose. Stop only for a conflict about product behavior.
+
+Stage A, selection:
+1. Register Binance in `exchangeRegistryProvider` with connectionId `binance-default`. Labels: OKX account `Chính`, product line `Tài khoản giao dịch`; Binance account `Chính`, product line `USDⓈ-M · Spot · Margin`, on web `USDⓈ-M`. The illustrative `Futures 01` and `USDT Perpetual` are not used.
+2. `configuredConnectionsProvider`: profiles whose keys exist in storage, in registry order. If the selected connection has no keys, the scope falls back to the other configured connection, else OKX's existing no-key state (EDGE-002).
+3. `ScopeBar`: 54 high, radius 12, badge 34 with exchange initial, two-line label, chevron; hit area at least 48; button semantics naming exchange and account. Tapping opens `ScopePicker`.
+4. `ScopePicker`: heading `Chọn sàn & tài khoản`, rows with `Đang xem` or `Chuyển sang tài khoản này`, the active row with a stronger border, and `Quản lý kết nối`.
+5. `ScopeSwitchGate` in the shell: on selection pop pushed routes, go to `Tài sản`, key the subtree by connectionId and epoch, and show `Đang tải <exchange> / <account>` with the bar until the account read settles. The text sits in a live region; the spinner is static under reduced motion.
+6. Add `ScopeBar` at the top of Tài sản, Lệnh, Thị trường, Công cụ, BMAG, Hỗ trợ / kháng cự and Cài đặt, using existing layouts.
+
+Stage B, management:
+7. `ConnectionsScreen` (`Sàn & tài khoản`): one card per configured connection with exchange, account, product line and state, reachable from Tools and the picker; footer `+ Thêm kết nối`.
+8. `ConnectionCatalogScreen` (`Thêm kết nối`): OKX, Binance, disabled `Sàn khác`. One connection per exchange, so an existing one opens its form to repair.
+9. OKX opens the existing `SettingsTradeAccessPage`, unchanged. `BinanceConnectionForm`: key and secret, obscured secret, guidance to use a read-only key, `Kiểm tra kết nối`, `Lưu`, and `Xóa kết nối` with confirmation. A test succeeds if any platform-available wallet read succeeds. Saving goes through `trackBinanceCredentialMutation`. Secrets never appear in errors or state.
+
+Stage C, states:
+10. Show instruments from `InstrumentKey.base` and `quote` when present, falling back to the existing OKX split only for OKX. Never split a Binance id.
+11. Filter chips from `capabilities`: Binance shows `Tất cả`, `USDⓈ-M` (value `SWAP`), `Spot`, `Margin`; OKX unchanged. On web Binance shows `Tất cả` and `USDⓈ-M`.
+12. Margin section on the Lệnh positions tab from `AccountSnapshot.marginRows`: cross and isolated cards showing net, borrowed, interest, margin level, and for isolated liquidation and index price. Absent values show `—`. No close action.
+13. Non-OKX absent amounts show `—`, not `0.00`. Partial total shows `Chưa đầy đủ` with reasons; unpriced rows say `Chưa định giá`. Map wallet issues to Vietnamese from `walletResults`; do not show the English issue text.
+14. States per spec section 12 through `adapter.classify`: expired shows `Cần kiểm tra lại kết nối` with `Kiểm tra kết nối` opening the form, and other connections stay selectable; empty per design; web shows `Chỉ có trên ứng dụng` for Spot and Margin; generic failure shows a retry card replacing raw `Lỗi: $error` in Orders and `Lỗi kết nối: $errorMessage` in Portfolio. Keep OKX retry behavior. Automatic refresh stops on terminal failures for every exchange through `classify`.
+15. Binance history shows which symbols are covered, from `binanceHistorySymbolsProvider`.
 
 Required invariants and edges: INV-001, INV-003, INV-004; EDGE-002, EDGE-004, EDGE-005, EDGE-010.
 Apply reuse-first, minimal complete changes. Do not invent product semantics. If the contract is insufficient, return `BLOCKED`.

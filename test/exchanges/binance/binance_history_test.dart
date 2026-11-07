@@ -168,7 +168,7 @@ void main() {
     container.read(orderTabProvider.notifier).state = OrderTab.history;
     await container.read(result.future);
     expect(
-      transport.requests.where(history).single.queryParameters['symbol'],
+      transport.requests.where(history).single.uri.queryParameters['symbol'],
       'BTCUSDT',
     );
   });
@@ -199,15 +199,15 @@ void main() {
         requests
             .skip(product * 10)
             .take(10)
-            .map((r) => r.queryParameters['symbol']),
+            .map((r) => r.uri.queryParameters['symbol']),
         symbols.take(10),
       );
     }
     for (final request in requests) {
-      expect(request.queryParameters['symbol'], isNotEmpty);
-      expect('${request.queryParameters['limit']}', '100');
-      expect(request.queryParameters.containsKey('startTime'), isFalse);
-      expect(request.queryParameters.containsKey('endTime'), isFalse);
+      expect(request.uri.queryParameters['symbol'], isNotEmpty);
+      expect(request.uri.queryParameters['limit'], '100');
+      expect(request.uri.queryParameters.containsKey('startTime'), isFalse);
+      expect(request.uri.queryParameters.containsKey('endTime'), isFalse);
     }
   });
 
@@ -228,7 +228,7 @@ void main() {
     () async {
       final transport = HistoryTransport((r) async {
         if (!history(r)) return time();
-        final symbol = r.queryParameters['symbol'];
+        final symbol = r.uri.queryParameters['symbol'];
         if (symbol == 'BADUSDT') return {'code': -2015};
         return [
           {
