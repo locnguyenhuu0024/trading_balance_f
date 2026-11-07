@@ -53,7 +53,11 @@ void main() {
     SharedPreferences.setMockInitialValues({});
   });
   tearDown(() => state.dispose());
-  BinanceReader make(HistoryTransport transport, {bool web = false}) {
+  BinanceReader make(
+    HistoryTransport transport, {
+    bool web = false,
+    String proxy = '',
+  }) {
     final dio = Dio()..httpClientAdapter = transport;
     return BinanceReader(
       BinancePrivateClient(
@@ -61,6 +65,7 @@ void main() {
         credentialState: state,
         coordinator: coordinator,
         isWeb: web,
+        proxyBaseUrl: proxy,
         dio: dio,
       ),
       BinanceMarket(BinanceClient(coordinator: coordinator, dio: dio)),
@@ -245,4 +250,23 @@ void main() {
       expect(result.issues, ['SWAP BADUSDT unavailable']);
     },
   );
+  test('web proxy includes Spot and Margin history', () async {
+    final transport = HistoryTransport((r) async => history(r) ? [] : time());
+    await make(
+      transport,
+      web: true,
+      proxy: 'https://proxy.example',
+    ).readHistory('ALL', ['BTCUSDT']);
+    final requests = transport.requests.where(history).toList();
+    expect(requests.map((r) => r.uri.path), [
+      '/fapi/v1/allOrders',
+      '/api/v3/allOrders',
+      '/sapi/v1/margin/allOrders',
+    ]);
+    expect(requests.map((r) => r.uri.host), [
+      'fapi.binance.com',
+      'proxy.example',
+      'proxy.example',
+    ]);
+  });
 }

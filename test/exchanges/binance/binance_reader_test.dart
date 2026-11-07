@@ -11,7 +11,8 @@ import 'package:trading_balance_f/exchanges/binance/binance_private_client.dart'
 import 'package:trading_balance_f/exchanges/binance/binance_reader.dart';
 
 class Transport implements HttpClientAdapter {
-  Transport(this.respond);
+  Transport(this.respond, {this.spotStatus});
+  final int? spotStatus;
   final Object Function(RequestOptions) respond;
   final requests = <RequestOptions>[];
   @override
@@ -24,7 +25,11 @@ class Transport implements HttpClientAdapter {
     final data = respond(options);
     return ResponseBody.fromString(
       jsonEncode(data),
-      data is Map && data['code'] != null ? 400 : 200,
+      options.uri.path == '/api/v3/account' && spotStatus != null
+          ? spotStatus!
+          : data is Map && data['code'] != null
+          ? 400
+          : 200,
       headers: {
         'content-type': ['application/json'],
       },
@@ -45,7 +50,11 @@ void main() {
     coordinator = RequestCoordinator(minimumSpacing: Duration.zero);
   });
   tearDown(() => state.dispose());
-  BinanceReader make(Transport transport, {bool web = false}) {
+  BinanceReader make(
+    Transport transport, {
+    bool web = false,
+    String proxy = '',
+  }) {
     final dio = Dio()..httpClientAdapter = transport;
     return BinanceReader(
       BinancePrivateClient(
@@ -53,6 +62,7 @@ void main() {
         credentialState: state,
         coordinator: coordinator,
         isWeb: web,
+        proxyBaseUrl: proxy,
         dio: dio,
       ),
       BinanceMarket(BinanceClient(coordinator: coordinator, dio: dio)),
@@ -230,5 +240,61 @@ void main() {
     expect(requests.length, 2);
     expect(requests.last.uri.queryParameters['symbol'], 'BTCUSDT');
     expect(requests.last.uri.queryParameters['isIsolated'], 'TRUE');
+  });
+  test(
+    'web proxy worked example routes private wallets and hides secret',
+    () async {
+      final t = Transport((r) => fixture(r));
+      final result = await make(
+        t,
+        web: true,
+        proxy: 'https://proxy.example',
+      ).readAccount();
+      expect(result.total, '1660.50');
+      expect(result.isPartial, isFalse);
+      expect(
+        result.issues,
+        isNot(contains('Spot and Margin are available in the app only')),
+      );
+      final wallets = t.requests.where(
+        (r) =>
+            r.uri.path == '/api/v3/account' || r.uri.path.startsWith('/sapi/'),
+      );
+      expect(wallets.length, 3);
+      for (final r in wallets) {
+        expect(r.uri.host, 'proxy.example');
+        expect(r.uri.toString(), isNot(contains('secret')));
+        expect(r.headers.toString(), isNot(contains('secret')));
+      }
+    },
+  );
+  test('proxy 451 on Spot preserves futures and marks total partial', () async {
+    final t = Transport((r) => fixture(r), spotStatus: 451);
+    final result = await make(
+      t,
+      web: true,
+      proxy: 'https://proxy.example',
+    ).readAccount();
+    expect(result.isPartial, isTrue);
+    expect(result.balances.any((b) => b.wallet == 'USD-M'), isTrue);
+    expect(result.issues, contains('Spot unavailable'));
+  });
+  test('web proxy includes Spot and Margin pending orders', () async {
+    final t = Transport((r) {
+      if (r.uri.path.endsWith('/time'))
+        return {'serverTime': DateTime.now().millisecondsSinceEpoch};
+      if (r.uri.path == '/sapi/v1/margin/isolated/account')
+        return {'assets': []};
+      return <Object>[];
+    });
+    await make(t, web: true, proxy: 'https://proxy.example').readOrders('ALL');
+    final orders = t.requests
+        .where((r) => r.uri.path.endsWith('/openOrders'))
+        .toList();
+    expect(orders.map((r) => r.uri.host), [
+      'fapi.binance.com',
+      'proxy.example',
+      'proxy.example',
+    ]);
   });
 }

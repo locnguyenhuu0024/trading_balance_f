@@ -14,6 +14,16 @@ import 'binance_private_client.dart';
 import 'binance_reader.dart';
 
 final binanceIsWebProvider = Provider<bool>((ref) => kIsWeb);
+final binanceProxyBaseUrlProvider = Provider<String>(
+  (ref) => normalizeBinanceProxyBaseUrl(
+    const String.fromEnvironment('BINANCE_PROXY_URL'),
+  ),
+);
+final binanceSpotMarginAvailableProvider = Provider<bool>(
+  (ref) =>
+      !ref.watch(binanceIsWebProvider) ||
+      ref.watch(binanceProxyBaseUrlProvider).isNotEmpty,
+);
 final binancePrivateClientProvider = FutureProvider<BinancePrivateClient>((
   ref,
 ) async {
@@ -23,6 +33,7 @@ final binancePrivateClientProvider = FutureProvider<BinancePrivateClient>((
     exchangeRequestCoordinatorProvider(ExchangeId.binance),
   );
   final isWeb = ref.watch(binanceIsWebProvider);
+  final proxyBaseUrl = ref.watch(binanceProxyBaseUrlProvider);
   final key = await storage.getBinanceApiKey();
   final secret = await storage.getBinanceApiSecret();
   if (snapshot.rotating || snapshot != storage.binanceCredentialState.value) {
@@ -43,6 +54,7 @@ final binancePrivateClientProvider = FutureProvider<BinancePrivateClient>((
     credentialState: storage.binanceCredentialState,
     coordinator: coordinator,
     isWeb: isWeb,
+    proxyBaseUrl: proxyBaseUrl,
   );
 });
 final binanceMarketProvider = Provider<BinanceMarket>(

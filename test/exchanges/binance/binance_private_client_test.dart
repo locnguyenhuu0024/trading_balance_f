@@ -50,15 +50,19 @@ void main() {
     coordinator = RequestCoordinator(minimumSpacing: Duration.zero);
   });
   tearDown(() => state.dispose());
-  BinancePrivateClient client(Fixture fixture, {bool web = false}) =>
-      BinancePrivateClient(
-        keys: BinanceKeyBundle(apiKey: 'fake-key', apiSecret: 'fake-secret'),
-        credentialState: state,
-        coordinator: coordinator,
-        isWeb: web,
-        dio: Dio()..httpClientAdapter = fixture,
-        clock: () => DateTime.fromMillisecondsSinceEpoch(1000, isUtc: true),
-      );
+  BinancePrivateClient client(
+    Fixture fixture, {
+    bool web = false,
+    String proxy = '',
+  }) => BinancePrivateClient(
+    keys: BinanceKeyBundle(apiKey: 'fake-key', apiSecret: 'fake-secret'),
+    credentialState: state,
+    coordinator: coordinator,
+    isWeb: web,
+    proxyBaseUrl: proxy,
+    dio: Dio()..httpClientAdapter = fixture,
+    clock: () => DateTime.fromMillisecondsSinceEpoch(1000, isUtc: true),
+  );
   bool failure(Object? e, ExchangeFailureKind kind) =>
       e is BinancePrivateException && e.failure.kind == kind;
 
@@ -177,5 +181,112 @@ void main() {
     );
     expect(query, contains('timestamp=5000'));
     expect(request.headers['X-MBX-APIKEY'], 'fake-key');
+  });
+  test(
+    'web proxy signs Spot and Margin while futures and time stay direct',
+    () async {
+      final fixture = Fixture(
+        (r) async => r.uri.path.endsWith('/time')
+            ? body({'serverTime': 1000})
+            : body({}),
+      );
+      final c = client(
+        fixture,
+        web: true,
+        proxy: 'https://proxy.example/base/',
+      );
+      for (final path in [
+        '/api/v3/account',
+        '/sapi/v1/margin/account',
+        '/fapi/v3/account',
+        '/api/v3/time',
+      ]) {
+        await c.get(path);
+      }
+      for (final request in fixture.requests) {
+        final path = request.uri.path;
+        if (path.startsWith('/base/')) {
+          expect(request.uri.host, 'proxy.example');
+          expect(
+            path,
+            anyOf('/base/api/v3/account', '/base/sapi/v1/margin/account'),
+          );
+          final query = request.uri.query;
+          final split = query.lastIndexOf('&signature=');
+          expect(split, greaterThan(0));
+          expect(
+            query.substring(split + 11),
+            BinancePrivateClient.signature(
+              'fake-secret',
+              query.substring(0, split),
+            ),
+          );
+          expect(request.headers['X-MBX-APIKEY'], 'fake-key');
+          expect(request.uri.toString(), isNot(contains('fake-secret')));
+          expect(request.headers.toString(), isNot(contains('fake-secret')));
+        } else {
+          expect(
+            request.uri.host,
+            path.startsWith('/fapi/') ? 'fapi.binance.com' : 'api.binance.com',
+          );
+        }
+      }
+      expect(
+        fixture.requests.where((r) => r.uri.host == 'proxy.example').length,
+        2,
+      );
+    },
+  );
+  test('invalid proxy values disable web private routes', () async {
+    for (final proxy in [
+      'http://proxy.example',
+      'https://proxy.example?x=1',
+      'https://proxy.example#x',
+      'not a url',
+    ]) {
+      final fixture = Fixture((_) async => body({}));
+      final c = client(fixture, web: true, proxy: proxy);
+      expect(c.spotMarginAvailable, isFalse);
+      await expectLater(
+        c.get('/api/v3/account'),
+        throwsA(
+          predicate(
+            (e) => failure(e, ExchangeFailureKind.unavailableOnPlatform),
+          ),
+        ),
+      );
+      expect(fixture.requests, isEmpty);
+    }
+  });
+  test('native ignores configured proxy', () async {
+    final fixture = Fixture(
+      (r) async =>
+          r.uri.path.endsWith('/time') ? body({'serverTime': 1000}) : body({}),
+    );
+    await client(
+      fixture,
+      proxy: 'https://proxy.example',
+    ).get('/sapi/v1/margin/account');
+    expect(
+      fixture.requests.every((r) => r.uri.host == 'api.binance.com'),
+      isTrue,
+    );
+  });
+  test('403 and 451 remain other even with credential error codes', () async {
+    for (final status in [403, 451]) {
+      final fixture = Fixture(
+        (r) async => r.uri.path.endsWith('/time')
+            ? body({'serverTime': 1000})
+            : body({'code': -2015}, status),
+      );
+      await expectLater(
+        client(
+          fixture,
+          web: true,
+          proxy: 'https://proxy.example',
+        ).get('/api/v3/account'),
+        throwsA(predicate((e) => failure(e, ExchangeFailureKind.other))),
+      );
+    }
   });
 }

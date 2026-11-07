@@ -29,7 +29,7 @@ class BinanceReader {
     var credentialFailures = 0;
     final wallets = <(String, String)>[
       ('USD-M', '/fapi/v3/account'),
-      if (!client.isWeb) ...[
+      if (client.spotMarginAvailable) ...[
         ('Spot', '/api/v3/account'),
         ('Cross Margin', '/sapi/v1/margin/account'),
         ('Isolated Margin', '/sapi/v1/margin/isolated/account'),
@@ -124,7 +124,7 @@ class BinanceReader {
         ExchangeFailure(ExchangeFailureKind.credential),
       );
     }
-    if (client.isWeb)
+    if (!client.spotMarginAvailable)
       issues.add('Spot and Margin are available in the app only');
     Map<String, double> prices = {};
     if (pending.any((row) => row.$2 != 'USDT' && row.$3 != 0)) {
@@ -261,9 +261,9 @@ class BinanceReader {
 
     if (filter == 'ALL' || filter == 'SWAP')
       await load('/fapi/v1/openOrders', 'SWAP');
-    if (!client.isWeb && (filter == 'ALL' || filter == 'SPOT'))
+    if (client.spotMarginAvailable && (filter == 'ALL' || filter == 'SPOT'))
       await load('/api/v3/openOrders', 'SPOT');
-    if (!client.isWeb && (filter == 'ALL' || filter == 'MARGIN')) {
+    if (client.spotMarginAvailable && (filter == 'ALL' || filter == 'MARGIN')) {
       await load('/sapi/v1/margin/openOrders', 'MARGIN');
       final account = await client.get('/sapi/v1/margin/isolated/account');
       for (final row in account.data['assets'] as List? ?? []) {
@@ -296,9 +296,9 @@ class BinanceReader {
     final issues = <String>[];
     final products = <(String, String)>[
       if (filter == 'ALL' || filter == 'SWAP') ('SWAP', '/fapi/v1/allOrders'),
-      if (!client.isWeb && (filter == 'ALL' || filter == 'SPOT'))
+      if (client.spotMarginAvailable && (filter == 'ALL' || filter == 'SPOT'))
         ('SPOT', '/api/v3/allOrders'),
-      if (!client.isWeb && (filter == 'ALL' || filter == 'MARGIN'))
+      if (client.spotMarginAvailable && (filter == 'ALL' || filter == 'MARGIN'))
         ('MARGIN', '/sapi/v1/margin/allOrders'),
     ];
     for (final (product, path) in products) {

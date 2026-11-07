@@ -1,6 +1,6 @@
 # Task 125 — Binance client routes Spot and Margin through the web proxy
 
-Status: PENDING
+Status: PASS
 Agent Role: implementation_executor
 Executor Class: E3
 Target Model: gpt-6.1-terra
@@ -112,4 +112,10 @@ Return `BLOCKED` if the fix needs a file outside the list.
 
 ## 11. Coordinator Audit
 
-Verdict: PENDING
+Attempt: f41cdadecc114f3b8c8cc15b8c5f1013
+Dispatch route compliance: UNVERIFIABLE (requested gpt-6.1-terra/high, explicit).
+Parent route inheritance: NO
+RED and GREEN executed by the coordinator on the host, RED first (VAL-005): Nine mutations of the client and reader each failed the suite (host, fapi exclusion, native, availability, invalid values, 451, wallet, history and order gates), then GREEN passed. The connection test provider has no injectable transport, so that change is verified by inspection. /api/v3/time returns ACAO * for the web origin, so the direct time route works.
+Regression and buildability, coordinator-observed: 56 tests pass in test/exchanges/binance and test/features/connections; analyzer 0 errors; web build passes.
+Task buildability gate: PASS
+Verdict: PASS

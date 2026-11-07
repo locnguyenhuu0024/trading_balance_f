@@ -14,6 +14,7 @@ typedef BinanceConnectionTest =
 
 final binanceConnectionTestProvider = Provider<BinanceConnectionTest>((ref) {
   final isWeb = ref.watch(binanceIsWebProvider);
+  final proxyBaseUrl = ref.watch(binanceProxyBaseUrlProvider);
   return (key, secret) async {
     final state = ValueNotifier(
       const OkxCredentialSnapshot(generation: 0, rotating: false),
@@ -23,14 +24,15 @@ final binanceConnectionTestProvider = Provider<BinanceConnectionTest>((ref) {
       credentialState: state,
       coordinator: RequestCoordinator(),
       isWeb: isWeb,
+      proxyBaseUrl: proxyBaseUrl,
     );
     final failures = <ExchangeFailureKind>[];
     try {
       for (final path in [
         '/fapi/v3/account',
-        if (!isWeb) '/api/v3/account',
-        if (!isWeb) '/sapi/v1/margin/account',
-        if (!isWeb) '/sapi/v1/margin/isolated/account',
+        if (client.spotMarginAvailable) '/api/v3/account',
+        if (client.spotMarginAvailable) '/sapi/v1/margin/account',
+        if (client.spotMarginAvailable) '/sapi/v1/margin/isolated/account',
       ]) {
         try {
           await client.get(path);

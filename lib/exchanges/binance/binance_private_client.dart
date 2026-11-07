@@ -27,21 +27,39 @@ class BinancePrivateException implements Exception {
   String toString() => 'Binance private read failed (${failure.kind.name}).';
 }
 
+String normalizeBinanceProxyBaseUrl(String value) {
+  final trimmed = value.trim();
+  final uri = Uri.tryParse(trimmed);
+  if (uri == null ||
+      uri.scheme != 'https' ||
+      uri.host.isEmpty ||
+      uri.hasQuery ||
+      uri.hasFragment ||
+      uri.userInfo.isNotEmpty) {
+    return '';
+  }
+  return trimmed.replaceFirst(RegExp(r'/+$'), '');
+}
+
 class BinancePrivateClient {
   BinancePrivateClient({
     required this.keys,
     required this.credentialState,
     required this.coordinator,
     required this.isWeb,
+    String proxyBaseUrl = '',
     Dio? dio,
     DateTime Function()? clock,
-  }) : _dio = dio ?? Dio(),
+  }) : proxyBaseUrl = normalizeBinanceProxyBaseUrl(proxyBaseUrl),
+       _dio = dio ?? Dio(),
        _clock = clock ?? DateTime.now;
 
   final BinanceKeyBundle keys;
   final ValueListenable<OkxCredentialSnapshot> credentialState;
   final RequestCoordinator coordinator;
   final bool isWeb;
+  final String proxyBaseUrl;
+  bool get spotMarginAvailable => !isWeb || proxyBaseUrl.isNotEmpty;
   final Dio _dio;
   final DateTime Function() _clock;
   final Map<String, int> _offsets = {};
@@ -77,7 +95,9 @@ class BinancePrivateClient {
     )) {
       throw ArgumentError('Reserved query parameter.');
     }
-    if (isWeb && _privatePaths.contains(path) && !path.startsWith('/fapi/')) {
+    if (!spotMarginAvailable &&
+        _privatePaths.contains(path) &&
+        !path.startsWith('/fapi/')) {
       throw const BinancePrivateException(
         ExchangeFailure(ExchangeFailureKind.unavailableOnPlatform),
       );
@@ -115,8 +135,11 @@ class BinancePrivateClient {
               'recvWindow=5000',
               'timestamp=$timestamp',
             ].join('&');
+            final requestHost = isWeb && !path.startsWith('/fapi/')
+                ? proxyBaseUrl
+                : host;
             final uri =
-                '$host$path?$signedQuery&signature=${signature(keys.apiSecret, signedQuery)}';
+                '$requestHost$path?$signedQuery&signature=${signature(keys.apiSecret, signedQuery)}';
             try {
               return await _fetch(uri, snapshot, authenticated: true);
             } on BinancePrivateException catch (error) {
@@ -204,7 +227,9 @@ class BinancePrivateClient {
       response.headers.value('retry-after'),
       _clock(),
     );
-    if (status == 429 || status == 418 || code == -1003) {
+    if (status != 403 &&
+        status != 451 &&
+        (status == 429 || status == 418 || code == -1003)) {
       final duration =
           status == 418 &&
               (retryAfter == null || retryAfter < const Duration(minutes: 2))
@@ -222,7 +247,9 @@ class BinancePrivateClient {
         ),
       );
     }
-    final kind = status == 401 || const {-2014, -2015, -2008}.contains(code)
+    final kind = status == 403 || status == 451
+        ? ExchangeFailureKind.other
+        : status == 401 || const {-2014, -2015, -2008}.contains(code)
         ? ExchangeFailureKind.credential
         : status >= 500 || status == 0
         ? ExchangeFailureKind.transient
