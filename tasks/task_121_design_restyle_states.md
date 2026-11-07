@@ -26,11 +26,25 @@ Requested Effort: medium
 Observed Effective Model: unavailable
 Observed Effective Effort: unavailable
 
+## Stage instruction (current)
+
+This task runs in stages. **Current stage 1 of 3: the shell.**
+
+- `trading_navigation_bar.dart`: bottom bar per handoff section 5: surface with top border, icon above label, selected item in a radius 12 `surface` pill, no floating circle or crest. Labels at least 11 at default scale, scaling with `textScaler`; targets at least 48.
+- `scope_bar.dart`: minimum 54, radius 12, `surface` with `border`, badge 34 square radius 8 in `ink` with `onStrong`, Bold account line and muted product line, chevron.
+- `scope_picker.dart`: full design rows, active row border in `ink`, `Đang xem`, explanatory line `Chỉ hiển thị một tài khoản mỗi lần.`, and an outlined `Quản lý kết nối`.
+- `tools_screen.dart`: `Công cụ` title and four design cards with subtitle copy: `Fractal theo nguồn giá của sàn`, `Coin theo dõi riêng theo sàn`, `Thêm, đổi hoặc quản lý kết nối`, `Hiển thị, tiền tệ, múi giờ`.
+- `scope_switch_gate.dart`: frame 08 layout without the prototype button.
+
+Tests: bar has no overflow at 320 wide at the largest text scale; update assertions that named the removed floating circle, keeping the behavior ones. Finish by returning the structured report.
+
 ## 2. Objective
 
 Retained screens match the design shell and pass accessibility checks.
 
 Done when: Rendered light and dark review of retained frames passes with no behavior change.
+
+Complete the work in this run; a long run is normal. Ending without file changes is a failed attempt.
 
 ## 3. Preconditions
 
@@ -39,10 +53,7 @@ Required state: clean checkout on branch `codex/multi-platform-view-only`. Plan 
 
 ## 4. Allowed Scope
 
-- `lib/core/navigation/trading_navigation_bar.dart`
-- `lib/core/theme/app_theme.dart` (text style additions only; palette unchanged)
-- Presentation files for portfolio, orders, market, fractal_tracker, support_resistance, settings, tools, connections
-- Related presentation tests
+Each stage gives the exact write list. Read access covers all non-protected source and tests, and the images in `designs/handoff-assets/`.
 
 ## 5. Forbidden Scope
 
@@ -57,10 +68,11 @@ If required work exceeds Allowed Scope, return `BLOCKED`.
 
 ## 6. Executor Contract
 
-1. Apply the shell: 24 inset, 54 scope bar, radius 12 and 16, card layouts from handoff section 7, using existing system font and tabular figures.
-2. Use the design copy: `Tổng tài sản tài khoản`, `Phạm vi dữ liệu`, `Tài sản chi tiết`, order tabs, `Công cụ`. Remove prototype-only copy such as `Dữ liệu minh họa`.
-3. Keep Vietnamese, masking, currency and time zone logic unchanged.
-4. Use safe areas and scrolling, not fixed coordinates. Keep bar labels readable; prefer not below 11 at default scale and scale with `textScaler`.
+Visual layer only: no logic, provider or data change. Design reference is `designs/CLAUDE_DESIGN_HANDOFF.md` sections 5 and 7 and `designs/handoff-assets/`. Use `AppPalette` tokens; `strong` is `ink`, and `onStrong` exists. Treat coordinates as guidance only: use safe areas and scrolling. Keep every existing `Key`.
+
+Common rules: horizontal inset 24; page title Bold 24 in the body, not a centered AppBar title, with a 48 back control on pushed screens; radius 12 for controls and 16 for large cards; thin `border` lines, no elevation; spacing 4/8/12/16/24/32; primary buttons 48 high in `ink` with `onStrong`; tabular figures for amounts; system font. Positive and negative keep their sign and do not rely on color. Use `Tài sản`, `Lệnh`, `Thị trường`, `Thêm`, `Công cụ` copy from the design. Remove nothing functional. Do not add prototype-only text such as `Dữ liệu minh họa`.
+
+Direct OKX reads leave `OkxPosition.size` empty, so the position card shows nothing after the direction today. Show `pos` when `size` is empty, through the existing neutral `size` mapping in `okx_adapter.dart` only if a stage lists that file.
 
 Required invariants and edges: No logic or provider changes. Numbers come from existing formatters.
 Apply reuse-first, minimal complete changes. Do not invent product semantics. If the contract is insufficient, return `BLOCKED`.
