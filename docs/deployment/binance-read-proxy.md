@@ -48,6 +48,7 @@ location ~ ^/binance-proxy/(?<binance_path>api/v3/(?:account|openOrders|allOrder
     proxy_http_version 1.1;
     proxy_ssl_server_name on;
     proxy_ssl_verify on;
+    proxy_ssl_verify_depth 3;
     proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
     proxy_set_header Host api.binance.com;
     proxy_set_header Connection "";
@@ -81,8 +82,6 @@ location ~ ^/binance-proxy/(?<binance_path>api/v3/(?:account|openOrders|allOrder
 ```sh
 sudo nginx -t && sudo systemctl reload nginx
 ```
-
-This snippet has not been run through `nginx -t` yet: no nginx was available where it was written.
 
 ## 3. Verify, with a dummy key
 

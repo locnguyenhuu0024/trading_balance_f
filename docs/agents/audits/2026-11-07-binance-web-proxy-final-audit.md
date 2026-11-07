@@ -21,16 +21,29 @@ Verdict: PASS for code. Live behavior is pending the user-owned steps below.
 
 T126 audit found a defect that predates this plan: reading `.value` of a failed account read threw during build of `OrdersScreen`. Fixed.
 
+## Live proxy checks
+
+The user applied the nginx location. Coordinator-observed on the live host with a dummy key, no real credentials:
+
+| Request | Result |
+|---|---|
+| Margin account, allowed origin | 400, Binance `-2008`, `access-control-allow-origin` set, `cache-control: no-store` |
+| Spot account, allowed origin | Binance `-1102`, so the request reached Binance |
+| Other origin, no origin | 403 |
+| `api/v3/order`, outside the list | 404 |
+| Preflight for `X-MBX-APIKEY` | 204 with CORS headers |
+| POST | 405 |
+| `/v1/health` | 200 |
+
 ## Not verified
 
-- U1: the VPS ping result was not reported. It must return 200 before U2.
-- The nginx location has not been syntax-checked or run.
+- U1: the user reported that the VPS ping returned 200; the coordinator did not observe it.
 - Live Spot and Margin reads with real keys through the proxy.
 - Native iOS and Android builds, still pending from the parent plan.
 
 ## User-owned steps
 
-Follow `docs/deployment/binance-read-proxy.md`: VPS ping, add the location, `nginx -t`, verification requests, build with the define, deploy, and check live with a read-only key.
+Remaining from `docs/deployment/binance-read-proxy.md`: build with the define, deploy, and check live with a read-only key.
 
 ## Known limits
 
