@@ -51,7 +51,7 @@ Profit on the covered quantity:
 
 - Long: `covered * (mark - average)`. Short: `covered * (average - mark)`.
 - Margin rows subtract current unpaid interest, valued at mark. Interest already paid is not known and is not subtracted.
-- Percentage: profit divided by `covered * average`.
+- Percentage: profit divided by `covered * average`. Amended 2026-11-13 for Isolated Margin rows, the Assets summary and `Vốn gốc`: see `docs/agents/plans/2026-11-13-binance-margin-own-capital-pnl.md` (D-001 to D-003).
 
 Mark comes from the account read: `valueUsdt / amount` for balances, `indexPrice` for isolated rows.
 
