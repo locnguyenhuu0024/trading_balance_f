@@ -15,9 +15,11 @@ Decisions: D-004, D-005, D-006, D-007, D-008
 
 ## 1. Dispatch Compliance
 
-Dispatch Route Status: PENDING
-Requested Model: PENDING
-Requested Effort: PENDING
+The CCB dispatcher passes `--model gpt-6.1-terra` and `model_reasoning_effort=medium` on your command line, and your prompt states the route. This is the explicit binding. `UNVERIFIABLE` is a valid state; do not stop for it.
+
+Dispatch Route Status: UNVERIFIABLE
+Requested Model: gpt-6.1-terra
+Requested Effort: medium
 Observed Effective Model: unavailable
 Observed Effective Effort: unavailable
 
