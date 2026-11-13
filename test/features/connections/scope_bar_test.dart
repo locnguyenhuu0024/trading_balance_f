@@ -120,4 +120,48 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(tester.getSize(find.byType(ScopeBar)).height, greaterThan(54));
   });
+  testWidgets('compact bar fits large text and opens picker', (tester) async {
+    final entries = [
+      ExchangeRegistration(
+        profile: const ConnectionProfile(
+          connectionId: 'fake',
+          exchange: ExchangeId.binance,
+          label: 'Binance Futures Account 01',
+        ),
+        adapter: FakeExchangeAdapter(),
+      ),
+    ];
+    tester.view.physicalSize = const Size(320, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          selectedConnectionIdProvider.overrideWith((ref) => 'fake'),
+          exchangeRegistryProvider.overrideWith((ref) => entries),
+          configuredConnectionsProvider.overrideWith((ref) async => entries),
+        ],
+        child: const MaterialApp(
+          home: MediaQuery(
+            data: MediaQueryData(textScaler: TextScaler.linear(2)),
+            child: Scaffold(
+              body: Align(
+                alignment: Alignment.topCenter,
+                child: SizedBox(width: 320, child: ScopeBar(compact: true)),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(tester.getSize(find.byType(ScopeBar)).height, lessThan(54));
+    await tester.tap(find.byType(ScopeBar));
+    await tester.pumpAndSettle();
+    expect(find.text('Binance Futures Account 01 / Ch\u00ednh'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
 }

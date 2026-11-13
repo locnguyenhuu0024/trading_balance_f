@@ -74,7 +74,17 @@ void main() {
       await tester.pump();
       await tester.pump();
       expect(find.text('Cần kiểm tra lại kết nối'), findsOneWidget);
-      expect(find.text('Binance / Chính'), findsWidgets);
+      final scopeBar = find.byType(ScopeBar);
+      final refresh = find.byKey(const Key('portfolio-manual-refresh'));
+      expect(find.descendant(of: scopeBar, matching: find.text('Binance')), findsOneWidget);
+      expect(find.descendant(of: scopeBar, matching: find.text('Binance / Ch\u00ednh')), findsNothing);
+      expect(find.text('Binance / Ch\u00ednh'), findsOneWidget);
+      expect(find.text('USD\u24c8-M \u00b7 Spot \u00b7 Margin'), findsNothing);
+      final sharedRows = find.ancestor(of: scopeBar, matching: find.byType(Row));
+      expect(sharedRows.evaluate().any((row) => find.descendant(
+        of: find.byWidget(row.widget), matching: refresh,
+      ).evaluate().isNotEmpty), isTrue);
+      expect(tester.getCenter(scopeBar).dx, lessThan(tester.getCenter(refresh).dx));
       expect(find.text('Kiểm tra kết nối'), findsOneWidget);
       expect(find.textContaining('secret'), findsNothing);
       final reads = adapter.accountReads;

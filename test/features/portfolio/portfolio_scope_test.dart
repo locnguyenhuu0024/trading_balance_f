@@ -120,7 +120,7 @@ void main() {
       expect(find.text('Chưa tính'), findsOneWidget);
       expect(
         find.textContaining('Ước tính Spot · Margin: Chưa đủ dữ liệu giá vốn'),
-        findsOneWidget,
+        findsNothing,
       );
       await tester.pumpWidget(const SizedBox.shrink());
       container.dispose();
@@ -166,8 +166,8 @@ void main() {
       await tester.pump();
       await tester.pump();
       if (withSpot) {
-        expect(find.text(r'Ước tính Spot · Margin: -$10.50 (-7.00%)'), findsOneWidget);
-        expect(find.text('Tính trên 2/2 tài sản'), findsOneWidget);
+        expect(find.text(r'Ước tính Spot · Margin: -$10.50 (-7.00%)'), findsNothing);
+        expect(find.text('Tính trên 2/2 tài sản'), findsNothing);
       } else {
         expect(find.text(r'$50.00'), findsOneWidget);
       }
@@ -216,6 +216,12 @@ void main() {
       }
       expect(find.text('Lãi / lỗ chưa thực hiện'), scenario == 2 ? findsNothing : findsOneWidget);
       expect(find.text('Lãi / lỗ chưa thực hiện · USDⓈ-M'), scenario == 2 ? findsOneWidget : findsNothing);
+      if (scenario == 0) {
+        expect(find.textContaining('\u01af\u1edbc t\u00ednh Spot \u00b7 Margin'), findsNothing);
+        expect(find.textContaining('T\u00ednh tr\u00ean'), findsNothing);
+        expect(find.text('Ph\u1ea1m vi d\u1eef li\u1ec7u'), findsNothing);
+        expect(find.text('Ti\u1ec1n t\u1ec7 hi\u1ec3n th\u1ecb'), findsNothing);
+      }
       expect(find.descendant(
         of: find.byKey(const Key('portfolio-asset-summary')),
         matching: find.text(scenario == 0 ? r'-$20.50' : scenario == 1 ? r'-$15.50' : r'+$5.00'),
@@ -447,8 +453,8 @@ void main() {
       await tester.pump();
       await tester.pump();
       expect(find.text('(+11.11%)'), findsOneWidget);
-      expect(find.textContaining('Ước tính Spot · Margin:'), findsOneWidget);
-      expect(find.text('Tính trên 1/1 tài sản'), findsOneWidget);
+      expect(find.textContaining('Ước tính Spot · Margin:'), findsNothing);
+      expect(find.text('Tính trên 1/1 tài sản'), findsNothing);
       expect(find.textContaining('Giá vốn TB 80.00'), findsOneWidget);
       expect(controller.runs, 1);
       await tester.pump(const Duration(seconds: 6));

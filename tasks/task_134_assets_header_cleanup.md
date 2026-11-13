@@ -1,6 +1,6 @@
 # Task 134 — Assets header and info cleanup
 
-Status: READY
+Status: PASS
 Agent Role: implementation_executor
 Executor Class: E2
 Target Model: gpt-6.1-terra
@@ -12,6 +12,8 @@ Parent Route Inheritance: FORBIDDEN
 Plan: `docs/agents/plans/2026-11-13-assets-header-cleanup.md`
 Plan Steps: P04
 Decisions: D-014, D-015, D-016
+
+Not dispatched for remediation. The user granted a task-specific coordinator override for T134 / AUD-134-01 (chat, 2026-11-13, "Cho Claude tự sửa"). The contract wrongly required `Binance / Chính` to be absent from the whole Assets page, but `AccountStateView` legitimately shows it on a credential error. The coordinator changed that one assertion in `account_state_test.dart` to check absence inside `ScopeBar` and presence once on the page, and nothing else.
 
 ## 1. Dispatch Compliance
 
@@ -114,4 +116,24 @@ Return `BLOCKED` if the change needs another screen, the picker, or a file outsi
 
 ## 11. Coordinator Audit
 
-Verdict: PENDING
+Attempt 9994cd0845e340c8888a3b779182d80a: REWORK (AUD-134-01, test-only), then the override above.
+Scope: PASS. Five allowed files changed.
+Contract: PASS.
+- The non-compact `ScopeBar` branch is unchanged, and the default-height test passes.
+- The compact pill matches D-015 (radius 20, min height 40, 22×22 letter square, ellipsized label, `expand_more` 18).
+- Title row: `Tài sản` → `Flexible(ScopeBar(compact: true))` → reload → visibility.
+- The estimate line, `Phạm vi dữ liệu`, `Tiền tệ hiển thị` and `_infoRow` are removed. `summary` still feeds the T132 headline.
+- No exchange-specific branch.
+
+RED (host, HEAD lib files with the new tests): failures included:
+- `Ước tính Spot · Margin` was still found;
+- `Found 0 widgets with text "Binance"` inside `ScopeBar`;
+- `scope_bar_test.dart` did not compile because `compact` was missing.
+
+GREEN (host): `flutter test --no-pub test/features/portfolio test/features/connections`: 71 passed. Because `ScopeBar` is shared by 8 screens, V4 was also run: `flutter test --no-pub` gave 677 passed, exit 0.
+Dispatch route compliance: UNVERIFIABLE (requested gpt-6.1-terra / medium, explicit). Parent route inheritance: NO.
+Task buildability gate: PASS.
+- `flutter analyze --no-pub --no-fatal-infos --no-fatal-warnings`: exit 0, 0 errors, 156 issues (unchanged).
+- `flutter build web --no-pub`: exit 0.
+
+Verdict: PASS

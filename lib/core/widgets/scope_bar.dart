@@ -14,7 +14,9 @@ String scopeProductLine(ExchangeId exchange, bool spotMarginAvailable) =>
     : (spotMarginAvailable ? 'USDⓈ-M · Spot · Margin' : 'USDⓈ-M');
 
 class ScopeBar extends ConsumerWidget {
-  const ScopeBar({super.key});
+  const ScopeBar({super.key, this.compact = false});
+
+  final bool compact;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -33,7 +35,58 @@ class ScopeBar extends ConsumerWidget {
       onTap: openPicker,
       label: '${profile.label}, Chính',
       child: ExcludeSemantics(
-        child: Material(
+        child: compact
+            ? Material(
+                color: palette.surface,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20),
+                  side: BorderSide(color: palette.border),
+                ),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(20),
+                  onTap: openPicker,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(minHeight: 40),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 22,
+                            height: 22,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: palette.ink,
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              profile.label.substring(0, 1),
+                              style: TextStyle(
+                                color: palette.onStrong,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Flexible(
+                            child: Text(
+                              profile.label,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                          const SizedBox(width: 2),
+                          const Icon(Icons.expand_more, size: 18),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              )
+            : Material(
           color: palette.surface,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),

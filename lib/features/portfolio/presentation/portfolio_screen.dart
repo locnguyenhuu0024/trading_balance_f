@@ -242,6 +242,8 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
                         ),
                       ),
                     ),
+                    const SizedBox(width: 8),
+                    const Flexible(child: ScopeBar(compact: true)),
                     ManualRefreshButton(
                       buttonKey: const Key('portfolio-manual-refresh'),
                       onRefresh: _refreshPortfolioAndRate,
@@ -265,10 +267,6 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
                     ),
                   ],
                 ),
-              ),
-              const Padding(
-                padding: EdgeInsets.fromLTRB(24, 8, 24, 0),
-                child: ScopeBar(),
               ),
               Expanded(
                 child: RefreshIndicator(
@@ -420,54 +418,6 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
           exchangeRate: exchangeRate,
         ),
 
-        if (summary != null && !isHidden)
-          Builder(
-            builder: (context) {
-              final percentage = summary.percentage;
-              final amount = formatPortfolioCurrencyLines(
-                usdtAmount: summary.profit,
-                currencyMode: currency,
-                vndRate: exchangeRate,
-                showPositiveSign: true,
-              );
-              return Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 24,
-                  vertical: 8,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      summary.covered == 0
-                          ? 'Ước tính Spot · Margin: Chưa đủ dữ liệu giá vốn'
-                          : 'Ước tính Spot · Margin: ${amount.primary}${percentage == null ? '' : ' (${percentage >= 0 ? '+' : ''}${percentage.toStringAsFixed(2)}%)'}',
-                    ),
-                    if (summary.covered > 0 && amount.secondary != null)
-                      Text(amount.secondary!),
-                    Text(
-                      'Tính trên ${summary.covered}/${summary.eligible} tài sản',
-                    ),
-                  ],
-                ),
-              );
-            },
-          ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-          child: Column(
-            children: [
-              _infoRow(
-                'Phạm vi dữ liệu',
-                '${ref.watch(exchangeRegistryProvider).firstWhere((entry) => entry.profile.connectionId == ref.watch(exchangeScopeProvider).connectionId).profile.label} / Chính',
-              ),
-              _infoRow(
-                'Tiền tệ hiển thị',
-                CurrencyDisplayMode.labelFor(currency),
-              ),
-            ],
-          ),
-        ),
         if (!isOkx)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -634,17 +584,6 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
       ],
     );
   }
-
-  Widget _infoRow(String label, String value) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 8),
-    child: Row(
-      children: [
-        Expanded(child: Text(label)),
-        const SizedBox(width: 12),
-        Flexible(child: Text(value, textAlign: TextAlign.right)),
-      ],
-    ),
-  );
 
   Widget _buildAssetSummary({
     required bool isBinance,
