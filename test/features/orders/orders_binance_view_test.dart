@@ -312,9 +312,33 @@ void main() {
     expect(find.text('Lãi/lỗ ước tính'), findsNothing);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const MaterialApp(home: Scaffold(body: MarginAccountCard(row: MarginAccountRow()))));
-    expect(find.text('—'), findsOneWidget);
+    expect(find.text('—'), findsNWidgets(5));
     expect(find.text('Cross Margin'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+  testWidgets('margin card details are compact with 2 decimals', (tester) async {
+    const row = MarginAccountRow(
+      key: InstrumentKey(exchange: ExchangeId.binance, product: 'MARGIN', nativeId: 'SOLUSDT', base: 'SOL', quote: 'USDT'),
+      baseNet: '1.031967', baseBorrowed: '0', baseInterest: '0',
+      quoteNet: '-53.69700399', quoteBorrowed: '53.56029479', quoteInterest: '0.1759292',
+      marginLevel: '1.53270549', liquidation: '54.63722695', indexPrice: '79.77249833',
+    );
+    await tester.pumpWidget(const MaterialApp(home: Scaffold(body: MarginAccountCard(row: row))));
+    for (final value in ['1.03', '-53.70', '53.56', '0.18', 'Mức ký quỹ 1.53', 'Giá thanh lý 54.64', 'Giá chỉ số 79.77', 'Net', 'Vay', 'Lãi vay']) {
+      expect(find.text(value), findsOneWidget);
+    }
+    expect(find.text('0.00'), findsWidgets);
+    expect(find.textContaining('1.031967'), findsNothing);
+    expect(find.textContaining('53.697'), findsNothing);
+  });
+  testWidgets('margin card keeps tiny values and dashes', (tester) async {
+    const row = MarginAccountRow(
+      key: InstrumentKey(exchange: ExchangeId.binance, product: 'MARGIN', nativeId: 'SOLUSDT', base: 'SOL', quote: 'USDT'),
+      baseNet: '0.00123', baseBorrowed: null,
+    );
+    await tester.pumpWidget(const MaterialApp(home: Scaffold(body: MarginAccountCard(row: row))));
+    expect(find.text('0.0012'), findsOneWidget);
+    expect(find.text('—'), findsWidgets);
   });
   testWidgets('margin estimate wraps at 320 and large text', (tester) async {
     tester.view.physicalSize = const Size(320, 900);
@@ -405,7 +429,7 @@ void main() {
       );
       expect(find.textContaining('Cross Margin'), findsOneWidget);
       expect(find.textContaining('Isolated Margin'), findsOneWidget);
-      expect(find.textContaining('Lãi vay'), findsNWidgets(3));
+      expect(find.textContaining('Lãi vay'), findsNWidgets(2));
       expect(find.textContaining('Lãi:'), findsNothing);
       expect(find.textContaining('—'), findsWidgets);
       expect(find.byType(OrderCancellationControl), findsNothing);

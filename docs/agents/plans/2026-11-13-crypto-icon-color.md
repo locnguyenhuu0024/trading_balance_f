@@ -1,6 +1,6 @@
 # Small Change Plan: Coin icons in color, compact margin details
 
-Status: APPROVED (revision 2)
+Status: COMPLETE
 Approval: "Duyệt, commit, làm" (user, chat, 2026-11-13, on revision 2; includes commit on PASS)
 Date: 2026-11-13
 Tier: S

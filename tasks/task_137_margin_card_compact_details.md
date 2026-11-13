@@ -1,6 +1,6 @@
 # Task 137 — Compact Margin card details, 2 decimals
 
-Status: READY
+Status: PASS
 Agent Role: implementation_executor
 Executor Class: E2
 Target Model: gpt-6.1-terra
@@ -12,6 +12,8 @@ Parent Route Inheritance: FORBIDDEN
 Plan: `docs/agents/plans/2026-11-13-crypto-icon-color.md`
 Plan Steps: P07
 Decisions: D-019, D-020
+
+Not dispatched for remediation. The user granted a task-specific coordinator override for T137 / AUD-137-01 and AUD-137-02 (chat, 2026-11-13, "Cho Claude tự sửa"). Both come from contract gaps. The coordinator changed one test line and removed one import, and nothing else.
 
 ## 1. Dispatch Compliance
 
@@ -95,12 +97,12 @@ None.
 Scenario: the new tests on the code before the change.
 Command: `flutter test --no-pub test/features/orders/orders_binance_view_test.dart`
 Expected: W21 and W22 fail (the raw `1.031967` is shown, and `1.03` is not found).
-Status: PENDING
+Status: OBSERVED (host)
 
 ### GREEN — GREEN-137
 Scenario: the same command after the change, then V3 `flutter test --no-pub test/features/crypto_icon_urls test/features/orders test/features/portfolio test/features/market`.
 Expected: all pass.
-Status: PENDING
+Status: PASS (host)
 
 Verification ceiling: V3.
 
@@ -116,8 +118,37 @@ Known Flutter pitfalls:
 
 Required: YES
 Exact secret-free build command: `flutter analyze --no-pub --no-fatal-infos --no-fatal-warnings && flutter build web --no-pub`
-Result: PENDING
+Result: PASS
 
 ## 10. Stop Conditions
 
 Return `BLOCKED` if the change needs a file outside the list.
+
+## 11. Coordinator Audit
+
+Attempt 9a745874f658488bb357532d85d98f9d. The executor reported `BLOCKED` only because its sandbox cannot build. Audit verdict: REWORK (contract gaps), then the override above.
+Scope: PASS. Two allowed files changed.
+Contract: PASS.
+- `_num` matches D-020 (`—`, raw non-numeric, `0.00`, 2 decimals, 2 significant digits below 0.01).
+- The `Table` has a `Net`/`Vay`/`Lãi vay` header, isolated base and quote rows, a cross row, right-aligned tabular numbers, and the `Wrap` summary line.
+- Nothing above the divider changed. No exchange-specific branch.
+
+Findings:
+- AUD-137-01 (contract gap): the existing `margin profit, missing capital, messages and sparse rows` test expected exactly one `—` for an empty Cross card. Each empty table cell is now its own `—`, so there are 5. Fixed by override: `findsNWidgets(5)`.
+- AUD-137-02 (contract gap): the contract's pitfall note led to an unnecessary `dart:ui` import (analyzer info 156 → 157). Fixed by override: the import was removed.
+
+RED (host, HEAD `margin_account_card.dart` with the new tests): failures in:
+- `margin card details are compact with 2 decimals`;
+- `margin card keeps tiny values and dashes` (`0.0012` not found);
+- the three `Binance positions and filters` cases (`Lãi vay` found 3 times).
+
+GREEN (host, after the override):
+- `flutter test --no-pub test/features/orders/orders_binance_view_test.dart`: 22 passed.
+- V3 `flutter test --no-pub test/features/crypto_icon_urls test/features/orders test/features/portfolio test/features/market`: 201 passed, exit 0.
+
+Dispatch route compliance: UNVERIFIABLE (requested gpt-6.1-terra / medium, explicit). Parent route inheritance: NO.
+Task buildability gate: PASS.
+- `flutter analyze --no-pub --no-fatal-infos --no-fatal-warnings`: 0 errors, 156 issues (unchanged).
+- `flutter build web --no-pub`: built.
+
+Verdict: PASS
