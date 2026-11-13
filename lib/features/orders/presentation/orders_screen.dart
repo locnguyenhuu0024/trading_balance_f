@@ -509,13 +509,9 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                         final vnd = currency == 'VNĐ';
                         return MarginAccountCard(
                           row: row,
-                          estimateText: estimate == null
-                              ? null
-                              : estimatedPnlText(
-                                  estimate,
-                                  rate: vnd ? exchangeRate : 1,
-                                  unit: vnd ? 'đ' : 'USDT',
-                                ),
+                          estimate: estimate,
+                          rate: vnd ? exchangeRate : 1,
+                          unit: vnd ? 'đ' : 'USDT',
                         );
                       }),
                       ...positions
@@ -858,7 +854,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                         baseCoin: baseCoin,
                         instrumentLabel: instrumentLabel,
                         instrumentType: instrumentType,
-                        instrumentFontSize: 14,
+                        instrumentFontSize: 16,
                         iconBackgroundColor: iconBgColor,
                         textColor: textColor,
                         badgeBackgroundColor: palette.surface,
@@ -976,8 +972,8 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                       '$pnlSign$pnlFormatted ',
                       style: TextStyle(
                         color: pnlColor,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 18,
                       ),
                     ),
                     Text(

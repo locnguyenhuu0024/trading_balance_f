@@ -8,6 +8,9 @@ class EstimatedPnlRow {
   final String? message;
   final double? capital;
   final bool stale;
+  double? get percentage => estimate == null || capital == null
+      ? null
+      : estimate!.profit / capital! * 100;
 }
 
 class EstimatedPnlSummary {

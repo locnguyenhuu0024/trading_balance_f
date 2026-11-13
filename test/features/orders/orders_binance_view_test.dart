@@ -4,6 +4,8 @@ import 'package:trading_balance_f/exchanges/binance/binance_estimated_pnl.dart';
 import 'package:trading_balance_f/exchanges/binance/binance_cost_basis.dart';
 import 'package:trading_balance_f/exchanges/binance/binance_trade_history.dart';
 import 'package:flutter/material.dart';
+import 'package:trading_balance_f/core/theme/app_theme.dart';
+import 'package:trading_balance_f/core/theme/pnl_color.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/exchange/exchange_models.dart';
@@ -269,11 +271,50 @@ void main() {
       'Isolated Margin:BTCUSDT': BinanceSymbolCost(
           CostState(quantity: 1, cost: 100, isMargin: true), completed: true),
     });
-    final text = estimatedPnlText(estimatedMargin(view, true, row, const AccountSnapshot())!);
+    final estimate = estimatedMargin(view, true, row, const AccountSnapshot());
     await tester.pumpWidget(MaterialApp(home: Scaffold(
-      body: MarginAccountCard(row: row, estimateText: text),
+      body: MarginAccountCard(row: row, estimate: estimate),
     )));
-    expect(find.text('Giá vốn TB 100.00 · Ước tính -20.50 USDT (-41.00%)'), findsOneWidget);
+    final pair = tester.widget<Text>(find.text('BTC/USDT'));
+    expect(pair.style?.fontSize, 16);
+    expect(pair.style?.fontWeight, FontWeight.bold);
+    expect(find.text('Isolated Margin'), findsOneWidget);
+    final amount = tester.widget<Text>(find.text('-20.50 USDT'));
+    expect(amount.style?.fontSize, 22);
+    expect(amount.style?.color, PnlColors.lightNegative);
+    expect(tester.widget<Text>(find.text('(-41.00%)')).style?.color, PnlColors.lightNegative);
+    expect(find.textContaining('Giá vốn TB 100.00'), findsOneWidget);
+  });
+  testWidgets('margin profit, missing capital, messages and sparse rows', (tester) async {
+    const key = InstrumentKey(exchange: ExchangeId.binance, product: 'MARGIN', nativeId: 'BTCUSDT', base: 'BTC', quote: 'USDT');
+    const view = BinanceCostView(symbols: {
+      'Isolated Margin:BTCUSDT': BinanceSymbolCost(CostState(quantity: -1, cost: 100, isMargin: true), completed: true),
+    });
+    const short = MarginAccountRow(key: key, baseNet: '-1', indexPrice: '90', quoteNet: '150');
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: MarginAccountCard(row: short, estimate: estimatedMargin(view, true, short, const AccountSnapshot())))));
+    expect(tester.widget<Text>(find.text('+10.00 USDT')).style?.color, PnlColors.lightPositive);
+    expect(tester.widget<Text>(find.text('(+20.00%)')).style?.color, PnlColors.lightPositive);
+    const loss = MarginAccountRow(key: key, baseNet: '1', indexPrice: '80', quoteNet: '-100.5', quoteInterest: '0.5');
+    const longView = BinanceCostView(symbols: {
+      'Isolated Margin:BTCUSDT': BinanceSymbolCost(CostState(quantity: 1, cost: 100, isMargin: true), completed: true),
+    });
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: MarginAccountCard(row: loss, estimate: estimatedMargin(longView, true, loss, const AccountSnapshot())))));
+    expect(find.text('-20.50 USDT'), findsOneWidget);
+    expect(find.textContaining('%)'), findsNothing);
+    await tester.pumpWidget(const MaterialApp(home: Scaffold(body: MarginAccountCard(row: loss, estimate: EstimatedPnlRow(null, 'Chưa đủ dữ liệu giá vốn')))));
+    expect(tester.widget<Text>(find.text('Chưa đủ dữ liệu giá vốn')).style?.color, AppPalette.light.muted);
+    expect(find.textContaining(' USDT'), findsNothing);
+    const sparse = MarginAccountRow(key: InstrumentKey(exchange: ExchangeId.binance, product: 'MARGIN', nativeId: 'ETH-USDT'));
+    await tester.pumpWidget(const MaterialApp(home: Scaffold(body: MarginAccountCard(row: sparse))));
+    expect(find.text('ETH-USDT'), findsOneWidget);
+    expect(find.text('Isolated Margin'), findsOneWidget);
+    expect(find.textContaining('—'), findsWidgets);
+    expect(find.text('Lãi/lỗ ước tính'), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const MaterialApp(home: Scaffold(body: MarginAccountCard(row: MarginAccountRow()))));
+    expect(find.text('—'), findsOneWidget);
+    expect(find.text('Cross Margin'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
   testWidgets('margin estimate wraps at 320 and large text', (tester) async {
     tester.view.physicalSize = const Size(320, 900);
@@ -299,9 +340,7 @@ void main() {
         ),
       },
     );
-    final text = estimatedPnlText(
-      estimatedMargin(view, true, row, const AccountSnapshot())!,
-    );
+    final estimate = estimatedMargin(view, true, row, const AccountSnapshot());
     await tester.pumpWidget(
       MaterialApp(
         home: MediaQuery(
@@ -311,7 +350,7 @@ void main() {
           ),
           child: Scaffold(
             body: SingleChildScrollView(
-              child: MarginAccountCard(row: row, estimateText: text),
+              child: MarginAccountCard(row: row, estimate: estimate),
             ),
           ),
         ),
@@ -375,7 +414,7 @@ void main() {
         await _pumpChip(tester);
         expect(find.textContaining('Cross Margin'), findsOneWidget);
         expect(find.textContaining('Isolated Margin'), findsOneWidget);
-        expect(find.text('BTC/USDT'), findsNothing);
+        expect(find.text('BTC/USDT'), findsOneWidget);
         await tester.tap(find.text('USDⓈ-M').first);
         await _pumpChip(tester);
         expect(find.text('BTC/USDT'), findsWidgets);

@@ -1,9 +1,14 @@
+import '../../../support/fake_exchange_adapter.dart';
+import 'package:trading_balance_f/core/exchange/exchange_models.dart';
+import 'package:trading_balance_f/core/exchange/exchange_registry.dart';
+import 'package:trading_balance_f/core/exchange/exchange_scope.dart';
 import '../../../support/backend_features_override.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/currency/currency_display_mode.dart';
 import 'package:trading_balance_f/core/theme/app_theme.dart';
+import 'package:trading_balance_f/core/theme/pnl_color.dart';
 import 'package:trading_balance_f/core/typography/app_text_scale.dart';
 import 'package:trading_balance_f/features/orders/data/okx_order_model.dart';
 import 'package:trading_balance_f/features/orders/data/okx_position_model.dart';
@@ -14,6 +19,19 @@ import 'package:trading_balance_f/features/orders/presentation/providers/trade_s
 import 'package:trading_balance_f/features/orders/presentation/widgets/position_action_controls.dart';
 import 'package:trading_balance_f/features/settings/presentation/settings_screen.dart';
 import 'package:trading_balance_f/main.dart';
+
+class _BinancePositionAdapter extends FakeExchangeAdapter {
+  @override
+  ExchangeCapabilities get capabilities => const ExchangeCapabilities(readableProducts: ['SWAP']);
+
+  @override
+  Future<List<ExchangePosition>> readPositions(Ref ref, ExchangeScope scope) async => const [
+    ExchangePosition(
+      key: InstrumentKey(exchange: ExchangeId.binance, product: 'SWAP', nativeId: 'BTCUSDT', base: 'BTC', quote: 'USDT'),
+      productLabel: 'SWAP', unrealizedPnl: '64.2',
+    ),
+  ];
+}
 
 class _LayoutTradeApi implements TradeApi {
   const _LayoutTradeApi({required this.isConfigured});
@@ -132,6 +150,36 @@ Finder _cardContainingPrice(String price) {
 }
 
 void main() {
+  testWidgets('position pair and profit are emphasized for OKX and Binance', (tester) async {
+    await tester.pumpWidget(_ordersApp(positions: [_position(liqPx: '1000', upl: '64.2')]));
+    await tester.pump();
+    await tester.pump();
+    void check(String pair) {
+      final amount = tester.widget<Text>(find.text('+64.20 '));
+      expect(amount.style?.fontSize, 18);
+      expect(amount.style?.fontWeight, FontWeight.w800);
+      expect(amount.style?.color, PnlColors.lightPositive);
+      final header = find.byKey(const Key('position-card-header'));
+      expect(tester.widget<Text>(find.descendant(of: header, matching: find.text(pair))).style?.fontSize, 16);
+    }
+    check('BTCUSDT');
+    await tester.pumpWidget(const SizedBox.shrink());
+    final container = ProviderContainer(overrides: [
+      selectedConnectionIdProvider.overrideWith((ref) => 'fake'),
+      exchangeRegistryProvider.overrideWith((ref) => [ExchangeRegistration(
+        profile: const ConnectionProfile(connectionId: 'fake', exchange: ExchangeId.binance, label: 'Binance'),
+        adapter: _BinancePositionAdapter(),
+      )]),
+      vndExchangeRateProvider.overrideWith((ref) async => 25400),
+    ]);
+    await tester.pumpWidget(UncontrolledProviderScope(container: container, child: const MaterialApp(home: OrdersScreen())));
+    await tester.pump();
+    await tester.pump();
+    check('BTC/USDT');
+    await tester.pumpWidget(const SizedBox.shrink());
+    container.dispose();
+  });
+
   testWidgets('T72 GREEN near-zero position PnL uses muted gray', (
     tester,
   ) async {

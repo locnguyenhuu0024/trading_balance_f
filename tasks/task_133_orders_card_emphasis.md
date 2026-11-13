@@ -1,6 +1,6 @@
 # Task 133 — Pair and profit emphasis in the Orders list
 
-Status: READY
+Status: PASS
 Agent Role: implementation_executor
 Executor Class: E3
 Target Model: gpt-6.1-terra
@@ -12,6 +12,16 @@ Parent Route Inheritance: FORBIDDEN
 Plan: `docs/agents/plans/2026-11-13-orders-card-emphasis.md`
 Plan Steps: P03
 Decisions: D-009, D-010, D-011, D-012
+
+## Remediation R01 (current instruction)
+
+The first pass is committed. Do not redo it. Write only `lib/features/orders/presentation/widgets/margin_account_card.dart`.
+
+AUD-133-01, compile error. `margin_account_card.dart:56` uses `Wrap(crossAxisAlignment: WrapCrossAlignment.baseline, textBaseline: …)`. `WrapCrossAlignment` has no `baseline` and `Wrap` has no `textBaseline`. Host error: `Member not found: 'baseline'` and `No named parameter with the name 'textBaseline'`. Both test files fail to compile. Required: use `crossAxisAlignment: WrapCrossAlignment.end` and remove `textBaseline`. Change nothing else.
+
+Not dispatched. The user granted task-specific coordinator overrides for T133 (chat, 2026-11-13, "Cho Claude tự sửa"):
+- AUD-133-01: changed `WrapCrossAlignment.baseline` and `textBaseline` to `WrapCrossAlignment.end`, and nothing else.
+- AUD-133-02: the contract wrongly named `AppPalette.light.positive/negative` as the PnL colors. That palette is grayscale; `resolvePnlColor` returns `PnlColors.lightPositive/lightNegative`. The coordinator changed those five color expectations in the two test files and added the `pnl_color.dart` import. The `muted` expectation was kept.
 
 ## 1. Dispatch Compliance
 
@@ -118,4 +128,25 @@ Return `BLOCKED` if the change needs a file outside the list, a change to estima
 
 ## 11. Coordinator Audit
 
-Verdict: PENDING
+Attempt bae325d29ead4796b4a74ee911709124: REWORK (AUD-133-01), then the overrides AUD-133-01 and AUD-133-02 above.
+Scope: PASS. Five allowed files changed.
+- `binance_estimated_pnl.dart` adds only the `percentage` getter, so `estimatedPnlText` output is unchanged.
+- The card has no `ExchangeId` check (D-013).
+
+Contract: PASS.
+- Pair at 16 bold, `Isolated Margin` and `Cross Margin` badges.
+- Amount at 22 w800 and percentage at 13, colored by `resolvePnlColor`.
+- Message state and no-estimate state as specified.
+- Detail lines muted at 12.
+- Futures pair at 16, amount at 18 w800.
+- Sparse rows fall back to `nativeId` and `—`.
+
+The test change `BTC/USDT` under the Margin filter (from `findsNothing` to `findsOneWidget`) still proves that the filter excludes the futures position.
+RED (host, HEAD lib files with the new tests): the futures emphasis test failed with `Expected: <18> Actual: <14.0>`. The margin card tests failed to compile because the `estimate` parameter was missing.
+GREEN (host, after the overrides): `flutter test --no-pub test/features/orders`: 151 passed, exit 0. This includes the 320 / scale 2.0 large-text and hide tests.
+Dispatch route compliance: UNVERIFIABLE (requested gpt-6.1-terra / high, explicit). Parent route inheritance: NO.
+Task buildability gate: PASS.
+- `flutter analyze --no-pub --no-fatal-infos --no-fatal-warnings`: exit 0, 0 errors, 156 issues (unchanged).
+- `flutter build web --no-pub`: exit 0.
+
+Verdict: PASS
