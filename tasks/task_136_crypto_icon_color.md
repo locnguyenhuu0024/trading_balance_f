@@ -1,6 +1,6 @@
 # Task 136 — Coin icons in original color
 
-Status: READY
+Status: PASS
 Agent Role: implementation_executor
 Executor Class: E1
 Target Model: gpt-6.1-terra
@@ -60,12 +60,12 @@ None.
 Scenario: the new test on the code before the change.
 Command: `flutter test --no-pub test/features/crypto_icon_urls/crypto_icon_url_test.dart`
 Expected: fails because `ColorFiltered` is found.
-Status: PENDING
+Status: OBSERVED (host)
 
 ### GREEN — GREEN-136
 Scenario: the same command after the change, then V3 `flutter test --no-pub test/features/crypto_icon_urls test/features/orders test/features/portfolio test/features/market`.
 Expected: all pass.
-Status: PENDING
+Status: PASS (host)
 
 Verification ceiling: V3.
 
@@ -77,8 +77,26 @@ The executor sandbox cannot run `flutter test` or compile. Write the complete ch
 
 Required: YES
 Exact secret-free build command: `flutter analyze --no-pub --no-fatal-infos --no-fatal-warnings && flutter build web --no-pub`
-Result: PENDING
+Result: PASS
 
 ## 10. Stop Conditions
 
 Return `BLOCKED` if the change needs a file outside the list.
+
+## 11. Coordinator Audit
+
+Attempt bf8258ce0b1c4511a98813e7d8058fc2. The executor reported `BLOCKED` only because its sandbox cannot build. No rework was needed.
+Scope: PASS. Two allowed files changed, 36 insertions and 40 deletions.
+Contract: PASS. `ColorFiltered` was removed. `Image.network`, its key, its sizing and the fallback chain are unchanged. The new widget test matches the contract.
+
+RED (host, HEAD `crypto_icon.dart` with the new test): `network icon keeps original colors` failed with `Found 1 widget with type "ColorFiltered"`. The other 4 tests passed.
+GREEN (host):
+- `flutter test --no-pub test/features/crypto_icon_urls/crypto_icon_url_test.dart`: 5 passed.
+- V3 `flutter test --no-pub test/features/crypto_icon_urls test/features/orders test/features/portfolio test/features/market`: 199 passed, exit 0.
+
+Dispatch route compliance: UNVERIFIABLE (requested gpt-6.1-terra / low, explicit). Parent route inheritance: NO.
+Task buildability gate: PASS.
+- `flutter analyze --no-pub --no-fatal-infos --no-fatal-warnings`: 0 errors, 156 issues (unchanged).
+- `flutter build web --no-pub`: built.
+
+Verdict: PASS
