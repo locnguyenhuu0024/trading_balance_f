@@ -1,6 +1,6 @@
 # Task 135 — Hide "Chưa đầy đủ" on Assets
 
-Status: READY
+Status: PASS
 Agent Role: implementation_executor
 Executor Class: E1
 Target Model: gpt-6.1-terra
@@ -88,4 +88,22 @@ Return `BLOCKED` if the change needs a file outside the list.
 
 ## 11. Coordinator Audit
 
-Verdict: PENDING
+Attempt 840916dcb26742a880b9b4f16a8fbb7c. The executor reported `BLOCKED` only because its sandbox cannot build. No rework was needed.
+Scope: PASS. The three allowed files changed, 5 insertions and 2 deletions, exactly as contracted.
+Contract: PASS.
+- `showPartialLabel` defaults to true.
+- The Assets page passes false.
+- Orders and the details screen are unchanged.
+- The specific failure lines are kept.
+
+RED (host, HEAD lib files with the updated test): `partial wallet results on home proxy=false|true` failed with `Found 1 widget with text "Chưa đầy đủ"`. The details cases passed.
+GREEN (host):
+- `flutter test --no-pub test/features/connections/account_state_test.dart`: 8 passed.
+- V3 `flutter test --no-pub test/features/connections test/features/portfolio test/features/orders`: 222 passed, exit 0.
+
+Dispatch route compliance: UNVERIFIABLE (requested gpt-6.1-terra / low, explicit). Parent route inheritance: NO.
+Task buildability gate: PASS.
+- `flutter analyze --no-pub --no-fatal-infos --no-fatal-warnings`: exit 0, 0 errors, 156 issues (unchanged).
+- `flutter build web --no-pub`: exit 0.
+
+Verdict: PASS

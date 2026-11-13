@@ -79,15 +79,17 @@ class PartialAccountNotice extends StatelessWidget {
     super.key,
     required this.account,
     required this.spotMarginAvailable,
+    this.showPartialLabel = true,
   });
   final AccountSnapshot account;
   final bool spotMarginAvailable;
+  final bool showPartialLabel;
 
   @override
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      if (account.isPartial) const Text('Chưa đầy đủ'),
+      if (account.isPartial && showPartialLabel) const Text('Chưa đầy đủ'),
       for (final result in account.walletResults.where(
         (result) => !result.available,
       ))

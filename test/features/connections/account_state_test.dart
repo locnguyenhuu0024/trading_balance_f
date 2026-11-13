@@ -173,7 +173,7 @@ void main() {
           );
           await tester.pump();
           await tester.pump();
-          expect(find.text('Chưa đầy đủ'), findsOneWidget);
+          expect(find.text('Chưa đầy đủ'), details ? findsOneWidget : findsNothing);
           expect(find.text('Không thể tải ví Margin chéo'), findsOneWidget);
           expect(
             find.text('Spot và Margin chỉ có trên ứng dụng'),
