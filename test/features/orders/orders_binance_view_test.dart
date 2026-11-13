@@ -259,6 +259,22 @@ void main() {
       container.dispose();
     },
   );
+  testWidgets('isolated margin card shows profit on own capital', (tester) async {
+    const row = MarginAccountRow(
+      key: InstrumentKey(exchange: ExchangeId.binance, product: 'MARGIN',
+          nativeId: 'BTCUSDT', base: 'BTC', quote: 'USDT'),
+      baseNet: '1', indexPrice: '80', quoteNet: '-50.5', quoteInterest: '0.5',
+    );
+    const view = BinanceCostView(symbols: {
+      'Isolated Margin:BTCUSDT': BinanceSymbolCost(
+          CostState(quantity: 1, cost: 100, isMargin: true), completed: true),
+    });
+    final text = estimatedPnlText(estimatedMargin(view, true, row, const AccountSnapshot())!);
+    await tester.pumpWidget(MaterialApp(home: Scaffold(
+      body: MarginAccountCard(row: row, estimateText: text),
+    )));
+    expect(find.text('Giá vốn TB 100.00 · Ước tính -20.50 USDT (-41.00%)'), findsOneWidget);
+  });
   testWidgets('margin estimate wraps at 320 and large text', (tester) async {
     tester.view.physicalSize = const Size(320, 900);
     tester.view.devicePixelRatio = 1;

@@ -128,6 +128,54 @@ void main() {
     },
   );
 
+  for (final withSpot in [false, true]) {
+    testWidgets('Assets own capital and summary withSpot=$withSpot', (tester) async {
+      const key = InstrumentKey(exchange: ExchangeId.binance, product: 'MARGIN',
+          nativeId: 'ETHUSDT', base: 'ETH', quote: 'USDT');
+      final snapshot = AccountSnapshot(
+        total: withSpot ? '139.5' : '29.5',
+        balances: [if (withSpot) const AssetBalance(
+          wallet: 'Spot', asset: 'BTC', total: '1', valueUsdt: '110')],
+        marginRows: const [MarginAccountRow(key: key, baseNet: '1', indexPrice: '80',
+            quoteNet: '-50.5', quoteInterest: '0.5')],
+      );
+      const symbols = <String, BinanceSymbolCost>{
+        'Spot:BTCUSDT': BinanceSymbolCost(CostState(quantity: 1, cost: 100), completed: true),
+        'Isolated Margin:ETHUSDT': BinanceSymbolCost(
+            CostState(quantity: 1, cost: 100, isMargin: true), completed: true),
+      };
+      final views = StreamController<BinanceCostView>();
+      final container = ProviderContainer(overrides: [
+        selectedConnectionIdProvider.overrideWith((ref) => 'test'),
+        exchangeRegistryProvider.overrideWith((ref) => [ExchangeRegistration(
+          profile: const ConnectionProfile(connectionId: 'test', exchange: ExchangeId.binance, label: 'Binance'),
+          adapter: _SnapshotAdapter(snapshot),
+        )]),
+        binanceCostControllerProvider.overrideWith((ref) async => _CostController()),
+        binanceCostStateProvider.overrideWith((ref) => views.stream),
+        vndExchangeRateProvider.overrideWith((ref) async => 25400),
+      ]);
+      await tester.pumpWidget(UncontrolledProviderScope(container: container,
+          child: const MaterialApp(home: PortfolioScreen())));
+      await tester.pump();
+      views.add(const BinanceCostView(loading: true, symbols: symbols));
+      await tester.pump();
+      await tester.pump();
+      if (!withSpot) expect(find.text(r'$29.50'), findsWidgets);
+      views.add(const BinanceCostView(symbols: symbols));
+      await tester.pump();
+      await tester.pump();
+      if (withSpot) {
+        expect(find.text(r'Ước tính Spot · Margin: -$10.50 (-7.00%)'), findsOneWidget);
+        expect(find.text('Tính trên 2/2 tài sản'), findsOneWidget);
+      } else {
+        expect(find.text(r'$50.00'), findsOneWidget);
+      }
+      await tester.pumpWidget(const SizedBox.shrink());
+      container.dispose();
+    });
+  }
+
   for (final isOkx in [true, false]) {
     testWidgets(
       'Assets preserves account when cost provider ${isOkx ? "is not built for OKX" : "fails"}',

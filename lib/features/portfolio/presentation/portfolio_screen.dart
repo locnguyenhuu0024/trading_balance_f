@@ -372,7 +372,12 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
     if (!isOkx) {
       dynamicTotalEquity = double.tryParse(accountData.total ?? '') ?? 0.0;
     }
-    final double baseEquity = dynamicTotalEquity - totalUnrealizedPnl;
+    final summary = isBinance && costView != null && costView.available &&
+            _costFinished && !costView.loading
+        ? estimatedSummary(costView, _costFinished, accountData)
+        : null;
+    final double baseEquity = dynamicTotalEquity - totalUnrealizedPnl -
+        (summary != null && summary.covered > 0 ? summary.profit : 0);
     final ratioBase = isBinance
         ? accountData.balances
                   .where((coin) => coin.wallet == 'USD-M')
@@ -408,19 +413,10 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
           exchangeRate: exchangeRate,
         ),
 
-        if (isBinance &&
-            costView != null &&
-            costView.available &&
-            _costFinished &&
-            !costView.loading &&
-            !isHidden)
+        if (summary != null && !isHidden)
           Builder(
             builder: (context) {
-              final summary = estimatedSummary(
-                costView,
-                _costFinished,
-                accountData,
-              );
+              final percentage = summary.percentage;
               final amount = formatPortfolioCurrencyLines(
                 usdtAmount: summary.profit,
                 currencyMode: currency,
@@ -438,7 +434,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
                     Text(
                       summary.covered == 0
                           ? 'Ước tính Spot · Margin: Chưa đủ dữ liệu giá vốn'
-                          : 'Ước tính Spot · Margin: ${amount.primary} (${summary.percentage >= 0 ? '+' : ''}${summary.percentage.toStringAsFixed(2)}%)',
+                          : 'Ước tính Spot · Margin: ${amount.primary}${percentage == null ? '' : ' (${percentage >= 0 ? '+' : ''}${percentage.toStringAsFixed(2)}%)'}',
                     ),
                     if (summary.covered > 0 && amount.secondary != null)
                       Text(amount.secondary!),

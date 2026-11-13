@@ -1,6 +1,6 @@
 # Small Change Plan: Margin profit percentage on own capital
 
-Status: APPROVED
+Status: COMPLETE
 Approval: "Duyệt, làm đi" (user, chat, 2026-11-13, on this revision)
 Date: 2026-11-13
 Tier: S

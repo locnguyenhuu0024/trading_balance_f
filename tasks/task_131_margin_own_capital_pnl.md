@@ -1,6 +1,6 @@
 # Task 131 — Margin profit percentage on own capital
 
-Status: READY
+Status: PASS
 Agent Role: implementation_executor
 Executor Class: E2
 Target Model: gpt-6.1-terra
@@ -13,6 +13,16 @@ Specification: `docs/agents/specs/2026-11-07-binance-estimated-pnl-design.md` (a
 Plan: `docs/agents/plans/2026-11-13-binance-margin-own-capital-pnl.md`
 Plan Steps: P01
 Decisions: D-001, D-002, D-003
+
+## Remediation R01 (current instruction)
+
+The first pass is committed. Do not redo it. Write only `test/features/portfolio/portfolio_scope_test.dart`.
+
+AUD-131-01, the test run hangs. In the new test `Assets own capital and summary withSpot=…`, the final `await views.close();` never completes inside `testWidgets` after the container is disposed. Because of that, `flutter test test/features/portfolio/portfolio_scope_test.dart` stops at that test until it times out, and the 15 tests after it never run. Required: delete only that `await views.close();` line, so the test matches the existing test that ends with `container.dispose();` and no close. Change nothing else: no other assertion, fixture or test.
+
+Executor Class for R01: E0, `gpt-6-luna / xhigh` (policy v2 default for a mechanical edit).
+
+Not dispatched. The user granted a task-specific coordinator override for T131 / AUD-131-01 ("Cho Claude tự sửa", chat, 2026-11-13). The coordinator removed that one line and nothing else.
 
 ## 1. Dispatch Compliance
 
@@ -114,9 +124,26 @@ Return `BLOCKED` if the change needs a file outside the list, a rule for Cross M
 
 ## 11. Coordinator Audit
 
-Scope: PENDING
-RED evidence: PENDING
-GREEN evidence: PENDING
-Dispatch route compliance: PENDING
-Task buildability gate: PENDING
-Verdict: PENDING
+Attempt: 4b3879c5853745a79db3e6f4182faff7. The executor reported `BLOCKED` only because its sandbox cannot run tests or builds, which this contract expects. Its changed paths equal the allowed list.
+Scope: PASS. Five allowed files changed. Not touched: `binance_cost_basis.dart`, `orders_screen.dart`, the card widget, protected config. The coordinator changed one test line under the R01 override, plus this file.
+Contract: PASS.
+- D-001: isolated capital = `baseNet × indexPrice + quoteNet − profit`. It is null when `quoteNet` is missing or the result is ≤ 0 or not finite.
+- D-002: Spot and Cross capital = covered × average, unchanged.
+- D-003: `baseEquity` subtracts `summary.profit` when the summary is available and `covered > 0`, including while hidden. The summary is computed once. `ratioBase` and `pnlRatio` are untouched.
+- The summary percentage is null on incomplete capital, and the text then leaves out `(…%)`.
+Tests: the W1–W5 figures are asserted exactly, plus invalid `quoteNet` (`-101`, `NaN`, `Infinity`, empty). No existing expectation was weakened.
+RED evidence (host, before GREEN): with the new tests against the HEAD versions of the two lib files, these widget tests failed:
+- `Assets own capital … withSpot=false`: no `$50.00`.
+- `withSpot=true`: no `Ước tính Spot · Margin: -$10.50 (-7.00%)`.
+- `isolated margin card shows profit on own capital`: no `(-41.00%)`.
+
+The unit file failed to compile because `EstimatedPnlRow.capital` was not defined. The lib files were then restored.
+AUD-131-01 (the hang on `await views.close()` in teardown) was found on the first GREEN and fixed by the coordinator under the user's override. It changed only teardown, after the assertions, so the RED evidence stays valid.
+GREEN evidence (host): `flutter test --no-pub` on the three task files: 42 passed, exit 0.
+V3 regression (host): `flutter test --no-pub test/features/portfolio test/features/orders test/exchanges/binance`: 248 passed, exit 0.
+Dispatch route compliance: UNVERIFIABLE (requested gpt-6.1-terra / medium, explicit). Parent route inheritance: NO.
+Task buildability gate: PASS, run after the last change.
+- `flutter analyze --no-pub --no-fatal-infos --no-fatal-warnings`: exit 0, 0 errors, 156 infos/warnings (same count as T130).
+- `flutter build web --no-pub`: exit 0, `Built build\web`.
+
+Verdict: PASS
