@@ -376,8 +376,9 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
             _costFinished && !costView.loading
         ? estimatedSummary(costView, _costFinished, accountData)
         : null;
+    final combined = summary != null && summary.covered > 0;
     final double baseEquity = dynamicTotalEquity - totalUnrealizedPnl -
-        (summary != null && summary.covered > 0 ? summary.profit : 0);
+        (combined ? summary.profit : 0);
     final ratioBase = isBinance
         ? accountData.balances
                   .where((coin) => coin.wallet == 'USD-M')
@@ -392,6 +393,11 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
         ? (totalUnrealizedPnl / ratioBase) * 100
         : 0.0;
 
+    final headlinePnl = combined ? totalUnrealizedPnl + summary.profit : totalUnrealizedPnl;
+    final headlineRatio = combined
+        ? (baseEquity > 0 ? headlinePnl / baseEquity * 100 : 0.0)
+        : pnlRatio;
+
     final palette = AppPalette.forBrightness(isDark);
     final textColor = palette.ink;
     final subtitleColor = palette.muted;
@@ -402,11 +408,12 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
       children: [
         _buildAssetSummary(
           isBinance: isBinance,
+          combined: combined,
           totalMissing: !isOkx && accountData.total == null,
           totalEquity: dynamicTotalEquity,
           baseEquity: baseEquity,
-          unrealizedPnl: totalUnrealizedPnl,
-          pnlRatio: pnlRatio,
+          unrealizedPnl: headlinePnl,
+          pnlRatio: headlineRatio,
           isHidden: isHidden,
           isDark: isDark,
           currency: currency,
@@ -641,6 +648,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
 
   Widget _buildAssetSummary({
     required bool isBinance,
+    required bool combined,
     required bool totalMissing,
     required double totalEquity,
     required double baseEquity,
@@ -741,7 +749,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          isBinance
+          isBinance && !combined
               ? 'Lãi / lỗ chưa thực hiện · USDⓈ-M'
               : 'Lãi / lỗ chưa thực hiện',
           style: TextStyle(

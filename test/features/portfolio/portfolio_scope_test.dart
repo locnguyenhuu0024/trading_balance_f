@@ -176,6 +176,57 @@ void main() {
     });
   }
 
+  for (final scenario in [0, 1, 2]) {
+    testWidgets('Assets account unrealized PnL scenario $scenario', (tester) async {
+      const key = InstrumentKey(exchange: ExchangeId.binance, product: 'MARGIN',
+          nativeId: 'ETHUSDT', base: 'ETH', quote: 'USDT');
+      final snapshot = AccountSnapshot(
+        total: scenario == 0 ? '29.5' : '129.5',
+        balances: [if (scenario != 0) const AssetBalance(
+          wallet: 'USD-M', asset: 'USDT', total: '100', valueUsdt: '100',
+          unrealizedPnl: '5')],
+        marginRows: const [MarginAccountRow(key: key, baseNet: '1', indexPrice: '80',
+            quoteNet: '-50.5', quoteInterest: '0.5')],
+      );
+      const symbols = <String, BinanceSymbolCost>{
+        'Isolated Margin:ETHUSDT': BinanceSymbolCost(
+            CostState(quantity: 1, cost: 100, isMargin: true), completed: true),
+      };
+      final views = StreamController<BinanceCostView>();
+      final container = ProviderContainer(overrides: [
+        selectedConnectionIdProvider.overrideWith((ref) => 'test'),
+        exchangeRegistryProvider.overrideWith((ref) => [ExchangeRegistration(
+          profile: const ConnectionProfile(connectionId: 'test', exchange: ExchangeId.binance, label: 'Binance'),
+          adapter: _SnapshotAdapter(snapshot),
+        )]),
+        binanceCostControllerProvider.overrideWith((ref) async => _CostController()),
+        binanceCostStateProvider.overrideWith((ref) => views.stream),
+        vndExchangeRateProvider.overrideWith((ref) async => 25400),
+      ]);
+      await tester.pumpWidget(UncontrolledProviderScope(container: container,
+          child: const MaterialApp(home: PortfolioScreen())));
+      await tester.pump();
+      views.add(const BinanceCostView(loading: true, symbols: symbols));
+      await tester.pump();
+      await tester.pump();
+      if (scenario != 2) {
+        views.add(const BinanceCostView(symbols: symbols));
+        await tester.pump();
+        await tester.pump();
+      }
+      expect(find.text('Lãi / lỗ chưa thực hiện'), scenario == 2 ? findsNothing : findsOneWidget);
+      expect(find.text('Lãi / lỗ chưa thực hiện · USDⓈ-M'), scenario == 2 ? findsOneWidget : findsNothing);
+      expect(find.descendant(
+        of: find.byKey(const Key('portfolio-asset-summary')),
+        matching: find.text(scenario == 0 ? r'-$20.50' : scenario == 1 ? r'-$15.50' : r'+$5.00'),
+      ), findsOneWidget);
+      expect(find.text(scenario == 0 ? '(-41.00%)' : scenario == 1 ? '(-10.69%)' : '(+5.26%)'), findsOneWidget);
+      expect(find.text(scenario == 0 ? r'$50.00' : scenario == 1 ? r'$145.00' : r'$124.50'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+      container.dispose();
+    });
+  }
+
   for (final isOkx in [true, false]) {
     testWidgets(
       'Assets preserves account when cost provider ${isOkx ? "is not built for OKX" : "fails"}',
@@ -337,7 +388,7 @@ void main() {
   });
 
   testWidgets(
-    'estimates stay separate from USD-M and polling does not run history',
+    'headline adds estimates to USD-M and polling does not run history',
     (tester) async {
       final controller = _CostController();
       const snapshot = AccountSnapshot(
@@ -395,7 +446,7 @@ void main() {
       await tester.pump();
       await tester.pump();
       await tester.pump();
-      expect(find.text('(+10.00%)'), findsOneWidget);
+      expect(find.text('(+11.11%)'), findsOneWidget);
       expect(find.textContaining('Ước tính Spot · Margin:'), findsOneWidget);
       expect(find.text('Tính trên 1/1 tài sản'), findsOneWidget);
       expect(find.textContaining('Giá vốn TB 80.00'), findsOneWidget);

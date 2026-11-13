@@ -1,6 +1,6 @@
 # Small Change Plan: Account-wide unrealized profit on Assets
 
-Status: APPROVED
+Status: COMPLETE
 Approval: "Duyệt, commit, làm" (user, chat, 2026-11-13, on this revision)
 Date: 2026-11-13
 Tier: S

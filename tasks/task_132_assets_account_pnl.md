@@ -1,6 +1,6 @@
 # Task 132 — Account-wide unrealized profit on Assets
 
-Status: READY
+Status: PASS
 Agent Role: implementation_executor
 Executor Class: E2
 Target Model: gpt-6.1-terra
@@ -12,6 +12,16 @@ Parent Route Inheritance: FORBIDDEN
 Plan: `docs/agents/plans/2026-11-13-assets-account-unrealized-pnl.md`
 Plan Steps: P02
 Decisions: D-004, D-005, D-006, D-007, D-008
+
+## Remediation R01 (current instruction)
+
+The first pass is committed. Do not redo it. Write only `lib/features/portfolio/presentation/portfolio_screen.dart`.
+
+AUD-132-01, the label is not switched. `_buildAssetSummary` receives `combined` but never uses it. The label at `pnlBlock` still chooses on `isBinance` only, so the combined headline shows `Lãi / lỗ chưa thực hiện · USDⓈ-M`. Coordinator GREEN: `Assets account unrealized PnL scenario 0` and `scenario 1` fail with `Found 0 widgets with text "Lãi / lỗ chưa thực hiện"`. The amounts are not reached by the assertions yet. Required: the label is `isBinance && !combined ? 'Lãi / lỗ chưa thực hiện · USDⓈ-M' : 'Lãi / lỗ chưa thực hiện'`. Change nothing else.
+
+Not dispatched. The user granted task-specific coordinator overrides (chat, 2026-11-13, "Cho Claude tự sửa"):
+- AUD-132-01: the label condition changed to `isBinance && !combined`, and nothing else.
+- AUD-132-02: the plan wrongly listed the T130 expectation `(+10.00%)` in the test now named `headline adds estimates to USD-M …` as preserved. Under D-004 that test expects (100 + 20) ÷ (1200 − 120) = `(+11.11%)`. The coordinator changed that one expectation and the test name, and nothing else.
 
 ## 1. Dispatch Compliance
 
@@ -102,4 +112,18 @@ Return `BLOCKED` if the change needs a file outside the list, or any decision ab
 
 ## 11. Coordinator Audit
 
-Verdict: PENDING
+Attempts: 7fe49336363d4379b3e8d5b41b1ce428 was BLOCKED, with no change, because the dispatch section said PENDING; the contract was fixed in 91b25a9. 18503a31b81a40a18f419efb5e1f80af was REWORK (AUD-132-01). Coordinator overrides AUD-132-01 and AUD-132-02 are listed above.
+Scope: PASS. Changed files: `portfolio_screen.dart` and `portfolio_scope_test.dart` only.
+Contract: PASS.
+- `combined = summary != null && summary.covered > 0`. No new exchange check; the summary itself exists only where a cost view exists, so OKX falls back.
+- Headline = `totalUnrealizedPnl + summary.profit`. Percentage = headline ÷ `baseEquity`.
+- The fallback keeps the USDⓈ-M values and label.
+
+RED (host, HEAD code with the new tests): scenarios 0 and 1 failed with `Found 0 widgets with text "Lãi / lỗ chưa thực hiện"`. Scenario 2, the fallback, passed as expected.
+GREEN (host, after the overrides): `flutter test --no-pub test/features/portfolio`: 40 passed, exit 0. This includes W6 `-$20.50` `(-41.00%)` `$50.00`, W7 `-$15.50` `(-10.69%)` `$145.00`, W8 `+$5.00` `(+5.26%)` `$124.50`, and the OKX cases unchanged.
+Dispatch route compliance: UNVERIFIABLE (requested gpt-6.1-terra / medium, explicit). Parent route inheritance: NO.
+Task buildability gate: PASS.
+- `flutter analyze --no-pub --no-fatal-infos --no-fatal-warnings`: exit 0, 0 errors, 156 issues (unchanged).
+- `flutter build web --no-pub`: exit 0.
+
+Verdict: PASS
