@@ -1,6 +1,6 @@
 # Task 138 — Account selector in the header on every screen
 
-Status: READY
+Status: PASS
 Agent Role: implementation_executor
 Executor Class: E2
 Target Model: gpt-6.1-terra
@@ -105,12 +105,12 @@ None.
 Scenario: the new and updated tests on the code before the change.
 Command: `flutter test --no-pub test/features/connections/header_scope_bar_test.dart test/features/orders/orders_binance_view_test.dart test/features/market/market_screen_test.dart`
 Expected: W24 fails (`ScopeBar()` found), and W25 and W26 fail (`compact` is false).
-Status: PENDING
+Status: OBSERVED (host)
 
 ### GREEN — GREEN-138
 Scenario: the same command after the change, then V4 `flutter test --no-pub`.
 Expected: all pass.
-Status: PENDING
+Status: PASS (host)
 
 Verification ceiling: V4.
 
@@ -127,8 +127,35 @@ Known Flutter pitfalls:
 
 Required: YES
 Exact secret-free build command: `flutter analyze --no-pub --no-fatal-infos --no-fatal-warnings && flutter build web --no-pub`
-Result: PENDING
+Result: PASS
 
 ## 10. Stop Conditions
 
 Return `BLOCKED` if the change needs a file outside the list, or a change to `ScopeBar` itself.
+
+## 11. Coordinator Audit
+
+Attempt de2d202d59954785aa7c7634456e04ed. The executor reported `BLOCKED` only because its sandbox cannot build. No rework was needed.
+Scope: PASS. Ten allowed files changed (7 screens, 2 updated tests, 1 new test). No unexpected paths.
+Contract: PASS.
+- All 7 screens use `Expanded(title)` → `SizedBox(8)` → `Flexible(ScopeBar(compact: true))` → their existing icons and reload.
+- The old `ScopeBar()` rows are removed.
+- Titles, back buttons, keys and callbacks are unchanged.
+- Support/resistance keeps a 12 px gap below the header, where the old selector row had been above it.
+- `scope_bar.dart` and the picker are unchanged.
+
+RED (host, HEAD lib files with the new tests):
+- `header_scope_bar_test` failed (`does not contain 'ScopeBar(compact: true)'`).
+- `RED-102 manual market refresh …` failed (the compact check).
+- The three `Binance positions and filters` cases failed (the compact check).
+
+GREEN (host):
+- The three task test files: 26 passed.
+- V4 `flutter test --no-pub`: 681 passed.
+
+Dispatch route compliance: UNVERIFIABLE (requested gpt-6.1-terra / medium, explicit). Parent route inheritance: NO.
+Task buildability gate: PASS.
+- `flutter analyze --no-pub --no-fatal-infos --no-fatal-warnings`: 0 errors, 156 issues (unchanged).
+- `flutter build web --no-pub`: built.
+
+Verdict: PASS

@@ -4,6 +4,7 @@ import 'package:trading_balance_f/exchanges/binance/binance_estimated_pnl.dart';
 import 'package:trading_balance_f/exchanges/binance/binance_cost_basis.dart';
 import 'package:trading_balance_f/exchanges/binance/binance_trade_history.dart';
 import 'package:flutter/material.dart';
+import 'package:trading_balance_f/core/widgets/scope_bar.dart';
 import 'package:trading_balance_f/core/theme/app_theme.dart';
 import 'package:trading_balance_f/core/theme/pnl_color.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -418,6 +419,20 @@ void main() {
       );
       await tester.pump();
       await tester.pump();
+      final bar = find.byType(ScopeBar);
+      final headerRefresh = find.byKey(const Key('orders-manual-refresh'));
+      expect(tester.widget<ScopeBar>(bar).compact, isTrue);
+      final sharedRows = find.ancestor(of: bar, matching: find.byType(Row));
+      expect(
+        sharedRows.evaluate().any(
+          (row) => find.descendant(
+            of: find.byWidget(row.widget),
+            matching: headerRefresh,
+          ).evaluate().isNotEmpty,
+        ),
+        isTrue,
+      );
+      expect(tester.getCenter(bar).dx, lessThan(tester.getCenter(headerRefresh).dx));
       expect(find.text('BTC/USDT'), findsWidgets);
       expect(find.text('BTCUSDT'), findsNothing);
       expect(find.text('Tất cả'), findsOneWidget);

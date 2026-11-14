@@ -432,6 +432,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           ),
                         ),
                       ),
+                      const SizedBox(width: 8),
+                      const Flexible(child: ScopeBar(compact: true)),
                       ManualRefreshButton(
                         buttonKey: const Key('settings-manual-refresh'),
                         onRefresh: _refreshExchangeRate,
@@ -441,7 +443,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       ),
                     ],
                   ),
-                  const ScopeBar(),
                   const SizedBox(height: 12),
                   // ================= SECTION 1: GIAO DIỆN =================
                   Padding(

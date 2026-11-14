@@ -87,8 +87,6 @@ class _SupportResistanceScreenState
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const ScopeBar(),
-                  const SizedBox(height: 12),
                   Row(
                     children: [
                       if (Navigator.of(context).canPop()) const BackButton(),
@@ -100,6 +98,8 @@ class _SupportResistanceScreenState
                           ),
                         ),
                       ),
+                      const SizedBox(width: 8),
+                      const Flexible(child: ScopeBar(compact: true)),
                       ManualRefreshButton(
                         buttonKey: const Key('support-resistance-refresh'),
                         onRefresh: instrumentIds.isEmpty
@@ -115,6 +115,7 @@ class _SupportResistanceScreenState
                       ),
                     ],
                   ),
+                  const SizedBox(height: 12),
                   Text('Nguồn giá: $label', style: theme.textTheme.bodySmall),
                   const SizedBox(height: 12),
                   Semantics(

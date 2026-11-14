@@ -1,6 +1,6 @@
 # Small Change Plan: Account selector in the header on every screen
 
-Status: APPROVED
+Status: COMPLETE
 Approval: "Duyệt, commit, làm" (user, chat, 2026-11-14, on this revision; includes commit on PASS)
 Date: 2026-11-14
 Tier: S

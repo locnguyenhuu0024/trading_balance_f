@@ -110,6 +110,8 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
                         ),
                       ),
                     ),
+                    const SizedBox(width: 8),
+                    const Flexible(child: ScopeBar(compact: true)),
                     IconButton(
                       icon: const Icon(Icons.search),
                       tooltip: 'Đổi Coin',
@@ -131,10 +133,6 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
                       _showCoinSelector(context, ref, selectedCoin, isDark),
                   child: Text(selectedCoin),
                 ),
-              ),
-              const Padding(
-                padding: EdgeInsets.fromLTRB(24, 12, 24, 0),
-                child: ScopeBar(),
               ),
               Padding(
                 padding: const EdgeInsets.symmetric(

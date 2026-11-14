@@ -286,6 +286,8 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                             ),
                           ),
                         ),
+                        const SizedBox(width: 8),
+                        const Flexible(child: ScopeBar(compact: true)),
                         if (backendFeaturesEnabled)
                           Tooltip(
                             message: isTradeAuthenticated
@@ -320,10 +322,6 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                         ),
                       ],
                     ),
-                  ),
-                  const Padding(
-                    padding: EdgeInsets.fromLTRB(24, 8, 24, 0),
-                    child: ScopeBar(),
                   ),
                   if (currentTab == OrderTab.positions &&
                       backendFeaturesEnabled)

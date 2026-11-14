@@ -149,6 +149,8 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
                         ),
                       ),
                     ),
+                    const SizedBox(width: 8),
+                    const Flexible(child: ScopeBar(compact: true)),
                     ManualRefreshButton(
                       buttonKey: const Key('market-manual-refresh'),
                       onRefresh: _refreshMarket,
@@ -156,10 +158,6 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
                     ),
                   ],
                 ),
-              ),
-              const Padding(
-                padding: EdgeInsets.fromLTRB(24, 12, 24, 0),
-                child: ScopeBar(),
               ),
               Padding(
                 padding: const EdgeInsets.symmetric(

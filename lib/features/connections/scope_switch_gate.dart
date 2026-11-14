@@ -48,15 +48,21 @@ class ScopeSwitchGate extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(
-              'Đang đổi tài khoản',
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-              ),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Đang đổi tài khoản',
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                const Flexible(child: ScopeBar(compact: true)),
+              ],
             ),
-            const SizedBox(height: 16),
-            const ScopeBar(),
             const SizedBox(height: 64),
             Center(
               child: reducedMotion

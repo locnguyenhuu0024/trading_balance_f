@@ -18,15 +18,21 @@ class ToolsScreen extends StatelessWidget {
         child: ListView(
           padding: const EdgeInsets.all(24),
           children: [
-            Text(
-              'Công cụ',
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-              ),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Công cụ',
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                const Flexible(child: ScopeBar(compact: true)),
+              ],
             ),
-            const SizedBox(height: 16),
-            const ScopeBar(),
             const SizedBox(height: 12),
             _ToolCard(
               icon: Icons.donut_small_outlined,

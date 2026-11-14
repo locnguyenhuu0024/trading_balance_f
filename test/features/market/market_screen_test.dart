@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:trading_balance_f/core/widgets/scope_bar.dart';
 import 'package:trading_balance_f/core/exchange/exchange_models.dart';
 import 'package:trading_balance_f/core/exchange/exchange_registry.dart';
 import 'package:trading_balance_f/core/exchange/exchange_scope.dart';
@@ -152,6 +153,20 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    final bar = find.byType(ScopeBar);
+    final headerRefresh = find.byKey(const Key('market-manual-refresh'));
+    expect(tester.widget<ScopeBar>(bar).compact, isTrue);
+    final sharedRows = find.ancestor(of: bar, matching: find.byType(Row));
+    expect(
+      sharedRows.evaluate().any(
+        (row) => find.descendant(
+          of: find.byWidget(row.widget),
+          matching: headerRefresh,
+        ).evaluate().isNotEmpty,
+      ),
+      isTrue,
+    );
+    expect(tester.getCenter(bar).dx, lessThan(tester.getCenter(headerRefresh).dx));
 
     final refresh = find.byTooltip('Làm mới dữ liệu');
     expect(refresh, findsOneWidget);
