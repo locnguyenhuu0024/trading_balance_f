@@ -107,7 +107,7 @@ OkxPosition _position() => const OkxPosition(
   signedSize: '2',
   direction: 'long',
   mgnMode: 'isolated',
-  identity: const {
+  identity: {
     'instrumentType': 'SWAP',
     'instrumentId': 'BTC-USDT-SWAP',
     'positionId': 'position-1',

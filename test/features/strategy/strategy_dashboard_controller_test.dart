@@ -842,7 +842,7 @@ void main() {
   test(
     'T65 uncertain create and execute writes refresh without retrying',
     () async {
-      final uncertain = const StrategyApiException(
+      const uncertain = StrategyApiException(
         code: 'timeout',
         message: 'request timeout',
         statusCode: null,

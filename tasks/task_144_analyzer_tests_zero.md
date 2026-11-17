@@ -190,7 +190,17 @@ The executor sandbox cannot run Flutter. Write the complete change. Report `red`
 `BLOCKED` if an issue can only be removed by weakening or deleting a test, or by touching `lib/`.
 
 ## 11. Execution Ledger
-(coordinator fills)
+
+- cfc0958cfef948e697d57df75b5847c2: REWORK — AUD-144-01/02, two follow-on const lints; WIP `58f4832`.
+- 77e6387fd3c349b182fc1b023203055c (R01): PASS. All attempts in §4 scope; route gpt-6.1-terra/medium, effective UNVERIFIABLE.
 
 ## 12. Coordinator Audit
-(coordinator fills)
+
+Verdict: PASS (2026-11-17).
+
+- RED-144 (host, after T143 `fe1b124`): 71 issues in the 23 files.
+- GREEN-144: whole-repo `flutter analyze --no-pub` → `No issues found!`. V4: 691/691 pass (same count as before the plan).
+- Strict buildability (D-027): `flutter analyze --no-pub && flutter build web --no-pub` → `No issues found!`, web built.
+- Suppression check: `git diff a78ef9c..` adds no `ignore:`; `analysis_options.yaml` unchanged.
+- Test strength: `Color.red/green/blue` → 8-bit `r/g/b` comparison (same grayscale assertion); two `hasFlag` checks → `isSemantics(isSelected: true, isButton: true)` (same two flags); removed never-passed optional parameters keep their default values; no test or expectation removed.
+- Format: T144 hunks formatted; `scope_bar_test.dart` and `orders_screen_position_layout_test.dart` were already not `dart format`-clean at `e8f273e` (pre-existing, not reformatted).

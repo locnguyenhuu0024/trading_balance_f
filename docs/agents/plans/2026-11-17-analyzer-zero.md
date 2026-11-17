@@ -1,6 +1,6 @@
 # Implementation Plan: Zero analyzer issues
 
-Status: APPROVED
+Status: COMPLETE
 Approval: "Duyệt, commit, làm" (user, chat, 2026-11-17, on this revision; includes commit on PASS)
 Date: 2026-11-17
 Tier: M
@@ -100,12 +100,13 @@ D-026 → P01, P02, P03; D-027 → P03 and all later plans.
 Each task ends with analyze (0 errors, count reduced by its share) and `flutter build web --no-pub`. No cross-task compile coupling (T143 adds a getter used only inside its own files).
 
 ## 14. Completion Gate
-- [ ] T142, T143, T144 PASS
-- [ ] `flutter analyze --no-pub` → `No issues found!`
-- [ ] V4 + web build green
-- [ ] no `ignore:` added, `analysis_options.yaml` untouched
-- [ ] no protected file read or changed
+- [x] T142, T143, T144 PASS (`52f60bd`, `fe1b124`, final commit of T144)
+- [x] `flutter analyze --no-pub` → `No issues found!`
+- [x] V4 + web build green (691/691)
+- [x] no `ignore:` added, `analysis_options.yaml` untouched
+- [x] no protected file read or changed
 
 ## 15. Change Log
 - 2026-11-17: created.
 - 2026-11-17: approved by user.
+- 2026-11-17: COMPLETE. 155 → 0. T142 4 attempts, T143 2, T144 2. From now on the buildability gate is strict: `flutter analyze --no-pub` must print `No issues found!` (D-027). Repo-wide `dart format` debt (13 pre-existing files) is not an analyzer issue and is out of scope.
