@@ -28,7 +28,7 @@
     "test/core/widgets/app_motion_screens_test.dart"
   ],
   "dependencies": [
-    "T140"
+    {"task_id": "T140", "status": "PASS"}
   ],
   "timeout_seconds": 1500,
   "domain": "mobile",
