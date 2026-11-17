@@ -404,9 +404,7 @@ class _StrategySettingsDialogState
                                 child: Column(
                                   children: [
                                     const RadioListTile<String>(
-                                      key: Key(
-                                        'strategy-settings-sequential',
-                                      ),
+                                      key: Key('strategy-settings-sequential'),
                                       enabled: false,
                                       value: 'sequential',
                                       title: Text('Hàng đợi tuần tự'),

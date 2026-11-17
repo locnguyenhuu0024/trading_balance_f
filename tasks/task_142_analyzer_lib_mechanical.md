@@ -15,7 +15,13 @@ Plan Steps: P01
 Requirements: REQ-201..REQ-203
 Decisions: D-026
 
-## Remediation R02 (current instruction)
+## Remediation R03 (current instruction)
+
+R02 (attempt bb57b56b) is in the working tree; host `flutter analyze` on the 21 files: `No issues found!`. Do not redo.
+
+- AUD-142-03, formatting. `dart format --set-exit-if-changed` still changes `lib/core/theme/app_theme.dart`, `lib/exchanges/binance/binance_estimated_pnl.dart`, `lib/features/market/presentation/market_screen.dart`: each has a doubled blank line left where an import was removed (e.g. `market_screen.dart` line 8). Required: remove that extra blank line in each of the three files so imports are separated by at most one blank line. No other change.
+
+## Remediation R02 (done)
 
 R01 (attempt 97141d8c) is in the working tree; host analyze on the 21 files: only one defect left, plus formatting. Do not redo.
 

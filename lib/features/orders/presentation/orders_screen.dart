@@ -109,7 +109,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                 ),
             currentRead.asError?.error,
           )) {
-      return;
+        return;
       }
 
       if (currentTab == OrderTab.positions &&
@@ -154,7 +154,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
         (currentFilter == 'ALL' || currentFilter == 'MARGIN') &&
         currentRead.asData != null &&
         ref.read(scopedAccountProvider(scope)).isLoading) {
-        return;
+      return;
     }
 
     setState(() => _manualRefreshInFlight = true);
@@ -513,16 +513,15 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                           unit: vnd ? 'đ' : 'USDT',
                         );
                       }),
-                      ...positions
-                          .map(
-                            (position) => _buildPositionCard(
-                              position,
-                              isDark,
-                              currency,
-                              exchangeRate,
-                              isBalanceHidden,
-                            ),
-                          ),
+                      ...positions.map(
+                        (position) => _buildPositionCard(
+                          position,
+                          isDark,
+                          currency,
+                          exchangeRate,
+                          isBalanceHidden,
+                        ),
+                      ),
                     ],
                   );
                 },

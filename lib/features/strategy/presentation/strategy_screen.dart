@@ -211,7 +211,7 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
     _StrategyActions actionsFor(Map<String, dynamic> current) =>
         _strategyActionsFor(context, session, dashboard, current);
     final actions = actionsFor(strategy);
-    Future<void?> openDetails() => showDialog<void>(
+    Future<void> openDetails() => showDialog<void>(
       context: context,
       builder: (dialogContext) => _StrategyDetailsDialog(
         dashboard: dashboard,
