@@ -21,15 +21,13 @@ void main() {
 
       await retireBackgroundService(
         invoke: (method, [arguments]) => events.add(method),
-        configure: ({
-          required androidConfiguration,
-          required iosConfiguration,
-        }) async {
-          events.add('configure');
-          capturedAndroidConfiguration = androidConfiguration;
-          capturedIosConfiguration = iosConfiguration;
-          return true;
-        },
+        configure:
+            ({required androidConfiguration, required iosConfiguration}) async {
+              events.add('configure');
+              capturedAndroidConfiguration = androidConfiguration;
+              capturedIosConfiguration = iosConfiguration;
+              return true;
+            },
       );
 
       expect(events, ['stopService', 'configure']);
@@ -55,8 +53,10 @@ void main() {
           invoke: (method, [arguments]) =>
               stopRequested = method == 'stopService',
           configure:
-              ({required androidConfiguration, required iosConfiguration})
-              async => false,
+              ({
+                required androidConfiguration,
+                required iosConfiguration,
+              }) async => false,
         ),
         throwsA(isA<StateError>()),
       );

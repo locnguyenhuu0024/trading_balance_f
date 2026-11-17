@@ -1,6 +1,6 @@
 # Implementation Plan: Clear `dart format` debt
 
-Status: APPROVED
+Status: COMPLETE
 Approval: "Duyệt A, commit, làm" (user, chat, 2026-11-17, on this revision; Option A coordinator tool-run override for T145; includes commit on PASS)
 Date: 2026-11-17
 Tier: S
@@ -84,11 +84,12 @@ One commit on PASS (approved together with this plan). Revert = revert that comm
 
 ## 10. Completion Gate
 
-- [ ] RED observed, GREEN exit 0
-- [ ] only the 13 files changed
-- [ ] analyze `No issues found!`, V4 691/691, web build OK
-- [ ] committed
+- [x] RED observed, GREEN exit 0
+- [x] only the 13 files changed (token-equal ignoring whitespace/commas)
+- [x] analyze `No issues found!`, V4 691/691, web build OK
+- [x] committed
 
 ## 11. Change Log
 
 - 2026-11-17: created.
+- 2026-11-17: approved (Option A). COMPLETE.

@@ -48,7 +48,10 @@ class ScopeBar extends ConsumerWidget {
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(minHeight: 40),
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -75,7 +78,10 @@ class ScopeBar extends ConsumerWidget {
                               profile.label,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
                           ),
                           const SizedBox(width: 2),
@@ -87,72 +93,76 @@ class ScopeBar extends ConsumerWidget {
                 ),
               )
             : Material(
-          color: palette.surface,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-            side: BorderSide(color: palette.border),
-          ),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(12),
-            onTap: openPicker,
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(minHeight: 54),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 4,
+                color: palette.surface,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  side: BorderSide(color: palette.border),
                 ),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 34,
-                      height: 34,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: palette.ink,
-                        borderRadius: BorderRadius.circular(8),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: openPicker,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(minHeight: 54),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 4,
                       ),
-                      child: Text(
-                        profile.label.substring(0, 1),
-                        style: TextStyle(
-                          color: palette.onStrong,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                      child: Row(
                         children: [
-                          Text(
-                            '${profile.label} / Chính',
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          Text(
-                            scopeProductLine(
-                              profile.exchange,
-                              ref.watch(binanceSpotMarginAvailableProvider),
+                          Container(
+                            width: 34,
+                            height: 34,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: palette.ink,
+                              borderRadius: BorderRadius.circular(8),
                             ),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(color: palette.muted),
+                            child: Text(
+                              profile.label.substring(0, 1),
+                              style: TextStyle(
+                                color: palette.onStrong,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
                           ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  '${profile.label} / Chính',
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                Text(
+                                  scopeProductLine(
+                                    profile.exchange,
+                                    ref.watch(
+                                      binanceSpotMarginAvailableProvider,
+                                    ),
+                                  ),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: Theme.of(context).textTheme.bodySmall
+                                      ?.copyWith(color: palette.muted),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const Icon(Icons.expand_more),
                         ],
                       ),
                     ),
-                    const Icon(Icons.expand_more),
-                  ],
+                  ),
                 ),
               ),
-            ),
-          ),
-        ),
       ),
     );
   }

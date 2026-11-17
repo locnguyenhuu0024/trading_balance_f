@@ -11,7 +11,7 @@ part 'okx_ticker_model.g.dart';
 class OkxTickerModel with _$OkxTickerModel {
   const factory OkxTickerModel({
     @Default('') String instId, // Cặp giao dịch (VD: BTC-USDT)
-    @Default('0') String last,  // Giá khớp gần nhất (Real-time price)
+    @Default('0') String last, // Giá khớp gần nhất (Real-time price)
   }) = _OkxTickerModel;
 
   factory OkxTickerModel.fromJson(Map<String, dynamic> json) =>

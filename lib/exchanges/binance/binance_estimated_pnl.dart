@@ -3,7 +3,12 @@ import 'binance_cost_basis.dart';
 import 'binance_trade_history.dart';
 
 class EstimatedPnlRow {
-  const EstimatedPnlRow(this.estimate, this.message, {this.capital, this.stale = false});
+  const EstimatedPnlRow(
+    this.estimate,
+    this.message, {
+    this.capital,
+    this.stale = false,
+  });
   final CostEstimate? estimate;
   final String? message;
   final double? capital;
@@ -24,9 +29,8 @@ class EstimatedPnlSummary {
   final double profit, cost;
   final int covered, eligible;
   final bool capitalComplete;
-  double? get percentage => capitalComplete && cost.isFinite && cost > 0
-      ? profit / cost * 100
-      : null;
+  double? get percentage =>
+      capitalComplete && cost.isFinite && cost > 0 ? profit / cost * 100 : null;
 }
 
 double? _number(String? value) => double.tryParse(value ?? '');
@@ -64,7 +68,9 @@ EstimatedPnlRow? _row(
         : usable == null
         ? 'Chưa đủ dữ liệu giá vốn'
         : null,
-    capital: capital != null && capital.isFinite && capital > 0 ? capital : null,
+    capital: capital != null && capital.isFinite && capital > 0
+        ? capital
+        : null,
     stale: entry.stale,
   );
 }
@@ -186,7 +192,11 @@ EstimatedPnlSummary estimatedSummary(
     }
   }
   return EstimatedPnlSummary(
-    profit, cost, covered, eligible, capitalComplete: capitalComplete,
+    profit,
+    cost,
+    covered,
+    eligible,
+    capitalComplete: capitalComplete,
   );
 }
 
@@ -199,7 +209,9 @@ String estimatedPnlText(
   final parts = <String>[];
   if (e != null) {
     String signed(double n) => '${n >= 0 ? '+' : ''}${n.toStringAsFixed(2)}';
-    final percentage = row.capital == null ? null : e.profit / row.capital! * 100;
+    final percentage = row.capital == null
+        ? null
+        : e.profit / row.capital! * 100;
     parts.add(
       'Giá vốn TB ${(e.average * rate).toStringAsFixed(2)} · Ước tính ${signed(e.profit * rate)} $unit${percentage == null ? '' : ' (${signed(percentage)}%)'}',
     );

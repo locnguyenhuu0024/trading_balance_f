@@ -22,7 +22,7 @@ class OkxBalanceResponse with _$OkxBalanceResponse {
 class OkxAccountData with _$OkxAccountData {
   const factory OkxAccountData({
     @Default('0') String totalEq,
-    @Default('0') String imr,   // Ký quỹ Cross Margin tổng
+    @Default('0') String imr, // Ký quỹ Cross Margin tổng
     @Default('0') String isoEq, // Ký quỹ Isolated Margin tổng
     @Default([]) List<OkxCoinDetail> details,
   }) = _OkxAccountData;
@@ -36,8 +36,8 @@ class OkxCoinDetail with _$OkxCoinDetail {
   const factory OkxCoinDetail({
     @Default('') String ccy,
     @Default('0') String cashBal,
-    @Default('0') String availBal,  // Tiền dư/khả dụng vật lý (THÊM MỚI)
-    @Default('0') String availEq,   // Tiền dư/khả dụng margin (THÊM MỚI)
+    @Default('0') String availBal, // Tiền dư/khả dụng vật lý (THÊM MỚI)
+    @Default('0') String availEq, // Tiền dư/khả dụng margin (THÊM MỚI)
     @Default('0') String eq,
     @Default('0') String eqUsd,
     @Default('0') String upl,

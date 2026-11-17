@@ -53,7 +53,16 @@ Expected: exit 0, `No issues found!`, web built.
 Stop if the formatter changes any file outside the 13, cannot parse a file, or if analyze/V4/build fail.
 
 ## 9. Execution Ledger
-(coordinator fills)
+
+- Option A, coordinator tool run (work id `T145-format-run`): `dart format` on the 13 explicit paths → "Formatted 13 files (13 changed)". No manual edit. No Codex dispatch.
 
 ## 10. Coordinator Audit
-(coordinator fills)
+
+Verdict: PASS (2026-11-17).
+
+- RED: `dart format --output=none --set-exit-if-changed lib test` → exit 1, 219 files (13 changed).
+- GREEN: same → exit 0, 219 files (0 changed).
+- Scope: `git diff --name-only` = exactly the 13 files; 663 insertions, 256 deletions.
+- No semantic change: for each of the 13 files, HEAD and new content are identical after removing whitespace and commas (13/13 token-equal).
+- `flutter analyze --no-pub` → `No issues found!`; V4 691/691 pass; full gate `dart format … && flutter analyze --no-pub && flutter build web --no-pub` → built.
+- D-029 in effect from here: every task's buildability gate includes the repo-wide format check.

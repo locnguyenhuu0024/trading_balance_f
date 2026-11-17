@@ -129,34 +129,76 @@ void main() {
   );
 
   for (final withSpot in [false, true]) {
-    testWidgets('Assets own capital and summary withSpot=$withSpot', (tester) async {
-      const key = InstrumentKey(exchange: ExchangeId.binance, product: 'MARGIN',
-          nativeId: 'ETHUSDT', base: 'ETH', quote: 'USDT');
+    testWidgets('Assets own capital and summary withSpot=$withSpot', (
+      tester,
+    ) async {
+      const key = InstrumentKey(
+        exchange: ExchangeId.binance,
+        product: 'MARGIN',
+        nativeId: 'ETHUSDT',
+        base: 'ETH',
+        quote: 'USDT',
+      );
       final snapshot = AccountSnapshot(
         total: withSpot ? '139.5' : '29.5',
-        balances: [if (withSpot) const AssetBalance(
-          wallet: 'Spot', asset: 'BTC', total: '1', valueUsdt: '110')],
-        marginRows: const [MarginAccountRow(key: key, baseNet: '1', indexPrice: '80',
-            quoteNet: '-50.5', quoteInterest: '0.5')],
+        balances: [
+          if (withSpot)
+            const AssetBalance(
+              wallet: 'Spot',
+              asset: 'BTC',
+              total: '1',
+              valueUsdt: '110',
+            ),
+        ],
+        marginRows: const [
+          MarginAccountRow(
+            key: key,
+            baseNet: '1',
+            indexPrice: '80',
+            quoteNet: '-50.5',
+            quoteInterest: '0.5',
+          ),
+        ],
       );
       const symbols = <String, BinanceSymbolCost>{
-        'Spot:BTCUSDT': BinanceSymbolCost(CostState(quantity: 1, cost: 100), completed: true),
+        'Spot:BTCUSDT': BinanceSymbolCost(
+          CostState(quantity: 1, cost: 100),
+          completed: true,
+        ),
         'Isolated Margin:ETHUSDT': BinanceSymbolCost(
-            CostState(quantity: 1, cost: 100, isMargin: true), completed: true),
+          CostState(quantity: 1, cost: 100, isMargin: true),
+          completed: true,
+        ),
       };
       final views = StreamController<BinanceCostView>();
-      final container = ProviderContainer(overrides: [
-        selectedConnectionIdProvider.overrideWith((ref) => 'test'),
-        exchangeRegistryProvider.overrideWith((ref) => [ExchangeRegistration(
-          profile: const ConnectionProfile(connectionId: 'test', exchange: ExchangeId.binance, label: 'Binance'),
-          adapter: _SnapshotAdapter(snapshot),
-        )]),
-        binanceCostControllerProvider.overrideWith((ref) async => _CostController()),
-        binanceCostStateProvider.overrideWith((ref) => views.stream),
-        vndExchangeRateProvider.overrideWith((ref) async => 25400),
-      ]);
-      await tester.pumpWidget(UncontrolledProviderScope(container: container,
-          child: const MaterialApp(home: PortfolioScreen())));
+      final container = ProviderContainer(
+        overrides: [
+          selectedConnectionIdProvider.overrideWith((ref) => 'test'),
+          exchangeRegistryProvider.overrideWith(
+            (ref) => [
+              ExchangeRegistration(
+                profile: const ConnectionProfile(
+                  connectionId: 'test',
+                  exchange: ExchangeId.binance,
+                  label: 'Binance',
+                ),
+                adapter: _SnapshotAdapter(snapshot),
+              ),
+            ],
+          ),
+          binanceCostControllerProvider.overrideWith(
+            (ref) async => _CostController(),
+          ),
+          binanceCostStateProvider.overrideWith((ref) => views.stream),
+          vndExchangeRateProvider.overrideWith((ref) async => 25400),
+        ],
+      );
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const MaterialApp(home: PortfolioScreen()),
+        ),
+      );
       await tester.pump();
       views.add(const BinanceCostView(loading: true, symbols: symbols));
       await tester.pump();
@@ -166,7 +208,10 @@ void main() {
       await tester.pump();
       await tester.pump();
       if (withSpot) {
-        expect(find.text(r'Ước tính Spot · Margin: -$10.50 (-7.00%)'), findsNothing);
+        expect(
+          find.text(r'Ước tính Spot · Margin: -$10.50 (-7.00%)'),
+          findsNothing,
+        );
         expect(find.text('Tính trên 2/2 tài sản'), findsNothing);
       } else {
         expect(find.text(r'$50.00'), findsOneWidget);
@@ -177,34 +222,73 @@ void main() {
   }
 
   for (final scenario in [0, 1, 2]) {
-    testWidgets('Assets account unrealized PnL scenario $scenario', (tester) async {
-      const key = InstrumentKey(exchange: ExchangeId.binance, product: 'MARGIN',
-          nativeId: 'ETHUSDT', base: 'ETH', quote: 'USDT');
+    testWidgets('Assets account unrealized PnL scenario $scenario', (
+      tester,
+    ) async {
+      const key = InstrumentKey(
+        exchange: ExchangeId.binance,
+        product: 'MARGIN',
+        nativeId: 'ETHUSDT',
+        base: 'ETH',
+        quote: 'USDT',
+      );
       final snapshot = AccountSnapshot(
         total: scenario == 0 ? '29.5' : '129.5',
-        balances: [if (scenario != 0) const AssetBalance(
-          wallet: 'USD-M', asset: 'USDT', total: '100', valueUsdt: '100',
-          unrealizedPnl: '5')],
-        marginRows: const [MarginAccountRow(key: key, baseNet: '1', indexPrice: '80',
-            quoteNet: '-50.5', quoteInterest: '0.5')],
+        balances: [
+          if (scenario != 0)
+            const AssetBalance(
+              wallet: 'USD-M',
+              asset: 'USDT',
+              total: '100',
+              valueUsdt: '100',
+              unrealizedPnl: '5',
+            ),
+        ],
+        marginRows: const [
+          MarginAccountRow(
+            key: key,
+            baseNet: '1',
+            indexPrice: '80',
+            quoteNet: '-50.5',
+            quoteInterest: '0.5',
+          ),
+        ],
       );
       const symbols = <String, BinanceSymbolCost>{
         'Isolated Margin:ETHUSDT': BinanceSymbolCost(
-            CostState(quantity: 1, cost: 100, isMargin: true), completed: true),
+          CostState(quantity: 1, cost: 100, isMargin: true),
+          completed: true,
+        ),
       };
       final views = StreamController<BinanceCostView>();
-      final container = ProviderContainer(overrides: [
-        selectedConnectionIdProvider.overrideWith((ref) => 'test'),
-        exchangeRegistryProvider.overrideWith((ref) => [ExchangeRegistration(
-          profile: const ConnectionProfile(connectionId: 'test', exchange: ExchangeId.binance, label: 'Binance'),
-          adapter: _SnapshotAdapter(snapshot),
-        )]),
-        binanceCostControllerProvider.overrideWith((ref) async => _CostController()),
-        binanceCostStateProvider.overrideWith((ref) => views.stream),
-        vndExchangeRateProvider.overrideWith((ref) async => 25400),
-      ]);
-      await tester.pumpWidget(UncontrolledProviderScope(container: container,
-          child: const MaterialApp(home: PortfolioScreen())));
+      final container = ProviderContainer(
+        overrides: [
+          selectedConnectionIdProvider.overrideWith((ref) => 'test'),
+          exchangeRegistryProvider.overrideWith(
+            (ref) => [
+              ExchangeRegistration(
+                profile: const ConnectionProfile(
+                  connectionId: 'test',
+                  exchange: ExchangeId.binance,
+                  label: 'Binance',
+                ),
+                adapter: _SnapshotAdapter(snapshot),
+              ),
+            ],
+          ),
+          binanceCostControllerProvider.overrideWith(
+            (ref) async => _CostController(),
+          ),
+          binanceCostStateProvider.overrideWith((ref) => views.stream),
+          vndExchangeRateProvider.overrideWith((ref) async => 25400),
+        ],
+      );
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const MaterialApp(home: PortfolioScreen()),
+        ),
+      );
       await tester.pump();
       views.add(const BinanceCostView(loading: true, symbols: symbols));
       await tester.pump();
@@ -214,20 +298,56 @@ void main() {
         await tester.pump();
         await tester.pump();
       }
-      expect(find.text('Lãi / lỗ chưa thực hiện'), scenario == 2 ? findsNothing : findsOneWidget);
-      expect(find.text('Lãi / lỗ chưa thực hiện · USDⓈ-M'), scenario == 2 ? findsOneWidget : findsNothing);
+      expect(
+        find.text('Lãi / lỗ chưa thực hiện'),
+        scenario == 2 ? findsNothing : findsOneWidget,
+      );
+      expect(
+        find.text('Lãi / lỗ chưa thực hiện · USDⓈ-M'),
+        scenario == 2 ? findsOneWidget : findsNothing,
+      );
       if (scenario == 0) {
-        expect(find.textContaining('\u01af\u1edbc t\u00ednh Spot \u00b7 Margin'), findsNothing);
+        expect(
+          find.textContaining('\u01af\u1edbc t\u00ednh Spot \u00b7 Margin'),
+          findsNothing,
+        );
         expect(find.textContaining('T\u00ednh tr\u00ean'), findsNothing);
         expect(find.text('Ph\u1ea1m vi d\u1eef li\u1ec7u'), findsNothing);
         expect(find.text('Ti\u1ec1n t\u1ec7 hi\u1ec3n th\u1ecb'), findsNothing);
       }
-      expect(find.descendant(
-        of: find.byKey(const Key('portfolio-asset-summary')),
-        matching: find.text(scenario == 0 ? r'-$20.50' : scenario == 1 ? r'-$15.50' : r'+$5.00'),
-      ), findsOneWidget);
-      expect(find.text(scenario == 0 ? '(-41.00%)' : scenario == 1 ? '(-10.69%)' : '(+5.26%)'), findsOneWidget);
-      expect(find.text(scenario == 0 ? r'$50.00' : scenario == 1 ? r'$145.00' : r'$124.50'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('portfolio-asset-summary')),
+          matching: find.text(
+            scenario == 0
+                ? r'-$20.50'
+                : scenario == 1
+                ? r'-$15.50'
+                : r'+$5.00',
+          ),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.text(
+          scenario == 0
+              ? '(-41.00%)'
+              : scenario == 1
+              ? '(-10.69%)'
+              : '(+5.26%)',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.text(
+          scenario == 0
+              ? r'$50.00'
+              : scenario == 1
+              ? r'$145.00'
+              : r'$124.50',
+        ),
+        findsOneWidget,
+      );
       await tester.pumpWidget(const SizedBox.shrink());
       container.dispose();
     });

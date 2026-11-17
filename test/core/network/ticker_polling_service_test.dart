@@ -360,10 +360,7 @@ class _FirstQuoteThenPendingAdapter implements HttpClientAdapter {
     cancelFuture?.then((_) {
       if (!_pending.isCompleted) {
         _pending.completeError(
-          DioException(
-            requestOptions: options,
-            type: DioExceptionType.cancel,
-          ),
+          DioException(requestOptions: options, type: DioExceptionType.cancel),
         );
       }
     });

@@ -3,15 +3,14 @@ import 'dart:ui' show DartPluginRegistrant;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 
-typedef BackgroundServiceConfigure = Future<bool> Function({
-  required IosConfiguration iosConfiguration,
-  required AndroidConfiguration androidConfiguration,
-});
+typedef BackgroundServiceConfigure =
+    Future<bool> Function({
+      required IosConfiguration iosConfiguration,
+      required AndroidConfiguration androidConfiguration,
+    });
 
-typedef BackgroundServiceCommand = void Function(
-  String method, [
-  Map<String, dynamic>? arguments,
-]);
+typedef BackgroundServiceCommand =
+    void Function(String method, [Map<String, dynamic>? arguments]);
 
 Future<void> retireBackgroundService({
   BackgroundServiceConfigure? configure,
@@ -28,10 +27,7 @@ Future<void> retireBackgroundService({
       autoStartOnBoot: false,
       isForegroundMode: false,
     ),
-    iosConfiguration: IosConfiguration(
-      autoStart: false,
-      onForeground: onStart,
-    ),
+    iosConfiguration: IosConfiguration(autoStart: false, onForeground: onStart),
   );
   if (!configured) {
     throw StateError('Legacy background service retirement failed.');

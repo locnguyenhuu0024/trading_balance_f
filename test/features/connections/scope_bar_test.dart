@@ -160,8 +160,10 @@ void main() {
     expect(tester.getSize(find.byType(ScopeBar)).height, lessThan(54));
     await tester.tap(find.byType(ScopeBar));
     await tester.pumpAndSettle();
-    expect(find.text('Binance Futures Account 01 / Ch\u00ednh'), findsOneWidget);
+    expect(
+      find.text('Binance Futures Account 01 / Ch\u00ednh'),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
-
 }

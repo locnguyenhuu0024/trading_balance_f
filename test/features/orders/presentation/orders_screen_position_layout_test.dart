@@ -22,13 +22,24 @@ import 'package:trading_balance_f/main.dart';
 
 class _BinancePositionAdapter extends FakeExchangeAdapter {
   @override
-  ExchangeCapabilities get capabilities => const ExchangeCapabilities(readableProducts: ['SWAP']);
+  ExchangeCapabilities get capabilities =>
+      const ExchangeCapabilities(readableProducts: ['SWAP']);
 
   @override
-  Future<List<ExchangePosition>> readPositions(Ref ref, ExchangeScope scope) async => const [
+  Future<List<ExchangePosition>> readPositions(
+    Ref ref,
+    ExchangeScope scope,
+  ) async => const [
     ExchangePosition(
-      key: InstrumentKey(exchange: ExchangeId.binance, product: 'SWAP', nativeId: 'BTCUSDT', base: 'BTC', quote: 'USDT'),
-      productLabel: 'SWAP', unrealizedPnl: '64.2',
+      key: InstrumentKey(
+        exchange: ExchangeId.binance,
+        product: 'SWAP',
+        nativeId: 'BTCUSDT',
+        base: 'BTC',
+        quote: 'USDT',
+      ),
+      productLabel: 'SWAP',
+      unrealizedPnl: '64.2',
     ),
   ];
 }
@@ -150,8 +161,14 @@ Finder _cardContainingPrice(String price) {
 }
 
 void main() {
-  testWidgets('position pair and profit are emphasized for OKX and Binance', (tester) async {
-    await tester.pumpWidget(_ordersApp(positions: [_position(liqPx: '1000', upl: '64.2')]));
+  testWidgets('position pair and profit are emphasized for OKX and Binance', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _ordersApp(
+        positions: [_position(liqPx: '1000', upl: '64.2')],
+      ),
+    );
     await tester.pump();
     await tester.pump();
     void check(String pair) {
@@ -160,19 +177,43 @@ void main() {
       expect(amount.style?.fontWeight, FontWeight.w800);
       expect(amount.style?.color, PnlColors.lightPositive);
       final header = find.byKey(const Key('position-card-header'));
-      expect(tester.widget<Text>(find.descendant(of: header, matching: find.text(pair))).style?.fontSize, 16);
+      expect(
+        tester
+            .widget<Text>(
+              find.descendant(of: header, matching: find.text(pair)),
+            )
+            .style
+            ?.fontSize,
+        16,
+      );
     }
+
     check('BTCUSDT');
     await tester.pumpWidget(const SizedBox.shrink());
-    final container = ProviderContainer(overrides: [
-      selectedConnectionIdProvider.overrideWith((ref) => 'fake'),
-      exchangeRegistryProvider.overrideWith((ref) => [ExchangeRegistration(
-        profile: const ConnectionProfile(connectionId: 'fake', exchange: ExchangeId.binance, label: 'Binance'),
-        adapter: _BinancePositionAdapter(),
-      )]),
-      vndExchangeRateProvider.overrideWith((ref) async => 25400),
-    ]);
-    await tester.pumpWidget(UncontrolledProviderScope(container: container, child: const MaterialApp(home: OrdersScreen())));
+    final container = ProviderContainer(
+      overrides: [
+        selectedConnectionIdProvider.overrideWith((ref) => 'fake'),
+        exchangeRegistryProvider.overrideWith(
+          (ref) => [
+            ExchangeRegistration(
+              profile: const ConnectionProfile(
+                connectionId: 'fake',
+                exchange: ExchangeId.binance,
+                label: 'Binance',
+              ),
+              adapter: _BinancePositionAdapter(),
+            ),
+          ],
+        ),
+        vndExchangeRateProvider.overrideWith((ref) async => 25400),
+      ],
+    );
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(home: OrdersScreen()),
+      ),
+    );
     await tester.pump();
     await tester.pump();
     check('BTC/USDT');
