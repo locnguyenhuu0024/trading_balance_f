@@ -43,6 +43,35 @@ Predecessors: T142 = PASS. Clean checkout.
 | `lib/features/strategy/presentation/strategy_wizard_dialog.dart` | deprecated `DropdownButtonFormField.value` ×3 (L1112, L1132, L1364), deprecated `RadioListTile.groupValue` + `onChanged` (L1698–1699), curly_braces ×2, prefer_const_constructors ×1, unnecessary_brace_in_string_interps ×1 |
 | `test/features/strategy/strategy_wizard_dialog_test.dart` | unnecessary_import ×1, deprecated `RadioListTile.groupValue` reads ×2 (L221, L679) |
 
+## 4a. Exact issue locations (binding)
+
+The executor sandbox cannot run Dart. All 24 sites below come from the host analyzer at HEAD `e8f273e` (`file:line:column`; line numbers are before your edits — work bottom-up within a file or re-locate by content). Fix exactly these; hand-format to `dart format` style. The coordinator runs the analyzer and `dart format` on the host.
+
+- `lib/exchanges/binance/binance_adapter.dart:90:20` invalid_use_of_visible_for_testing_member : The member 'state' can only be used within 'package:state_notifier/state_notifier.dart' or a test
+- `lib/exchanges/binance/binance_adapter.dart:90:20` invalid_use_of_protected_member : The member 'state' can only be used within instance members of subclasses of 'StateNotifier'
+- `lib/exchanges/binance/binance_trade_history.dart:110:7` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/exchanges/binance/binance_trade_history.dart:130:11` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/exchanges/binance/binance_trade_history.dart:189:17` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/exchanges/binance/binance_trade_history.dart:191:17` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/exchanges/binance/binance_trade_history.dart:221:13` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/exchanges/binance/binance_trade_history.dart:229:13` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/features/orders/presentation/providers/order_cancellation_flow_provider.dart:242:67` unnecessary_non_null_assertion : The '!' will have no effect because the receiver can't be null.
+- `lib/features/orders/presentation/providers/order_cancellation_flow_provider.dart:270:9` use_build_context_synchronously : Don't use 'BuildContext's across async gaps.
+- `lib/features/orders/presentation/providers/order_cancellation_flow_provider.dart:351:65` unnecessary_non_null_assertion : The '!' will have no effect because the receiver can't be null.
+- `lib/features/orders/presentation/providers/order_cancellation_flow_provider.dart:592:9` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/features/strategy/presentation/strategy_wizard_dialog.dart:411:11` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/features/strategy/presentation/strategy_wizard_dialog.dart:1112:11` deprecated_member_use : 'value' is deprecated and shouldn't be used. Use initialValue instead. This will set the initial value for the form field. This feature was deprecated after v3.33.0-1.0.pre.
+- `lib/features/strategy/presentation/strategy_wizard_dialog.dart:1132:11` deprecated_member_use : 'value' is deprecated and shouldn't be used. Use initialValue instead. This will set the initial value for the form field. This feature was deprecated after v3.33.0-1.0.pre.
+- `lib/features/strategy/presentation/strategy_wizard_dialog.dart:1310:9` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `lib/features/strategy/presentation/strategy_wizard_dialog.dart:1357:104` unnecessary_brace_in_string_interps : Unnecessary braces in a string interpolation.
+- `lib/features/strategy/presentation/strategy_wizard_dialog.dart:1364:11` deprecated_member_use : 'value' is deprecated and shouldn't be used. Use initialValue instead. This will set the initial value for the form field. This feature was deprecated after v3.33.0-1.0.pre.
+- `lib/features/strategy/presentation/strategy_wizard_dialog.dart:1389:21` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/features/strategy/presentation/strategy_wizard_dialog.dart:1698:15` deprecated_member_use : 'groupValue' is deprecated and shouldn't be used. Use a RadioGroup ancestor to manage group value instead. This feature was deprecated after v3.32.0-0.0.pre.
+- `lib/features/strategy/presentation/strategy_wizard_dialog.dart:1699:15` deprecated_member_use : 'onChanged' is deprecated and shouldn't be used. Use RadioGroup to handle value change instead. This feature was deprecated after v3.32.0-0.0.pre.
+- `test/features/strategy/strategy_wizard_dialog_test.dart:2:8` unnecessary_import : The import of 'dart:typed_data' is unnecessary because all of the used elements are also provided by the import of 'package:flutter/services.dart'.
+- `test/features/strategy/strategy_wizard_dialog_test.dart:221:33` deprecated_member_use : 'groupValue' is deprecated and shouldn't be used. Use a RadioGroup ancestor to manage group value instead. This feature was deprecated after v3.32.0-0.0.pre.
+- `test/features/strategy/strategy_wizard_dialog_test.dart:679:63` deprecated_member_use : 'groupValue' is deprecated and shouldn't be used. Use a RadioGroup ancestor to manage group value instead. This feature was deprecated after v3.32.0-0.0.pre.
+
 ## 5. Forbidden Scope
 
 - Every file not listed, `analysis_options.yaml`, protected configuration, `backend/`, Git state, new dependencies.

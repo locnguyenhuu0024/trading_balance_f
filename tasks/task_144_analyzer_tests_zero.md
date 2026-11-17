@@ -61,6 +61,82 @@ Predecessors: T143 = PASS. Clean checkout.
 | `test/features/strategy/strategy_retry_dialog_test.dart` | unused_import ×1, prefer_inlined_adds ×1, prefer_const_constructors ×1 |
 | `test/features/strategy/strategy_screen_test.dart` | unnecessary_import ×1, unused_import ×1, prefer_const_constructors ×1 |
 
+## 4a. Exact issue locations (binding)
+
+The executor sandbox cannot run Dart. All 71 sites below come from the host analyzer at HEAD `e8f273e` (`file:line:column`; line numbers are before your edits — work bottom-up within a file or re-locate by content). Fix exactly these; hand-format to `dart format` style. The coordinator runs the analyzer and `dart format` on the host.
+
+- `test/core/navigation/app_page_transition_test.dart:5:8` unused_import : Unused import: 'package:trading_balance_f/core/theme/app_theme.dart'.
+- `test/core/navigation/navigation_content_frame_test.dart:18:15` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `test/core/network/okx_data_client_test.dart:18:50` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `test/core/network/okx_data_client_test.dart:60:48` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `test/core/network/okx_data_client_test.dart:107:28` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `test/core/network/okx_data_client_test.dart:143:21` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `test/core/network/okx_data_client_test.dart:166:50` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `test/core/network/okx_data_client_test.dart:212:28` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `test/core/network/okx_data_client_test.dart:254:48` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `test/core/network/okx_data_client_test.dart:274:16` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `test/core/network/okx_data_client_test.dart:291:16` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `test/core/network/okx_data_client_test.dart:325:20` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `test/core/network/okx_data_client_test.dart:356:50` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `test/core/network/okx_data_client_test.dart:389:21` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `test/core/network/okx_data_client_test.dart:428:23` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `test/core/network/okx_data_client_test.dart:520:24` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `test/core/network/okx_data_client_test.dart:532:18` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `test/core/network/okx_data_client_test.dart:615:50` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `test/core/network/okx_data_client_test.dart:640:50` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `test/core/network/okx_data_client_test.dart:657:50` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `test/core/network/okx_data_client_test.dart:675:9` prefer_const_declarations : Use 'const' for final variables initialized to a constant value.
+- `test/core/network/okx_data_client_test.dart:789:57` unused_element_parameter : A value for optional parameter 'headers' isn't ever given.
+- `test/core/theme/app_theme_test.dart:23:24` deprecated_member_use : 'red' is deprecated and shouldn't be used. Use (*.r * 255.0).round().clamp(0, 255).
+- `test/core/theme/app_theme_test.dart:23:35` deprecated_member_use : 'green' is deprecated and shouldn't be used. Use (*.g * 255.0).round().clamp(0, 255).
+- `test/core/theme/app_theme_test.dart:24:24` deprecated_member_use : 'green' is deprecated and shouldn't be used. Use (*.g * 255.0).round().clamp(0, 255).
+- `test/core/theme/app_theme_test.dart:24:37` deprecated_member_use : 'blue' is deprecated and shouldn't be used. Use (*.b * 255.0).round().clamp(0, 255).
+- `test/core/widgets/app_startup_preview_test.dart:123:7` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `test/core/widgets/app_startup_preview_test.dart:125:16` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `test/core/widgets/app_startup_preview_test.dart:127:17` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `test/core/widgets/app_startup_test.dart:186:7` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `test/core/widgets/app_startup_test.dart:187:15` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `test/exchanges/binance/binance_private_client_test.dart:138:9` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `test/exchanges/binance/binance_private_client_test.dart:277:9` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `test/exchanges/binance/binance_private_client_test.dart:279:9` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `test/exchanges/binance/binance_reader_test.dart:80:7` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `test/exchanges/binance/binance_reader_test.dart:82:7` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `test/exchanges/binance/binance_reader_test.dart:87:7` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `test/exchanges/binance/binance_reader_test.dart:89:7` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `test/exchanges/binance/binance_reader_test.dart:95:7` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `test/exchanges/binance/binance_reader_test.dart:103:7` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `test/exchanges/binance/binance_reader_test.dart:201:9` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `test/exchanges/binance/binance_reader_test.dart:203:9` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `test/exchanges/binance/binance_reader_test.dart:285:9` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `test/exchanges/binance/binance_reader_test.dart:287:9` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `test/exchanges/binance/binance_trade_history_test.dart:313:5` prefer_const_declarations : Use 'const' for final variables initialized to a constant value.
+- `test/features/connections/scope_bar_test.dart:106:16` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `test/features/connections/scope_bar_test.dart:107:17` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `test/features/fractal_tracker/fractal_screen_price_formatting_test.dart:4:8` unnecessary_import : The import of 'dart:typed_data' is unnecessary because all of the used elements are also provided by the import of 'package:flutter/services.dart'.
+- `test/features/orders/order_cancellation_flow_test.dart:101:28` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `test/features/orders/order_cancellation_flow_test.dart:120:26` unused_element_parameter : A value for optional parameter 'configured' isn't ever given.
+- `test/features/orders/order_filter_controls_test.dart:38:21` deprecated_member_use : 'hasFlag' is deprecated and shouldn't be used. Use flagsCollection instead. This feature was deprecated after v3.32.0-0.0.pre.
+- `test/features/orders/order_filter_controls_test.dart:39:21` deprecated_member_use : 'hasFlag' is deprecated and shouldn't be used. Use flagsCollection instead. This feature was deprecated after v3.32.0-0.0.pre.
+- `test/features/orders/orders_binance_view_test.dart:689:9` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `test/features/orders/orders_binance_view_test.dart:691:9` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `test/features/orders/orders_binance_view_test.dart:693:9` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `test/features/orders/orders_binance_view_test.dart:761:16` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `test/features/orders/orders_binance_view_test.dart:762:17` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `test/features/orders/position_actions_test.dart:66:10` unused_element_parameter : A value for optional parameter 'configured' isn't ever given.
+- `test/features/orders/presentation/orders_screen_history_layout_test.dart:11:8` unused_import : Unused import: 'package:trading_balance_f/features/portfolio/presentation/portfolio_screen.dart'.
+- `test/features/orders/presentation/orders_screen_position_layout_test.dart:579:11` prefer_const_declarations : Use 'const' for final variables initialized to a constant value.
+- `test/features/portfolio/monochrome_portfolio_preview_test.dart:2:8` unnecessary_import : The import of 'dart:typed_data' is unnecessary because all of the used elements are also provided by the import of 'package:flutter/services.dart'.
+- `test/features/portfolio/monochrome_portfolio_preview_test.dart:92:12` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `test/features/settings/settings_trade_access_page_test.dart:221:5` prefer_const_declarations : Use 'const' for final variables initialized to a constant value.
+- `test/features/strategy/strategy_dashboard_controller_test.dart:845:25` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `test/features/strategy/strategy_market_repository_test.dart:16:11` prefer_function_declarations_over_variables : Use a function declaration rather than a variable assignment to bind a function to a name.
+- `test/features/strategy/strategy_retry_dialog_test.dart:14:8` unused_import : Unused import: 'package:trading_balance_f/features/strategy/presentation/providers/strategy_dashboard_provider.dart'.
+- `test/features/strategy/strategy_retry_dialog_test.dart:400:14` prefer_inlined_adds : The addition of a list item could be inlined.
+- `test/features/strategy/strategy_retry_dialog_test.dart:401:13` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `test/features/strategy/strategy_screen_test.dart:3:8` unnecessary_import : The import of 'dart:typed_data' is unnecessary because all of the used elements are also provided by the import of 'package:flutter/services.dart'.
+- `test/features/strategy/strategy_screen_test.dart:16:8` unused_import : Unused import: 'package:trading_balance_f/core/widgets/responsive_form_content.dart'.
+- `test/features/strategy/strategy_screen_test.dart:212:38` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+
 ## 5. Forbidden Scope
 
 - `lib/`, every file not listed, `analysis_options.yaml`, protected configuration, `backend/`, Git state, new dependencies.

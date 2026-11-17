@@ -15,6 +15,71 @@ Plan Steps: P01
 Requirements: REQ-201..REQ-203
 Decisions: D-026
 
+## Remediation R01 (current instruction)
+
+Attempt af43dec9 changed nothing because the sandbox cannot run Dart to locate issues. You do not need any tool: every issue is listed below with its exact `file:line:column` from the host analyzer (HEAD `e8f273e`). Fix exactly these 60 sites by reading the source, following §6. Hand-format to `dart format` style (80 columns, trailing commas as in the surrounding code); the coordinator runs `dart format` and the analyzer on the host. Line numbers refer to the file before your edits — work bottom-up within a file or re-locate by content.
+
+- `lib/core/exchange/exchange_registry.dart:15:5` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `lib/core/exchange/exchange_registry.dart:23:5` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `lib/core/network/okx_data_client.dart:1:8` unnecessary_import : The import of 'dart:typed_data' is unnecessary because all of the used elements are also provided by the import of 'package:flutter/foundation.dart'.
+- `lib/core/network/okx_read_scope.dart:80:9` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/core/network/okx_read_scope.dart:82:9` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/core/theme/app_theme.dart:1:8` unnecessary_import : The import of 'dart:ui' is unnecessary because all of the used elements are also provided by the import of 'package:flutter/material.dart'.
+- `lib/core/widgets/responsive_form_content.dart:49:15` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `lib/core/widgets/responsive_form_content.dart:152:19` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `lib/exchanges/binance/binance_estimated_pnl.dart:79:5` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/exchanges/binance/binance_estimated_pnl.dart:177:7` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/exchanges/binance/binance_estimated_pnl.dart:183:7` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/exchanges/binance/binance_estimated_pnl.dart:204:7` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/exchanges/binance/binance_market.dart:21:7` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/exchanges/binance/binance_market.dart:81:9` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/exchanges/binance/binance_market.dart:149:9` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/exchanges/binance/binance_market.dart:149:15` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `lib/exchanges/binance/binance_private_client.dart:129:13` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/exchanges/binance/binance_private_client.dart:131:13` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/exchanges/binance/binance_private_client.dart:190:7` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/exchanges/binance/binance_private_client.dart:227:7` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/exchanges/binance/binance_reader.dart:51:15` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/exchanges/binance/binance_reader.dart:57:15` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/exchanges/binance/binance_reader.dart:84:15` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/exchanges/binance/binance_reader.dart:88:17` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/exchanges/binance/binance_reader.dart:117:11` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/exchanges/binance/binance_reader.dart:128:7` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/exchanges/binance/binance_reader.dart:263:7` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/exchanges/binance/binance_reader.dart:265:7` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/exchanges/binance/binance_reader.dart:337:13` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/exchanges/okx/okx_adapter.dart:121:7` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/exchanges/okx/okx_adapter.dart:123:7` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/exchanges/okx/okx_adapter.dart:128:7` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/features/connections/binance_connection_form.dart:1:8` unnecessary_import : The import of 'package:flutter/foundation.dart' is unnecessary because all of the used elements are also provided by the import of 'package:flutter/material.dart'.
+- `lib/features/connections/binance_connection_form.dart:124:9` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/features/connections/scope_picker.dart:85:29` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/features/fractal_tracker/presentation/fractal_screen.dart:164:23` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/features/fractal_tracker/presentation/fractal_screen.dart:294:7` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/features/fractal_tracker/presentation/fractal_screen.dart:296:7` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/features/fractal_tracker/presentation/fractal_screen.dart:766:26` deprecated_member_use : 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss.
+- `lib/features/fractal_tracker/presentation/fractal_screen.dart:805:49` deprecated_member_use : 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss.
+- `lib/features/market/presentation/market_screen.dart:8:8` unnecessary_import : The import of 'dart:ui' is unnecessary because all of the used elements are also provided by the import of 'package:flutter/material.dart'.
+- `lib/features/orders/presentation/orders_screen.dart:129:11` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/features/orders/presentation/orders_screen.dart:156:7` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/features/orders/presentation/orders_screen.dart:433:21` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/features/orders/presentation/orders_screen.dart:523:28` unnecessary_to_list_in_spreads : Unnecessary use of 'toList' in a spread.
+- `lib/features/portfolio/presentation/portfolio_screen.dart:299:31` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/features/portfolio/presentation/portfolio_screen.dart:492:23` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/features/portfolio/presentation/portfolio_screen.dart:541:41` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/features/strategy/presentation/providers/strategy_dashboard_provider.dart:349:24` unused_catch_clause : The exception variable 'error' isn't used, so the 'catch' clause can be removed.
+- `lib/features/strategy/presentation/strategy_screen.dart:214:11` prefer_function_declarations_over_variables : Use a function declaration rather than a variable assignment to bind a function to a name.
+- `lib/features/strategy/presentation/strategy_screen.dart:244:11` prefer_function_declarations_over_variables : Use a function declaration rather than a variable assignment to bind a function to a name.
+- `lib/features/strategy/presentation/strategy_settings_dialog.dart:406:37` prefer_const_constructors : Use 'const' with the constructor to improve performance.
+- `lib/features/support_resistance/data/market_repository.dart:87:45` annotate_overrides : The member 'getInstruments' overrides an inherited member but isn't annotated with '@override'.
+- `lib/features/support_resistance/data/market_repository.dart:159:35` annotate_overrides : The member 'getTicker' overrides an inherited member but isn't annotated with '@override'.
+- `lib/features/support_resistance/data/market_repository.dart:192:41` annotate_overrides : The member 'getCandles' overrides an inherited member but isn't annotated with '@override'.
+- `lib/features/support_resistance/data/market_repository.dart:327:43` annotate_overrides : The member 'loadLevels' overrides an inherited member but isn't annotated with '@override'.
+- `lib/main.dart:4:8` unnecessary_import : The import of 'dart:ui' is unnecessary because all of the used elements are also provided by the import of 'package:flutter/material.dart'.
+- `lib/main.dart:393:7` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/main.dart:414:7` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+- `lib/main.dart:425:11` curly_braces_in_flow_control_structures : Statements in an if should be enclosed in a block.
+
 ## 1. Dispatch Compliance
 
 The CCB dispatcher passes `--model gpt-6.1-terra` and `model_reasoning_effort=medium` on your command line, and your prompt states the route. This is the explicit binding. `UNVERIFIABLE` is a valid state; do not stop for it.
