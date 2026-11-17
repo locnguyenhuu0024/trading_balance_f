@@ -292,6 +292,9 @@ class _BiometricAuthScreenState extends State<BiometricAuthScreen> {
     if (_isAuthenticated) {
       return const MainNavigationShell();
     }
+    if (_isChecking) {
+      return const AppStartupStatusView(isLoading: true);
+    }
 
     return Scaffold(
       backgroundColor: palette.background,
@@ -302,9 +305,7 @@ class _BiometricAuthScreenState extends State<BiometricAuthScreen> {
             child: ConstrainedBox(
               constraints: BoxConstraints(minHeight: constraints.maxHeight),
               child: Center(
-                child: _isChecking
-                    ? CircularProgressIndicator(color: palette.ink)
-                    : Column(
+                child: Column(
                         mainAxisSize: MainAxisSize.min,
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [

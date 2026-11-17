@@ -135,8 +135,8 @@ void main() {
       ),
     );
     await tester.pump();
-    expect(find.byType(CircularProgressIndicator), findsNothing);
-    expect(find.byIcon(Icons.hourglass_empty), findsOneWidget);
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+    expect(find.byKey(const Key('app-startup-brand-mark')), findsOneWidget);
     await _capture(tester, 'startup-reduced-motion-static');
   });
 }

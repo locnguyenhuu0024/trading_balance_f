@@ -146,6 +146,33 @@ void main() {
     expect(builderCalls, 1);
   });
 
+  testWidgets('RED-139c pending startup shows brand and progress', (tester) async {
+    final pending = Completer<int>();
+    await tester.pumpWidget(AppStartup<int>(
+      initialize: () => pending.future,
+      builder: (_, value) => Text('$value'),
+    ));
+    expect(find.byKey(const Key('app-startup-brand-mark')), findsOneWidget);
+    expect(find.text('Crypto Portfolio'), findsOneWidget);
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+  });
+
+  testWidgets('RED-139d startup cross-fades into the app', (tester) async {
+    final pending = Completer<int>();
+    await tester.pumpWidget(AppStartup<int>(
+      initialize: () => pending.future,
+      builder: (_, value) => MaterialApp(home: Text('Ready $value')),
+    ));
+    pending.complete(7);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 140));
+    expect(find.text('Crypto Portfolio'), findsOneWidget);
+    expect(find.text('Ready 7'), findsOneWidget);
+    await tester.pumpAndSettle();
+    expect(find.text('Crypto Portfolio'), findsNothing);
+    expect(find.text('Ready 7'), findsOneWidget);
+  });
+
   testWidgets('reduced motion keeps startup progress static and labeled', (
     tester,
   ) async {
@@ -162,8 +189,8 @@ void main() {
     );
 
     expect(find.text('Đang khởi tạo ứng dụng…'), findsOneWidget);
-    expect(find.byType(CircularProgressIndicator), findsNothing);
-    expect(find.byIcon(Icons.hourglass_empty), findsOneWidget);
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+    expect(find.byKey(const Key('app-startup-brand-mark')), findsOneWidget);
     final progressSemantics = tester.widget<Semantics>(
       find.byKey(const Key('app-startup-progress-semantics')),
     );

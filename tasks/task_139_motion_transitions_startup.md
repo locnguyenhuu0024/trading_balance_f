@@ -15,6 +15,13 @@ Plan Steps: P01
 Requirements: REQ-101..REQ-105
 Decisions: D-022, D-023
 
+## Remediation R01 (current instruction)
+
+The first pass (attempt 596935ea) is in the working tree. Do not redo it. Write only the 7 files in §4.
+
+- AUD-139-01, test bug. `test/core/navigation/app_page_transition_test.dart` RED-139a, reduced-motion branch: after `tap` + one `pump()`, a newly pushed route is still offstage for its first frame, so `find.text('Slide target')` finds nothing and `tester.widget` throws `Bad state: No element` (host GREEN run). Required: add one more `await tester.pump();` before the `dy()` checks in the reduced-motion branch (both branches may share it). Do not change the expectations.
+- AUD-139-02, formatting. `dart format --set-exit-if-changed` reports changes in `app_page_transition.dart`, `app_startup.dart`, `main.dart` and the 3 test files; the repository is otherwise formatted. Required: format all 7 files with `dart format` (if unavailable in the sandbox, format by hand to `dart format` style, 80 columns). No logic change.
+
 ## 1. Dispatch Compliance
 
 The CCB dispatcher passes `--model gpt-6.1-terra` and `model_reasoning_effort=high` on your command line, and your prompt states the route. This is the explicit binding. `UNVERIFIABLE` is a valid state; do not stop for it.
