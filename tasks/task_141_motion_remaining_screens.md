@@ -62,6 +62,8 @@ Pattern: put `AppEntranceScope` directly around the screen's main `ListView`; wr
 
 ### 6.1 Clarifications from the T140 audit (binding)
 
+- Coordinator decision on attempt 384d888f's blocker: where a screen uses `SingleChildScrollView` + `Column` instead of a `ListView` (Settings ~L416; Support-resistance ~L82/~L123), do NOT convert it. Wrap that existing `SingleChildScrollView` in `AppEntranceScope` and wrap each top-level card inside its `Column` in `AppEntrance(index: i)`. "Main `ListView`" in §6 means "the screen's main scroll view", whatever its type. Layout, padding and scroll physics stay unchanged.
+
 - In TEST-141-2 do not use `find.ancestor(of: …, matching: find.byType(FadeTransition))`: `MaterialApp`'s route already adds `FadeTransition`s. Use `find.descendant(of: <first AppEntrance>, matching: find.byType(FadeTransition)).first`.
 - Any widget test that pumps a screen while an `AppSkeleton` is visible must use `pump(duration)`, never `pumpAndSettle` (the shimmer repeats).
 - If an existing test of these screens expects the old loader (`FormPendingStatus`/`CircularProgressIndicator`) for a loader you replace, that test is outside §4: return `BLOCKED` naming it instead of editing it.
