@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:dio/dio.dart';
@@ -218,7 +217,16 @@ void main() {
       }
       final entryIds = tester
           .widgetList<RadioListTile<String>>(find.byType(RadioListTile<String>))
-          .map((radio) => radio.groupValue)
+          .map(
+            (radio) => tester
+                .widget<RadioGroup<String>>(
+                  find.ancestor(
+                    of: find.byWidget(radio),
+                    matching: find.byType(RadioGroup<String>),
+                  ).first,
+                )
+                .groupValue,
+          )
           .toSet();
       expect(entryIds, containsAll({'long-1', 'short-1'}));
       expect(
@@ -676,7 +684,16 @@ void main() {
         find.byType(RadioListTile<String>),
       );
       expect(
-        radios.firstWhere((radio) => radio.value == 'long_0').groupValue,
+        tester
+            .widget<RadioGroup<String>>(
+              find.ancestor(
+                of: find.byWidget(
+                  radios.firstWhere((radio) => radio.value == 'long_0'),
+                ),
+                matching: find.byType(RadioGroup<String>),
+              ).first,
+            )
+            .groupValue,
         'long_0',
       );
       expect(api.previewBodies, hasLength(1));

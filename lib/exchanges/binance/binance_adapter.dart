@@ -87,7 +87,7 @@ final binanceCostControllerProvider = FutureProvider<BinanceCostController>((
 
 final binanceCostStateProvider = StreamProvider<BinanceCostView>((ref) async* {
   final controller = await ref.watch(binanceCostControllerProvider.future);
-  yield controller.state;
+  yield controller.current;
   yield* controller.stream;
 });
 

@@ -15,6 +15,14 @@ Plan Steps: P02
 Requirements: REQ-201..REQ-205
 Decisions: D-026
 
+## Remediation R01 (current instruction)
+
+Attempt effb49d4 is in the working tree (host: 23/24 issues gone, V4 689 pass / 2 fail). Do not redo. Write only files in §4.
+
+- AUD-143-01, keys moved (coordinator's §6.3 fallback was wrong). `test/features/strategy/strategy_screen_test.dart:782` (outside scope, unchanged) does `tester.widget<DropdownButtonFormField<dynamic>>(find.byKey(const Key('strategy-direction-select')))`; the key now sits on a `KeyedSubtree`, so 2 tests fail with `Bad state: No element`. `DropdownButtonFormField` already follows `initialValue` changes in `didUpdateWidget`, so re-creating the field is unnecessary. Required in `strategy_wizard_dialog.dart`: remove both `KeyedSubtree` wrappers (~L1111, ~L1133) and put `Key('strategy-interval-select')` / `Key('strategy-direction-select')` back directly on their `DropdownButtonFormField` exactly as before; remove `key: ValueKey(_interval)`, `key: ValueKey(_direction)` and `key: ValueKey(_allocation)` (~L1371; that field had no key before). Keep `initialValue:`. Leave the existing `ValueKey('strategy-level-${level.id}')` (~L1294) untouched.
+- AUD-143-02, analyzer. `order_cancellation_flow_provider.dart:271` still reports `use_build_context_synchronously` ("guarded by an unrelated 'mounted' check"): `navigator.context.mounted` is not accepted. Required: replace the added line with `final dialogContext = navigator.context; if (!dialogContext.mounted) return;` and pass `dialogContext` (not `navigator.context`) to `showTradeActionConfirmation`. Nothing else changes.
+- AUD-143-03, formatting. `dart format` still changes `test/features/strategy/strategy_wizard_dialog_test.dart`. Required: format it (80 columns). Keep all touched files formatted.
+
 ## 1. Dispatch Compliance
 
 The CCB dispatcher passes `--model gpt-6.1-terra` and `model_reasoning_effort=high` on your command line, and your prompt states the route. This is the explicit binding. `UNVERIFIABLE` is a valid state; do not stop for it.

@@ -407,8 +407,9 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
       setState(() {
         _instruments = instruments;
         _isLoadingInstruments = false;
-        if (instruments.isNotEmpty)
+        if (instruments.isNotEmpty) {
           _instrumentId = instruments.first.instrumentId;
+        }
       });
       if (instruments.isEmpty) {
         setState(
@@ -1107,56 +1108,62 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
           ),
         ),
         const SizedBox(height: 12),
-        DropdownButtonFormField<StrategyInterval>(
+        KeyedSubtree(
           key: const Key('strategy-interval-select'),
-          value: _interval,
-          decoration: const InputDecoration(labelText: 'Khung nến UTC'),
-          items: StrategyInterval.values
-              .map(
-                (value) =>
-                    DropdownMenuItem(value: value, child: Text(value.label)),
-              )
-              .toList(growable: false),
-          onChanged: _isLoadingLevels || _isSaving || _isReviewingCandidates
-              ? null
-              : (value) {
-                  if (value != null && _instrumentId != null) {
-                    unawaited(_loadLevels(_instrumentId!, value));
-                  }
-                },
+          child: DropdownButtonFormField<StrategyInterval>(
+            key: ValueKey(_interval),
+            initialValue: _interval,
+            decoration: const InputDecoration(labelText: 'Khung nến UTC'),
+            items: StrategyInterval.values
+                .map(
+                  (value) =>
+                      DropdownMenuItem(value: value, child: Text(value.label)),
+                )
+                .toList(growable: false),
+            onChanged: _isLoadingLevels || _isSaving || _isReviewingCandidates
+                ? null
+                : (value) {
+                    if (value != null && _instrumentId != null) {
+                      unawaited(_loadLevels(_instrumentId!, value));
+                    }
+                  },
+          ),
         ),
         const SizedBox(height: 12),
-        DropdownButtonFormField<_StrategyDirection>(
-          isExpanded: true,
+        KeyedSubtree(
           key: const Key('strategy-direction-select'),
-          value: _direction,
-          decoration: const InputDecoration(labelText: 'Phía giao dịch'),
-          items: !_candidateScopeValid
-              ? [
-                  DropdownMenuItem(
-                    value: _direction,
-                    child: const Text('Không rõ chiều'),
-                  ),
-                ]
-              : [
-                  for (final direction in _StrategyDirection.values)
-                    if (!_candidateDirectionIsFixed ||
-                        direction == _candidateDirection)
-                      DropdownMenuItem(
-                        value: direction,
-                        child: Text(switch (direction) {
-                          _StrategyDirection.long => 'Long',
-                          _StrategyDirection.short => 'Short',
-                          _StrategyDirection.both => 'Long&Short',
-                        }),
-                      ),
-                ],
-          onChanged:
-              _isSaving || _candidateDirectionIsFixed || !_candidateScopeValid
-              ? null
-              : (value) {
-                  if (value != null) _changeDirection(value);
-                },
+          child: DropdownButtonFormField<_StrategyDirection>(
+            isExpanded: true,
+            key: ValueKey(_direction),
+            initialValue: _direction,
+            decoration: const InputDecoration(labelText: 'Phía giao dịch'),
+            items: !_candidateScopeValid
+                ? [
+                    DropdownMenuItem(
+                      value: _direction,
+                      child: const Text('Không rõ chiều'),
+                    ),
+                  ]
+                : [
+                    for (final direction in _StrategyDirection.values)
+                      if (!_candidateDirectionIsFixed ||
+                          direction == _candidateDirection)
+                        DropdownMenuItem(
+                          value: direction,
+                          child: Text(switch (direction) {
+                            _StrategyDirection.long => 'Long',
+                            _StrategyDirection.short => 'Short',
+                            _StrategyDirection.both => 'Long&Short',
+                          }),
+                        ),
+                  ],
+            onChanged:
+                _isSaving || _candidateDirectionIsFixed || !_candidateScopeValid
+                ? null
+                : (value) {
+                    if (value != null) _changeDirection(value);
+                  },
+          ),
         ),
         const SizedBox(height: 12),
         if (_isLoadingInstruments || _isLoadingLevels)
@@ -1307,7 +1314,7 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
+        const Text(
           'Ngân sách USDT là ký quỹ trước đòn bẩy. Phí mở lệnh được tính riêng.',
         ),
         const SizedBox(height: 12),
@@ -1354,14 +1361,15 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
           ),
           const SizedBox(height: 12),
           Text(
-            'Long ${_longPercentController.text.isEmpty ? '50' : _longPercentController.text}% · Short ${_shortPercentLabel}%',
+            'Long ${_longPercentController.text.isEmpty ? '50' : _longPercentController.text}% · Short $_shortPercentLabel%',
           ),
         ],
         const SizedBox(height: 12),
         DropdownButtonFormField<StrategyAllocation>(
           isExpanded: true,
           itemHeight: null,
-          value: _allocation,
+          key: ValueKey(_allocation),
+          initialValue: _allocation,
           decoration: const InputDecoration(labelText: 'Phân bổ giữa các lệnh'),
           selectedItemBuilder: (context) => const [
             _AllocationSelectedLabel('Đều nhau'),
@@ -1385,11 +1393,12 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
           onChanged: _isRequestingPreview
               ? null
               : (value) {
-                  if (value != null)
+                  if (value != null) {
                     setState(() {
                       _allocation = value;
                       _invalidatePreview();
                     });
+                  }
                 },
         ),
         const SizedBox(height: 12),
@@ -1693,13 +1702,16 @@ class _StrategyLevelCard extends StatelessWidget {
               assessment: candidateAssessment!,
             ),
           if (selected)
-            RadioListTile<String>(
-              value: level.id,
+            RadioGroup<String>(
               groupValue: entryLevelId,
-              onChanged: canBeEntry ? (_) => onEntry() : null,
-              title: const Text('Điểm vào gần giá nhất'),
-              dense: true,
-              visualDensity: VisualDensity.compact,
+              onChanged: (_) => onEntry(),
+              child: RadioListTile<String>(
+                value: level.id,
+                enabled: canBeEntry,
+                title: const Text('Điểm vào gần giá nhất'),
+                dense: true,
+                visualDensity: VisualDensity.compact,
+              ),
             ),
         ],
       ),

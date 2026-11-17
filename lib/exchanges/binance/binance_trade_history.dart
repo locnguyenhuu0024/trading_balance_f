@@ -96,6 +96,9 @@ class BinanceCostController extends StateNotifier<BinanceCostView> {
   DateTime? _lastRun;
   bool _disposed = false;
 
+  /// The current cost view.
+  BinanceCostView get current => state;
+
   @override
   void dispose() {
     _disposed = true;
@@ -106,8 +109,9 @@ class BinanceCostController extends StateNotifier<BinanceCostView> {
     if (!client.spotMarginAvailable || state.loading || _disposed) return;
     final now = _clock();
     if (_lastRun != null &&
-        now.difference(_lastRun!) < const Duration(seconds: 60))
+        now.difference(_lastRun!) < const Duration(seconds: 60)) {
       return;
+    }
     _lastRun = now;
     final generation = client.credentialState.value;
     bool cancelled() =>
@@ -126,8 +130,9 @@ class BinanceCostController extends StateNotifier<BinanceCostView> {
         if (base == 'USDT' ||
             symbol != '${base}USDT' ||
             instrument?['base'] != base ||
-            instrument?['quote'] != 'USDT')
+            instrument?['quote'] != 'USDT') {
           return;
+        }
         final item = BinanceCostSymbol(product, symbol, base, value.abs());
         candidates[item.key] = item;
       }
@@ -185,10 +190,12 @@ class BinanceCostController extends StateNotifier<BinanceCostView> {
             for (final raw in rows) {
               final row = raw as Map;
               final id = int.parse('${row['id']}');
-              if (id <= (next.lastTradeId ?? -1))
+              if (id <= (next.lastTradeId ?? -1)) {
                 throw const FormatException('Unordered trades');
-              if (row['isBuyer'] is! bool)
+              }
+              if (row['isBuyer'] is! bool) {
                 throw const FormatException('Invalid trade side');
+              }
               final quantity = double.parse('${row['qty']}');
               next = next.apply(
                 CostTrade(
@@ -217,16 +224,18 @@ class BinanceCostController extends StateNotifier<BinanceCostView> {
         } catch (error) {
           if (cancelled() ||
               (error is BinancePrivateException &&
-                  error.failure.kind == ExchangeFailureKind.cancellation))
+                  error.failure.kind == ExchangeFailureKind.cancellation)) {
             return;
+          }
           results[symbol.key] = BinanceSymbolCost(
             old.cost,
             completed: old.completed,
             stale: true,
           );
           if (error is BinancePrivateException &&
-              error.failure.kind == ExchangeFailureKind.credential)
+              error.failure.kind == ExchangeFailureKind.credential) {
             break;
+          }
         }
       }
     } catch (_) {
