@@ -95,13 +95,15 @@ class _AppStartupState<T> extends State<AppStartup<T>> {
                 theme: AppTheme.light,
                 darkTheme: AppTheme.dark,
                 themeMode: ThemeMode.system,
-                home: AppStartupStatusView(isLoading: _isLoading, onRetry: _retry),
+                home: AppStartupStatusView(
+                  isLoading: _isLoading,
+                  onRetry: _retry,
+                ),
               ),
             ),
     );
   }
 }
-
 
 class AppBrandMark extends StatelessWidget {
   const AppBrandMark({super.key, this.size = 64});
@@ -147,7 +149,11 @@ class AppBrandMark extends StatelessWidget {
 
 /// Accessible status UI shared by startup and biometric checks.
 class AppStartupStatusView extends StatefulWidget {
-  const AppStartupStatusView({super.key, required this.isLoading, this.onRetry});
+  const AppStartupStatusView({
+    super.key,
+    required this.isLoading,
+    this.onRetry,
+  });
 
   final bool isLoading;
   final VoidCallback? onRetry;
@@ -165,9 +171,14 @@ class _AppStartupStatusViewState extends State<AppStartupStatusView>
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(vsync: this, duration: AppTokens.motionLong)
-      ..forward();
-    _markAnimation = CurvedAnimation(parent: _controller, curve: AppTokens.motionEnter);
+    _controller = AnimationController(
+      vsync: this,
+      duration: AppTokens.motionLong,
+    )..forward();
+    _markAnimation = CurvedAnimation(
+      parent: _controller,
+      curve: AppTokens.motionEnter,
+    );
     _textAnimation = CurvedAnimation(
       parent: _controller,
       curve: const Interval(0.3, 1.0, curve: AppTokens.motionEnter),
@@ -191,7 +202,9 @@ class _AppStartupStatusViewState extends State<AppStartupStatusView>
   @override
   Widget build(BuildContext context) {
     final palette = AppPalette.of(context);
-    final reduceMotion = AppPageTransitions.reduceMotion(MediaQuery.of(context));
+    final reduceMotion = AppPageTransitions.reduceMotion(
+      MediaQuery.of(context),
+    );
     return Scaffold(
       backgroundColor: palette.background,
       body: SafeArea(
@@ -206,8 +219,13 @@ class _AppStartupStatusViewState extends State<AppStartupStatusView>
                   FadeTransition(
                     opacity: _markAnimation,
                     child: ScaleTransition(
-                      scale: Tween<double>(begin: 0.92, end: 1).animate(_markAnimation),
-                      child: const AppBrandMark(key: Key('app-startup-brand-mark')),
+                      scale: Tween<double>(
+                        begin: 0.92,
+                        end: 1,
+                      ).animate(_markAnimation),
+                      child: const AppBrandMark(
+                        key: Key('app-startup-brand-mark'),
+                      ),
                     ),
                   ),
                   const SizedBox(height: 20),
@@ -218,26 +236,41 @@ class _AppStartupStatusViewState extends State<AppStartupStatusView>
                       children: [
                         Text(
                           'Crypto Portfolio',
-                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: palette.ink),
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600,
+                            color: palette.ink,
+                          ),
                         ),
                         const SizedBox(height: 6),
                         if (widget.isLoading)
                           Text(
                             'Đang khởi tạo ứng dụng…',
                             textAlign: TextAlign.center,
-                            style: TextStyle(fontSize: 13, color: palette.muted),
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: palette.muted,
+                            ),
                           )
                         else
                           Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(Icons.error_outline, size: 20, color: palette.warning),
+                              Icon(
+                                Icons.error_outline,
+                                size: 20,
+                                color: palette.warning,
+                              ),
                               const SizedBox(width: AppTokens.space2),
                               Flexible(
                                 child: Text(
                                   'Chưa thể khởi tạo ứng dụng.',
                                   textAlign: TextAlign.center,
-                                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: palette.ink),
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                    color: palette.ink,
+                                  ),
                                 ),
                               ),
                             ],
@@ -274,7 +307,9 @@ class _AppStartupStatusViewState extends State<AppStartupStatusView>
                           const SizedBox(height: AppTokens.space4),
                           FilledButton(
                             onPressed: widget.onRetry,
-                            style: FilledButton.styleFrom(minimumSize: const Size(48, 48)),
+                            style: FilledButton.styleFrom(
+                              minimumSize: const Size(48, 48),
+                            ),
                             child: const Text('Thử lại'),
                           ),
                         ],

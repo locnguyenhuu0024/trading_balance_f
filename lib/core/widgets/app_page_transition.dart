@@ -158,7 +158,10 @@ class AppFadePageTransitionsBuilder extends PageTransitionsBuilder {
           child: child,
           builder: (context, child) => Transform.translate(
             key: const Key('app-route-slide'),
-            offset: Offset(0, AppTokens.motionEntranceOffset * (1 - curved.value)),
+            offset: Offset(
+              0,
+              AppTokens.motionEntranceOffset * (1 - curved.value),
+            ),
             child: child,
           ),
         ),

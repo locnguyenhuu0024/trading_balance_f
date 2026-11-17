@@ -291,27 +291,45 @@ void main() {
     },
   );
 
-  testWidgets('RED-139a route rises and respects reduced motion', (tester) async {
+  testWidgets('RED-139a route rises and respects reduced motion', (
+    tester,
+  ) async {
     for (final reduce in [false, true]) {
-      await tester.pumpWidget(MaterialApp(
-        theme: ThemeData(platform: TargetPlatform.android, pageTransitionsTheme: AppPageTransitions.theme),
-        builder: (context, child) => MediaQuery(
-          data: MediaQuery.of(context).copyWith(disableAnimations: reduce, accessibleNavigation: false),
-          child: child!,
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(
+            platform: TargetPlatform.android,
+            pageTransitionsTheme: AppPageTransitions.theme,
+          ),
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(disableAnimations: reduce, accessibleNavigation: false),
+            child: child!,
+          ),
+          home: Builder(
+            builder: (context) => TextButton(
+              onPressed: () => Navigator.of(context).push<void>(
+                MaterialPageRoute<void>(
+                  builder: (_) => const Scaffold(body: Text('Slide target')),
+                ),
+              ),
+              child: const Text('Open slide target'),
+            ),
+          ),
         ),
-        home: Builder(builder: (context) => TextButton(
-          onPressed: () => Navigator.of(context).push<void>(MaterialPageRoute<void>(
-            builder: (_) => const Scaffold(body: Text('Slide target')),
-          )),
-          child: const Text('Open slide target'),
-        )),
-      ));
+      );
       await tester.pumpAndSettle();
       await tester.tap(find.text('Open slide target'));
       await tester.pump();
+      if (reduce) await tester.pump();
       if (!reduce) await tester.pump(const Duration(milliseconds: 140));
-      final slide = find.ancestor(of: find.text('Slide target'), matching: find.byKey(const Key('app-route-slide')));
-      double dy() => tester.widget<Transform>(slide).transform.getTranslation().y;
+      final slide = find.ancestor(
+        of: find.text('Slide target'),
+        matching: find.byKey(const Key('app-route-slide')),
+      );
+      double dy() =>
+          tester.widget<Transform>(slide).transform.getTranslation().y;
       if (reduce) {
         expect(dy(), 0);
       } else {
@@ -325,13 +343,18 @@ void main() {
     }
   });
 
-  testWidgets('RED-139b destination scales during a tab switch', (tester) async {
+  testWidgets('RED-139b destination scales during a tab switch', (
+    tester,
+  ) async {
     await tester.pumpWidget(shellApp(onDispose: (_) {}));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('navigation-destination-1')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 110));
-    final scale = tester.widget<ScaleTransition>(find.byKey(const Key('app-destination-scale'))).scale.value;
+    final scale = tester
+        .widget<ScaleTransition>(find.byKey(const Key('app-destination-scale')))
+        .scale
+        .value;
     expect(scale, greaterThanOrEqualTo(0.985));
     expect(scale, lessThan(1));
   });

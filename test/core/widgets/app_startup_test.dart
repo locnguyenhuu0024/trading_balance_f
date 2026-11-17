@@ -146,12 +146,16 @@ void main() {
     expect(builderCalls, 1);
   });
 
-  testWidgets('RED-139c pending startup shows brand and progress', (tester) async {
+  testWidgets('RED-139c pending startup shows brand and progress', (
+    tester,
+  ) async {
     final pending = Completer<int>();
-    await tester.pumpWidget(AppStartup<int>(
-      initialize: () => pending.future,
-      builder: (_, value) => Text('$value'),
-    ));
+    await tester.pumpWidget(
+      AppStartup<int>(
+        initialize: () => pending.future,
+        builder: (_, value) => Text('$value'),
+      ),
+    );
     expect(find.byKey(const Key('app-startup-brand-mark')), findsOneWidget);
     expect(find.text('Crypto Portfolio'), findsOneWidget);
     expect(find.byType(LinearProgressIndicator), findsOneWidget);
@@ -159,10 +163,12 @@ void main() {
 
   testWidgets('RED-139d startup cross-fades into the app', (tester) async {
     final pending = Completer<int>();
-    await tester.pumpWidget(AppStartup<int>(
-      initialize: () => pending.future,
-      builder: (_, value) => MaterialApp(home: Text('Ready $value')),
-    ));
+    await tester.pumpWidget(
+      AppStartup<int>(
+        initialize: () => pending.future,
+        builder: (_, value) => MaterialApp(home: Text('Ready $value')),
+      ),
+    );
     pending.complete(7);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 140));

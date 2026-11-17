@@ -123,7 +123,7 @@ void main() {
       RepaintBoundary(
         key: const Key('startup-capture-root'),
         child: MaterialApp(
-            debugShowCheckedModeBanner: false,
+          debugShowCheckedModeBanner: false,
           home: MediaQuery(
             data: const MediaQueryData(
               disableAnimations: true,

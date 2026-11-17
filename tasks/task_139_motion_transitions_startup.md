@@ -119,7 +119,17 @@ The executor sandbox cannot run `flutter test` or compile. Write the complete ch
 Return `BLOCKED` if: a file outside §4 is needed; reduced motion cannot be honored at the root without `MediaQuery`; an existing test would have to be deleted or weakened beyond the updates named in §6.8.
 
 ## 11. Execution Ledger
-(coordinator fills)
+
+- Attempt 596935ea5c3742b3932fed1e61287d09 (first pass): REWORK — AUD-139-01 (RED-139a reduced-motion branch read the pushed route while still offstage), AUD-139-02 (`dart format`). First pass committed as WIP `94c2274` on user choice so the R01 dispatch had a clean checkout.
+- Attempt dd048620f29b442bb9925a2429cc9f5d (R01): dispatcher status BLOCKED "Missing/invalid structured executor report"; changed paths all inside §4, no unexpected paths, nothing staged. Route requested gpt-6.1-terra/high, effective UNVERIFIABLE.
 
 ## 12. Coordinator Audit
-(coordinator fills)
+
+Verdict: PASS (2026-11-17).
+
+- Scope: R01 diff (`git diff -w`) is formatting only plus one `if (reduce) await tester.pump();` in RED-139a; expectations unchanged. `main.dart` change is a re-indent of the existing lock-icon line only.
+- RED-139 (first pass, host, old `lib/`): RED-139a..d failed as expected.
+- GREEN-139: focused command 19/19 pass. V4 `flutter test --no-pub`: 685/685 pass.
+- Format: `dart format --set-exit-if-changed` on the 7 files: 0 changed.
+- Buildability gate: `flutter analyze` 156 issues (= baseline), 0 errors; `flutter build web --no-pub` built.
+- AC-101..AC-105 met by code review of transitions, startup view, hand-off and biometric checking branch. Protected config not read or changed.

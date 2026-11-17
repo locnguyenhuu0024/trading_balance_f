@@ -306,69 +306,65 @@ class _BiometricAuthScreenState extends State<BiometricAuthScreen> {
               constraints: BoxConstraints(minHeight: constraints.maxHeight),
               child: Center(
                 child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.lock_outline,
-                            size: 80,
-                            color: palette.ink,
-                          ),
-                          const SizedBox(height: 24),
-                          const Text(
-                            'Ứng dụng đã bị khoá',
-                            style: TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Vui lòng xác thực để bảo vệ tài sản',
-                            style: TextStyle(color: palette.muted),
-                          ),
-                          const SizedBox(height: 32),
-
-                          if (_errorMessage != null)
-                            Padding(
-                              padding: const EdgeInsets.only(
-                                bottom: 24,
-                                left: 32,
-                                right: 32,
-                              ),
-                              child: Text(
-                                _errorMessage!,
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  color: palette.warning,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ),
-
-                          ElevatedButton.icon(
-                            onPressed: _authenticate,
-                            icon: const Icon(Icons.fingerprint),
-                            label: const Text(
-                              'Mở khoá',
-                              style: TextStyle(fontWeight: FontWeight.bold),
-                            ),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: palette.ink,
-                              foregroundColor: palette.onStrong,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 24,
-                                vertical: 12,
-                              ),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              elevation: 0,
-                            ),
-                          ),
-                        ],
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.lock_outline, size: 80, color: palette.ink),
+                    const SizedBox(height: 24),
+                    const Text(
+                      'Ứng dụng đã bị khoá',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
                       ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Vui lòng xác thực để bảo vệ tài sản',
+                      style: TextStyle(color: palette.muted),
+                    ),
+                    const SizedBox(height: 32),
+
+                    if (_errorMessage != null)
+                      Padding(
+                        padding: const EdgeInsets.only(
+                          bottom: 24,
+                          left: 32,
+                          right: 32,
+                        ),
+                        child: Text(
+                          _errorMessage!,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: palette.warning,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+
+                    ElevatedButton.icon(
+                      onPressed: _authenticate,
+                      icon: const Icon(Icons.fingerprint),
+                      label: const Text(
+                        'Mở khoá',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: palette.ink,
+                        foregroundColor: palette.onStrong,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 24,
+                          vertical: 12,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        elevation: 0,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
