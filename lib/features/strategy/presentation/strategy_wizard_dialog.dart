@@ -1108,62 +1108,56 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
           ),
         ),
         const SizedBox(height: 12),
-        KeyedSubtree(
+        DropdownButtonFormField<StrategyInterval>(
           key: const Key('strategy-interval-select'),
-          child: DropdownButtonFormField<StrategyInterval>(
-            key: ValueKey(_interval),
-            initialValue: _interval,
-            decoration: const InputDecoration(labelText: 'Khung nến UTC'),
-            items: StrategyInterval.values
-                .map(
-                  (value) =>
-                      DropdownMenuItem(value: value, child: Text(value.label)),
-                )
-                .toList(growable: false),
-            onChanged: _isLoadingLevels || _isSaving || _isReviewingCandidates
-                ? null
-                : (value) {
-                    if (value != null && _instrumentId != null) {
-                      unawaited(_loadLevels(_instrumentId!, value));
-                    }
-                  },
-          ),
+          initialValue: _interval,
+          decoration: const InputDecoration(labelText: 'Khung nến UTC'),
+          items: StrategyInterval.values
+              .map(
+                (value) =>
+                    DropdownMenuItem(value: value, child: Text(value.label)),
+              )
+              .toList(growable: false),
+          onChanged: _isLoadingLevels || _isSaving || _isReviewingCandidates
+              ? null
+              : (value) {
+                  if (value != null && _instrumentId != null) {
+                    unawaited(_loadLevels(_instrumentId!, value));
+                  }
+                },
         ),
         const SizedBox(height: 12),
-        KeyedSubtree(
+        DropdownButtonFormField<_StrategyDirection>(
           key: const Key('strategy-direction-select'),
-          child: DropdownButtonFormField<_StrategyDirection>(
-            isExpanded: true,
-            key: ValueKey(_direction),
-            initialValue: _direction,
-            decoration: const InputDecoration(labelText: 'Phía giao dịch'),
-            items: !_candidateScopeValid
-                ? [
-                    DropdownMenuItem(
-                      value: _direction,
-                      child: const Text('Không rõ chiều'),
-                    ),
-                  ]
-                : [
-                    for (final direction in _StrategyDirection.values)
-                      if (!_candidateDirectionIsFixed ||
-                          direction == _candidateDirection)
-                        DropdownMenuItem(
-                          value: direction,
-                          child: Text(switch (direction) {
-                            _StrategyDirection.long => 'Long',
-                            _StrategyDirection.short => 'Short',
-                            _StrategyDirection.both => 'Long&Short',
-                          }),
-                        ),
-                  ],
-            onChanged:
-                _isSaving || _candidateDirectionIsFixed || !_candidateScopeValid
-                ? null
-                : (value) {
-                    if (value != null) _changeDirection(value);
-                  },
-          ),
+          isExpanded: true,
+          initialValue: _direction,
+          decoration: const InputDecoration(labelText: 'Phía giao dịch'),
+          items: !_candidateScopeValid
+              ? [
+                  DropdownMenuItem(
+                    value: _direction,
+                    child: const Text('Không rõ chiều'),
+                  ),
+                ]
+              : [
+                  for (final direction in _StrategyDirection.values)
+                    if (!_candidateDirectionIsFixed ||
+                        direction == _candidateDirection)
+                      DropdownMenuItem(
+                        value: direction,
+                        child: Text(switch (direction) {
+                          _StrategyDirection.long => 'Long',
+                          _StrategyDirection.short => 'Short',
+                          _StrategyDirection.both => 'Long&Short',
+                        }),
+                      ),
+                ],
+          onChanged:
+              _isSaving || _candidateDirectionIsFixed || !_candidateScopeValid
+              ? null
+              : (value) {
+                  if (value != null) _changeDirection(value);
+                },
         ),
         const SizedBox(height: 12),
         if (_isLoadingInstruments || _isLoadingLevels)
@@ -1368,7 +1362,6 @@ class _StrategyWizardDialogState extends ConsumerState<StrategyWizardDialog> {
         DropdownButtonFormField<StrategyAllocation>(
           isExpanded: true,
           itemHeight: null,
-          key: ValueKey(_allocation),
           initialValue: _allocation,
           decoration: const InputDecoration(labelText: 'Phân bổ giữa các lệnh'),
           selectedItemBuilder: (context) => const [

@@ -266,9 +266,10 @@ class OrderCancellationFlowsController
 
       final target = prepared.targets.single;
       final remainingSize = _summaryValue(target, 'remainingSize');
-      if (!navigator.context.mounted) return;
+      final dialogContext = navigator.context;
+      if (!dialogContext.mounted) return;
       final confirmed = await showTradeActionConfirmation(
-        navigator.context,
+        dialogContext,
         prepared: prepared,
         title: 'Xác nhận hủy lệnh limit',
         confirmLabel: 'Hủy phần còn lại $remainingSize',

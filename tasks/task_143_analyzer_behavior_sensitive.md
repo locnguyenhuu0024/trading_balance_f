@@ -130,7 +130,15 @@ The executor sandbox cannot run Flutter. Write the complete change. Report `red`
 `BLOCKED` if `RadioGroup`/`initialValue` is unavailable in this Flutter SDK, if a behavior test would have to change beyond §6.4, or if a file outside §4 is needed.
 
 ## 11. Execution Ledger
-(coordinator fills)
+
+- effb49d4dd8b4afeae68bff044763bbd: REWORK — AUD-143-01 dropdown keys moved onto `KeyedSubtree` (coordinator fallback in §6.3 was wrong; 2 strategy_screen tests failed), AUD-143-02 `use_build_context_synchronously` still reported, AUD-143-03 format; WIP `aa5cb15`.
+- 1e82dad2aeb84f599dd11b1e89e8b97a (R01): PASS. All attempts in §4 scope; route gpt-6.1-terra/high, effective UNVERIFIABLE.
 
 ## 12. Coordinator Audit
-(coordinator fills)
+
+Verdict: PASS (2026-11-17).
+
+- RED-143 (host, `e8f273e`): 24 issues in the 5 files.
+- GREEN-143: `flutter analyze --no-pub <5 files>` → `No issues found!`. V4: 691/691 pass (incl. strategy wizard dropdown/radio tests, cancellation flow, Binance cost view).
+- Buildability: whole repo 71 issues (target ≤ 71), 0 errors; web build OK. `dart format` clean on the 5 files. No `// ignore`; `analysis_options.yaml` untouched.
+- Review: `BinanceCostController.current` getter, provider yields it first then the stream (unchanged order); cancellation flow keeps `_canContinue`, adds a local `dialogContext.mounted` guard before the dialog; dropdowns use `initialValue` with original keys (no forced re-creation); entry radio in `RadioGroup` with `enabled: canBeEntry` (disabled state preserved), tap still calls `onEntry()`; test accessors read `RadioGroup.groupValue` with unchanged expectations.

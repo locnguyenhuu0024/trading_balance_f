@@ -220,10 +220,12 @@ void main() {
           .map(
             (radio) => tester
                 .widget<RadioGroup<String>>(
-                  find.ancestor(
-                    of: find.byWidget(radio),
-                    matching: find.byType(RadioGroup<String>),
-                  ).first,
+                  find
+                      .ancestor(
+                        of: find.byWidget(radio),
+                        matching: find.byType(RadioGroup<String>),
+                      )
+                      .first,
                 )
                 .groupValue,
           )
@@ -686,12 +688,14 @@ void main() {
       expect(
         tester
             .widget<RadioGroup<String>>(
-              find.ancestor(
-                of: find.byWidget(
-                  radios.firstWhere((radio) => radio.value == 'long_0'),
-                ),
-                matching: find.byType(RadioGroup<String>),
-              ).first,
+              find
+                  .ancestor(
+                    of: find.byWidget(
+                      radios.firstWhere((radio) => radio.value == 'long_0'),
+                    ),
+                    matching: find.byType(RadioGroup<String>),
+                  )
+                  .first,
             )
             .groupValue,
         'long_0',

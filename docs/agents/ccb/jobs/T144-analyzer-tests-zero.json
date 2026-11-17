@@ -45,7 +45,7 @@
     "test/features/strategy/strategy_screen_test.dart"
   ],
   "dependencies": [
-    "T143"
+    {"task_id": "T143", "status": "PASS"}
   ],
   "timeout_seconds": 1800,
   "domain": "mobile",
