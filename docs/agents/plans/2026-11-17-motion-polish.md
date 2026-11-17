@@ -1,6 +1,6 @@
 # Implementation Plan: Motion polish
 
-Status: APPROVED
+Status: COMPLETE
 Approval: "Duyệt, commit, làm" (user, chat, 2026-11-17, on this revision; includes commit on PASS)
 Date: 2026-11-17
 Tier: M
@@ -98,10 +98,11 @@ D-022 → P01; D-023 → P01; D-024 → P02, P03; D-025 → P02, P03.
 Each task ends with `flutter analyze --no-pub --no-fatal-infos --no-fatal-warnings && flutter build web --no-pub` passing. No compile coupling across tasks (T139 tokens are additive; T140 widgets are new).
 
 ## 14. Completion Gate
-- [ ] T139, T140, T141 PASS
-- [ ] V4 + web build green after T141
-- [ ] manual visual check done
-- [ ] no protected file read or changed
+- [x] T139, T140, T141 PASS (`4a30c1b`, `adf1de6`, `5daf776`)
+- [x] V4 + web build green after T141 (691/691; analyze 155, 0 errors)
+- [x] manual visual check done (web build in browser pane: cold start, tab switch entrance, BMAG route + data; reduced motion covered by widget tests)
+- [x] no protected file read or changed
 
 ## 15. Change Log
 - 2026-11-17: created.
+- 2026-11-17: COMPLETE. T139 2 attempts, T140 4 attempts, T141 3 attempts; WIP commits per user choice "Commit nháp, gửi Codex".
