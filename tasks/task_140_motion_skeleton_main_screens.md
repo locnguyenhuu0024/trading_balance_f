@@ -15,7 +15,15 @@ Plan Steps: P02
 Requirements: REQ-106, REQ-107, REQ-108
 Decisions: D-024, D-025
 
-## Remediation R01 (current instruction)
+## Remediation R02 (current instruction)
+
+R01 (attempt 7f1c76de) is in the working tree; AUD-140-01..03 are fixed (host V4: 687 pass, 2 fail). Do not redo. Write only files in §4.
+
+- AUD-140-04, wrong test edit. `test/features/orders/orders_binance_view_test.dart` ~L534, `Margin account state: loading`: that state shows the margin-account loader (`orders_screen.dart` ~L458, `accountAsync.isLoading && account == null`), which is not one of the two loaders this task replaces. Required: restore the expectation to `find.byType(CircularProgressIndicator)` findsWidgets, as on HEAD before T140. No `lib` change for this.
+- AUD-140-05, accessibility. `AppEntrance` uses `FadeTransition` which drops the child from the semantics tree while opacity is 0, so screen readers lose content during the entrance (`fractal_screen_price_formatting_test.dart` L359 `Q1:.*tăng, nến rỗng` semantics label not found). Required: `FadeTransition(opacity: …, alwaysIncludeSemantics: true, …)` in `AppEntrance`. Do not change that test.
+- AUD-140-06, formatting. `dart format --set-exit-if-changed` still reports `fractal_screen.dart`, `market_screen.dart`, `portfolio_details_screen.dart`, `portfolio_screen.dart`, `market_screen_test.dart`, `orders_binance_view_test.dart`. Required: `dart format` all 12 files in §4 (or hand-format to its style). No logic change.
+
+## Remediation R01 (done)
 
 The first pass (attempt 9d2829a9) is in the working tree. Do not redo it. Write only files in §4. Host V4 had 113 failures from three causes:
 
