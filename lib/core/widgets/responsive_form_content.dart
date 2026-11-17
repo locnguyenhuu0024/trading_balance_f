@@ -46,7 +46,7 @@ class FormPendingStatus extends StatelessWidget {
         child: Row(
           children: [
             if (!linear) ...[
-              FormProgressMark(size: 16),
+              const FormProgressMark(size: 16),
               const SizedBox(width: AppTokens.space2),
             ],
             Expanded(
@@ -149,7 +149,7 @@ class AsyncFormButton extends StatelessWidget {
           SizedBox.square(
             dimension: 18,
             child: showProgress
-                ? FormProgressMark(size: 18)
+                ? const FormProgressMark(size: 18)
                 : showIcon && icon != null
                 ? Icon(icon, size: 18)
                 : null,

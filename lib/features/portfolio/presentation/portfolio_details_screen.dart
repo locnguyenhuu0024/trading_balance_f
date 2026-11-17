@@ -1,3 +1,4 @@
+import '../../../core/widgets/app_motion.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -7,12 +8,16 @@ import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/pnl_color.dart';
 import '../../../core/widgets/crypto_icon.dart';
+import '../../../core/widgets/account_state_view.dart';
+import '../../../exchanges/binance/binance_adapter.dart';
 import '../../../core/widgets/manual_refresh_button.dart';
 import '../../market/presentation/providers/market_provider.dart';
 import '../../settings/presentation/settings_screen.dart';
-import '../data/okx_balance_model.dart';
+import '../../../core/exchange/exchange_models.dart';
+import '../../../core/exchange/exchange_registry.dart';
+import '../../../core/exchange/exchange_scope.dart';
+import '../../../core/exchange/scoped_read.dart';
 import '../presentation/widgets/portfolio_currency_amount.dart';
-import 'providers/portfolio_provider.dart';
 import 'portfolio_screen.dart';
 
 /// Opt-in balance view. Portfolio Home intentionally does not render PnL;
@@ -32,15 +37,24 @@ class _PortfolioDetailsScreenState
   bool _isRefreshInFlight = false;
 
   Future<void> _refreshPortfolio() async {
-    if (!mounted ||
-        _isRefreshInFlight ||
-        ref.read(portfolioFutureProvider).isLoading) {
+    final scope = ref.read(exchangeScopeProvider);
+    final provider = scopedAccountProvider(scope);
+    if (!mounted || _isRefreshInFlight || ref.read(provider).isLoading) {
       return;
     }
     setState(() => _isRefreshInFlight = true);
     try {
-      ref.invalidate(portfolioFutureProvider);
-      await ref.read(portfolioFutureProvider.future);
+      ref
+          .read(exchangeRegistryProvider)
+          .firstWhere(
+            (entry) =>
+                entry.profile.connectionId == scope.connectionId &&
+                entry.profile.exchange == scope.exchange,
+          )
+          .adapter
+          .invalidateAccount(ref.invalidate);
+      ref.invalidate(provider);
+      await ref.read(provider.future);
     } catch (_) {
       // The watched provider displays the read error.
     } finally {
@@ -50,7 +64,9 @@ class _PortfolioDetailsScreenState
 
   @override
   Widget build(BuildContext context) {
-    final async = ref.watch(portfolioFutureProvider);
+    final scope = ref.watch(exchangeScopeProvider);
+    final isOkx = scope.exchange == ExchangeId.okx;
+    final async = ref.watch(scopedAccountProvider(scope));
     final hidden = ref.watch(hideBalanceProvider);
     final currency = ref.watch(currencyProvider);
     final rate = ref.watch(vndExchangeRateProvider).value ?? 25400.0;
@@ -80,14 +96,22 @@ class _PortfolioDetailsScreenState
       ),
       body: NavigationContentFrame(
         child: async.when(
-          loading: () =>
-              Center(child: CircularProgressIndicator(color: foreground)),
-          error: (error, _) => _DetailsState(
-            message: 'Unable to load portfolio details: $error',
+          loading: () => const AppSkeleton(),
+          error: (error, _) => AccountStateView.fromError(
+            error: error,
+            registration: ref
+                .read(exchangeRegistryProvider)
+                .firstWhere(
+                  (entry) => entry.profile.connectionId == scope.connectionId,
+                ),
+            onRetry: _refreshPortfolio,
           ),
           data: (account) => _DetailsContent(
             account: account,
-            livePrices: ref.watch(livePriceProvider),
+            isOkx: isOkx,
+            isBinance: scope.exchange == ExchangeId.binance,
+            spotMarginAvailable: ref.watch(binanceSpotMarginAvailableProvider),
+            livePrices: isOkx ? ref.watch(livePriceProvider) : const {},
             currency: currency,
             exchangeRate: rate,
             hidden: hidden,
@@ -104,6 +128,9 @@ class _PortfolioDetailsScreenState
 class _DetailsContent extends StatelessWidget {
   const _DetailsContent({
     required this.account,
+    required this.isOkx,
+    required this.isBinance,
+    required this.spotMarginAvailable,
     required this.livePrices,
     required this.currency,
     required this.exchangeRate,
@@ -113,7 +140,10 @@ class _DetailsContent extends StatelessWidget {
     required this.onRefresh,
   });
 
-  final OkxAccountData account;
+  final AccountSnapshot account;
+  final bool isOkx;
+  final bool isBinance;
+  final bool spotMarginAvailable;
   final Map<String, String> livePrices;
   final String currency;
   final double exchangeRate;
@@ -126,11 +156,11 @@ class _DetailsContent extends StatelessWidget {
   Widget build(BuildContext context) {
     var total = 0.0;
     var pnl = 0.0;
-    final values = <OkxCoinDetail, double>{};
-    for (final coin in account.details) {
-      final eq = double.tryParse(coin.eq);
-      final live = double.tryParse(livePrices[coin.ccy] ?? '');
-      final reportedValue = double.tryParse(coin.eqUsd);
+    final values = <AssetBalance, double>{};
+    for (final coin in account.balances) {
+      final eq = double.tryParse(coin.total ?? '');
+      final live = double.tryParse(livePrices[coin.asset] ?? '');
+      final reportedValue = double.tryParse(coin.valueUsdt ?? '');
       final fallbackPrice = eq != null && eq > 0 && reportedValue != null
           ? reportedValue / eq
           : null;
@@ -140,14 +170,25 @@ class _DetailsContent extends StatelessWidget {
       if (value.isFinite) {
         values[coin] = value;
         total += value;
-        final upl = double.tryParse(coin.upl);
+        final upl = double.tryParse(coin.unrealizedPnl ?? '');
         if (upl != null && upl.isFinite) {
           pnl += upl * (live ?? fallbackPrice ?? 1);
         }
       }
     }
+    if (!isOkx) total = double.tryParse(account.total ?? '') ?? 0.0;
     final base = total - pnl;
-    final ratio = base > 0 ? pnl / base : null;
+    final ratioBase = isBinance
+        ? account.balances
+                  .where((coin) => coin.wallet == 'USD-M')
+                  .fold<double>(
+                    0.0,
+                    (sum, coin) =>
+                        sum + (double.tryParse(coin.valueUsdt ?? '') ?? 0.0),
+                  ) -
+              pnl
+        : base;
+    final ratio = ratioBase > 0 ? pnl / ratioBase : null;
     final palette = AppPalette.of(context);
     final textColor = palette.ink;
     final subtitle = palette.muted;
@@ -155,121 +196,148 @@ class _DetailsContent extends StatelessWidget {
       color: palette.ink,
       backgroundColor: palette.raised,
       onRefresh: onRefresh,
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
-        children: [
-          Card(
-            key: const Key('portfolio-details-summary'),
-            elevation: 0,
-            margin: EdgeInsets.zero,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(AppTokens.radiusMedium),
-              side: BorderSide(color: palette.border),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Balances',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
+      child: AppEntranceScope(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
+          children:
+              <Widget>[
+                    Card(
+                      key: const Key('portfolio-details-summary'),
+                      elevation: 0,
+                      margin: EdgeInsets.zero,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(
+                          AppTokens.radiusMedium,
+                        ),
+                        side: BorderSide(color: palette.border),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Balances',
+                              style: Theme.of(context).textTheme.titleMedium
+                                  ?.copyWith(fontWeight: FontWeight.w700),
+                            ),
+                            const SizedBox(height: 10),
+                            Text(
+                              'Total assets (${CurrencyDisplayMode.labelFor(currency)})',
+                              style: TextStyle(
+                                color: subtitle,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 5),
+                            if (!isOkx && account.total == null)
+                              Text(hidden ? '******' : '—')
+                            else
+                              PortfolioCurrencyAmount(
+                                usdtAmount: total,
+                                currencyMode: currency,
+                                vndRate: exchangeRate,
+                                hidden: hidden,
+                                primaryStyle: TextStyle(
+                                  color: textColor,
+                                  fontSize: 26,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                                secondaryStyle: TextStyle(
+                                  color: subtitle,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            if (!isOkx)
+                              PartialAccountNotice(
+                                account: account,
+                                spotMarginAvailable: spotMarginAvailable,
+                              ),
+                            const SizedBox(height: 10),
+                            Text(
+                              'Principal / base capital',
+                              style: TextStyle(
+                                color: subtitle,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            if (!isOkx && account.total == null)
+                              Text(
+                                hidden ? '******' : '—',
+                                key: const Key('portfolio-principal-base'),
+                              )
+                            else
+                              PortfolioCurrencyAmount(
+                                key: const Key('portfolio-principal-base'),
+                                usdtAmount: base,
+                                currencyMode: currency,
+                                vndRate: exchangeRate,
+                                hidden: hidden,
+                                primaryStyle: TextStyle(
+                                  color: textColor,
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                                secondaryStyle: TextStyle(
+                                  color: subtitle,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            const SizedBox(height: 14),
+                            if (!pnlRevealed)
+                              OutlinedButton.icon(
+                                key: const Key('portfolio-reveal-pnl'),
+                                onPressed: onRevealPnl,
+                                icon: const Icon(Icons.visibility_outlined),
+                                label: const Text('Reveal PnL for this visit'),
+                              )
+                            else
+                              _PnlBlock(
+                                isBinance: isBinance,
+                                pnl: pnl,
+                                ratio: ratio,
+                                currency: currency,
+                                exchangeRate: exchangeRate,
+                                hidden: hidden,
+                              ),
+                          ],
+                        ),
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    'Total assets (${CurrencyDisplayMode.labelFor(currency)})',
-                    style: TextStyle(
-                      color: subtitle,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
+                    const SizedBox(height: 14),
+                    Text(
+                      'Asset balances',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 5),
-                  PortfolioCurrencyAmount(
-                    usdtAmount: total,
-                    currencyMode: currency,
-                    vndRate: exchangeRate,
-                    hidden: hidden,
-                    primaryStyle: TextStyle(
-                      color: textColor,
-                      fontSize: 26,
-                      fontWeight: FontWeight.w800,
-                    ),
-                    secondaryStyle: TextStyle(
-                      color: subtitle,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    'Principal / base capital',
-                    style: TextStyle(
-                      color: subtitle,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  PortfolioCurrencyAmount(
-                    key: const Key('portfolio-principal-base'),
-                    usdtAmount: base,
-                    currencyMode: currency,
-                    vndRate: exchangeRate,
-                    hidden: hidden,
-                    primaryStyle: TextStyle(
-                      color: textColor,
-                      fontSize: 17,
-                      fontWeight: FontWeight.w800,
-                    ),
-                    secondaryStyle: TextStyle(
-                      color: subtitle,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  if (!pnlRevealed)
-                    OutlinedButton.icon(
-                      key: const Key('portfolio-reveal-pnl'),
-                      onPressed: onRevealPnl,
-                      icon: const Icon(Icons.visibility_outlined),
-                      label: const Text('Reveal PnL for this visit'),
-                    )
-                  else
-                    _PnlBlock(
-                      pnl: pnl,
-                      ratio: ratio,
-                      currency: currency,
-                      exchangeRate: exchangeRate,
-                      hidden: hidden,
-                    ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 14),
-          Text(
-            'Asset balances',
-            style: Theme.of(
-              context,
-            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 8),
-          if (account.details.isEmpty)
-            const _DetailsState(message: 'No balances available.')
-          else
-            for (final coin in account.details)
-              _BalanceTile(
-                coin: coin,
-                value: values[coin],
-                currency: currency,
-                exchangeRate: exchangeRate,
-                hidden: hidden,
-              ),
-        ],
+                    const SizedBox(height: 8),
+                    if (account.balances.isEmpty)
+                      const _DetailsState(message: 'No balances available.')
+                    else
+                      for (final coin in account.balances)
+                        _BalanceTile(
+                          coin: coin,
+                          isOkx: isOkx,
+                          value: values[coin],
+                          currency: currency,
+                          exchangeRate: exchangeRate,
+                          hidden: hidden,
+                        ),
+                  ]
+                  .asMap()
+                  .entries
+                  .map(
+                    (entry) =>
+                        AppEntrance(index: entry.key, child: entry.value),
+                  )
+                  .toList(),
+        ),
       ),
     );
   }
@@ -277,6 +345,7 @@ class _DetailsContent extends StatelessWidget {
 
 class _PnlBlock extends StatelessWidget {
   const _PnlBlock({
+    required this.isBinance,
     required this.pnl,
     required this.ratio,
     required this.currency,
@@ -284,6 +353,7 @@ class _PnlBlock extends StatelessWidget {
     required this.hidden,
   });
 
+  final bool isBinance;
   final double pnl;
   final double? ratio;
   final String currency;
@@ -303,7 +373,7 @@ class _PnlBlock extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Unrealized PnL',
+          isBinance ? 'Unrealized PnL · USDⓈ-M' : 'Unrealized PnL',
           style: TextStyle(
             color: palette.muted,
             fontSize: 12,
@@ -343,13 +413,15 @@ class _PnlBlock extends StatelessWidget {
 class _BalanceTile extends StatelessWidget {
   const _BalanceTile({
     required this.coin,
+    required this.isOkx,
     required this.value,
     required this.currency,
     required this.exchangeRate,
     required this.hidden,
   });
 
-  final OkxCoinDetail coin;
+  final AssetBalance coin;
+  final bool isOkx;
   final double? value;
   final String currency;
   final double exchangeRate;
@@ -360,7 +432,7 @@ class _BalanceTile extends StatelessWidget {
     final palette = AppPalette.of(context);
     final subtitle = palette.muted;
     final color = palette.ink;
-    final eq = double.tryParse(coin.eq);
+    final eq = double.tryParse(coin.total ?? '');
     return Card(
       elevation: 0,
       margin: const EdgeInsets.only(bottom: 7),
@@ -370,24 +442,24 @@ class _BalanceTile extends StatelessWidget {
       ),
       child: ListTile(
         leading: CryptoIcon(
-          symbol: coin.ccy,
+          symbol: coin.asset,
           size: 32,
           backgroundColor: palette.surface,
           textColor: color,
           textSize: 13,
         ),
         title: Text(
-          coin.ccy,
+          coin.asset,
           style: TextStyle(color: color, fontWeight: FontWeight.w700),
         ),
         subtitle: Text(
           hidden
               ? '******'
-              : 'Qty ${NumberFormat('#,##0.########', 'en_US').format(eq ?? 0)}',
+              : 'Qty ${!isOkx && eq == null ? '—' : NumberFormat('#,##0.########', 'en_US').format(eq ?? 0)}',
           style: TextStyle(color: subtitle, fontSize: 12),
         ),
         trailing: value == null
-            ? const Text('-')
+            ? Text(hidden ? '******' : (isOkx ? '-' : 'Chưa định giá'))
             : PortfolioCurrencyAmount(
                 usdtAmount: value!,
                 currencyMode: currency,

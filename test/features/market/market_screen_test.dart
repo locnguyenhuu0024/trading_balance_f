@@ -1,6 +1,18 @@
+import 'package:trading_balance_f/core/widgets/app_motion.dart';
 import 'dart:async';
 
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:trading_balance_f/core/widgets/scope_bar.dart';
+import 'package:trading_balance_f/core/exchange/exchange_models.dart';
+import 'package:trading_balance_f/core/exchange/exchange_registry.dart';
+import 'package:trading_balance_f/core/exchange/exchange_scope.dart';
+import 'package:trading_balance_f/core/exchange/market_source.dart';
+import 'package:trading_balance_f/core/network/request_coordinator.dart';
+import 'package:trading_balance_f/exchanges/binance/binance_client.dart';
+import 'package:trading_balance_f/exchanges/binance/binance_market.dart';
+import 'package:trading_balance_f/exchanges/okx/okx_adapter.dart';
+import '../../support/fake_exchange_adapter.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/network/okx_websocket_service.dart';
@@ -26,6 +38,81 @@ class _RecordingOkxWebsocketService extends OkxWebsocketService {
 }
 
 void main() {
+  testWidgets(
+    'Binance market displays fixture rows, source and product selection',
+    (tester) async {
+      final client = _MarketFixtureClient();
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            exchangeRegistryProvider.overrideWith(
+              (ref) => [
+                const ExchangeRegistration(
+                  profile: ConnectionProfile(
+                    connectionId: 'okx-default',
+                    exchange: ExchangeId.okx,
+                    label: 'OKX',
+                  ),
+                  adapter: OkxAdapter(),
+                ),
+                ExchangeRegistration(
+                  profile: const ConnectionProfile(
+                    connectionId: 'binance',
+                    exchange: ExchangeId.binance,
+                    label: 'Binance',
+                  ),
+                  adapter: _BinanceAdapter(client),
+                ),
+              ],
+            ),
+            selectedConnectionIdProvider.overrideWith((ref) => 'binance'),
+            isDarkModeProvider.overrideWithValue(false),
+          ],
+          child: const MaterialApp(home: MarketScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Nguồn giá: Binance'), findsOneWidget);
+      expect(find.text('Spot'), findsOneWidget);
+      expect(find.text('USDⓈ-M'), findsOneWidget);
+      expect(
+        tester
+            .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, 'USDⓈ-M'))
+            .selected,
+        isTrue,
+      );
+      expect(find.text('BTC'), findsOneWidget);
+      expect(find.text('\$12.00'), findsOneWidget);
+      expect(client.paths, ['/fapi/v1/ticker/24hr']);
+      await tester.tap(find.text('Spot'));
+      await tester.pumpAndSettle();
+      expect(client.paths.last, '/api/v3/ticker/24hr');
+    },
+  );
+
+  testWidgets('market loading and rows use motion widgets', (tester) async {
+    final pending = Completer<List<MarketTicker>>();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          marketListProvider.overrideWith((ref) => pending.future),
+          isDarkModeProvider.overrideWithValue(false),
+        ],
+        child: const MaterialApp(home: MarketScreen()),
+      ),
+    );
+    expect(find.byType(AppSkeleton), findsOneWidget);
+    pending.complete([
+      MarketTicker(instId: 'BTC-USDT', last: 1, open24h: 1, vol24h: 1),
+    ]);
+    await tester.pump();
+    await tester.pump();
+    expect(
+      find.ancestor(of: find.text('BTC'), matching: find.byType(AppEntrance)),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('Market renders its fetched ticker snapshot without WebSocket', (
     tester,
   ) async {
@@ -90,6 +177,23 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    final bar = find.byType(ScopeBar);
+    final headerRefresh = find.byKey(const Key('market-manual-refresh'));
+    expect(tester.widget<ScopeBar>(bar).compact, isTrue);
+    final sharedRows = find.ancestor(of: bar, matching: find.byType(Row));
+    expect(
+      sharedRows.evaluate().any(
+        (row) => find
+            .descendant(of: find.byWidget(row.widget), matching: headerRefresh)
+            .evaluate()
+            .isNotEmpty,
+      ),
+      isTrue,
+    );
+    expect(
+      tester.getCenter(bar).dx,
+      lessThan(tester.getCenter(headerRefresh).dx),
+    );
 
     final refresh = find.byTooltip('Làm mới dữ liệu');
     expect(refresh, findsOneWidget);
@@ -111,4 +215,36 @@ void main() {
     expect(tickerCalls, 2);
     await tester.pumpWidget(const SizedBox.shrink());
   });
+}
+
+class _BinanceAdapter extends FakeExchangeAdapter {
+  _BinanceAdapter(this.client);
+  final BinanceClient client;
+  @override
+  List<String> get marketProducts => const ['SPOT', 'SWAP'];
+  @override
+  MarketSource market(Ref ref) => BinanceMarket(client);
+}
+
+class _MarketFixtureClient extends BinanceClient {
+  _MarketFixtureClient() : super(coordinator: RequestCoordinator());
+  final paths = <String>[];
+  @override
+  Future<Response<dynamic>> get(
+    String path, {
+    Map<String, dynamic> queryParameters = const {},
+  }) async {
+    paths.add(path);
+    return Response(
+      requestOptions: RequestOptions(path: path),
+      data: [
+        {
+          'symbol': 'BTCUSDT',
+          'lastPrice': '12',
+          'openPrice': '10',
+          'quoteVolume': '6000000',
+        },
+      ],
+    );
+  }
 }

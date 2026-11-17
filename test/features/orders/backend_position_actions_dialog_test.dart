@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import '../../support/backend_features_override.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -99,6 +100,11 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(targetLoads, 0);
+      await tester.scrollUntilVisible(
+        find.text('BTCUSDT'),
+        100,
+        scrollable: find.byType(Scrollable).first,
+      );
       expect(find.text('BTCUSDT'), findsOneWidget);
       expect(find.byType(PositionActionControls), findsNothing);
       final entry = find.byKey(const Key('backend-position-actions-entry'));
@@ -108,6 +114,7 @@ void main() {
         findsOneWidget,
       );
 
+      await tester.ensureVisible(entry);
       await tester.tap(entry);
       await tester.pumpAndSettle();
 
@@ -345,6 +352,7 @@ Widget _app({
   required Future<TradePositionsSnapshot> Function() targets,
 }) => ProviderScope(
   overrides: [
+    backendFeaturesEnabledTestOverride,
     tradeApiProvider.overrideWithValue(api),
     tradeSessionProvider.overrideWith((ref) => sessionController),
     tradePositionsProvider.overrideWith((ref) => targets()),

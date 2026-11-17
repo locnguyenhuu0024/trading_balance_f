@@ -49,13 +49,16 @@ Transport failures such as `ORCHESTRATION_TRANSPORT_ERROR`, environment blockers
 ### Executor-model selection and binding at dispatch
 
 For every implementation/remediation task, dispatch using the executor class recorded in the task/plan:
-- `E0` -> `gpt-6-luna` / `high`;
-- `E1` -> `gpt-6-luna` / `xhigh` (**default**);
-- `E2` -> `gpt-6-luna` / `max`.
+- `E0` -> `gpt-6-luna` / `xhigh`;
+- `E1` -> `gpt-6.1-terra` / `low`;
+- `E2` -> `gpt-6.1-terra` / `medium`;
+- `E3` -> `gpt-6.1-terra` / `high`;
+- `E4` -> `gpt-6.1-terra` / `xhigh`;
+- `E5` -> `gpt-6.1-terra` / `max`.
 
-The mapping above is the **default runtime dispatch requirement**; the only exception is the explicit user-approved Terra E1/E2 trial below. Before each executor spawn, the coordinator must validate the task contains:
+The mapping above is the default runtime dispatch requirement sourced from validated EXECUTOR_ROUTING_POLICY.json; alternate allowlisted routes require specific user approval. Before each executor spawn, the coordinator must validate the task contains:
 - `Agent Role: implementation_executor`;
-- `Executor Class: E0|E1|E2`;
+- `Executor Class: E0|E1|E2|E3|E4|E5`;
 - exact `Target Model`;
 - exact `Target Effort`;
 - `Route Binding: EXPLICIT`;
@@ -70,13 +73,13 @@ Then perform this dispatch state machine:
 6. `BLOCKED_ROUTE`: if the runtime cannot explicitly express the required child model/effort, do **not** spawn an inherited/default writer. Obtain a task-specific user decision for an alternate explicitly identified route/runtime.
 
 
-### Approved Terra trial for bounded implementation (OptCodex v1.2.0)
+### Terra-first dynamic routing within fixed allowlist (OptCodex v1.4.0)
 
-Luna defaults remain E0 = `gpt-6-luna/high`, E1 = `gpt-6-luna/xhigh`, E2 = `gpt-6-luna/max`. Opt-in experiment routes: **E1 = `gpt-6.1-terra/high`** or **E2 = `gpt-6.1-terra/xhigh`** only. E0 cannot use Terra. The plan/task must record a distinct `experiment_id`, controlled reason `UI_VISUAL|HARD_DEBUG|LUNA_REWORK|E2_COMPLEX`, exact model/effort and affirmative, specific user approval of that trial on that task. The `terra_trial` manifest must include `user_approved: true` but the coordinator MUST independently check real authorization (this JSON flag is not proof). No implicit route escalation, model inheritance, or fallback when Terra is unavailable: BLOCKED_ROUTE.
+Executor routing follows validated EXECUTOR_ROUTING_POLICY.json (contract v2): E0 Luna/xhigh; E1 Terra/low; E2 Terra/medium; E3 Terra/high; E4 Terra/xhigh; E5 Terra/max. Classify by implementation entropy, not task size; E5 is exceptional and requires demonstrated need. Never silently fall back or self-escalate. Nondefault allowlisted routes require task-specific approval. Preserve explicit model+effort, approved task/scope, protected-file constraints, RED/GREEN, independent audit, buildability and final build.
 
 For fair A/B compare separate clean checkouts of the same base commit with the same approved SPEC/AC/tests; never run two writers on the same checkout. Keep RED/GREEN, Task Buildability, final build, protected file exclusions, independent audit and QA/explicit Git authorizations unchanged. Count unique logical task IDs separately from executor attempts/retries; record requested and only observed effective route, runtime duration and quota/tokens (unknown = null). Do not treat executor terminal output as audited PASS.
 
-If no class is recorded, the coordinator must classify implementation entropy before dispatch rather than silently defaulting to Max. Escalate only after evidence that the selected route is insufficient. An executor failure caused by unresolved requirement/design/architecture ambiguity returns to coordinator reasoning/replanning; it is not solved by blindly increasing executor effort. GPT-6.1 Terra E1/E2 is an explicit user-approved trial route, not a default or silent replacement.
+If no class is recorded, the coordinator must classify implementation entropy before dispatch rather than silently defaulting to Max. Escalate only after evidence that the selected route is insufficient. An executor failure caused by unresolved requirement/design/architecture ambiguity returns to coordinator reasoning/replanning; it is not solved by blindly increasing executor effort. Terra is the default for E1–E5; Luna/xhigh is the E0 default. Any nondefault allowlisted route requires verified task-specific authorization.
 
 ### Mandatory executor route-compliance gate
 
@@ -464,7 +467,7 @@ Build selection and safety:
 Build outcome rules:
 1. **PASS** requires an actually observed successful final build (normally exit code `0`) after all implementation and remediation changes are complete. Warnings do not fail the gate unless repository policy treats them as errors.
 2. A compiler/parser/type/reference/link/build error is a **blocking audit finding**, not an ignorable test gap. Localize it using build diagnostics plus inspection of permitted non-protected source/test/generated-code surfaces.
-3. If the build failure was introduced by the approved change, lies on an affected dependency path, or can be fixed without changing approved requirements/architecture/scope, create a bounded remediation contract, classify it independently as `E0`/`E1`/`E2`, delegate it under §9 remediation rules, wait, audit the diff, then rerun the canonical final build. Repeat until the build passes or a genuine blocker exists.
+3. If the build failure was introduced by the approved change, lies on an affected dependency path, or can be fixed without changing approved requirements/architecture/scope, create a bounded remediation contract, classify it independently as `E0`–`E5`, delegate it under §9 remediation rules, wait, audit the diff, then rerun the canonical final build. Repeat until the build passes or a genuine blocker exists.
 4. If the failure is proven pre-existing/unrelated and fixing it would expand approved scope or materially change behavior/architecture, do **not** silently ignore or patch it. Final audit remains `BLOCKED`; report the concrete build failure and request the required scope/decision.
 5. If the build fails before compilation/build execution because of a genuine environment/toolchain restriction, apply §4 environment short-circuit rules. The build gate is `BLOCKED_ENVIRONMENT` and the final audit verdict remains `BLOCKED`; do not convert it to `PASS` merely because focused tests succeeded.
 6. If build success requires a protected configuration/environment change, report the required user-owned External Configuration Action and keep final audit `BLOCKED` until it is applied and the final build is rerun successfully.
@@ -474,7 +477,7 @@ Record the exact build command (secret-free), exit/status, concise compiler/buil
 
 ### Mandatory final-audit remediation delegation
 
-If the final integration audit finds **any issue whose resolution requires modifying permitted application code, test code, migration code, generated application/runtime code, or other non-protected executable repository behavior**, the auditor/coordinator must not patch it directly. The finding must be converted into a bounded remediation contract, classified independently as `E0`/`E1`/`E2` from the remediation's implementation entropy, and automatically delegated using that selected route.
+If the final integration audit finds **any issue whose resolution requires modifying permitted application code, test code, migration code, generated application/runtime code, or other non-protected executable repository behavior**, the auditor/coordinator must not patch it directly. The finding must be converted into a bounded remediation contract, classified independently as `E0`–`E5` from the remediation's implementation entropy, and automatically delegated using that selected route.
 
 **Protected configuration/environment changes are the exception:** they must never be patched or delegated. Report them as user-owned External Configuration Actions with target file/path, insertion location/section/key, exact non-secret content/placeholder, scope, reason, and validation/restart step. If applying the external action is required to establish correctness, final audit remains `BLOCKED` until the user applies it and verification can be rerun safely.
 
@@ -482,7 +485,7 @@ For each such finding:
 1. assign or preserve a stable `AUD-*` finding ID;
 2. describe expected vs observed behavior, concrete evidence, affected requirement/acceptance criterion, and the exact remediation scope;
 3. create the smallest independently auditable remediation contract that fixes only the finding;
-4. classify the remediation contract as `E0`/`E1`/`E2` from its own implementation entropy, then automatically dispatch it using that route;
+4. classify the remediation contract as `E0`–`E5` from its own implementation entropy, then automatically dispatch it using that route;
 5. wait for the executor's terminal result under the patience/stall rules in §2;
 6. independently audit the resulting diff and verification evidence;
 7. rerun only evidence invalidated by the remediation;

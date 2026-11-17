@@ -1,5 +1,3 @@
-import 'dart:ui' show FontFeature;
-
 import 'package:flutter/material.dart';
 
 /// Shared grayscale roles for screen-level presentation.
@@ -77,6 +75,12 @@ class AppTokens {
 
   static const motionShort = Duration(milliseconds: 140);
   static const motionStandard = Duration(milliseconds: 220);
+  static const motionMedium = Duration(milliseconds: 280);
+  static const motionLong = Duration(milliseconds: 420);
+  static const motionStagger = Duration(milliseconds: 40);
+  static const motionEntranceOffset = 12.0;
+  static const Curve motionEnter = Curves.easeOutCubic;
+  static const Curve motionExit = Curves.easeInCubic;
 }
 
 class AppTheme {

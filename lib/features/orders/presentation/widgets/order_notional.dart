@@ -1,7 +1,6 @@
 import 'package:flutter/foundation.dart';
 
-import '../../data/okx_order_model.dart';
-import '../../data/okx_position_model.dart';
+import '../../../../core/exchange/exchange_models.dart';
 
 enum TradeNotionalSource {
   position,
@@ -18,8 +17,8 @@ class TradeNotional {
   final TradeNotionalSource source;
 }
 
-TradeNotional? resolvePositionNotional(OkxPosition position) {
-  final notional = _parsePositiveAmount(position.notionalUsd);
+TradeNotional? resolvePositionNotional(ExchangePosition position) {
+  final notional = _parsePositiveAmount(position.notional);
   if (notional == null) return null;
 
   return TradeNotional(
@@ -28,8 +27,8 @@ TradeNotional? resolvePositionNotional(OkxPosition position) {
   );
 }
 
-TradeNotional? resolveOrderNotional(OkxOrder order) {
-  final filledNotional = _parsePositiveAmount(order.fillNotionalUsd);
+TradeNotional? resolveOrderNotional(ExchangeOrder order) {
+  final filledNotional = _parsePositiveAmount(order.filledNotional);
   if (filledNotional != null) {
     return TradeNotional(
       usdAmount: filledNotional,
@@ -37,7 +36,7 @@ TradeNotional? resolveOrderNotional(OkxOrder order) {
     );
   }
 
-  final estimatedNotional = _parsePositiveAmount(order.notionalUsd);
+  final estimatedNotional = _parsePositiveAmount(order.notional);
   if (estimatedNotional != null) {
     return TradeNotional(
       usdAmount: estimatedNotional,
@@ -45,14 +44,15 @@ TradeNotional? resolveOrderNotional(OkxOrder order) {
     );
   }
 
-  if (order.instType != 'SPOT' && order.instType != 'MARGIN') {
+  if (order.productLabel != 'SPOT' && order.productLabel != 'MARGIN') {
     return null;
   }
 
   final price =
-      _parsePositiveAmount(order.avgPx) ?? _parsePositiveAmount(order.px);
+      _parsePositiveAmount(order.average) ?? _parsePositiveAmount(order.price);
   final size =
-      _parsePositiveAmount(order.accFillSz) ?? _parsePositiveAmount(order.sz);
+      _parsePositiveAmount(order.filled) ??
+      _parsePositiveAmount(order.quantity);
   if (price == null || size == null) return null;
 
   return TradeNotional(
@@ -61,8 +61,8 @@ TradeNotional? resolveOrderNotional(OkxOrder order) {
   );
 }
 
-double? _parsePositiveAmount(String value) {
-  final parsed = double.tryParse(value);
+double? _parsePositiveAmount(String? value) {
+  final parsed = double.tryParse(value ?? '');
   if (parsed == null || !parsed.isFinite || parsed == 0) return null;
   return parsed.abs();
 }

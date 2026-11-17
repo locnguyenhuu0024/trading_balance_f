@@ -13,7 +13,7 @@ void main() {
 
   test('excludes open, malformed, duplicate, and wrong-swap candles', () async {
     final base = DateTime.utc(2030, 1, 1);
-    final candle = (int index, {String confirm = '1'}) => [
+    List<String> candle(int index, {String confirm = '1'}) => [
       (base.add(Duration(hours: index * 12))).millisecondsSinceEpoch.toString(),
       '100.000',
       '110.0100',

@@ -239,7 +239,7 @@ class OrderCancellationFlowsController
           targetIdentity: identity,
         );
       } on TradeApiException catch (error) {
-        if (error.isUnauthorized && _sessionMatches(initialSession!)) {
+        if (error.isUnauthorized && _sessionMatches(initialSession)) {
           _readSessionController().expire();
         }
         _setStatus(flowKey, runId, error.message);
@@ -266,8 +266,10 @@ class OrderCancellationFlowsController
 
       final target = prepared.targets.single;
       final remainingSize = _summaryValue(target, 'remainingSize');
+      final dialogContext = navigator.context;
+      if (!dialogContext.mounted) return;
       final confirmed = await showTradeActionConfirmation(
-        navigator.context,
+        dialogContext,
         prepared: prepared,
         title: 'Xác nhận hủy lệnh limit',
         confirmLabel: 'Hủy phần còn lại $remainingSize',
@@ -348,7 +350,7 @@ class OrderCancellationFlowsController
         refreshOrders: refreshOrdersOnce,
       );
     } on TradeApiException catch (error) {
-      if (error.isUnauthorized && _sessionMatches(initialSession!)) {
+      if (error.isUnauthorized && _sessionMatches(initialSession)) {
         _readSessionController().expire();
       }
       _setStatus(flowKey, runId, error.message);
@@ -588,8 +590,9 @@ class OrderCancellationFlowsController
   ) {
     const exactFields = ['instType', 'instId', 'ordId', 'ordType', 'side'];
     for (final field in exactFields) {
-      if (actual[field]?.toString() != selected[field]?.toString())
+      if (actual[field]?.toString() != selected[field]?.toString()) {
         return false;
+      }
     }
     return _sameDecimal(actual['px']?.toString(), selected['px']?.toString()) &&
         _sameDecimal(actual['sz']?.toString(), selected['sz']?.toString());

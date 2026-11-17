@@ -1,18 +1,18 @@
 {
   "schema_version": 1,
   "source_repository": "locnguyenhuu0024/OptCodexRules",
-  "source_revision": "7ce5bb67cabfee4e89733455ee2519f5ca8dcbd0",
+  "source_revision": "42fe641fab7b6481f2e5b4898cd62be926250339",
   "variants": {
     "company": {
-      "variant_version": "1.2.0",
+      "variant_version": "1.4.0",
       "baseline_version": "2.2.2",
       "baseline_file": "BASELINE_AGENTS_OptCodex-v2.2.2.md",
       "pinned_files": {
-        "AGENTS.md": "5432c24f1b0578aa4d834ff8a38a257baff4e9f2",
-        "BASELINE_AGENTS_OptCodex-v2.2.2.md": "46108dcc9bfaac3582ba092155778040709e5351",
-        "VERSION": "26aaba0e86632e4d537006e45b0ec918d780b3b4",
-        "docs/agents/framework/PLANNING_RULES.md": "6a3cff0930414b451b244fec87dfe851f8ca27d2",
-        "docs/agents/framework/EXECUTION_AUDIT_RULES.md": "6dc8631874041ce3de85f2219416ac688d0dc415",
+        "AGENTS.md": "803c3f02e6f1d5e931f622142ae5ad25a2e42db3",
+        "BASELINE_AGENTS_OptCodex-v2.2.2.md": "c0b815a26840890e5bee5e74801542d8c3c31360",
+        "VERSION": "88c5fb891dcf1d1647d2b84bac0630cf9570d213",
+        "docs/agents/framework/PLANNING_RULES.md": "cfac0b0ea91ae79986eec7e427772e7d1cbe1938",
+        "docs/agents/framework/EXECUTION_AUDIT_RULES.md": "422bba864e606ceb31e96a26c4a700f48f6a28b5",
         "docs/agents/framework/PONYTAIL_RULES.md": "6786686b1b7c7d976a21bf9441e3d3cd8409223d",
         "docs/agents/framework/AGENT_TELEMETRY_SCHEMA.md": "166e27e37ff10cb31259bf2946f7b0cb094307b7",
         "docs/agents/framework/QA_HANDOFF_CONTRACT.md": "c4f91ed52f33d5ea5af096b6d9d8d41085e55e5a",
@@ -50,19 +50,20 @@
         "docs/agents/templates/TASK_TEMPLATE.md",
         "docs/agents/templates/WEEKLY_EVALUATION_TEMPLATE.md",
         "scripts/qa-handoff-publish-dev",
-        "scripts/qa-handoff-validate"
+        "scripts/qa-handoff-validate",
+        "docs/agents/framework/EXECUTOR_ROUTING_POLICY.json"
       ]
     },
     "personal": {
-      "variant_version": "1.2.0",
+      "variant_version": "1.4.0",
       "baseline_version": "1.2.2",
       "baseline_file": "BASELINE_AGENTS_OptCodex-Personal-v1.2.2.md",
       "pinned_files": {
-        "AGENTS.md": "5e75462092850c7e258d1d21b56fc5493d7f2d0b",
-        "BASELINE_AGENTS_OptCodex-Personal-v1.2.2.md": "fab1206934ecc24e21ed1535476465ad642803cd",
-        "VERSION": "26aaba0e86632e4d537006e45b0ec918d780b3b4",
-        "docs/agents/framework/PLANNING_RULES.md": "96a8d19c5276d5042ffb35970fff2eb9dd4867d7",
-        "docs/agents/framework/EXECUTION_AUDIT_RULES.md": "03a2cc9ba796fcf84326991766cdc53bce832ffe",
+        "AGENTS.md": "18a38ecfce345c4535e8c731baba25a877ba19ff",
+        "BASELINE_AGENTS_OptCodex-Personal-v1.2.2.md": "d66aca52ac099b8c363fe2a7a7e3a68becd30376",
+        "VERSION": "88c5fb891dcf1d1647d2b84bac0630cf9570d213",
+        "docs/agents/framework/PLANNING_RULES.md": "9770e777c9e92250f074ad6ae2a10a3febc7681b",
+        "docs/agents/framework/EXECUTION_AUDIT_RULES.md": "5668fa55d835dcaf58f99ec5701b0ef6a24a4fae",
         "docs/agents/framework/PONYTAIL_RULES.md": "6786686b1b7c7d976a21bf9441e3d3cd8409223d",
         "docs/agents/framework/AGENT_TELEMETRY_SCHEMA.md": "166e27e37ff10cb31259bf2946f7b0cb094307b7",
         "docs/agents/framework/profiles/CONTEXT_OPTIMIZATION.md": "281f93058ff9f53a85f4c5d04aa7e2420fd6a1f5"
@@ -87,19 +88,20 @@
         "docs/agents/templates/SMALL_TASK_TEMPLATE.md",
         "docs/agents/templates/SPEC_TEMPLATE.md",
         "docs/agents/templates/TASK_TEMPLATE.md",
-        "docs/agents/templates/WEEKLY_EVALUATION_TEMPLATE.md"
+        "docs/agents/templates/WEEKLY_EVALUATION_TEMPLATE.md",
+        "docs/agents/framework/EXECUTOR_ROUTING_POLICY.json"
       ]
     },
     "frontend-company": {
-      "variant_version": "1.2.0",
+      "variant_version": "1.4.0",
       "baseline_version": "2.2.2",
       "baseline_file": "BASELINE_AGENTS_OptCodex-v2.2.2.md",
       "pinned_files": {
-        "AGENTS.md": "d997da45d1a86e7912c373cc53713cde5010afcc",
-        "BASELINE_AGENTS_OptCodex-v2.2.2.md": "46108dcc9bfaac3582ba092155778040709e5351",
-        "VERSION": "26aaba0e86632e4d537006e45b0ec918d780b3b4",
-        "docs/agents/framework/PLANNING_RULES.md": "6a3cff0930414b451b244fec87dfe851f8ca27d2",
-        "docs/agents/framework/EXECUTION_AUDIT_RULES.md": "6dc8631874041ce3de85f2219416ac688d0dc415",
+        "AGENTS.md": "73535c7f607cd4fd8883b48c749ade00d45a963c",
+        "BASELINE_AGENTS_OptCodex-v2.2.2.md": "c0b815a26840890e5bee5e74801542d8c3c31360",
+        "VERSION": "88c5fb891dcf1d1647d2b84bac0630cf9570d213",
+        "docs/agents/framework/PLANNING_RULES.md": "cfac0b0ea91ae79986eec7e427772e7d1cbe1938",
+        "docs/agents/framework/EXECUTION_AUDIT_RULES.md": "422bba864e606ceb31e96a26c4a700f48f6a28b5",
         "docs/agents/framework/PONYTAIL_RULES.md": "6786686b1b7c7d976a21bf9441e3d3cd8409223d",
         "docs/agents/framework/AGENT_TELEMETRY_SCHEMA.md": "8fe0483b0e00fb596dcaa1dbb4125ba751f2da2b",
         "docs/agents/framework/QA_HANDOFF_CONTRACT.md": "c4f91ed52f33d5ea5af096b6d9d8d41085e55e5a",
@@ -157,19 +159,20 @@
         "third_party/vercel-labs/agent-skills/react-view-transitions/SKILL.md",
         "third_party/vercel-labs/agent-skills/web-design-guidelines/SKILL.md",
         "third_party/vercel-labs/web-interface-guidelines/LICENSE",
-        "third_party/vercel-labs/web-interface-guidelines/command.md"
+        "third_party/vercel-labs/web-interface-guidelines/command.md",
+        "docs/agents/framework/EXECUTOR_ROUTING_POLICY.json"
       ]
     },
     "frontend-personal": {
-      "variant_version": "1.2.0",
+      "variant_version": "1.4.0",
       "baseline_version": "1.2.2",
       "baseline_file": "BASELINE_AGENTS_OptCodex-Personal-v1.2.2.md",
       "pinned_files": {
-        "AGENTS.md": "2109b6334ede6bceeac7a5fcbc4ea81f6a7521c8",
-        "BASELINE_AGENTS_OptCodex-Personal-v1.2.2.md": "fab1206934ecc24e21ed1535476465ad642803cd",
-        "VERSION": "26aaba0e86632e4d537006e45b0ec918d780b3b4",
-        "docs/agents/framework/PLANNING_RULES.md": "96a8d19c5276d5042ffb35970fff2eb9dd4867d7",
-        "docs/agents/framework/EXECUTION_AUDIT_RULES.md": "03a2cc9ba796fcf84326991766cdc53bce832ffe",
+        "AGENTS.md": "9da0029b2cd0ce64e52cd029ad620441d2c17a88",
+        "BASELINE_AGENTS_OptCodex-Personal-v1.2.2.md": "d66aca52ac099b8c363fe2a7a7e3a68becd30376",
+        "VERSION": "88c5fb891dcf1d1647d2b84bac0630cf9570d213",
+        "docs/agents/framework/PLANNING_RULES.md": "9770e777c9e92250f074ad6ae2a10a3febc7681b",
+        "docs/agents/framework/EXECUTION_AUDIT_RULES.md": "5668fa55d835dcaf58f99ec5701b0ef6a24a4fae",
         "docs/agents/framework/PONYTAIL_RULES.md": "6786686b1b7c7d976a21bf9441e3d3cd8409223d",
         "docs/agents/framework/AGENT_TELEMETRY_SCHEMA.md": "8fe0483b0e00fb596dcaa1dbb4125ba751f2da2b",
         "docs/agents/framework/profiles/CONTEXT_OPTIMIZATION.md": "281f93058ff9f53a85f4c5d04aa7e2420fd6a1f5",
@@ -214,7 +217,8 @@
         "third_party/vercel-labs/agent-skills/react-view-transitions/SKILL.md",
         "third_party/vercel-labs/agent-skills/web-design-guidelines/SKILL.md",
         "third_party/vercel-labs/web-interface-guidelines/LICENSE",
-        "third_party/vercel-labs/web-interface-guidelines/command.md"
+        "third_party/vercel-labs/web-interface-guidelines/command.md",
+        "docs/agents/framework/EXECUTOR_ROUTING_POLICY.json"
       ]
     }
   }

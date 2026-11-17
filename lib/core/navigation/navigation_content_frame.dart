@@ -42,10 +42,7 @@ class NavigationContentFrame extends StatelessWidget {
     return Padding(
       key: const Key('navigation-content-frame'),
       padding: EdgeInsets.only(
-        bottom:
-            TradingNavigationBar.crestHeight +
-            TradingNavigationBar.barHeight +
-            bottomInset,
+        bottom: TradingNavigationBar.heightFor(context) + bottomInset,
       ),
       child: child,
     );

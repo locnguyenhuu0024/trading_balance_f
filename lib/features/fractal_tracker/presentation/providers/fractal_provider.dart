@@ -3,7 +3,10 @@
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:trading_balance_f/core/network/okx_data_client.dart';
+import '../../../../core/exchange/exchange_registry.dart';
+import '../../../../core/exchange/exchange_models.dart';
+import '../../../../core/exchange/market_source.dart';
+import '../../../../core/exchange/exchange_scope.dart';
 import '../../../../core/timezone/app_time_zone.dart';
 import '../../data/fractal_model.dart';
 
@@ -19,7 +22,10 @@ final selectedYearProvider = StateProvider<int>((ref) {
 });
 
 // THÊM MỚI: Provider quản lý Coin đang chọn, mặc định là BTC
-final selectedCoinProvider = StateProvider<String>((ref) => 'BTC');
+final selectedCoinProvider = StateProvider<String>((ref) {
+  ref.watch(selectedConnectionIdProvider);
+  return 'BTC';
+});
 
 String fractalBarForTimeframe(String timeframe) {
   return switch (timeframe) {
@@ -128,60 +134,65 @@ int _yearMonthlyCandleMidpointMs(int candleTimestampMs) {
           2;
 }
 
-final fractalDataProvider = FutureProvider.autoDispose<List<FractalData>>((
-  ref,
-) async {
-  final client = ref.watch(okxDataClientProvider);
+final fractalDataProvider = FutureProvider.autoDispose
+    .family<List<FractalData>, ExchangeScope>((ref, scope) async {
+      final registry = ref.watch(exchangeRegistryProvider);
+      final source = registry
+          .firstWhere(
+            (entry) => entry.profile.connectionId == scope.connectionId,
+          )
+          .adapter
+          .market(ref);
 
-  final targetMonth = ref.watch(selectedMonthProvider);
-  final targetYear = ref.watch(selectedYearProvider);
-  final targetCoin = ref.watch(selectedCoinProvider); // THÊM MỚI
-  final timeZoneId = ref.watch(appTimeZoneProvider);
+      final targetMonth = ref.watch(selectedMonthProvider);
+      final targetYear = ref.watch(selectedYearProvider);
+      final targetCoin = ref.watch(selectedCoinProvider); // THÊM MỚI
+      final timeZoneId = ref.watch(appTimeZoneProvider);
 
-  final results = await Future.wait([
-    _fetchAndProcess(
-      client,
-      'D1',
-      fractalBarForTimeframe('D1'),
-      24,
-      null,
-      targetCoin,
-      timeZoneId,
-    ),
-    _fetchAndProcess(
-      client,
-      'W1',
-      fractalBarForTimeframe('W1'),
-      42,
-      null,
-      targetCoin,
-      timeZoneId,
-    ),
-    _fetchAndProcess(
-      client,
-      'M1',
-      fractalBarForTimeframe('M1'),
-      31,
-      targetMonth,
-      targetCoin,
-      timeZoneId,
-    ),
-    _fetchAndProcess(
-      client,
-      'Y1',
-      fractalBarForTimeframe('Y1'),
-      12,
-      DateTime(targetYear),
-      targetCoin,
-      timeZoneId,
-    ),
-  ]);
+      final results = await Future.wait([
+        _fetchAndProcess(
+          source,
+          'D1',
+          fractalBarForTimeframe('D1'),
+          24,
+          null,
+          targetCoin,
+          timeZoneId,
+        ),
+        _fetchAndProcess(
+          source,
+          'W1',
+          fractalBarForTimeframe('W1'),
+          42,
+          null,
+          targetCoin,
+          timeZoneId,
+        ),
+        _fetchAndProcess(
+          source,
+          'M1',
+          fractalBarForTimeframe('M1'),
+          31,
+          targetMonth,
+          targetCoin,
+          timeZoneId,
+        ),
+        _fetchAndProcess(
+          source,
+          'Y1',
+          fractalBarForTimeframe('Y1'),
+          12,
+          DateTime(targetYear),
+          targetCoin,
+          timeZoneId,
+        ),
+      ]);
 
-  return results.whereType<FractalData>().toList();
-});
+      return results.whereType<FractalData>().toList();
+    });
 
 Future<FractalData?> _fetchAndProcess(
-  OkxDataClient client,
+  MarketSource source,
   String timeframe,
   String barId,
   int limit,
@@ -189,7 +200,7 @@ Future<FractalData?> _fetchAndProcess(
   String coin,
   String timeZoneId,
 ) async {
-  try {
+  {
     final period = fractalPeriodBounds(
       timeframe: timeframe,
       timeZoneId: timeZoneId,
@@ -197,7 +208,6 @@ Future<FractalData?> _fetchAndProcess(
     );
     final startMs = period.startMs;
     final endMs = period.endMs;
-    final isCurrentPeriod = period.isCurrentPeriod;
     if (timeframe == 'M1') {
       final month = targetDate ?? AppTimeZone.now(timeZoneId);
       final monthStart = DateTime.utc(month.year, month.month);
@@ -208,35 +218,12 @@ Future<FractalData?> _fetchAndProcess(
     }
     final quarterDuration = (endMs - startMs) / 4;
 
-    List rawCandles = [];
-    final afterTs = endMs.toString();
-
-    // Hàm gọi API
-    Future<void> fetchApi(String endpoint) async {
-      try {
-        final response = await client.get(
-          endpoint,
-          queryParameters: {
-            'instId': '$coin-USDT',
-            'bar': barId,
-            'limit': limit,
-            'after': afterTs,
-          },
-        );
-        if (response.data['code'] == '0') rawCandles = response.data['data'];
-      } catch (_) {}
-    }
-
-    // THAY ĐỔI QUAN TRỌNG:
-    // Nếu là khoảng thời gian hiện tại -> Gọi API lấy nến đang chạy (chứa nến của hôm nay/tháng này)
-    // Nếu là quá khứ -> Gọi API History để lấy chính xác dữ liệu cũ
-    if (isCurrentPeriod) {
-      await fetchApi('/api/v5/market/candles');
-      if (rawCandles.isEmpty) await fetchApi('/api/v5/market/history-candles');
-    } else {
-      await fetchApi('/api/v5/market/history-candles');
-      if (rawCandles.isEmpty) await fetchApi('/api/v5/market/candles');
-    }
+    final rawCandles = await source.fractalCandles(
+      coin: coin,
+      bar: barId,
+      limit: limit,
+      endTime: endMs,
+    );
 
     if (rawCandles.isEmpty) return null;
 
@@ -341,7 +328,5 @@ Future<FractalData?> _fetchAndProcess(
       currentPrice: currentPrice,
       subCandles: subCandles,
     );
-  } catch (e) {
-    return null;
   }
 }

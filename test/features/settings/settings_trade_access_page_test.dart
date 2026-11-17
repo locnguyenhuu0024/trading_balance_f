@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import '../../support/backend_features_override.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
@@ -79,6 +80,7 @@ Widget _settingsPage(_FakeStorage storage) {
   final api = _FakeTradeApi();
   return ProviderScope(
     overrides: [
+      backendFeaturesEnabledTestOverride,
       secureStorageProvider.overrideWithValue(storage),
       tradeApiProvider.overrideWithValue(api),
       tradeSessionProvider.overrideWith((ref) => TradeSessionController(api)),
@@ -216,7 +218,7 @@ void main() {
     tester,
   ) async {
     final storage = _FakeStorage();
-    final pasted =
+    const pasted =
         'API Key: demo-api\nSecret Key = demo:secret=tail\n'
         'Passphrase: demo-pass';
     var clipboardReads = 0;

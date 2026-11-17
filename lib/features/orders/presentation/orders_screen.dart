@@ -1,3 +1,6 @@
+import '../../../core/widgets/app_motion.dart';
+import '../../../core/widgets/scope_bar.dart';
+import '../../../core/widgets/account_state_view.dart';
 // File Name: orders_screen.dart
 // File Path: lib/features/orders/presentation/orders_screen.dart
 
@@ -5,9 +8,13 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/backend_features.dart';
+import '../../../core/exchange/exchange_models.dart';
+import '../../../core/exchange/exchange_registry.dart';
+import '../../../core/exchange/exchange_scope.dart';
+import '../../../core/exchange/scoped_read.dart';
 import '../../../core/formatting/adaptive_number_format.dart';
 import '../../../core/navigation/navigation_content_frame.dart';
-import '../../../core/network/okx_read_scope.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/pnl_color.dart';
 import '../../../core/timezone/app_time_zone.dart';
@@ -16,7 +23,6 @@ import '../../../core/widgets/manual_refresh_button.dart';
 import 'providers/order_provider.dart';
 import 'providers/order_cancellation_flow_provider.dart';
 import '../data/okx_order_model.dart';
-import '../data/okx_position_model.dart';
 import 'providers/trade_session_provider.dart';
 import 'package:intl/intl.dart';
 import '../../portfolio/presentation/portfolio_screen.dart'; // Thêm import này để lấy trạng thái Dark Mode
@@ -24,10 +30,25 @@ import '../../portfolio/presentation/widgets/portfolio_currency_amount.dart';
 import '../../settings/presentation/settings_screen.dart'
     show currencyProvider, vndExchangeRateProvider;
 import 'widgets/order_filter_controls.dart';
+import 'widgets/margin_account_card.dart';
+import '../../../exchanges/binance/binance_adapter.dart';
+import '../../../exchanges/binance/binance_estimated_pnl.dart';
 import 'widgets/order_notional.dart';
 import 'widgets/order_cancellation_control.dart';
 import 'widgets/responsive_order_grid.dart';
 import 'widgets/trade_account_controls.dart';
+
+String _instrumentBase(InstrumentKey key) =>
+    key.base ??
+    (key.exchange == ExchangeId.okx
+        ? key.nativeId.split('-').first
+        : key.nativeId);
+String _instrumentLabel(InstrumentKey key) =>
+    key.exchange != ExchangeId.okx && key.base != null && key.quote != null
+    ? '${key.base}/${key.quote}'
+    : (key.exchange == ExchangeId.okx
+          ? key.nativeId.split('-').take(2).join()
+          : key.nativeId);
 
 String formatOrderTimestamp(String rawTimestamp, String timeZoneId) {
   final timestampMs = int.tryParse(rawTimestamp);
@@ -46,6 +67,26 @@ class OrdersScreen extends ConsumerStatefulWidget {
 class _OrdersScreenState extends ConsumerState<OrdersScreen> {
   Timer? _refreshTimer;
   bool _manualRefreshInFlight = false;
+  ExchangeScope? _costScope;
+  ExchangeScope? _activeCostScope;
+  bool _costFinished = false;
+
+  void _startCost(ExchangeScope scope, AccountSnapshot account) {
+    _costScope = scope;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted || ref.read(exchangeScopeProvider) != scope) return;
+      try {
+        final controller = await ref.read(binanceCostControllerProvider.future);
+        await controller.run(account);
+      } catch (_) {
+        // History failure does not affect account data.
+      } finally {
+        if (mounted && ref.read(exchangeScopeProvider) == scope) {
+          setState(() => _costFinished = true);
+        }
+      }
+    });
+  }
 
   @override
   void initState() {
@@ -55,19 +96,40 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       final currentFilter = ref.read(orderFilterProvider);
       if (currentTab == OrderTab.positions && currentFilter == 'SPOT') return;
 
+      final scope = ref.read(exchangeScopeProvider);
       final currentRead = currentTab == OrderTab.positions
-          ? ref.read(positionsFutureProvider)
-          : ref.read(ordersFutureProvider);
+          ? ref.read(scopedPositionsProvider(scope))
+          : ref.read(scopedOrdersProvider(scope));
       if (currentRead.isLoading ||
-          isTerminalOkxReadFailure(currentRead.asError?.error)) {
+          isTerminalAccountFailure(
+            ref
+                .read(exchangeRegistryProvider)
+                .firstWhere(
+                  (entry) => entry.profile.connectionId == scope.connectionId,
+                ),
+            currentRead.asError?.error,
+          )) {
         return;
       }
 
-      if (currentTab == OrderTab.positions) {
-        ref.invalidate(positionsFutureProvider);
-      } else {
-        ref.invalidate(ordersFutureProvider);
+      if (currentTab == OrderTab.positions &&
+          scope.exchange == ExchangeId.binance &&
+          (currentFilter == 'ALL' || currentFilter == 'MARGIN') &&
+          currentRead.asData != null) {
+        final accountRead = ref.read(scopedAccountProvider(scope));
+        if (accountRead.isLoading ||
+            isTerminalAccountFailure(
+              ref
+                  .read(exchangeRegistryProvider)
+                  .firstWhere(
+                    (entry) => entry.profile.connectionId == scope.connectionId,
+                  ),
+              accountRead.asError?.error,
+            )) {
+          return;
+        }
       }
+      _invalidateCurrentRead(scope, currentTab);
     });
   }
 
@@ -82,29 +144,74 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     final currentFilter = ref.read(orderFilterProvider);
     if (currentTab == OrderTab.positions && currentFilter == 'SPOT') return;
 
+    final scope = ref.read(exchangeScopeProvider);
     final currentRead = currentTab == OrderTab.positions
-        ? ref.read(positionsFutureProvider)
-        : ref.read(ordersFutureProvider);
+        ? ref.read(scopedPositionsProvider(scope))
+        : ref.read(scopedOrdersProvider(scope));
     if (currentRead.isLoading || _manualRefreshInFlight) return;
+    if (currentTab == OrderTab.positions &&
+        scope.exchange == ExchangeId.binance &&
+        (currentFilter == 'ALL' || currentFilter == 'MARGIN') &&
+        currentRead.asData != null &&
+        ref.read(scopedAccountProvider(scope)).isLoading) {
+      return;
+    }
 
     setState(() => _manualRefreshInFlight = true);
     try {
       if (currentTab == OrderTab.positions) {
-        ref.invalidate(positionsFutureProvider);
-        await ref.read(positionsFutureProvider.future);
+        _invalidateCurrentRead(scope, currentTab);
+        await ref.read(scopedPositionsProvider(scope).future);
       } else {
-        ref.invalidate(ordersFutureProvider);
-        await ref.read(ordersFutureProvider.future);
+        _invalidateCurrentRead(scope, currentTab);
+        await ref.read(scopedOrdersProvider(scope).future);
       }
     } catch (_) {
       // The current tab provider renders its read error.
     } finally {
+      if (mounted &&
+          scope.exchange == ExchangeId.binance &&
+          (currentFilter == 'ALL' || currentFilter == 'MARGIN') &&
+          ref.read(exchangeScopeProvider) == scope) {
+        final account = ref.read(scopedAccountProvider(scope)).valueOrNull;
+        if (account != null) _startCost(scope, account);
+      }
       if (mounted) setState(() => _manualRefreshInFlight = false);
+    }
+  }
+
+  void _invalidateCurrentRead(ExchangeScope scope, OrderTab tab) {
+    final adapter = ref
+        .read(exchangeRegistryProvider)
+        .firstWhere(
+          (entry) =>
+              entry.profile.connectionId == scope.connectionId &&
+              entry.profile.exchange == scope.exchange,
+        )
+        .adapter;
+    if (tab == OrderTab.positions) {
+      adapter.invalidatePositions(ref.invalidate);
+      ref.invalidate(scopedPositionsProvider(scope));
+      if (scope.exchange == ExchangeId.binance &&
+          (ref.read(orderFilterProvider) == 'ALL' ||
+              ref.read(orderFilterProvider) == 'MARGIN')) {
+        adapter.invalidateAccount(ref.invalidate);
+        ref.invalidate(scopedAccountProvider(scope));
+      }
+    } else {
+      adapter.invalidateOrders(ref.invalidate);
+      ref.invalidate(scopedOrdersProvider(scope));
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final activeScope = ref.watch(exchangeScopeProvider);
+    if (_activeCostScope != activeScope) {
+      _activeCostScope = activeScope;
+      _costScope = null;
+      _costFinished = false;
+    }
     final currentFilter = ref.watch(orderFilterProvider);
     final currentTab = ref.watch(orderTabProvider);
     final isDark = ref.watch(
@@ -114,23 +221,41 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     final timeZoneId = ref.watch(appTimeZoneProvider);
     final exchangeRate = ref.watch(vndExchangeRateProvider).value ?? 25400.0;
     final isBalanceHidden = ref.watch(hideBalanceProvider);
-    final tradeSessionState = ref.watch(tradeSessionProvider);
-    final isTradeAuthenticated = tradeSessionState.isAuthenticated;
+    final scope = ref.watch(exchangeScopeProvider);
+    final backendFeaturesEnabled =
+        ref.watch(backendFeaturesEnabledProvider) &&
+        scope.exchange == ExchangeId.okx;
+    final tradeSessionState = backendFeaturesEnabled
+        ? ref.watch(tradeSessionProvider)
+        : null;
+    final isTradeAuthenticated = tradeSessionState?.isAuthenticated ?? false;
     final isCurrentReadLoading = switch (currentTab) {
       OrderTab.positions when currentFilter == 'SPOT' => false,
-      OrderTab.positions => ref.watch(positionsFutureProvider).isLoading,
-      _ => ref.watch(ordersFutureProvider).isLoading,
+      OrderTab.positions => ref.watch(scopedPositionsProvider(scope)).isLoading,
+      _ => ref.watch(scopedOrdersProvider(scope)).isLoading,
     };
 
     final palette = AppPalette.of(context);
     final bgColor = palette.background;
-    final textColor = palette.ink;
-    final textScale = MediaQuery.textScalerOf(context).scale(1.0);
-    final toolbarHeight =
-        MediaQuery.sizeOf(context).width <= 400 && textScale > 1
-        ? kToolbarHeight + (textScale - 1) * 24
-        : kToolbarHeight;
     final filterControls = OrderFilterControls(
+      binanceProducts: scope.exchange == ExchangeId.binance
+          ? ref
+                .watch(exchangeRegistryProvider)
+                .firstWhere(
+                  (entry) =>
+                      entry.profile.connectionId == scope.connectionId &&
+                      entry.profile.exchange == scope.exchange,
+                )
+                .adapter
+                .capabilities
+                .readableProducts
+                .where(
+                  (product) =>
+                      ref.watch(binanceSpotMarginAvailableProvider) ||
+                      product == 'SWAP',
+                )
+                .toList()
+          : null,
       currentTab: currentTab,
       currentFilter: currentFilter,
       isDark: isDark,
@@ -144,79 +269,101 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
 
     return Scaffold(
       backgroundColor: bgColor,
-      appBar: AppBar(
-        backgroundColor: bgColor,
-        foregroundColor: textColor,
-        elevation: 0,
-        centerTitle: true,
-        toolbarHeight: toolbarHeight,
-        title: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Flexible(
-              child: Text(
-                'Quản lý Giao dịch',
-                maxLines: 2,
-                softWrap: true,
-                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+      body: SafeArea(
+        child: NavigationContentFrame(
+          child: NestedScrollView(
+            headerSliverBuilder: (context, innerBoxIsScrolled) => [
+              SliverList(
+                delegate: SliverChildListDelegate([
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
+                    child: Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            'Lệnh',
+                            style: TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        const Flexible(child: ScopeBar(compact: true)),
+                        if (backendFeaturesEnabled)
+                          Tooltip(
+                            message: isTradeAuthenticated
+                                ? 'Đã đăng nhập'
+                                : 'Chưa đăng nhập',
+                            child: Semantics(
+                              label: isTradeAuthenticated
+                                  ? 'Đã đăng nhập'
+                                  : 'Chưa đăng nhập',
+                              child: Icon(
+                                isTradeAuthenticated
+                                    ? Icons.verified_user_outlined
+                                    : Icons.lock_outline,
+                                size: 18,
+                                color: isTradeAuthenticated
+                                    ? palette.positive
+                                    : Theme.of(
+                                        context,
+                                      ).colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                        ManualRefreshButton(
+                          buttonKey: const Key('orders-manual-refresh'),
+                          onRefresh:
+                              currentTab == OrderTab.positions &&
+                                  currentFilter == 'SPOT'
+                              ? null
+                              : _refreshCurrentRead,
+                          isBusy:
+                              _manualRefreshInFlight || isCurrentReadLoading,
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (currentTab == OrderTab.positions &&
+                      backendFeaturesEnabled)
+                    TradeAccountControls(filterControls: filterControls)
+                  else
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                      child: filterControls,
+                    ),
+
+                  if (currentTab == OrderTab.positions)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 8,
+                      ),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Vị thế của ${ref.watch(exchangeRegistryProvider).firstWhere((entry) => entry.profile.connectionId == scope.connectionId).profile.label} / Chính',
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ),
+                  Divider(height: 16, color: palette.border),
+                ]),
               ),
+            ],
+            body: _buildBodyContent(
+              context,
+              currentTab,
+              currentFilter,
+              isDark,
+              currency,
+              exchangeRate,
+              isBalanceHidden,
+              timeZoneId,
+              backendFeaturesEnabled,
             ),
-            const SizedBox(width: 6),
-            Tooltip(
-              message: isTradeAuthenticated ? 'Đã đăng nhập' : 'Chưa đăng nhập',
-              child: Semantics(
-                label: isTradeAuthenticated ? 'Đã đăng nhập' : 'Chưa đăng nhập',
-                child: Icon(
-                  isTradeAuthenticated
-                      ? Icons.verified_user_outlined
-                      : Icons.lock_outline,
-                  size: 18,
-                  color: isTradeAuthenticated
-                      ? palette.positive
-                      : Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          ManualRefreshButton(
-            buttonKey: const Key('orders-manual-refresh'),
-            onRefresh:
-                currentTab == OrderTab.positions && currentFilter == 'SPOT'
-                ? null
-                : _refreshCurrentRead,
-            isBusy: _manualRefreshInFlight || isCurrentReadLoading,
           ),
-        ],
-      ),
-      body: NavigationContentFrame(
-        child: Column(
-          children: [
-            if (currentTab == OrderTab.positions)
-              TradeAccountControls(filterControls: filterControls)
-            else
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-                child: filterControls,
-              ),
-
-            Divider(height: 16, color: palette.border),
-
-            // --- Nội dung chính ---
-            Expanded(
-              child: _buildBodyContent(
-                context,
-                currentTab,
-                currentFilter,
-                isDark,
-                currency,
-                exchangeRate,
-                isBalanceHidden,
-                timeZoneId,
-              ),
-            ),
-          ],
         ),
       ),
     );
@@ -231,6 +378,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     double exchangeRate,
     bool isBalanceHidden,
     String timeZoneId,
+    bool backendFeaturesEnabled,
   ) {
     final palette = AppPalette.forBrightness(isDark);
     if (currentTab == OrderTab.positions) {
@@ -249,7 +397,9 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
         );
       }
 
-      final positionsAsyncValue = ref.watch(positionsFutureProvider);
+      final positionsAsyncValue = ref.watch(
+        scopedPositionsProvider(ref.watch(exchangeScopeProvider)),
+      );
       return Column(
         children: [
           Expanded(
@@ -259,35 +409,120 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
               onRefresh: _refreshCurrentRead,
               child: positionsAsyncValue.when(
                 skipLoadingOnReload: false,
-                loading: () => Center(
-                  child: CircularProgressIndicator(color: palette.ink),
-                ),
-                error: (error, stack) => Center(
-                  child: Text(
-                    'Lỗi: $error',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 12, color: palette.negative),
-                  ),
+                loading: () => const AppSkeleton(itemHeight: 112),
+                error: (error, stack) => AccountStateView.fromError(
+                  error: error,
+                  registration: ref
+                      .read(exchangeRegistryProvider)
+                      .firstWhere(
+                        (entry) =>
+                            entry.profile.connectionId ==
+                            ref.read(exchangeScopeProvider).connectionId,
+                      ),
+                  onRetry: _refreshCurrentRead,
                 ),
                 data: (positions) {
-                  if (positions.isEmpty) {
+                  final scope = ref.watch(exchangeScopeProvider);
+                  final showMargin =
+                      scope.exchange == ExchangeId.binance &&
+                      (filter == 'ALL' || filter == 'MARGIN');
+                  final accountAsync = showMargin
+                      ? ref.watch(scopedAccountProvider(scope))
+                      : null;
+                  final account = accountAsync?.valueOrNull;
+                  if (_costScope != scope) _costFinished = false;
+                  if (account != null && _costScope != scope) {
+                    _startCost(scope, account);
+                  }
+                  final costView = showMargin
+                      ? ref.watch(binanceCostStateProvider).valueOrNull
+                      : null;
+                  final rows =
+                      account?.marginRows ?? const <MarginAccountRow>[];
+                  final marginUnavailable =
+                      account?.walletResults.any(
+                        (result) =>
+                            !result.available &&
+                            (result.wallet == 'Cross Margin' ||
+                                result.wallet == 'Isolated Margin'),
+                      ) ??
+                      false;
+                  final notice = marginUnavailable
+                      ? PartialAccountNotice(
+                          account: account!,
+                          spotMarginAvailable: ref.watch(
+                            binanceSpotMarginAvailableProvider,
+                          ),
+                        )
+                      : null;
+                  if (positions.isEmpty && rows.isEmpty) {
+                    if (accountAsync != null) {
+                      if (accountAsync.isLoading && account == null) {
+                        return _scrollableState(
+                          Center(
+                            child: CircularProgressIndicator(
+                              color: palette.ink,
+                            ),
+                          ),
+                        );
+                      }
+                      if (accountAsync.hasError) {
+                        return _scrollableState(
+                          AccountStateView.fromError(
+                            error: accountAsync.error!,
+                            registration: ref
+                                .read(exchangeRegistryProvider)
+                                .firstWhere(
+                                  (entry) =>
+                                      entry.profile.connectionId ==
+                                      scope.connectionId,
+                                ),
+                            onRetry: _refreshCurrentRead,
+                          ),
+                        );
+                      }
+                    }
+                    if (notice != null) return _scrollableState(notice);
                     return _buildEmptyState(
-                      'Không có vị thế nào đang mở.',
+                      scope.exchange == ExchangeId.okx
+                          ? 'Không có vị thế nào đang mở.'
+                          : 'Chưa có vị thế trên ${ref.watch(exchangeRegistryProvider).firstWhere((entry) => entry.profile.connectionId == scope.connectionId).profile.label}',
                       isDark,
                     );
                   }
                   return ResponsiveOrderGrid(
-                    children: positions
-                        .map(
-                          (position) => _buildPositionCard(
-                            position,
-                            isDark,
-                            currency,
-                            exchangeRate,
-                            isBalanceHidden,
-                          ),
-                        )
-                        .toList(growable: false),
+                    children: [
+                      if (notice != null) notice,
+                      ...rows.map((row) {
+                        final estimate =
+                            account != null &&
+                                costView != null &&
+                                !isBalanceHidden
+                            ? estimatedMargin(
+                                costView,
+                                _costFinished,
+                                row,
+                                account,
+                              )
+                            : null;
+                        final vnd = currency == 'VNĐ';
+                        return MarginAccountCard(
+                          row: row,
+                          estimate: estimate,
+                          rate: vnd ? exchangeRate : 1,
+                          unit: vnd ? 'đ' : 'USDT',
+                        );
+                      }),
+                      ...positions.map(
+                        (position) => _buildPositionCard(
+                          position,
+                          isDark,
+                          currency,
+                          exchangeRate,
+                          isBalanceHidden,
+                        ),
+                      ),
+                    ],
                   );
                 },
               ),
@@ -296,21 +531,26 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
         ],
       );
     } else {
-      final ordersAsyncValue = ref.watch(ordersFutureProvider);
+      final ordersAsyncValue = ref.watch(
+        scopedOrdersProvider(ref.watch(exchangeScopeProvider)),
+      );
       final orderList = RefreshIndicator(
         color: palette.ink,
         backgroundColor: palette.raised,
         onRefresh: _refreshCurrentRead,
         child: ordersAsyncValue.when(
           skipLoadingOnReload: false,
-          loading: () =>
-              Center(child: CircularProgressIndicator(color: palette.ink)),
-          error: (error, stack) => Center(
-            child: Text(
-              'Lỗi: $error',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 12, color: palette.negative),
-            ),
+          loading: () => const AppSkeleton(itemHeight: 112),
+          error: (error, stack) => AccountStateView.fromError(
+            error: error,
+            registration: ref
+                .read(exchangeRegistryProvider)
+                .firstWhere(
+                  (entry) =>
+                      entry.profile.connectionId ==
+                      ref.read(exchangeScopeProvider).connectionId,
+                ),
+            onRetry: _refreshCurrentRead,
           ),
           data: (orders) {
             if (orders.isEmpty) {
@@ -332,6 +572,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                       exchangeRate,
                       isBalanceHidden,
                       timeZoneId,
+                      backendFeaturesEnabled,
                     ),
                   )
                   .toList(),
@@ -342,7 +583,29 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       if (currentTab == OrderTab.pending) {
         return Column(
           children: [
-            const TradeAccountControls(showCloseAll: false),
+            if (backendFeaturesEnabled)
+              const TradeAccountControls(showCloseAll: false),
+            Expanded(child: orderList),
+          ],
+        );
+      }
+      final scope = ref.watch(exchangeScopeProvider);
+      if (scope.exchange == ExchangeId.binance) {
+        final coverage = ref.watch(binanceHistorySymbolsProvider(scope));
+        return Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text(
+                coverage.when(
+                  data: (symbols) => symbols.isEmpty
+                      ? 'Chưa có cặp giao dịch để xem lịch sử.'
+                      : 'Lịch sử của: ${symbols.join(', ')}',
+                  loading: () => 'Đang tải phạm vi lịch sử',
+                  error: (_, __) => 'Không thể xác định phạm vi lịch sử.',
+                ),
+              ),
+            ),
             Expanded(child: orderList),
           ],
         );
@@ -350,6 +613,16 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       return orderList;
     }
   }
+
+  Widget _scrollableState(Widget child) => LayoutBuilder(
+    builder: (context, constraints) => SingleChildScrollView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(minHeight: constraints.maxHeight),
+        child: Center(child: child),
+      ),
+    ),
+  );
 
   Widget _buildEmptyState(String message, bool isDark) {
     final palette = AppPalette.forBrightness(isDark);
@@ -500,14 +773,14 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
 
   // --- Thẻ hiển thị VỊ THẾ MỞ ---
   Widget _buildPositionCard(
-    OkxPosition position,
+    ExchangePosition position,
     bool isDark,
     String currency,
     double exchangeRate,
     bool isBalanceHidden,
   ) {
     final palette = AppPalette.forBrightness(isDark);
-    final posSide = position.posSide.toUpperCase();
+    final posSide = (position.side ?? '').toUpperCase();
     final isLong = posSide == 'LONG';
 
     final sideColor = posSide == 'NET'
@@ -515,14 +788,14 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
         : (isLong ? palette.positive : palette.negative);
     final sideText = posSide == 'NET' ? 'VỊ THẾ' : (isLong ? 'LONG' : 'SHORT');
 
-    final pnl = double.tryParse(position.upl);
+    final pnl = double.tryParse((position.unrealizedPnl ?? ''));
     final pnlColor = resolvePnlColor(pnl, palette, hidden: isBalanceHidden);
     final pnlSign = pnl == null ? '' : (pnl >= 0 ? '+' : '');
     final pnlFormatted = pnl == null
         ? '--'
         : NumberFormat("#,##0.00", "en_US").format(pnl.abs());
 
-    final pnlRatio = double.tryParse(position.uplRatio);
+    final pnlRatio = double.tryParse((position.unrealizedPnlRatio ?? ''));
     final pnlRatioPercent = pnlRatio == null
         ? '--'
         : '${pnlRatio >= 0 ? '+' : ''}${(pnlRatio * 100).toStringAsFixed(2)}%';
@@ -532,11 +805,13 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       hidden: isBalanceHidden,
     );
 
-    final String baseCoin = position.instId.split('-').isNotEmpty
-        ? position.instId.split('-').first
-        : '?';
-    final instrumentLabel = position.instId.split('-').take(2).join();
-    final instrumentType = position.instType.toUpperCase();
+    final baseCoin = _instrumentBase(position.key);
+    final instrumentLabel = _instrumentLabel(position.key);
+    final instrumentType =
+        position.key.exchange == ExchangeId.binance &&
+            position.productLabel.toUpperCase() == 'SWAP'
+        ? 'USDⓈ-M'
+        : position.productLabel.toUpperCase();
 
     // Bảng màu cho Card
     final cardColor = palette.raised;
@@ -575,7 +850,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                         baseCoin: baseCoin,
                         instrumentLabel: instrumentLabel,
                         instrumentType: instrumentType,
-                        instrumentFontSize: 14,
+                        instrumentFontSize: 16,
                         iconBackgroundColor: iconBgColor,
                         textColor: textColor,
                         badgeBackgroundColor: palette.surface,
@@ -632,9 +907,9 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                               ),
                             ),
                             child: Text(
-                              position.lever.isEmpty
+                              (position.leverage ?? '').isEmpty
                                   ? '--'
-                                  : '${position.lever}x',
+                                  : '${(position.leverage ?? '')}x',
                               style: TextStyle(
                                 color: palette.ink,
                                 fontSize: 12,
@@ -649,23 +924,23 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                 ),
               ],
             ),
-            if (position.instType.isNotEmpty) ...[
+            if (position.productLabel.isNotEmpty) ...[
               const SizedBox(height: 6),
               Wrap(
                 spacing: 8,
                 runSpacing: 2,
                 children: [
                   Text(
-                    '${position.direction.toUpperCase()} · ${position.size}',
+                    '${(position.direction ?? '').toUpperCase()} · ${position.size ?? ''}',
                     style: TextStyle(color: subtitleColor, fontSize: 12),
                   ),
                   Text(
-                    '${position.instType} · ${position.mgnMode.toUpperCase()}',
+                    '${position.key.exchange == ExchangeId.binance && position.productLabel.toUpperCase() == 'SWAP' ? 'USDⓈ-M' : position.productLabel} · ${(position.marginMode ?? '').toUpperCase()}',
                     style: TextStyle(color: subtitleColor, fontSize: 12),
                   ),
-                  if (position.marginCurrency.isNotEmpty)
+                  if ((position.marginCurrency ?? '').isNotEmpty)
                     Text(
-                      'Ký quỹ ${position.marginCurrency}',
+                      'Ký quỹ ${(position.marginCurrency ?? '')}',
                       style: TextStyle(color: subtitleColor, fontSize: 12),
                     ),
                 ],
@@ -693,8 +968,8 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                       '$pnlSign$pnlFormatted ',
                       style: TextStyle(
                         color: pnlColor,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 18,
                       ),
                     ),
                     Text(
@@ -735,7 +1010,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        formatAdaptiveNumber(position.avgPx),
+                        formatAdaptiveNumber((position.entry ?? '')),
                         style: TextStyle(
                           fontWeight: FontWeight.w600,
                           fontSize: 12,
@@ -755,7 +1030,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        formatAdaptiveNumber(position.markPx),
+                        formatAdaptiveNumber((position.mark ?? '')),
                         style: TextStyle(
                           fontWeight: FontWeight.w600,
                           fontSize: 12,
@@ -775,9 +1050,11 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        position.liqPx.isEmpty
+                        (position.liquidation ?? '').isEmpty
                             ? '--'
-                            : formatAdaptiveNumber(position.liqPx),
+                            : formatAdaptiveNumber(
+                                (position.liquidation ?? ''),
+                              ),
                         style: TextStyle(
                           fontWeight: FontWeight.w600,
                           fontSize: 12,
@@ -795,17 +1072,17 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     );
   }
 
-  String _nativePositionDisplayKey(OkxPosition position) {
-    if (position.positionId.isNotEmpty) {
-      return 'native-pos:${position.positionId}';
+  String _nativePositionDisplayKey(ExchangePosition position) {
+    if ((position.positionId ?? '').isNotEmpty) {
+      return 'native-pos:${(position.positionId ?? '')}';
     }
     return jsonEncode([
-      position.instId,
-      position.instType,
-      position.posSide,
-      position.mgnMode,
-      position.marginCurrency,
-      position.positionCurrency,
+      position.key.nativeId,
+      position.productLabel,
+      (position.side ?? ''),
+      (position.marginMode ?? ''),
+      (position.marginCurrency ?? ''),
+      (position.positionCurrency ?? ''),
     ]);
   }
 
@@ -847,30 +1124,39 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
   }
 
   Widget _buildPendingOrderCard(
-    OkxOrder order,
+    ExchangeOrder order,
     bool isDark,
     String currency,
     double exchangeRate,
     bool isBalanceHidden,
     String timeZoneId,
+    bool backendFeaturesEnabled,
   ) {
     final palette = AppPalette.forBrightness(isDark);
-    final isBuy = order.side.toLowerCase() == 'buy';
+    final isBuy = (order.side ?? '').toLowerCase() == 'buy';
     final sideColor = isBuy ? palette.positive : palette.negative;
     final sideText = isBuy ? 'MUA' : 'BÁN';
-    final timeString = formatOrderTimestamp(order.cTime, timeZoneId);
-    final baseCoin = order.instId.split('-').first;
-    final instrumentLabel = order.instId.split('-').take(2).join();
+    final timeString = formatOrderTimestamp(
+      (order.createdAtMs ?? ''),
+      timeZoneId,
+    );
+    final baseCoin = _instrumentBase(order.key);
+    final instrumentLabel = _instrumentLabel(order.key);
     final cardColor = palette.raised;
     final borderColor = palette.border;
     final textColor = palette.ink;
     final subtitleColor = palette.muted;
     final iconBgColor = palette.surface;
     final notional = resolveOrderNotional(order);
-    final leverage = order.lever.isNotEmpty && order.lever != '0'
-        ? order.lever
+    final leverage =
+        (order.leverage ?? '').isNotEmpty && (order.leverage ?? '') != '0'
+        ? (order.leverage ?? '')
         : null;
-    final instrumentType = order.instType.toUpperCase();
+    final instrumentType =
+        order.key.exchange == ExchangeId.binance &&
+            order.productLabel.toUpperCase() == 'SWAP'
+        ? 'USDⓈ-M'
+        : order.productLabel.toUpperCase();
 
     return Card(
       elevation: 0,
@@ -1021,7 +1307,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
               rowName: 'state',
               label: 'Trạng thái',
               value: Text(
-                order.state.toUpperCase(),
+                (order.state ?? '').toUpperCase(),
                 maxLines: 1,
                 softWrap: false,
                 style: TextStyle(
@@ -1037,7 +1323,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
               rowName: 'price',
               label: 'Giá',
               value: Text(
-                formatAdaptiveNumber(order.px),
+                formatAdaptiveNumber((order.price ?? '')),
                 maxLines: 1,
                 softWrap: false,
                 style: TextStyle(
@@ -1053,7 +1339,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
               rowName: 'quantity',
               label: 'KL',
               value: Text(
-                formatAdaptiveNumber(order.sz),
+                formatAdaptiveNumber((order.quantity ?? '')),
                 maxLines: 1,
                 softWrap: false,
                 style: TextStyle(
@@ -1102,8 +1388,10 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
               labelColor: subtitleColor,
               crossAxisAlignment: CrossAxisAlignment.start,
             ),
-            if (isActiveLimitOrder(order))
-              OrderCancellationControl(order: order),
+            if (backendFeaturesEnabled &&
+                order.native is OkxOrder &&
+                isActiveLimitOrder(order.native as OkxOrder))
+              OrderCancellationControl(order: order.native as OkxOrder),
           ],
         ),
       ),
@@ -1112,13 +1400,14 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
 
   // --- Thẻ hiển thị LỆNH ---
   Widget _buildOrderCard(
-    OkxOrder order,
+    ExchangeOrder order,
     OrderTab currentTab,
     bool isDark,
     String currency,
     double exchangeRate,
     bool isBalanceHidden,
     String timeZoneId,
+    bool backendFeaturesEnabled,
   ) {
     if (currentTab == OrderTab.pending) {
       return _buildPendingOrderCard(
@@ -1128,23 +1417,30 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
         exchangeRate,
         isBalanceHidden,
         timeZoneId,
+        backendFeaturesEnabled,
       );
     }
 
     final palette = AppPalette.forBrightness(isDark);
-    final isBuy = order.side.toLowerCase() == 'buy';
+    final isBuy = (order.side ?? '').toLowerCase() == 'buy';
     final sideColor = isBuy ? palette.positive : palette.negative;
     final sideText = isBuy ? 'MUA' : 'BÁN';
 
-    final timeString = formatOrderTimestamp(order.cTime, timeZoneId);
+    final timeString = formatOrderTimestamp(
+      (order.createdAtMs ?? ''),
+      timeZoneId,
+    );
 
-    final String baseCoin = order.instId.split('-').isNotEmpty
-        ? order.instId.split('-').first
-        : '?';
-    final instrumentLabel = order.instId.split('-').take(2).join();
-    final instrumentType = order.instType.toUpperCase();
-    final leverage = order.lever.isNotEmpty && order.lever != '0'
-        ? order.lever
+    final baseCoin = _instrumentBase(order.key);
+    final instrumentLabel = _instrumentLabel(order.key);
+    final instrumentType =
+        order.key.exchange == ExchangeId.binance &&
+            order.productLabel.toUpperCase() == 'SWAP'
+        ? 'USDⓈ-M'
+        : order.productLabel.toUpperCase();
+    final leverage =
+        (order.leverage ?? '').isNotEmpty && (order.leverage ?? '') != '0'
+        ? (order.leverage ?? '')
         : null;
 
     // Bảng màu
@@ -1256,7 +1552,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      order.state.toUpperCase(),
+                      (order.state ?? '').toUpperCase(),
                       style: TextStyle(
                         color: subtitleColor,
                         fontWeight: FontWeight.bold,
@@ -1274,7 +1570,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     Text(
-                      'Giá: ${formatAdaptiveNumber(order.px)}',
+                      'Giá: ${formatAdaptiveNumber((order.price ?? ''))}',
                       style: TextStyle(
                         fontWeight: FontWeight.w500,
                         fontSize: 12,
@@ -1283,7 +1579,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                     ),
                     const SizedBox(height: AppTokens.space1),
                     Text(
-                      'KL: ${formatAdaptiveNumber(order.sz)}',
+                      'KL: ${formatAdaptiveNumber((order.quantity ?? ''))}',
                       style: TextStyle(
                         fontWeight: FontWeight.w500,
                         fontSize: 12,
@@ -1330,8 +1626,11 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
               textColor: textColor,
               subtitleColor: subtitleColor,
             ),
-            if (currentTab == OrderTab.pending && isActiveLimitOrder(order))
-              OrderCancellationControl(order: order),
+            if (backendFeaturesEnabled &&
+                currentTab == OrderTab.pending &&
+                order.native is OkxOrder &&
+                isActiveLimitOrder(order.native as OkxOrder))
+              OrderCancellationControl(order: order.native as OkxOrder),
           ],
         ),
       ),

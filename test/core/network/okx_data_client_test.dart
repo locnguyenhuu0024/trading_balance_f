@@ -15,7 +15,9 @@ void main() {
     test(
       'close during a signed interceptor keeps the final guard installed',
       () async {
-        final adapter = _RecordingAdapter((_) => _WireResponse(200, _success));
+        final adapter = _RecordingAdapter(
+          (_) => const _WireResponse(200, _success),
+        );
         final interceptorReached = Completer<void>();
         final releaseInterceptor = Completer<void>();
         final dio = Dio()..httpClientAdapter = adapter;
@@ -57,7 +59,9 @@ void main() {
     );
 
     test('close during credential loading prevents a later send', () async {
-      final adapter = _RecordingAdapter((_) => _WireResponse(200, _success));
+      final adapter = _RecordingAdapter(
+        (_) => const _WireResponse(200, _success),
+      );
       final storage = _DelayedFixtureStorage();
       final client = _client(adapter, storage: storage);
 
@@ -104,7 +108,7 @@ void main() {
 
         final first = client.get('/api/v5/account/balance');
         await adapter.firstStarted.future;
-        adapter.replyFirst(_WireResponse(200, _success));
+        adapter.replyFirst(const _WireResponse(200, _success));
         expect((await first).statusCode, 200);
 
         final queued = client.get('/api/v5/account/positions');
@@ -140,7 +144,7 @@ void main() {
       final request = client.get('/api/v5/account/balance');
       await adapter.requestStarted.future;
       client.dispose();
-      adapter.reply(_WireResponse(200, _success));
+      adapter.reply(const _WireResponse(200, _success));
 
       await expectLater(
         request,
@@ -163,7 +167,9 @@ void main() {
     test(
       'normal public and current-generation private reads still succeed',
       () async {
-        final adapter = _RecordingAdapter((_) => _WireResponse(200, _success));
+        final adapter = _RecordingAdapter(
+          (_) => const _WireResponse(200, _success),
+        );
         final storage = _FixtureStorage.withCredentials();
         final client = OkxDataClient(
           dio: Dio()..httpClientAdapter = adapter,
@@ -209,7 +215,7 @@ void main() {
         expect(_okxCredentialHeaderCount(adapter.requests.single.headers), 4);
 
         client.dispose();
-        adapter.replyFirst(_WireResponse(200, _success));
+        adapter.replyFirst(const _WireResponse(200, _success));
         await expectLater(
           managed,
           throwsA(
@@ -251,7 +257,9 @@ void main() {
 
   group('RED-001', () {
     test('rejects missing private credentials before sending', () async {
-      final adapter = _RecordingAdapter((_) => _WireResponse(200, _success));
+      final adapter = _RecordingAdapter(
+        (_) => const _WireResponse(200, _success),
+      );
       final storage = _FixtureStorage();
       final client = _client(adapter, storage: storage);
 
@@ -271,7 +279,7 @@ void main() {
 
     test('rejects unregistered routes and caller bearer headers', () async {
       final unregisteredAdapter = _RecordingAdapter(
-        (_) => _WireResponse(200, _success),
+        (_) => const _WireResponse(200, _success),
       );
       final unregisteredClient = _client(unregisteredAdapter);
       await expectLater(
@@ -288,7 +296,7 @@ void main() {
       unregisteredClient.dispose();
 
       final headerAdapter = _RecordingAdapter(
-        (_) => _WireResponse(200, _success),
+        (_) => const _WireResponse(200, _success),
       );
       final dio = Dio()
         ..options.headers['Authorization'] = 'Bearer backend-token';
@@ -322,7 +330,7 @@ void main() {
 
         for (final mutate in mutations) {
           final adapter = _RecordingAdapter(
-            (_) => _WireResponse(200, _success),
+            (_) => const _WireResponse(200, _success),
           );
           final dio = Dio()..httpClientAdapter = adapter;
           dio.interceptors.add(
@@ -353,7 +361,9 @@ void main() {
     test(
       'rejects direct Dio.fetch without a client authorization record',
       () async {
-        final adapter = _RecordingAdapter((_) => _WireResponse(200, _success));
+        final adapter = _RecordingAdapter(
+          (_) => const _WireResponse(200, _success),
+        );
         final dio = Dio()..httpClientAdapter = adapter;
         final client = OkxDataClient(dio: dio);
 
@@ -386,7 +396,7 @@ void main() {
       final inFlight = client.get('/api/v5/account/balance');
       await adapter.requestStarted.future;
       await storage.rotate();
-      adapter.reply(_WireResponse(200, _success));
+      adapter.reply(const _WireResponse(200, _success));
 
       await expectLater(
         inFlight,
@@ -425,7 +435,7 @@ void main() {
         final inFlight = client.get('/api/v5/account/balance');
         await adapter.requestStarted.future;
         final queued = client.get('/api/v5/account/positions');
-        adapter.reply(_WireResponse(200, _success));
+        adapter.reply(const _WireResponse(200, _success));
         await inFlight;
         await delayStarted.future;
         await storage.rotate();
@@ -517,7 +527,7 @@ void main() {
         ),
       );
       await adapter.secondStarted.future;
-      adapter.reply(1, _WireResponse(200, _success));
+      adapter.reply(1, const _WireResponse(200, _success));
 
       expect((await second).statusCode, 200);
       expect(adapter.requests, hasLength(2));
@@ -529,7 +539,7 @@ void main() {
       'maps OKX code 50011 into authenticated coordinator backoff',
       () async {
         final adapter = _RecordingAdapter(
-          (_) => _WireResponse(200, const {
+          (_) => const _WireResponse(200, {
             'code': '50011',
             'msg': 'private detail',
           }),
@@ -612,7 +622,9 @@ void main() {
     test(
       'public GET uses fixed HTTPS origin without storage or backend session',
       () async {
-        final adapter = _RecordingAdapter((_) => _WireResponse(200, _success));
+        final adapter = _RecordingAdapter(
+          (_) => const _WireResponse(200, _success),
+        );
         final storage = _FixtureStorage.withCredentials();
         final client = OkxDataClient(
           dio: Dio()..httpClientAdapter = adapter,
@@ -637,7 +649,9 @@ void main() {
     test(
       'public GET succeeds when no credential storage is provided',
       () async {
-        final adapter = _RecordingAdapter((_) => _WireResponse(200, _success));
+        final adapter = _RecordingAdapter(
+          (_) => const _WireResponse(200, _success),
+        );
         final client = _client(adapter);
 
         final response = await client.get('/api/v5/public/instruments');
@@ -654,7 +668,9 @@ void main() {
     test(
       'private GET signs the exact encoded query for the current generation',
       () async {
-        final adapter = _RecordingAdapter((_) => _WireResponse(200, _success));
+        final adapter = _RecordingAdapter(
+          (_) => const _WireResponse(200, _success),
+        );
         final storage = _FixtureStorage.withCredentials();
         final coordinator = RequestCoordinator(
           minimumSpacing: Duration.zero,
@@ -672,7 +688,7 @@ void main() {
         );
 
         final request = adapter.requests.single;
-        final target = '/api/v5/account/balance?detail=a+b&instId=BTC-USDT';
+        const target = '/api/v5/account/balance?detail=a+b&instId=BTC-USDT';
         final timestamp = request.headers['OK-ACCESS-TIMESTAMP'] as String;
         final expectedSignature = base64Encode(
           Hmac(
@@ -786,7 +802,7 @@ class _DelayedFixtureStorage extends _FixtureStorage {
 }
 
 class _WireResponse {
-  const _WireResponse(this.statusCode, this.body, {this.headers = const {}});
+  const _WireResponse(this.statusCode, this.body) : headers = const {};
 
   final int statusCode;
   final Object body;

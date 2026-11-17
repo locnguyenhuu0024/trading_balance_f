@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import '../../support/backend_features_override.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -97,7 +98,7 @@ TradeSession _session(String token) => TradeSession(
   expiresAt: DateTime.now().add(const Duration(hours: 1)),
 );
 
-OkxPosition _position() => OkxPosition(
+OkxPosition _position() => const OkxPosition(
   instId: 'BTC-USDT-SWAP',
   instType: 'SWAP',
   posSide: 'net',
@@ -106,7 +107,7 @@ OkxPosition _position() => OkxPosition(
   signedSize: '2',
   direction: 'long',
   mgnMode: 'isolated',
-  identity: const {
+  identity: {
     'instrumentType': 'SWAP',
     'instrumentId': 'BTC-USDT-SWAP',
     'positionId': 'position-1',
@@ -116,9 +117,9 @@ OkxPosition _position() => OkxPosition(
 );
 
 class _CancellationApi implements TradeApi {
-  _CancellationApi({this.configured = true});
+  _CancellationApi();
 
-  final bool configured;
+  final bool configured = true;
   @override
   bool get isConfigured => configured;
   @override
@@ -265,6 +266,7 @@ class _Fixture {
        ) {
     container = ProviderContainer(
       overrides: [
+        backendFeaturesEnabledTestOverride,
         tradeApiProvider.overrideWithValue(api),
         tradeSessionProvider.overrideWith((ref) => sessionController),
         ordersFutureProvider.overrideWith((ref) {

@@ -155,6 +155,7 @@ def record_attempt_event(project: Path, manifest: dict, kind: str, attempt_id: s
     if kind not in ("ATTEMPT_STARTED", "ATTEMPT_FINISHED"):
         raise LedgerError("Invalid implementation attempt transition")
     trial = manifest.get("terra_trial")
+    override = manifest.get("route_override")
     if kind == "ATTEMPT_STARTED":
         record_planned_task(project, manifest["approved_plan_id"], manifest["task_id"],
                             domain=manifest.get("domain", "unspecified"))
@@ -162,7 +163,7 @@ def record_attempt_event(project: Path, manifest: dict, kind: str, attempt_id: s
                        attempt_id=attempt_id, status=status, duration_seconds=duration_seconds,
                        model=manifest["model"], effort=manifest["effort"],
                        domain=manifest.get("domain", "unspecified"),
-                       experiment_id=trial["experiment_id"] if trial else None)
+                       experiment_id=(trial["experiment_id"] if trial else (override["approval_id"] if override else None)))
 
 
 def summarize(events: list[dict]) -> dict:
@@ -171,6 +172,7 @@ def summarize(events: list[dict]) -> dict:
     attempted = set()
     attempts = {}
     audits = {}
+    per_attempt_audits = {}
     claude_work = set()
     by_model = {}
     planning_attempts = {}
@@ -207,15 +209,41 @@ def summarize(events: list[dict]) -> dict:
             attempt["duration"] = ev.get("duration_seconds")
         if kind == "AUDIT_COMPLETED":
             audits[key] = ev
+            aid = ev.get("attempt_id")
+            if aid and aid not in per_attempt_audits:
+                per_attempt_audits[aid] = ev
     for x in attempts.values():
         label = x["model"] + "/" + x["effort"]
         rec = by_model.setdefault(label, {"attempts": 0, "finished": 0,
-                                           "observed_duration_seconds": 0.0})
+                                           "observed_duration_seconds": 0.0,
+                                           "audited_attempts": 0, "audit_pass": 0,
+                                           "audit_rework": 0, "audit_blocked": 0,
+                                           "first_attempt_audit_pass": 0})
         rec["attempts"] += 1
         if x["finished"]:
             rec["finished"] += 1
             if x["duration"] is not None:
                 rec["observed_duration_seconds"] += x["duration"]
+    first_by_task = {}
+    for aid, item in attempts.items():
+        first_by_task.setdefault(item["key"], aid)
+    for aid, event in per_attempt_audits.items():
+        attempt = attempts.get(aid)
+        if not attempt:
+            continue
+        key = (event["project_id"], event["approved_plan_id"], event["task_id"])
+        if key != attempt["key"]:
+            continue  # never attribute another task's audit to this model
+        row = by_model[attempt["model"] + "/" + attempt["effort"]]
+        row["audited_attempts"] += 1
+        if event["status"] == "PASS":
+            row["audit_pass"] += 1
+            if first_by_task[key] == aid:
+                row["first_attempt_audit_pass"] += 1
+        elif event["status"] == "REWORK":
+            row["audit_rework"] += 1
+        elif event["status"] == "BLOCKED":
+            row["audit_blocked"] += 1
     by_planning_model = {}
     for current in planning_attempts.values():
         label = str(current["model"]) + "/" + str(current["effort"])
@@ -229,12 +257,7 @@ def summarize(events: list[dict]) -> dict:
             if current["duration"] is not None:
                 rec["observed_duration_seconds"] += current["duration"]
     latest = {v: sum(a["status"] == v for a in audits.values()) for v in OUTCOMES}
-    first_pass = 0
-    for key, audit in audits.items():
-        if audit["status"] == "PASS":
-            atts = [aid for aid, a in attempts.items() if a["key"] == key]
-            if len(atts) == 1 and audit.get("attempt_id") == atts[0]:
-                first_pass += 1
+    first_pass = sum(x["first_attempt_audit_pass"] for x in by_model.values())
     return {"distinct_tasks_seen": len(tasks), "planned_tasks": len(planned),
             "attempted_tasks": len(attempted), "attempts_started": len(attempts),
             "attempts_finished": sum(x["finished"] for x in attempts.values()),
@@ -288,9 +311,13 @@ def main(argv=None):
                       **summarize(values)}
             if a.format == "csv":
                 buf = io.StringIO(); writer = csv.writer(buf)
-                writer.writerow(["model_effort", "attempts", "finished", "duration_seconds"])
+                writer.writerow(["model_effort", "attempts", "finished", "duration_seconds",
+                                 "audited_attempts", "audit_pass", "audit_rework",
+                                 "audit_blocked", "first_attempt_audit_pass"])
                 for model, row in sorted(result["by_requested_model_effort"].items()):
-                    writer.writerow([model, row["attempts"], row["finished"], row["observed_duration_seconds"]])
+                    writer.writerow([model, row["attempts"], row["finished"], row["observed_duration_seconds"],
+                                     row["audited_attempts"], row["audit_pass"], row["audit_rework"],
+                                     row["audit_blocked"], row["first_attempt_audit_pass"]])
                 print(buf.getvalue(), end="")
             else:
                 print(json.dumps(result, indent=2))

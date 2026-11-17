@@ -176,7 +176,7 @@ When the runtime supports child model/effort selection, the coordinator **must p
 
 
 Role binding is also mandatory:
-- `E0`/`E1`/`E2` work must be dispatched as `implementation_executor`; a reasoning/advisory child must not be used as the writer.
+- `E0`–`E5` work must be dispatched as `implementation_executor`; a reasoning/advisory child must not be used as the writer.
 - `R0`-`R5` work must remain read-only/advisory and must not mutate product/test/migration/generated-runtime behavior.
 - If the runtime exposes an agent profile/type selector, the coordinator must set the role-appropriate child type explicitly; if it exposes only a generic child primitive, the assigned role and write/read-only boundary must be explicit in the child contract.
 
@@ -340,13 +340,16 @@ Implementation-executor routing (the selected route must be explicitly bound at 
 
 | Class | Typical bounded implementation | Target |
 | --- | --- | --- |
-| `E0 — mechanical` | renames, DTO/mapping changes, straightforward fixture/test edits, obvious CRUD/wiring/type fixes, repetitive mechanical changes with very low decision entropy | `gpt-6-luna` / `high` |
-| `E1 — normal bounded` | normal service/repository/API/frontend implementation, clearly specified multi-file work, routine integration where the contract and invariants are already explicit | `gpt-6-luna` / `xhigh` **default implementation route** |
-| `E2 — complex bounded` | complex SQL, transaction/state-machine behavior, tricky algorithms, migration logic, many interacting invariants, or implementation where coding difficulty is high but product/architecture decisions are already resolved | `gpt-6-luna` / `max` |
+| `E0 — mechanical` | renames, mechanical edits, predictable fixtures, low-decision changes | `gpt-6-luna` / `xhigh` |
+| `E1 — simple bounded` | straightforward CRUD, mapping, isolated unit tests with explicit expected behavior | `gpt-6.1-terra` / `low` |
+| `E2 — routine` | bounded APIs/services and routine logic with clear acceptance criteria | `gpt-6.1-terra` / `medium` |
+| `E3 — multi-file integration` | multi-module implementation, integration or frontend work with explicit invariants | `gpt-6.1-terra` / `high` |
+| `E4 — hard bounded` | SQL, concurrency, transaction logic, multi-invariant debugging | `gpt-6.1-terra` / `xhigh` |
+| `E5 — exceptional bounded` | difficult algorithms/state machines or high-interaction invariants after architecture is settled | `gpt-6.1-terra` / `max` |
 
-### Approved Terra trial for bounded implementation (OptCodex v1.2.0)
+### Terra-first dynamic routing within fixed allowlist (OptCodex v1.4.0)
 
-Luna defaults remain E0 = `gpt-6-luna/high`, E1 = `gpt-6-luna/xhigh`, E2 = `gpt-6-luna/max`. Opt-in experiment routes: **E1 = `gpt-6.1-terra/high`** or **E2 = `gpt-6.1-terra/xhigh`** only. E0 cannot use Terra. The plan/task must record a distinct `experiment_id`, controlled reason `UI_VISUAL|HARD_DEBUG|LUNA_REWORK|E2_COMPLEX`, exact model/effort and affirmative, specific user approval of that trial on that task. The `terra_trial` manifest must include `user_approved: true` but the coordinator MUST independently check real authorization (this JSON flag is not proof). No implicit route escalation, model inheritance, or fallback when Terra is unavailable: BLOCKED_ROUTE.
+Executor routing follows validated EXECUTOR_ROUTING_POLICY.json contract v2: E0 Luna/xhigh, E1 Terra/low, E2 Terra/medium, E3 Terra/high, E4 Terra/xhigh, E5 Terra/max. Distinguish implementation entropy from planning tier. E5 is exceptional, never the default for a difficult-sounding task. All routes must explicitly bind model/effort, preserve approved scope, protected files, RED/GREEN, independent audit and final build, without silent fallback. Nondefault allowlisted routes require task-specific verified user approval.
 
 For fair A/B compare separate clean checkouts of the same base commit with the same approved SPEC/AC/tests; never run two writers on the same checkout. Keep RED/GREEN, Task Buildability, final build, protected file exclusions, independent audit and QA/explicit Git authorizations unchanged. Count unique logical task IDs separately from executor attempts/retries; record requested and only observed effective route, runtime duration and quota/tokens (unknown = null). Do not treat executor terminal output as audited PASS.
 
@@ -355,10 +358,10 @@ For fair A/B compare separate clean checkouts of the same base commit with the s
 
 
 Executor-routing rules:
-- Choose `E0`/`E1`/`E2` from **implementation entropy**, not task tier, file count, or perceived importance. A high-impact task can still be `E0` after the coordinator has made it mechanical; a small task can be `E2` if the coding itself is intricate.
-- Escalate `E0 -> E1 -> E2` only when observed implementation difficulty, failed attempts, or evidence shows the lower route is insufficient. Do not start at `E2` merely for safety when the task is mechanical.
-- If `E2` cannot complete the approved contract, the coordinator must diagnose **why** before selecting a stronger writer: implementation difficulty may justify an exceptional stronger executor, but requirement/design/architecture ambiguity returns to coordinator reasoning/replanning instead of blind writer escalation.
-- Do not route new implementation through legacy GPT-5.6 Terra by default. GPT-6 has no Terra tier; retain Terra only as a compatibility/runtime exception when concrete evidence requires it.
+- Choose `E0`–`E5` from **implementation entropy**, not task tier, file count, or perceived importance. A high-impact task can still be `E0` after the coordinator has made it mechanical; a small task can be `E2` if the coding itself is intricate.
+- Escalate `E0 -> E1 -> E2 -> E3 -> E4 -> E5` only when observed implementation difficulty, failed attempts, or evidence shows the lower route is insufficient. Do not start at `E5` merely for safety when the task is mechanical.
+- If `E5` cannot complete the approved contract, the coordinator must diagnose **why** before selecting a stronger writer: implementation difficulty may justify an exceptional stronger executor, but requirement/design/architecture ambiguity returns to coordinator reasoning/replanning instead of blind writer escalation.
+- Use only allowlisted `gpt-6.1-terra` for E1–E5; do not confuse this with legacy GPT-5.6 Terra or an unlisted GPT-6 model.
 
 
 

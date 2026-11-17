@@ -4,9 +4,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../../../../core/network/request_coordinator.dart';
-import '../../../../core/network/okx_data_client.dart';
-import '../../data/market_repository.dart';
+import '../../../../core/exchange/exchange_models.dart';
+import '../../../../core/exchange/exchange_registry.dart';
+import '../../../../core/exchange/exchange_scope.dart';
+import '../../../../core/exchange/market_source.dart';
 import '../../data/watchlist_store.dart';
 import '../../domain/models.dart';
 
@@ -43,6 +44,7 @@ class WatchlistController extends ChangeNotifier {
   WatchlistSnapshot _confirmedSnapshot;
   Future<void> _writeQueue = Future<void>.value();
   Future<void>? _loadFuture;
+  bool _disposed = false;
   bool _isLoaded = false;
   bool _isLoading = false;
   bool _isSaving = false;
@@ -55,6 +57,17 @@ class WatchlistController extends ChangeNotifier {
   bool get isSaving => _isSaving;
   String? get loadError => _loadError;
   String? get saveError => _saveError;
+
+  @override
+  void notifyListeners() {
+    if (!_disposed) super.notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
 
   Future<void> load() {
     if (_isLoaded) return Future<void>.value();
@@ -106,7 +119,7 @@ class WatchlistController extends ChangeNotifier {
   Future<WatchlistMutationResult> addInstrument(String instrumentId) async {
     if (!_isLoaded) return WatchlistMutationResult.notLoaded;
     final marketMode = _snapshot.marketMode;
-    if (!WatchlistStore.hasValidInstrumentId(marketMode, instrumentId)) {
+    if (!_store.hasValidInstrumentId(marketMode, instrumentId)) {
       return WatchlistMutationResult.invalidInstrument;
     }
     final selected = _snapshot.instrumentIdsFor(marketMode);
@@ -167,7 +180,7 @@ class WatchlistController extends ChangeNotifier {
   }) {
     if (!_isLoaded) return Future.value(WatchlistMutationResult.notLoaded);
     final targetMode = marketMode ?? _snapshot.marketMode;
-    if (!WatchlistStore.hasValidInstrumentId(targetMode, instrumentId)) {
+    if (!_store.hasValidInstrumentId(targetMode, instrumentId)) {
       return Future.value(WatchlistMutationResult.invalidInstrument);
     }
     return _enqueue((current) {
@@ -238,21 +251,25 @@ class _WatchlistUpdate {
   final WatchlistMutationResult unchangedResult;
 }
 
-final supportResistanceMarketRepositoryProvider =
-    Provider<SupportResistanceRepository>((ref) {
-      final client = ref.watch(okxDataClientProvider);
-      return SupportResistanceRepository(
-        client,
-        requestCoordinator: ref.watch(requestCoordinatorProvider),
-      );
-    });
+final supportResistanceMarketRepositoryProvider = Provider<MarketSource>((ref) {
+  final scope = ref.watch(exchangeScopeProvider);
+  return ref
+      .watch(exchangeRegistryProvider)
+      .firstWhere((entry) => entry.profile.connectionId == scope.connectionId)
+      .adapter
+      .market(ref);
+});
 
 final supportResistanceWatchlistProvider =
     ChangeNotifierProvider<WatchlistController>((ref) {
+      final scope = ref.watch(exchangeScopeProvider);
       final repository = ref.watch(supportResistanceMarketRepositoryProvider);
       final controller = WatchlistController(
         store: WatchlistStore(
-          storage: DeferredSharedPreferencesWatchlistStorage(),
+          exchange: scope.exchange,
+          storage: DeferredSharedPreferencesWatchlistStorage(
+            exchange: scope.exchange,
+          ),
         ),
         loadActiveInstruments: (marketMode) =>
             repository.getInstruments(marketMode: marketMode),
@@ -263,19 +280,21 @@ final supportResistanceWatchlistProvider =
 
 /// Defers platform access so constructing the controller stays synchronous.
 class DeferredSharedPreferencesWatchlistStorage implements WatchlistStorage {
-  DeferredSharedPreferencesWatchlistStorage()
-    : _preferences = SharedPreferences.getInstance();
+  DeferredSharedPreferencesWatchlistStorage({
+    ExchangeId exchange = ExchangeId.okx,
+  }) : _key = exchange == ExchangeId.binance
+           ? WatchlistStore.binanceStorageKey
+           : WatchlistStore.storageKey,
+       _preferences = SharedPreferences.getInstance();
+
+  final String _key;
 
   final Future<SharedPreferences> _preferences;
 
   @override
-  Future<String?> readSnapshot() async =>
-      (await _preferences).getString(WatchlistStore.storageKey);
+  Future<String?> readSnapshot() async => (await _preferences).getString(_key);
 
   @override
   Future<bool> writeSnapshot(String encodedSnapshot) async =>
-      (await _preferences).setString(
-        WatchlistStore.storageKey,
-        encodedSnapshot,
-      );
+      (await _preferences).setString(_key, encodedSnapshot);
 }

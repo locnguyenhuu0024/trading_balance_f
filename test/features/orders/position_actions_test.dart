@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import '../../support/backend_features_override.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -62,7 +63,6 @@ OkxPosition _position({
 
 class _FakeTradeApi implements TradeApi {
   _FakeTradeApi({
-    this.configured = true,
     this.sessionRestorationSupported = false,
     this.restoredSession,
     this.restoreGate,
@@ -71,7 +71,7 @@ class _FakeTradeApi implements TradeApi {
     this.logoutFailure,
   });
 
-  final bool configured;
+  final bool configured = true;
   @override
   bool get isConfigured => configured;
   final bool sessionRestorationSupported;
@@ -389,6 +389,7 @@ Widget _tradeApp({
 }) {
   return ProviderScope(
     overrides: [
+      backendFeaturesEnabledTestOverride,
       tradeApiProvider.overrideWithValue(api),
       if (storage != null) secureStorageProvider.overrideWithValue(storage),
       tradeSessionProvider.overrideWith((ref) {

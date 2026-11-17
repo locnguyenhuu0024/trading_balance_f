@@ -120,23 +120,23 @@ void main() {
     await _capture(tester, 'startup-desktop-error');
 
     await tester.pumpWidget(
-      RepaintBoundary(
-        key: const Key('startup-capture-root'),
+      const RepaintBoundary(
+        key: Key('startup-capture-root'),
         child: MaterialApp(
-            debugShowCheckedModeBanner: false,
+          debugShowCheckedModeBanner: false,
           home: MediaQuery(
-            data: const MediaQueryData(
+            data: MediaQueryData(
               disableAnimations: true,
               accessibleNavigation: true,
             ),
-            child: const AppStartupStatusView(isLoading: true),
+            child: AppStartupStatusView(isLoading: true),
           ),
         ),
       ),
     );
     await tester.pump();
-    expect(find.byType(CircularProgressIndicator), findsNothing);
-    expect(find.byIcon(Icons.hourglass_empty), findsOneWidget);
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+    expect(find.byKey(const Key('app-startup-brand-mark')), findsOneWidget);
     await _capture(tester, 'startup-reduced-motion-static');
   });
 }

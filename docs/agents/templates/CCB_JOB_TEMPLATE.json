@@ -3,15 +3,15 @@
   "approved_plan_id": "YYYY-MM-DD-feature-v1",
   "task_file": "tasks/task_01_feature.md",
   "optcodex_variant": "company",
-  "optcodex_version": "1.2.0",
+  "optcodex_version": "1.4.0",
   "baseline_version": "2.2.2",
-  "optcodex_source_revision": "7ce5bb67cabfee4e89733455ee2519f5ca8dcbd0",
+  "optcodex_source_revision": "42fe641fab7b6481f2e5b4898cd62be926250339",
   "agent_role": "implementation_executor",
   "route_class": "E0",
   "route_binding": "EXPLICIT",
   "parent_route_inheritance": "FORBIDDEN",
   "model": "gpt-6-luna",
-  "effort": "high",
+  "effort": "xhigh",
   "planning_fanout": {
     "required": false,
     "status": "EXCEPTION",
@@ -26,5 +26,6 @@
   "dependencies": [],
   "timeout_seconds": 900,
   "domain": "backend",
-  "terra_trial": null
+  "terra_trial": null,
+  "route_override": null
 }

@@ -20,8 +20,9 @@ void main() {
         );
         expect(theme.cardTheme.elevation, 0);
         for (final color in _schemeColors(theme.colorScheme)) {
-          expect(color.red, color.green);
-          expect(color.green, color.blue);
+          int c8(double value) => (value * 255.0).round().clamp(0, 255);
+          expect(c8(color.r), c8(color.g));
+          expect(c8(color.g), c8(color.b));
         }
       }
 

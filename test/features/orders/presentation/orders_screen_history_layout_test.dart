@@ -1,3 +1,4 @@
+import '../../../support/backend_features_override.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -7,12 +8,12 @@ import 'package:trading_balance_f/core/widgets/crypto_icon.dart';
 import 'package:trading_balance_f/features/orders/data/okx_order_model.dart';
 import 'package:trading_balance_f/features/orders/presentation/orders_screen.dart';
 import 'package:trading_balance_f/features/orders/presentation/providers/order_provider.dart';
-import 'package:trading_balance_f/features/portfolio/presentation/portfolio_screen.dart';
 import 'package:trading_balance_f/features/settings/presentation/settings_screen.dart';
 
 Widget _historyApp(OkxOrder order, double textScale) {
   return ProviderScope(
     overrides: [
+      backendFeaturesEnabledTestOverride,
       orderFilterProvider.overrideWith((ref) => 'SWAP'),
       orderTabProvider.overrideWith((ref) => OrderTab.history),
       ordersFutureProvider.overrideWith((ref) async => [order]),

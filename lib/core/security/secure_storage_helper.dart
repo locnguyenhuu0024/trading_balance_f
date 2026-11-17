@@ -8,7 +8,6 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../navigation/navigation_preferences.dart';
 import '../timezone/app_time_zone.dart';
 import '../typography/app_text_scale.dart';
 
@@ -52,6 +51,36 @@ class SecureStorageHelper {
     : _okxCredentialState = ValueNotifier(
         const OkxCredentialSnapshot(generation: 0, rotating: false),
       );
+
+  final ValueNotifier<OkxCredentialSnapshot> _binanceCredentialState =
+      ValueNotifier(
+        const OkxCredentialSnapshot(generation: 0, rotating: false),
+      );
+  int _activeBinanceCredentialMutations = 0;
+  ValueListenable<OkxCredentialSnapshot> get binanceCredentialState =>
+      _binanceCredentialState;
+
+  Future<T> trackBinanceCredentialMutation<T>(
+    Future<T> Function() mutation,
+  ) async {
+    if (_disposed) throw StateError('SecureStorageHelper is disposed.');
+    _activeBinanceCredentialMutations++;
+    _binanceCredentialState.value = OkxCredentialSnapshot(
+      generation: _binanceCredentialState.value.generation + 1,
+      rotating: true,
+    );
+    try {
+      return await mutation();
+    } finally {
+      _activeBinanceCredentialMutations--;
+      if (!_disposed) {
+        _binanceCredentialState.value = OkxCredentialSnapshot(
+          generation: _binanceCredentialState.value.generation + 1,
+          rotating: _activeBinanceCredentialMutations > 0,
+        );
+      }
+    }
+  }
 
   final ValueNotifier<OkxCredentialSnapshot> _okxCredentialState;
   int _activeOkxCredentialMutations = 0;
@@ -97,7 +126,43 @@ class SecureStorageHelper {
     if (_disposed) return;
     _disposed = true;
     _okxCredentialState.dispose();
+    _binanceCredentialState.dispose();
   }
+
+  Future<String> getSelectedConnectionId() async =>
+      await _storage.read(key: 'SELECTED_CONNECTION_ID') ?? 'okx-default';
+
+  Future<void> saveSelectedConnectionId(String id) =>
+      _storage.write(key: 'SELECTED_CONNECTION_ID', value: id);
+
+  Future<String?> getBinanceApiKey() => _storage.read(key: 'BINANCE_API_KEY');
+  Future<String?> getBinanceApiSecret() =>
+      _storage.read(key: 'BINANCE_API_SECRET');
+
+  Future<void> saveBinanceCredentials({
+    required String apiKey,
+    required String apiSecret,
+  }) => trackBinanceCredentialMutation(() async {
+    await Future.wait([
+      _storage.write(key: 'BINANCE_API_KEY', value: apiKey),
+      _storage.write(key: 'BINANCE_API_SECRET', value: apiSecret),
+    ]);
+  });
+
+  Future<void> clearBinanceCredentials() =>
+      trackBinanceCredentialMutation(() async {
+        await Future.wait([
+          _storage.delete(key: 'BINANCE_API_KEY'),
+          _storage.delete(key: 'BINANCE_API_SECRET'),
+        ]);
+      });
+
+  Future<void> saveBinanceKeys({
+    required String apiKey,
+    required String apiSecret,
+  }) => saveBinanceCredentials(apiKey: apiKey, apiSecret: apiSecret);
+
+  Future<void> clearBinanceKeys() => clearBinanceCredentials();
 
   // Define keys
   static const String _okxApiKey = 'OKX_API_KEY';
@@ -108,7 +173,6 @@ class SecureStorageHelper {
   // THÊM MỚI: Keys cho Theme và Tiền tệ
   static const String _themeMode = 'THEME_MODE';
   static const String _currency = 'CURRENCY';
-  static const String _navigationPreferences = 'NAVIGATION_PREFERENCES';
   static const String _timeZoneId = 'TIME_ZONE_ID';
   static const String _appTextScale = 'APP_TEXT_SCALE';
   static const String _rememberedTradePasswordPrefix =
@@ -279,20 +343,6 @@ class SecureStorageHelper {
     return _storage.write(
       key: _appTextScale,
       value: AppTextScale.normalize(scale).toString(),
-    );
-  }
-
-  /// Returns a safe default for missing, corrupt, or future records.
-  Future<NavigationPreferences> getNavigationPreferences() async {
-    final value = await _storage.read(key: _navigationPreferences);
-    return NavigationPreferences.decode(value);
-  }
-
-  /// Persists navigation independently from the pre-existing app settings.
-  Future<void> saveNavigationPreferences(NavigationPreferences preferences) {
-    return _storage.write(
-      key: _navigationPreferences,
-      value: preferences.encode(),
     );
   }
 

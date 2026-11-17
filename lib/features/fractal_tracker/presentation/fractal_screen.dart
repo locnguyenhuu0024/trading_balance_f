@@ -1,3 +1,5 @@
+import '../../../core/widgets/app_motion.dart';
+import '../../../core/widgets/scope_bar.dart';
 // File Name: fractal_screen.dart
 // File Path: lib/features/fractal_tracker/presentation/fractal_screen.dart
 
@@ -5,6 +7,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import '../../../core/exchange/exchange_registry.dart';
+import '../../../core/exchange/exchange_scope.dart';
 import '../../../core/formatting/adaptive_number_format.dart';
 import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/theme/app_theme.dart';
@@ -31,21 +35,29 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
     super.initState();
     // THÊM MỚI: Tự động invalidate (làm mới) provider mỗi 1 giây
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (_manualRefreshInFlight || ref.read(fractalDataProvider).isLoading) {
+      if (_manualRefreshInFlight ||
+          ref
+              .read(fractalDataProvider(ref.read(exchangeScopeProvider)))
+              .isLoading) {
         return;
       }
-      ref.invalidate(fractalDataProvider);
+      ref.invalidate(fractalDataProvider(ref.read(exchangeScopeProvider)));
     });
   }
 
   Future<void> _refreshFractal() async {
-    if (_manualRefreshInFlight || ref.read(fractalDataProvider).isLoading) {
+    if (_manualRefreshInFlight ||
+        ref
+            .read(fractalDataProvider(ref.read(exchangeScopeProvider)))
+            .isLoading) {
       return;
     }
     setState(() => _manualRefreshInFlight = true);
     try {
-      ref.invalidate(fractalDataProvider);
-      await ref.read(fractalDataProvider.future);
+      ref.invalidate(fractalDataProvider(ref.read(exchangeScopeProvider)));
+      await ref.read(
+        fractalDataProvider(ref.read(exchangeScopeProvider)).future,
+      );
     } catch (_) {
       // The watched provider renders the read error.
     } finally {
@@ -62,7 +74,13 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final fractalAsync = ref.watch(fractalDataProvider);
+    final scope = ref.watch(exchangeScopeProvider);
+    final fractalAsync = ref.watch(fractalDataProvider(scope));
+    final label = ref
+        .watch(exchangeRegistryProvider)
+        .firstWhere((entry) => entry.profile.connectionId == scope.connectionId)
+        .profile
+        .label;
     final selectedCoin = ref.watch(
       selectedCoinProvider,
     ); // THÊM MỚI: Lấy coin đang chọn
@@ -74,121 +92,157 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
 
     return Scaffold(
       backgroundColor: bgColor,
-      appBar: AppBar(
-        backgroundColor: bgColor,
-        foregroundColor: textColor,
-        elevation: 0,
-        centerTitle: true,
-        // THAY ĐỔI: Chuyển title thành nút bấm để chọn coin
-        title: GestureDetector(
-          onTap: () => _showCoinSelector(context, ref, selectedCoin, isDark),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
+      body: SafeArea(
+        child: NavigationContentFrame(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Flexible(
-                child: Text(
-                  'BMAG Tracker ($selectedCoin)',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w800,
-                    fontSize: 16,
-                  ),
-                ),
-              ),
-              const Icon(Icons.arrow_drop_down),
-            ],
-          ),
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.search),
-            tooltip: 'Đổi Coin',
-            onPressed: () =>
-                _showCoinSelector(context, ref, selectedCoin, isDark),
-          ),
-          ManualRefreshButton(
-            buttonKey: const Key('fractal-manual-refresh'),
-            onRefresh: _refreshFractal,
-            isBusy: _manualRefreshInFlight || fractalAsync.isLoading,
-          ),
-        ],
-      ),
-      body: NavigationContentFrame(
-        child: fractalAsync.when(
-          // Rất quan trọng: Bỏ qua trạng thái Loading khi reload để app không bị chớp mỗi giây
-          skipLoadingOnReload: true,
-          loading: () => const Center(
-            child: FormPendingStatus(
-              label: 'Đang tải dữ liệu fractal…',
-              linear: false,
-            ),
-          ),
-          error: (err, stack) => Center(
-            child: Text('Lỗi tải dữ liệu', style: TextStyle(color: textColor)),
-          ),
-          data: (data) {
-            if (data.isEmpty)
-              return const Center(child: Text('Không có dữ liệu'));
-
-            return RefreshIndicator(
-              color: palette.ink,
-              backgroundColor: palette.raised,
-              onRefresh: _refreshFractal,
-              child: ListView(
-                padding: const EdgeInsets.all(AppTokens.space4),
-                physics: const AlwaysScrollableScrollPhysics(),
-                children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: Text(
-                          'MA TRẬN ĐỒNG PHA (CONFLUENCE)',
-                          softWrap: true,
-                          style: TextStyle(
-                            color: palette.muted,
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                          ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+                child: Row(
+                  children: [
+                    if (Navigator.of(context).canPop()) const BackButton(),
+                    const Expanded(
+                      child: Text(
+                        'BMAG',
+                        style: TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
                         ),
                       ),
-                      const SizedBox(width: AppTokens.space2),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Container(
-                            width: 8,
-                            height: 8,
-                            decoration: BoxDecoration(
-                              color: palette.positive,
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            'LIVE',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                              color: palette.muted,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: AppTokens.space4),
-                  ...data.map(
-                    (fData) =>
-                        _buildFractalRow(context, fData, isDark, timeZoneId),
-                  ),
-                  const SizedBox(height: 32),
-                  _buildLegend(isDark),
-                ],
+                    ),
+                    const SizedBox(width: 8),
+                    const Flexible(child: ScopeBar(compact: true)),
+                    IconButton(
+                      icon: const Icon(Icons.search),
+                      tooltip: 'Đổi Coin',
+                      onPressed: () =>
+                          _showCoinSelector(context, ref, selectedCoin, isDark),
+                    ),
+                    ManualRefreshButton(
+                      buttonKey: const Key('fractal-manual-refresh'),
+                      onRefresh: _refreshFractal,
+                      isBusy: _manualRefreshInFlight || fractalAsync.isLoading,
+                    ),
+                  ],
+                ),
               ),
-            );
-          },
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: TextButton(
+                  onPressed: () =>
+                      _showCoinSelector(context, ref, selectedCoin, isDark),
+                  child: Text(selectedCoin),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: AppTokens.space2,
+                ),
+                child: Text(
+                  'Nguồn giá: $label',
+                  style: TextStyle(color: palette.muted, fontSize: 12),
+                ),
+              ),
+              Expanded(
+                child: fractalAsync.when(
+                  // Rất quan trọng: Bỏ qua trạng thái Loading khi reload để app không bị chớp mỗi giây
+                  skipLoadingOnReload: true,
+                  loading: () => const AppSkeleton(
+                    caption: 'Đang tải dữ liệu fractal…',
+                    itemHeight: 96,
+                  ),
+                  error: (err, stack) => Center(
+                    child: Text(
+                      'Lỗi tải dữ liệu',
+                      style: TextStyle(color: textColor),
+                    ),
+                  ),
+                  data: (data) {
+                    if (data.isEmpty) {
+                      return const Center(child: Text('Không có dữ liệu'));
+                    }
+
+                    return RefreshIndicator(
+                      color: palette.ink,
+                      backgroundColor: palette.raised,
+                      onRefresh: _refreshFractal,
+                      child: AppEntranceScope(
+                        child: ListView(
+                          padding: const EdgeInsets.all(AppTokens.space4),
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          children:
+                              <Widget>[
+                                    Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            'MA TRẬN ĐỒNG PHA (CONFLUENCE)',
+                                            softWrap: true,
+                                            style: TextStyle(
+                                              color: palette.muted,
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: AppTokens.space2),
+                                        Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Container(
+                                              width: 8,
+                                              height: 8,
+                                              decoration: BoxDecoration(
+                                                color: palette.positive,
+                                                shape: BoxShape.circle,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              'LIVE',
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.bold,
+                                                color: palette.muted,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: AppTokens.space4),
+                                    ...data.map(
+                                      (fData) => _buildFractalRow(
+                                        context,
+                                        fData,
+                                        isDark,
+                                        timeZoneId,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 32),
+                                    _buildLegend(isDark),
+                                  ]
+                                  .asMap()
+                                  .entries
+                                  .map(
+                                    (entry) => AppEntrance(
+                                      index: entry.key,
+                                      child: entry.value,
+                                    ),
+                                  )
+                                  .toList(),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -237,10 +291,12 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
       }
     }
 
-    if (maxHigh != null && data.currentPrice > maxHigh)
+    if (maxHigh != null && data.currentPrice > maxHigh) {
       maxHigh = data.currentPrice;
-    if (minLow != null && data.currentPrice < minLow)
+    }
+    if (minLow != null && data.currentPrice < minLow) {
       minLow = data.currentPrice;
+    }
     final openPriceText = openPrice != null
         ? formatAdaptiveNumber(openPrice.toString())
         : '--';
@@ -710,7 +766,7 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
 
     final blockColor = isEmpty
         ? palette.surface
-        : directionColor.withOpacity(0.12);
+        : directionColor.withValues(alpha: 0.12);
     final textColor = isEmpty ? palette.muted : directionColor;
 
     String timeStr = '';
@@ -749,7 +805,7 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
               borderRadius: BorderRadius.circular(AppTokens.radiusSmall),
               border: isEmpty
                   ? null
-                  : Border.all(color: textColor.withOpacity(0.5)),
+                  : Border.all(color: textColor.withValues(alpha: 0.5)),
             ),
             child: Stack(
               alignment: Alignment.center,

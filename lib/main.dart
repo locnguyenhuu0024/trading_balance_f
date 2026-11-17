@@ -1,8 +1,6 @@
 // File Name: main.dart
 // File Path: lib/main.dart
 
-import 'dart:ui' show FontFeature;
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart'; // Dùng kIsWeb
@@ -12,8 +10,8 @@ import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/navigation/main_navigation_shell.dart';
-import 'core/navigation/navigation_preferences.dart';
-import 'core/navigation/navigation_preferences_provider.dart';
+import 'core/exchange/exchange_scope.dart';
+import 'core/exchange/exchange_registry.dart';
 import 'core/security/secure_storage_helper.dart';
 import 'core/services/background_service.dart';
 import 'core/theme/app_theme.dart';
@@ -35,7 +33,7 @@ class AppStartupData {
     required this.currency,
     required this.timeZoneId,
     required this.appTextScale,
-    required this.navigationPreferences,
+    this.selectedConnectionId = defaultConnectionId,
   });
 
   final SecureStorageHelper secureStorage;
@@ -45,7 +43,7 @@ class AppStartupData {
   final String currency;
   final String timeZoneId;
   final double appTextScale;
-  final NavigationPreferences navigationPreferences;
+  final String selectedConnectionId;
 }
 
 Future<AppStartupData> initializeAppStartup({
@@ -85,7 +83,6 @@ Future<AppStartupData> initializeAppStartup({
   String currencyStr = 'USD';
   String timeZoneId = AppTimeZone.defaultId;
   var appTextScale = AppTextScale.defaultScale;
-  var navigationPreferences = NavigationPreferences.defaults;
 
   try {
     bioAuth = await helper.getBiometricAuth();
@@ -103,10 +100,11 @@ Future<AppStartupData> initializeAppStartup({
     debugPrint('App text-scale restoration failed; using the default.');
   }
 
+  var selectedConnectionId = defaultConnectionId;
   try {
-    navigationPreferences = await helper.getNavigationPreferences();
+    selectedConnectionId = await helper.getSelectedConnectionId();
   } catch (_) {
-    debugPrint('Navigation preference restoration failed; using defaults.');
+    selectedConnectionId = defaultConnectionId;
   }
 
   final initialThemeMode = themeModeStr == 'dark'
@@ -122,7 +120,7 @@ Future<AppStartupData> initializeAppStartup({
     currency: currencyStr,
     timeZoneId: initialTimeZoneId,
     appTextScale: appTextScale,
-    navigationPreferences: navigationPreferences,
+    selectedConnectionId: selectedConnectionId,
   );
 }
 
@@ -138,14 +136,23 @@ Widget buildInitializedApp(AppStartupData startup, {Widget? home}) {
   return ProviderScope(
     overrides: [
       secureStorageProvider.overrideWithValue(startup.secureStorage),
+      selectedConnectionIdProvider.overrideWith(
+        (ref) =>
+            ref
+                .watch(exchangeRegistryProvider)
+                .any(
+                  (entry) =>
+                      entry.profile.connectionId ==
+                      startup.selectedConnectionId,
+                )
+            ? startup.selectedConnectionId
+            : defaultConnectionId,
+      ),
       hideBalanceProvider.overrideWith((ref) => startup.hideBalanceDefault),
       themeModeProvider.overrideWith((ref) => startup.themeMode),
       currencyProvider.overrideWith((ref) => startup.currency),
       appTimeZoneProvider.overrideWith((ref) => startup.timeZoneId),
       appTextScaleProvider.overrideWith((ref) => startup.appTextScale),
-      navigationPreferencesInitialProvider.overrideWithValue(
-        startup.navigationPreferences,
-      ),
     ],
     child: TradingBalanceApp(
       requireBiometrics: startup.requireBiometrics,
@@ -283,6 +290,9 @@ class _BiometricAuthScreenState extends State<BiometricAuthScreen> {
     if (_isAuthenticated) {
       return const MainNavigationShell();
     }
+    if (_isChecking) {
+      return const AppStartupStatusView(isLoading: true);
+    }
 
     return Scaffold(
       backgroundColor: palette.background,
@@ -293,72 +303,66 @@ class _BiometricAuthScreenState extends State<BiometricAuthScreen> {
             child: ConstrainedBox(
               constraints: BoxConstraints(minHeight: constraints.maxHeight),
               child: Center(
-                child: _isChecking
-                    ? CircularProgressIndicator(color: palette.ink)
-                    : Column(
-                        mainAxisSize: MainAxisSize.min,
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.lock_outline,
-                            size: 80,
-                            color: palette.ink,
-                          ),
-                          const SizedBox(height: 24),
-                          const Text(
-                            'Ứng dụng đã bị khoá',
-                            style: TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Vui lòng xác thực để bảo vệ tài sản',
-                            style: TextStyle(color: palette.muted),
-                          ),
-                          const SizedBox(height: 32),
-
-                          if (_errorMessage != null)
-                            Padding(
-                              padding: const EdgeInsets.only(
-                                bottom: 24,
-                                left: 32,
-                                right: 32,
-                              ),
-                              child: Text(
-                                _errorMessage!,
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  color: palette.warning,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ),
-
-                          ElevatedButton.icon(
-                            onPressed: _authenticate,
-                            icon: const Icon(Icons.fingerprint),
-                            label: const Text(
-                              'Mở khoá',
-                              style: TextStyle(fontWeight: FontWeight.bold),
-                            ),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: palette.ink,
-                              foregroundColor: palette.onStrong,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 24,
-                                vertical: 12,
-                              ),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              elevation: 0,
-                            ),
-                          ),
-                        ],
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.lock_outline, size: 80, color: palette.ink),
+                    const SizedBox(height: 24),
+                    const Text(
+                      'Ứng dụng đã bị khoá',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
                       ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Vui lòng xác thực để bảo vệ tài sản',
+                      style: TextStyle(color: palette.muted),
+                    ),
+                    const SizedBox(height: 32),
+
+                    if (_errorMessage != null)
+                      Padding(
+                        padding: const EdgeInsets.only(
+                          bottom: 24,
+                          left: 32,
+                          right: 32,
+                        ),
+                        child: Text(
+                          _errorMessage!,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: palette.warning,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+
+                    ElevatedButton.icon(
+                      onPressed: _authenticate,
+                      icon: const Icon(Icons.fingerprint),
+                      label: const Text(
+                        'Mở khoá',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: palette.ink,
+                        foregroundColor: palette.onStrong,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 24,
+                          vertical: 12,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        elevation: 0,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -376,6 +380,51 @@ class WebStorageHelper extends SecureStorageHelper {
   final SharedPreferences _prefs;
 
   WebStorageHelper(this._prefs) : super(const FlutterSecureStorage());
+
+  @override
+  Future<String> getSelectedConnectionId() async =>
+      _prefs.getString('SELECTED_CONNECTION_ID') ?? defaultConnectionId;
+
+  @override
+  Future<void> saveSelectedConnectionId(String id) async {
+    if (!await _prefs.setString('SELECTED_CONNECTION_ID', id)) {
+      throw StateError('Unable to save selected connection.');
+    }
+  }
+
+  @override
+  Future<String?> getBinanceApiKey() async =>
+      _prefs.getString('BINANCE_API_KEY');
+
+  @override
+  Future<String?> getBinanceApiSecret() async =>
+      _prefs.getString('BINANCE_API_SECRET');
+
+  @override
+  Future<void> saveBinanceCredentials({
+    required String apiKey,
+    required String apiSecret,
+  }) => trackBinanceCredentialMutation(() async {
+    final results = await Future.wait([
+      _prefs.setString('BINANCE_API_KEY', apiKey),
+      _prefs.setString('BINANCE_API_SECRET', apiSecret),
+    ]);
+    if (results.any((result) => !result)) {
+      throw StateError('Unable to save Binance keys.');
+    }
+  });
+
+  @override
+  Future<void> clearBinanceCredentials() =>
+      trackBinanceCredentialMutation(() async {
+        final results = await Future.wait([
+          _prefs.remove('BINANCE_API_KEY'),
+          _prefs.remove('BINANCE_API_SECRET'),
+        ]);
+        if (results.any((result) => !result)) {
+          throw StateError('Unable to clear Binance keys.');
+        }
+      });
 
   @override
   Future<void> saveOkxCredentials({
@@ -434,26 +483,6 @@ class WebStorageHelper extends SecureStorageHelper {
     );
     if (!didSave) {
       throw StateError('Không thể lưu cỡ chữ ứng dụng trên Web.');
-    }
-  }
-
-  @override
-  Future<NavigationPreferences> getNavigationPreferences() async {
-    return NavigationPreferences.decode(
-      _prefs.getString('NAVIGATION_PREFERENCES'),
-    );
-  }
-
-  @override
-  Future<void> saveNavigationPreferences(
-    NavigationPreferences preferences,
-  ) async {
-    final didSave = await _prefs.setString(
-      'NAVIGATION_PREFERENCES',
-      preferences.encode(),
-    );
-    if (!didSave) {
-      throw StateError('Không thể lưu tùy chọn điều hướng trên Web.');
     }
   }
 

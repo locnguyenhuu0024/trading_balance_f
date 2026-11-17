@@ -4,16 +4,23 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/network/okx_read_scope.dart';
+import '../../../../core/exchange/exchange_scope.dart';
 import '../../data/order_repository.dart';
 import '../../data/okx_order_model.dart';
 import '../../data/okx_position_model.dart';
 
 /// Local display filters are independent of backend trade-session state.
-final orderFilterProvider = StateProvider<String>((ref) => 'ALL');
+final orderFilterProvider = StateProvider<String>((ref) {
+  ref.watch(selectedConnectionIdProvider);
+  return 'ALL';
+});
 
 enum OrderTab { positions, pending, history }
 
-final orderTabProvider = StateProvider<OrderTab>((ref) => OrderTab.positions);
+final orderTabProvider = StateProvider<OrderTab>((ref) {
+  ref.watch(selectedConnectionIdProvider);
+  return OrderTab.positions;
+});
 
 /// Direct authenticated OKX orders for the selected display tab.
 final ordersFutureProvider = FutureProvider.autoDispose<List<OkxOrder>>((

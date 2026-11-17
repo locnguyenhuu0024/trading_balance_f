@@ -4,8 +4,8 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 
 class AppPageTransitions {
-  static const destinationDuration = AppTokens.motionShort;
-  static const routeDuration = AppTokens.motionStandard;
+  static const destinationDuration = AppTokens.motionStandard;
+  static const routeDuration = AppTokens.motionMedium;
 
   static const PageTransitionsTheme theme = PageTransitionsTheme(
     builders: <TargetPlatform, PageTransitionsBuilder>{
@@ -56,7 +56,7 @@ class _AppDestinationTransitionState extends State<AppDestinationTransition>
     value: 1,
   );
   late final Animation<double> _opacity = CurveTween(
-    curve: Curves.easeOut,
+    curve: AppTokens.motionEnter,
   ).animate(_controller);
   var _transitionGeneration = 0;
   bool? _reduceMotion;
@@ -107,7 +107,11 @@ class _AppDestinationTransitionState extends State<AppDestinationTransition>
     return FadeTransition(
       key: const Key('app-destination-fade'),
       opacity: _opacity,
-      child: widget.child,
+      child: ScaleTransition(
+        key: const Key('app-destination-scale'),
+        scale: Tween<double>(begin: 0.985, end: 1.0).animate(_opacity),
+        child: widget.child,
+      ),
     );
   }
 }
@@ -140,16 +144,27 @@ class AppFadePageTransitionsBuilder extends PageTransitionsBuilder {
     final coveredAnimation = respectMotion
         ? secondaryAnimation
         : AppPageTransitions.settledAnimation(secondaryAnimation);
-    final Animation<double> opacity = enteringAnimation.drive(
-      CurveTween(curve: Curves.easeOut),
+    final Animation<double> curved = enteringAnimation.drive(
+      CurveTween(curve: AppTokens.motionEnter),
     );
 
     return AnimatedBuilder(
       animation: Listenable.merge([enteringAnimation, coveredAnimation]),
       child: FadeTransition(
         key: const Key('app-route-fade'),
-        opacity: opacity,
-        child: child,
+        opacity: curved,
+        child: AnimatedBuilder(
+          animation: curved,
+          child: child,
+          builder: (context, child) => Transform.translate(
+            key: const Key('app-route-slide'),
+            offset: Offset(
+              0,
+              AppTokens.motionEntranceOffset * (1 - curved.value),
+            ),
+            child: child,
+          ),
+        ),
       ),
       builder: (context, child) {
         final isCovered = coveredAnimation.status != AnimationStatus.dismissed;

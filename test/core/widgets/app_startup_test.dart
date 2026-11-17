@@ -4,10 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:trading_balance_f/core/navigation/navigation_preferences.dart';
-import 'package:trading_balance_f/core/navigation/navigation_preferences_provider.dart';
 import 'package:trading_balance_f/core/security/secure_storage_helper.dart';
-import 'package:trading_balance_f/core/theme/app_theme.dart';
+import 'package:trading_balance_f/core/exchange/exchange_scope.dart';
 import 'package:trading_balance_f/core/timezone/app_time_zone.dart';
 import 'package:trading_balance_f/core/typography/app_text_scale.dart';
 import 'package:trading_balance_f/core/widgets/app_startup.dart';
@@ -20,25 +18,23 @@ import 'package:trading_balance_f/features/settings/presentation/settings_screen
 class _StartupStorage extends SecureStorageHelper {
   _StartupStorage({
     this.failBiometricRead = false,
-    this.biometric = true,
-    this.hideBalance = true,
-    this.theme = 'dark',
-    this.currency = 'VND',
-    this.timeZoneId = 'Asia/Ho_Chi_Minh',
     this.textScale = 1.25,
-    this.navigation = NavigationPreferences.defaults,
     this.calls,
+    this.selection = 'okx-default',
+    this.failSelection = false,
   }) : super(const FlutterSecureStorage());
 
   final bool failBiometricRead;
-  final bool biometric;
-  final bool hideBalance;
-  final String theme;
-  final String currency;
-  final String timeZoneId;
   final double textScale;
-  final NavigationPreferences navigation;
   final List<String>? calls;
+  final String selection;
+  final bool failSelection;
+
+  @override
+  Future<String> getSelectedConnectionId() async {
+    if (failSelection) throw StateError('unreadable selection');
+    return selection;
+  }
 
   @override
   Future<bool> getBiometricAuth() async {
@@ -46,43 +42,37 @@ class _StartupStorage extends SecureStorageHelper {
     if (failBiometricRead) {
       throw StateError('private storage failure detail');
     }
-    return biometric;
+    return true;
   }
 
   @override
   Future<bool> getHideBalanceDefault() async {
     calls?.add('hideBalance');
-    return hideBalance;
+    return true;
   }
 
   @override
   Future<String> getThemeMode() async {
     calls?.add('theme');
-    return theme;
+    return 'dark';
   }
 
   @override
   Future<String> getCurrency() async {
     calls?.add('currency');
-    return currency;
+    return 'VND';
   }
 
   @override
   Future<String> getTimeZoneId() async {
     calls?.add('timeZone');
-    return timeZoneId;
+    return 'Asia/Ho_Chi_Minh';
   }
 
   @override
   Future<double> getAppTextScale() async {
     calls?.add('textScale');
     return textScale;
-  }
-
-  @override
-  Future<NavigationPreferences> getNavigationPreferences() async {
-    calls?.add('navigation');
-    return navigation;
   }
 }
 
@@ -156,24 +146,57 @@ void main() {
     expect(builderCalls, 1);
   });
 
+  testWidgets('RED-139c pending startup shows brand and progress', (
+    tester,
+  ) async {
+    final pending = Completer<int>();
+    await tester.pumpWidget(
+      AppStartup<int>(
+        initialize: () => pending.future,
+        builder: (_, value) => Text('$value'),
+      ),
+    );
+    expect(find.byKey(const Key('app-startup-brand-mark')), findsOneWidget);
+    expect(find.text('Crypto Portfolio'), findsOneWidget);
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+  });
+
+  testWidgets('RED-139d startup cross-fades into the app', (tester) async {
+    final pending = Completer<int>();
+    await tester.pumpWidget(
+      AppStartup<int>(
+        initialize: () => pending.future,
+        builder: (_, value) => MaterialApp(home: Text('Ready $value')),
+      ),
+    );
+    pending.complete(7);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 140));
+    expect(find.text('Crypto Portfolio'), findsOneWidget);
+    expect(find.text('Ready 7'), findsOneWidget);
+    await tester.pumpAndSettle();
+    expect(find.text('Crypto Portfolio'), findsNothing);
+    expect(find.text('Ready 7'), findsOneWidget);
+  });
+
   testWidgets('reduced motion keeps startup progress static and labeled', (
     tester,
   ) async {
     await tester.pumpWidget(
-      MaterialApp(
+      const MaterialApp(
         home: MediaQuery(
-          data: const MediaQueryData(
+          data: MediaQueryData(
             disableAnimations: true,
             accessibleNavigation: true,
           ),
-          child: const AppStartupStatusView(isLoading: true),
+          child: AppStartupStatusView(isLoading: true),
         ),
       ),
     );
 
     expect(find.text('Đang khởi tạo ứng dụng…'), findsOneWidget);
-    expect(find.byType(CircularProgressIndicator), findsNothing);
-    expect(find.byIcon(Icons.hourglass_empty), findsOneWidget);
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+    expect(find.byKey(const Key('app-startup-brand-mark')), findsOneWidget);
     final progressSemantics = tester.widget<Semantics>(
       find.byKey(const Key('app-startup-progress-semantics')),
     );
@@ -182,21 +205,12 @@ void main() {
   });
 
   test(
-    'legacy read failure does not block independent text-scale/navigation reads',
+    'legacy read failure does not block independent text-scale reads',
     () async {
       final calls = <String>[];
-      const navigation = NavigationPreferences(
-        displayMode: NavigationDisplayMode.floating,
-        floatingEdge: NavigationEdge.top,
-        buttonScale: 1,
-        buttonOpacity: 1,
-        enabledDestinationIds: ['home', 'settings'],
-        destinationOrderIds: ['home', 'settings'],
-      );
       final storage = _StartupStorage(
         failBiometricRead: true,
         textScale: 1.2,
-        navigation: navigation,
         calls: calls,
       );
 
@@ -207,25 +221,44 @@ void main() {
         retireLegacyBackgroundService: () async {},
       );
 
-      expect(calls, ['biometric', 'textScale', 'navigation']);
+      expect(calls, ['biometric', 'textScale']);
       expect(startup.requireBiometrics, isFalse);
       expect(startup.hideBalanceDefault, isFalse);
       expect(startup.themeMode, ThemeMode.system);
       expect(startup.currency, 'USD');
       expect(startup.timeZoneId, AppTimeZone.defaultId);
       expect(startup.appTextScale, 1.2);
-      expect(startup.navigationPreferences, navigation);
     },
   );
+
+  test('selection restoration falls back when storage fails', () async {
+    final storage = _StartupStorage(failSelection: true);
+    final startup = await app.initializeAppStartup(
+      isWeb: false,
+      createNativeStorage: () => storage,
+      initializeTimeZone: () {},
+      retireLegacyBackgroundService: () async {},
+    );
+    expect(startup.selectedConnectionId, defaultConnectionId);
+    storage.dispose();
+  });
+
+  test('selection restoration loads stored value', () async {
+    final storage = _StartupStorage(selection: 'other');
+    final startup = await app.initializeAppStartup(
+      isWeb: false,
+      createNativeStorage: () => storage,
+      initializeTimeZone: () {},
+      retireLegacyBackgroundService: () async {},
+    );
+    expect(startup.selectedConnectionId, 'other');
+    storage.dispose();
+  });
 
   testWidgets(
     'initialized values retain provider overrides and native biometric gate',
     (tester) async {
-      final storage = _StartupStorage(
-        navigation: NavigationPreferences.defaults.copyWith(
-          displayMode: NavigationDisplayMode.floating,
-        ),
-      );
+      final storage = _StartupStorage();
       final startup = app.AppStartupData(
         secureStorage: storage,
         requireBiometrics: true,
@@ -234,7 +267,7 @@ void main() {
         currency: 'VND',
         timeZoneId: 'Asia/Ho_Chi_Minh',
         appTextScale: 1.25,
-        navigationPreferences: storage.navigation,
+        selectedConnectionId: 'other',
       );
 
       await tester.pumpWidget(
@@ -248,9 +281,7 @@ void main() {
                 Text('hidden:${ref.watch(hideBalanceProvider)}'),
                 Text('timezone:${ref.watch(appTimeZoneProvider)}'),
                 Text('scale:${ref.watch(appTextScaleProvider)}'),
-                Text(
-                  'navigation:${ref.watch(navigationPreferencesInitialProvider).displayMode.name}',
-                ),
+                Text('connection:${ref.watch(selectedConnectionIdProvider)}'),
                 Text(
                   'same-storage:${identical(ref.watch(secureStorageProvider), storage)}',
                 ),
@@ -265,7 +296,7 @@ void main() {
       expect(find.text('hidden:true'), findsOneWidget);
       expect(find.text('timezone:Asia/Ho_Chi_Minh'), findsOneWidget);
       expect(find.text('scale:1.25'), findsOneWidget);
-      expect(find.text('navigation:floating'), findsOneWidget);
+      expect(find.text('connection:okx-default'), findsOneWidget);
       expect(find.text('same-storage:true'), findsOneWidget);
       expect(
         tester

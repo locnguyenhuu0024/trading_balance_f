@@ -1,4 +1,4 @@
-# OptCodex + Ponytail — personal v1.2.0
+# OptCodex + Ponytail — personal v1.4.0
 
 This is the self-contained `personal` rule bundle, maintained **only on GitHub**.
 
@@ -6,7 +6,7 @@ This is the self-contained `personal` rule bundle, maintained **only on GitHub**
 
 - OptCodex-Personal v1.2.2 remains authoritative in `BASELINE_AGENTS_OptCodex-Personal-v1.2.2.md`. The snapshot is preserved unchanged.
 - `AGENTS.md` provides a small startup layer; `docs/agents/framework/PONYTAIL_RULES.md` is loaded on demand.
-- The coordinator handles S/M/L, R0–R5, C1–C3 and E0–E2 directly with baseline rules. Models: Sol `gpt-6.1-sol`, Luna `gpt-6-luna`, exceptional Astra `gpt-6-astra`, with explicit effort binding.
+- The coordinator handles S/M/L, R0–R5, C1–C3 and E0–E5 directly with baseline rules. Models: Sol `gpt-6.1-sol`, Luna `gpt-6-luna`, exceptional Astra `gpt-6-astra`, with explicit effort binding.
 - No external AI classification API, credential, SDK or decision adapter is needed.
 - Ponytail means reuse-first and the smallest **complete** change, never reduced security, approval, RED/GREEN, independent audit, compile/build evidence or user-requested behavior.
 - RTK + Headroom context optimization remains active through `docs/agents/framework/profiles/CONTEXT_OPTIMIZATION.md`.
@@ -21,6 +21,6 @@ Do **not** automatically install the upstream Ponytail plugin or turn on codebas
 
 From the OptCodexRules monorepo root, run `python scripts/validate-rules.py`. Repo-local work additionally requires all checks in the binding OptCodex baseline.
 
-## Optional Terra implementation A/B trial
+## Dynamic routing (Terra-first)
 
-Luna remains the E0/E1/E2 default. With task-specific user approval and a recorded trial reason/ID, E1 may use GPT-6.1 Terra/high and E2 Terra/xhigh. Never silently change route or accept an executor report as an independent audit.
+E0–E5 defaults (policy v2): Luna/xhigh; Terra/low; Terra/medium; Terra/high; Terra/xhigh; Terra/max. Nondefault alternatives must be allowlisted and independently approved.

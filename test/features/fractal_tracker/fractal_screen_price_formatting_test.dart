@@ -1,6 +1,6 @@
+import 'package:trading_balance_f/core/widgets/app_motion.dart';
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -9,6 +9,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/theme/app_theme.dart';
+import 'package:trading_balance_f/core/exchange/exchange_models.dart';
+import 'package:trading_balance_f/core/exchange/exchange_registry.dart';
+import 'package:trading_balance_f/core/exchange/exchange_scope.dart';
+import 'package:trading_balance_f/exchanges/okx/okx_adapter.dart';
+import '../../support/fake_exchange_adapter.dart';
 import 'package:trading_balance_f/features/fractal_tracker/data/fractal_model.dart';
 import 'package:trading_balance_f/features/fractal_tracker/presentation/fractal_screen.dart';
 import 'package:trading_balance_f/features/fractal_tracker/presentation/providers/fractal_provider.dart';
@@ -47,7 +52,7 @@ FractalData _fractalDataWithoutQuarterPrices() {
 Widget _screenWithData(FractalData data) {
   return ProviderScope(
     overrides: [
-      fractalDataProvider.overrideWith((ref) async => [data]),
+      fractalDataProvider.overrideWith((ref, scope) async => [data]),
     ],
     child: const MaterialApp(home: FractalScreen()),
   );
@@ -104,7 +109,7 @@ FractalData _populatedMonthlyFractal() {
 Widget _responsiveScreenWithData(FractalData data, double textScale) {
   return ProviderScope(
     overrides: [
-      fractalDataProvider.overrideWith((ref) async => [data]),
+      fractalDataProvider.overrideWith((ref, scope) async => [data]),
     ],
     child: MaterialApp(
       theme: AppTheme.light,
@@ -125,6 +130,94 @@ Widget _responsiveScreenWithData(FractalData data, double textScale) {
 }
 
 void main() {
+  testWidgets('switching exchange hides previous fractal while Binance loads', (
+    tester,
+  ) async {
+    final pending = Completer<List<FractalData>>();
+    final container = ProviderContainer(
+      overrides: [
+        exchangeRegistryProvider.overrideWith(
+          (ref) => [
+            const ExchangeRegistration(
+              profile: ConnectionProfile(
+                connectionId: 'okx-default',
+                exchange: ExchangeId.okx,
+                label: 'OKX',
+              ),
+              adapter: OkxAdapter(),
+            ),
+            ExchangeRegistration(
+              profile: const ConnectionProfile(
+                connectionId: 'binance',
+                exchange: ExchangeId.binance,
+                label: 'Binance',
+              ),
+              adapter: FakeExchangeAdapter(),
+            ),
+          ],
+        ),
+        fractalDataProvider.overrideWith(
+          (ref, scope) => scope.exchange == ExchangeId.okx
+              ? Future.value([_fractalDataWithPrices()])
+              : pending.future,
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(home: FractalScreen()),
+      ),
+    );
+    await tester.pump();
+    expect(find.textContaining('0.09117'), findsWidgets);
+    container.read(selectedConnectionIdProvider.notifier).state = 'binance';
+    await tester.pump();
+    expect(find.textContaining('0.09117'), findsNothing);
+    expect(find.text('Đang tải dữ liệu fractal…'), findsOneWidget);
+    expect(find.byType(AppSkeleton), findsOneWidget);
+    pending.complete([]);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('BMAG displays Binance as the price source', (tester) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          exchangeRegistryProvider.overrideWith(
+            (ref) => [
+              const ExchangeRegistration(
+                profile: ConnectionProfile(
+                  connectionId: 'okx-default',
+                  exchange: ExchangeId.okx,
+                  label: 'OKX',
+                ),
+                adapter: OkxAdapter(),
+              ),
+              ExchangeRegistration(
+                profile: const ConnectionProfile(
+                  connectionId: 'binance',
+                  exchange: ExchangeId.binance,
+                  label: 'Binance',
+                ),
+                adapter: FakeExchangeAdapter(),
+              ),
+            ],
+          ),
+          selectedConnectionIdProvider.overrideWith((ref) => 'binance'),
+          fractalDataProvider.overrideWith(
+            (ref, scope) async => <FractalData>[],
+          ),
+        ],
+        child: const MaterialApp(home: FractalScreen()),
+      ),
+    );
+    await tester.pump();
+    expect(find.text('Nguồn giá: Binance'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('quick coin preset remains usable at narrow enlarged width', (
     tester,
   ) async {
@@ -139,7 +232,7 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    await tester.tap(find.text('BMAG Tracker (BTC)'));
+    await tester.tap(find.widgetWithText(TextButton, 'BTC'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
@@ -159,7 +252,7 @@ void main() {
 
     await tester.tap(ethText);
     await tester.pumpAndSettle();
-    expect(find.text('BMAG Tracker (ETH)'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, 'ETH'), findsOneWidget);
     expect(find.text('Chọn Coin'), findsNothing);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
@@ -206,7 +299,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          fractalDataProvider.overrideWith((ref) async {
+          fractalDataProvider.overrideWith((ref, scope) async {
             loads++;
             if (loads == 1) return [_fractalDataWithPrices()];
             return refreshResult.future;

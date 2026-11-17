@@ -2,11 +2,71 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:trading_balance_f/core/exchange/exchange_models.dart';
+import 'package:trading_balance_f/core/exchange/exchange_scope.dart';
+import 'package:trading_balance_f/core/exchange/market_source.dart';
 import 'package:trading_balance_f/features/support_resistance/data/watchlist_store.dart';
 import 'package:trading_balance_f/features/support_resistance/domain/models.dart';
 import 'package:trading_balance_f/features/support_resistance/presentation/providers/watchlist_provider.dart';
 
 void main() {
+  test('exchange watchlists preserve OKX and accept Binance BTCUSDT', () async {
+    final original = jsonEncode({
+      'version': 1,
+      'marketMode': 'spot',
+      'timeframe': 'h6',
+      'spotInstrumentIds': ['BTC-USDT'],
+      'perpetualInstrumentIds': [],
+    });
+    SharedPreferences.setMockInitialValues({
+      WatchlistStore.storageKey: original,
+    });
+    final container = ProviderContainer(
+      overrides: [
+        exchangeScopeProvider.overrideWith((ref) {
+          final id = ref.watch(selectedConnectionIdProvider);
+          return ExchangeScope(
+            connectionId: id,
+            exchange: id == 'binance' ? ExchangeId.binance : ExchangeId.okx,
+            credentialGeneration: 0,
+            switchEpoch: 0,
+          );
+        }),
+        supportResistanceMarketRepositoryProvider.overrideWith((ref) {
+          ref.watch(exchangeScopeProvider);
+          return _Catalog();
+        }),
+      ],
+    );
+    addTearDown(container.dispose);
+    var controller = container.read(supportResistanceWatchlistProvider);
+    await controller.load();
+    expect(controller.snapshot.spotInstrumentIds, ['BTC-USDT']);
+    container.read(selectedConnectionIdProvider.notifier).state = 'binance';
+    controller = container.read(supportResistanceWatchlistProvider);
+    await controller.load();
+    expect(
+      await controller.addInstrument('BTCUSDT'),
+      WatchlistMutationResult.changed,
+    );
+    expect(
+      await controller.addInstrument('BTC-USDT'),
+      WatchlistMutationResult.invalidInstrument,
+    );
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString(WatchlistStore.storageKey), original);
+    expect(
+      prefs.getString(WatchlistStore.binanceStorageKey),
+      contains('BTCUSDT'),
+    );
+    container.read(selectedConnectionIdProvider.notifier).state = 'okx-default';
+    controller = container.read(supportResistanceWatchlistProvider);
+    await controller.load();
+    expect(controller.snapshot.spotInstrumentIds, ['BTC-USDT']);
+  });
+
   group('RED-29 persisted corruption and failure boundaries', () {
     test('sanitizes corrupt lists and falls back from invalid enums', () async {
       final storage = _MemoryWatchlistStorage(
@@ -292,4 +352,19 @@ class _MemoryWatchlistStorage implements WatchlistStorage {
     initial = encodedSnapshot;
     return true;
   }
+}
+
+class _Catalog implements MarketSource {
+  @override
+  Future<List<SupportResistanceInstrument>> getInstruments({
+    required SupportResistanceMarketMode marketMode,
+  }) async => [
+    SupportResistanceInstrument(
+      marketMode: marketMode,
+      instrumentId: 'BTCUSDT',
+      baseCurrency: 'BTC',
+    ),
+  ];
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

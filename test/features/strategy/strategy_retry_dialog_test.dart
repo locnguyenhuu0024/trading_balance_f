@@ -11,7 +11,6 @@ import 'package:trading_balance_f/core/network/request_coordinator.dart';
 import 'package:trading_balance_f/features/strategy/data/strategy_api_client.dart';
 import 'package:trading_balance_f/features/strategy/data/strategy_market_repository.dart';
 import 'package:trading_balance_f/features/strategy/domain/strategy_models.dart';
-import 'package:trading_balance_f/features/strategy/presentation/providers/strategy_dashboard_provider.dart';
 import 'package:trading_balance_f/features/strategy/presentation/strategy_screen.dart';
 
 void main() {
@@ -382,35 +381,33 @@ class _RetryDialogApi implements StrategyApi {
     return StrategyRetryCandidates(
       sourceStrategyId: sourceStrategyId,
       sourceRevision: 'source-revision-1',
-      candidates:
-          [
-            for (var index = 0; index < 11; index++)
-              StrategyRetryCandidate(
-                sourceClientOrderId: 'source-order-$index',
-                side: 'long',
-                role: 'entry',
-                limitPrice: '65000.123456',
-                contracts: '1',
-                leverage: '5',
-                priorOutcome: 'not_submitted',
-                eligible: true,
-                reason: null,
-                levelId: null,
-              ),
-          ]..add(
-            StrategyRetryCandidate(
-              sourceClientOrderId: 'source-order-excluded',
-              side: 'short',
-              role: 'entry',
-              limitPrice: '64000',
-              contracts: '1',
-              leverage: '5',
-              priorOutcome: 'other',
-              eligible: false,
-              reason: 'missing_evidence',
-              levelId: null,
-            ),
+      candidates: [
+        for (var index = 0; index < 11; index++)
+          StrategyRetryCandidate(
+            sourceClientOrderId: 'source-order-$index',
+            side: 'long',
+            role: 'entry',
+            limitPrice: '65000.123456',
+            contracts: '1',
+            leverage: '5',
+            priorOutcome: 'not_submitted',
+            eligible: true,
+            reason: null,
+            levelId: null,
           ),
+        const StrategyRetryCandidate(
+          sourceClientOrderId: 'source-order-excluded',
+          side: 'short',
+          role: 'entry',
+          limitPrice: '64000',
+          contracts: '1',
+          leverage: '5',
+          priorOutcome: 'other',
+          eligible: false,
+          reason: 'missing_evidence',
+          levelId: null,
+        ),
+      ],
       blockedReason: null,
       linkedChildren: const [],
     );

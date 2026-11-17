@@ -1,3 +1,9 @@
+import '../../../core/widgets/app_motion.dart';
+import '../../../core/widgets/scope_bar.dart';
+import '../../../core/widgets/account_state_view.dart';
+import '../../../exchanges/binance/binance_adapter.dart';
+import '../../../exchanges/binance/binance_estimated_pnl.dart';
+import '../../../exchanges/binance/binance_trade_history.dart';
 // File Name: portfolio_screen.dart
 // File Path: lib/features/portfolio/presentation/portfolio_screen.dart
 
@@ -6,18 +12,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../../core/currency/currency_display_mode.dart';
-import '../../../core/network/okx_read_scope.dart';
 import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/platform_brightness_provider.dart';
 import '../../../core/theme/pnl_color.dart';
 import '../../../core/widgets/crypto_icon.dart';
 import '../../../core/widgets/manual_refresh_button.dart';
-import 'providers/portfolio_provider.dart';
+import '../../../core/exchange/exchange_models.dart';
+import '../../../core/exchange/exchange_registry.dart';
+import '../../../core/exchange/exchange_scope.dart';
+import '../../../core/exchange/scoped_read.dart';
 import '../../settings/presentation/settings_screen.dart';
 import '../../market/presentation/providers/market_provider.dart';
 import '../../../core/network/okx_websocket_service.dart';
-import '../data/okx_balance_model.dart';
 import 'widgets/portfolio_currency_amount.dart';
 
 final hideBalanceProvider = StateProvider<bool>((ref) => false);
@@ -46,6 +53,25 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
   List<String>? _pendingCoins;
   OkxWebsocketService? _tickerService;
   Timer? _refreshTimer;
+  ExchangeScope? _costScope;
+  bool _costFinished = false;
+
+  void _startCost(ExchangeScope scope, AccountSnapshot account) {
+    _costScope = scope;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted || ref.read(exchangeScopeProvider) != scope) return;
+      try {
+        final controller = await ref.read(binanceCostControllerProvider.future);
+        await controller.run(account);
+      } catch (_) {
+        // History is independent of the account read.
+      } finally {
+        if (mounted && ref.read(exchangeScopeProvider) == scope) {
+          setState(() => _costFinished = true);
+        }
+      }
+    });
+  }
 
   @override
   void initState() {
@@ -56,17 +82,36 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
   }
 
   Future<void> _refreshPortfolio({bool automatic = false}) async {
-    final currentRead = ref.read(portfolioFutureProvider);
+    final scope = ref.read(exchangeScopeProvider);
+    final provider = scopedAccountProvider(scope);
+    final currentRead = ref.read(provider);
     if (!mounted ||
         _portfolioRefreshInFlight ||
         currentRead.isLoading ||
-        (automatic && isTerminalOkxReadFailure(currentRead.asError?.error))) {
+        (automatic &&
+            isTerminalAccountFailure(
+              ref
+                  .read(exchangeRegistryProvider)
+                  .firstWhere(
+                    (entry) => entry.profile.connectionId == scope.connectionId,
+                  ),
+              currentRead.asError?.error,
+            ))) {
       return;
     }
     _portfolioRefreshInFlight = true;
-    ref.invalidate(portfolioFutureProvider);
+    ref
+        .read(exchangeRegistryProvider)
+        .firstWhere(
+          (entry) =>
+              entry.profile.connectionId == scope.connectionId &&
+              entry.profile.exchange == scope.exchange,
+        )
+        .adapter
+        .invalidateAccount(ref.invalidate);
+    ref.invalidate(provider);
     try {
-      await ref.read(portfolioFutureProvider.future);
+      await ref.read(provider.future);
     } catch (_) {
       // The watched provider renders refresh errors in the screen.
     } finally {
@@ -78,7 +123,9 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
     if (!mounted ||
         _portfolioRefreshInFlight ||
         _pageRefreshInFlight ||
-        ref.read(portfolioFutureProvider).isLoading) {
+        ref
+            .read(scopedAccountProvider(ref.read(exchangeScopeProvider)))
+            .isLoading) {
       return;
     }
     setState(() => _pageRefreshInFlight = true);
@@ -96,6 +143,11 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
     if (!mounted) return;
     try {
       await _refreshPortfolio();
+      final scope = ref.read(exchangeScopeProvider);
+      final account = ref.read(scopedAccountProvider(scope)).valueOrNull;
+      if (scope.exchange == ExchangeId.binance && account != null) {
+        _startCost(scope, account);
+      }
     } finally {
       if (mounted) setState(() => _pageRefreshInFlight = false);
     }
@@ -124,7 +176,9 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
       _pendingCoins = null;
       if (_sameCoins(_subscribedCoins, requestedCoins)) return;
       _subscribedCoins = requestedCoins;
-      final service = ref.read(okxWebsocketProvider);
+      if (requestedCoins.isEmpty && _tickerService == null) return;
+      final OkxWebsocketService service =
+          _tickerService ?? ref.read<OkxWebsocketService>(okxWebsocketProvider);
       _tickerService = service;
       if (requestedCoins.isEmpty) {
         service.clearLegacySubscription();
@@ -144,8 +198,20 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final portfolioAsyncValue = ref.watch(portfolioFutureProvider);
-    final livePrices = ref.watch(livePriceProvider);
+    final scope = ref.watch(exchangeScopeProvider);
+    final isOkx = scope.exchange == ExchangeId.okx;
+    final portfolioAsyncValue = ref.watch(scopedAccountProvider(scope));
+    if (_costScope != scope) {
+      _costFinished = false;
+      if (isOkx) _costScope = scope;
+    }
+    final costView = scope.exchange == ExchangeId.binance
+        ? ref.watch(binanceCostStateProvider).valueOrNull
+        : null;
+    final livePrices = isOkx
+        ? ref.watch(livePriceProvider)
+        : <String, String>{};
+    if (!isOkx) _syncTickerSubscription(const <String>[]);
 
     final isBalanceHidden = ref.watch(hideBalanceProvider);
     final isDark = ref.watch(isDarkModeProvider);
@@ -156,67 +222,104 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
 
     final palette = AppPalette.of(context);
     final bgColor = palette.background;
-    final textColor = palette.ink;
 
     return Scaffold(
       backgroundColor: bgColor,
-      appBar: AppBar(
-        backgroundColor: bgColor,
-        foregroundColor: textColor,
-        elevation: 0,
-        centerTitle: true,
-        actions: [
-          ManualRefreshButton(
-            buttonKey: const Key('portfolio-manual-refresh'),
-            onRefresh: _refreshPortfolioAndRate,
-            isBusy:
-                _pageRefreshInFlight ||
-                _portfolioRefreshInFlight ||
-                portfolioAsyncValue.isLoading ||
-                exchangeRateAsync.isLoading,
-          ),
-          IconButton(
-            icon: Icon(
-              isBalanceHidden ? Icons.visibility_off : Icons.visibility,
-              size: 22,
-            ),
-            tooltip: isBalanceHidden ? 'Hiện số dư' : 'Ẩn số dư',
-            onPressed: () {
-              ref.read(hideBalanceProvider.notifier).state = !isBalanceHidden;
-            },
-          ),
-        ],
-      ),
-      body: NavigationContentFrame(
-        child: RefreshIndicator(
-          color: palette.ink,
-          backgroundColor: palette.raised,
-          onRefresh: _refreshPortfolioAndRate,
-          child: !portfolioAsyncValue.hasValue && portfolioAsyncValue.isLoading
-              ? Center(child: CircularProgressIndicator(color: textColor))
-              : portfolioAsyncValue.when(
-                  skipLoadingOnReload: false,
-                  loading: () => Center(
-                    child: CircularProgressIndicator(color: textColor),
-                  ),
-                  error: (error, stack) {
-                    _syncTickerSubscription(const <String>[]);
-                    return _buildErrorState(context, error.toString(), isDark);
-                  },
-                  data: (data) {
-                    _syncTickerSubscription(
-                      data.details.map((e) => e.ccy).toList(),
-                    );
-                    return _buildPortfolioData(
-                      data,
-                      livePrices,
-                      isBalanceHidden,
-                      isDark,
-                      currency,
-                      exchangeRate,
-                    );
-                  },
+      body: SafeArea(
+        child: NavigationContentFrame(
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
+                child: Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'Tài sản',
+                        style: TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    const Flexible(child: ScopeBar(compact: true)),
+                    ManualRefreshButton(
+                      buttonKey: const Key('portfolio-manual-refresh'),
+                      onRefresh: _refreshPortfolioAndRate,
+                      isBusy:
+                          _pageRefreshInFlight ||
+                          _portfolioRefreshInFlight ||
+                          portfolioAsyncValue.isLoading ||
+                          exchangeRateAsync.isLoading,
+                    ),
+                    IconButton(
+                      icon: Icon(
+                        isBalanceHidden
+                            ? Icons.visibility_off
+                            : Icons.visibility,
+                        size: 22,
+                      ),
+                      tooltip: isBalanceHidden ? 'Hiện số dư' : 'Ẩn số dư',
+                      onPressed: () =>
+                          ref.read(hideBalanceProvider.notifier).state =
+                              !isBalanceHidden,
+                    ),
+                  ],
                 ),
+              ),
+              Expanded(
+                child: RefreshIndicator(
+                  color: palette.ink,
+                  backgroundColor: palette.raised,
+                  onRefresh: _refreshPortfolioAndRate,
+                  child:
+                      !portfolioAsyncValue.hasValue &&
+                          portfolioAsyncValue.isLoading
+                      ? const AppSkeleton()
+                      : portfolioAsyncValue.when(
+                          skipLoadingOnReload: false,
+                          loading: () => const AppSkeleton(),
+                          error: (error, stack) {
+                            _syncTickerSubscription(const <String>[]);
+                            return AccountStateView.fromError(
+                              error: error,
+                              registration: ref
+                                  .read(exchangeRegistryProvider)
+                                  .firstWhere(
+                                    (entry) =>
+                                        entry.profile.connectionId ==
+                                        scope.connectionId,
+                                  ),
+                              onRetry: _refreshPortfolioAndRate,
+                            );
+                          },
+                          data: (data) {
+                            if (!isOkx && _costScope != scope) {
+                              _startCost(scope, data);
+                            }
+                            _syncTickerSubscription(
+                              isOkx
+                                  ? data.balances.map((e) => e.asset).toList()
+                                  : const <String>[],
+                            );
+                            return _buildPortfolioData(
+                              data,
+                              isOkx,
+                              scope.exchange == ExchangeId.binance,
+                              livePrices,
+                              isBalanceHidden,
+                              isDark,
+                              currency,
+                              exchangeRate,
+                              costView,
+                            );
+                          },
+                        ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -227,27 +330,31 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
   }
 
   Widget _buildPortfolioData(
-    OkxAccountData accountData,
+    AccountSnapshot accountData,
+    bool isOkx,
+    bool isBinance,
     Map<String, String> livePrices,
     bool isHidden,
     bool isDark,
     String currency,
     double exchangeRate,
+    BinanceCostView? costView,
   ) {
     double dynamicTotalEquity = 0.0;
     double totalUnrealizedPnl = 0.0;
 
-    for (var coin in accountData.details) {
-      final double eq = double.tryParse(coin.eq) ?? 0.0;
-      final double totalCoinUpl = double.tryParse(coin.upl) ?? 0.0;
+    for (var coin in accountData.balances) {
+      final double eq = double.tryParse(coin.total ?? '') ?? 0.0;
+      final double totalCoinUpl =
+          double.tryParse(coin.unrealizedPnl ?? '') ?? 0.0;
 
-      final String? realtimePriceStr = livePrices[coin.ccy];
+      final String? realtimePriceStr = livePrices[coin.asset];
       double priceToUsd = 0.0;
 
       if (realtimePriceStr != null) {
         priceToUsd = double.tryParse(realtimePriceStr) ?? 0.0;
       } else {
-        final double eqUsd = double.tryParse(coin.eqUsd) ?? 0.0;
+        final double eqUsd = double.tryParse(coin.valueUsdt ?? '') ?? 0.0;
         if (eq > 0) {
           priceToUsd = eqUsd / eq;
         }
@@ -257,49 +364,96 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
       totalUnrealizedPnl += totalCoinUpl * priceToUsd;
     }
 
-    final double baseEquity = dynamicTotalEquity - totalUnrealizedPnl;
-    final double pnlRatio = baseEquity > 0
-        ? (totalUnrealizedPnl / baseEquity) * 100
+    if (!isOkx) {
+      dynamicTotalEquity = double.tryParse(accountData.total ?? '') ?? 0.0;
+    }
+    final summary =
+        isBinance &&
+            costView != null &&
+            costView.available &&
+            _costFinished &&
+            !costView.loading
+        ? estimatedSummary(costView, _costFinished, accountData)
+        : null;
+    final combined = summary != null && summary.covered > 0;
+    final double baseEquity =
+        dynamicTotalEquity -
+        totalUnrealizedPnl -
+        (combined ? summary.profit : 0);
+    final ratioBase = isBinance
+        ? accountData.balances
+                  .where((coin) => coin.wallet == 'USD-M')
+                  .fold<double>(
+                    0.0,
+                    (sum, coin) =>
+                        sum + (double.tryParse(coin.valueUsdt ?? '') ?? 0.0),
+                  ) -
+              totalUnrealizedPnl
+        : baseEquity;
+    final double pnlRatio = ratioBase > 0
+        ? (totalUnrealizedPnl / ratioBase) * 100
         : 0.0;
+
+    final headlinePnl = combined
+        ? totalUnrealizedPnl + summary.profit
+        : totalUnrealizedPnl;
+    final headlineRatio = combined
+        ? (baseEquity > 0 ? headlinePnl / baseEquity * 100 : 0.0)
+        : pnlRatio;
 
     final palette = AppPalette.forBrightness(isDark);
     final textColor = palette.ink;
-    final cardColor = palette.raised;
-    final borderColor = palette.border;
     final subtitleColor = palette.muted;
     final iconBgColor = palette.surface;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _buildAssetSummary(
-          totalEquity: dynamicTotalEquity,
-          baseEquity: baseEquity,
-          unrealizedPnl: totalUnrealizedPnl,
-          pnlRatio: pnlRatio,
-          isHidden: isHidden,
-          isDark: isDark,
-          currency: currency,
-          exchangeRate: exchangeRate,
-        ),
-
-        Divider(height: 1, indent: 16, endIndent: 16, color: palette.border),
-
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-          child: Text(
-            'Tài sản chi tiết',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.bold,
-              color: textColor,
+    return AppEntranceScope(
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: [
+          AppEntrance(
+            index: 0,
+            child: _buildAssetSummary(
+              isBinance: isBinance,
+              combined: combined,
+              totalMissing: !isOkx && accountData.total == null,
+              totalEquity: dynamicTotalEquity,
+              baseEquity: baseEquity,
+              unrealizedPnl: headlinePnl,
+              pnlRatio: headlineRatio,
+              isHidden: isHidden,
+              isDark: isDark,
+              currency: currency,
+              exchangeRate: exchangeRate,
             ),
           ),
-        ),
 
-        // DANH SÁCH COIN
-        Expanded(
-          child: accountData.details.isEmpty
+          if (!isOkx)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: PartialAccountNotice(
+                account: accountData,
+                showPartialLabel: false,
+                spotMarginAvailable: ref.watch(
+                  binanceSpotMarginAvailableProvider,
+                ),
+              ),
+            ),
+          Divider(height: 1, indent: 24, endIndent: 24, color: palette.border),
+
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
+            child: Text(
+              'Tài sản chi tiết',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: textColor,
+              ),
+            ),
+          ),
+
+          // DANH SÁCH COIN
+          accountData.balances.isEmpty
               ? Center(
                   child: Text(
                     'Không có tài sản nào.',
@@ -307,112 +461,151 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
                   ),
                 )
               : ListView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
+                    horizontal: 24,
                     vertical: 4,
                   ),
-                  itemCount: accountData.details.length,
+                  itemCount: accountData.balances.length,
                   itemBuilder: (context, index) {
-                    final coin = accountData.details[index];
-                    final double eq = double.tryParse(coin.eq) ?? 0.0;
-                    final String? realtimePriceStr = livePrices[coin.ccy];
+                    final coin = accountData.balances[index];
+                    final double eq = double.tryParse(coin.total ?? '') ?? 0.0;
+                    final String? realtimePriceStr = livePrices[coin.asset];
 
                     double currentUsdValue = 0.0;
                     if (realtimePriceStr != null) {
                       currentUsdValue =
                           eq * (double.tryParse(realtimePriceStr) ?? 0.0);
                     } else {
-                      currentUsdValue = double.tryParse(coin.eqUsd) ?? 0.0;
+                      currentUsdValue =
+                          double.tryParse(coin.valueUsdt ?? '') ?? 0.0;
                     }
 
                     // Ẩn các loại coin có giá trị nhỏ hơn $0.01 (dust)
-                    if (currentUsdValue < 0.01) return const SizedBox.shrink();
+                    final unpriced =
+                        !isOkx &&
+                        realtimePriceStr == null &&
+                        coin.valueUsdt == null;
+                    if (!unpriced &&
+                        (isOkx ? currentUsdValue : currentUsdValue.abs()) <
+                            0.01) {
+                      return const SizedBox.shrink();
+                    }
 
-                    return Card(
-                      elevation: 0,
-                      color: cardColor,
-                      margin: const EdgeInsets.only(bottom: 6),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(
-                          AppTokens.radiusMedium,
-                        ),
-                        side: BorderSide(color: borderColor),
-                      ),
-                      child: ListTile(
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 2,
-                        ),
-                        leading: CryptoIcon(
-                          symbol: coin.ccy,
-                          size: 34,
-                          backgroundColor: iconBgColor,
-                          textColor: textColor,
-                          textSize: 14,
-                        ),
-                        title: Text(
-                          coin.ccy,
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14,
-                            color: textColor,
-                          ),
-                        ),
-                        subtitle: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const SizedBox(height: 2),
-                            Text(
-                              _obfuscate(
-                                'SL: ${NumberFormat("#,##0.00##", "en_US").format(eq)}',
-                                isHidden,
-                              ),
+                    return AppEntrance(
+                      index: index + 1,
+                      child: Column(
+                        children: [
+                          ListTile(
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 2,
+                            ),
+                            leading: CryptoIcon(
+                              symbol: coin.asset,
+                              size: 40,
+                              backgroundColor: iconBgColor,
+                              textColor: textColor,
+                              textSize: 14,
+                            ),
+                            title: Text(
+                              coin.asset,
                               style: TextStyle(
-                                color: subtitleColor,
-                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                                color: textColor,
                               ),
                             ),
-                            if (realtimePriceStr != null) ...[
-                              const SizedBox(height: 2),
-                              Text(
-                                '\$$realtimePriceStr',
-                                style: TextStyle(
-                                  color: textColor,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w500,
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const SizedBox(height: 2),
+                                Text(
+                                  _obfuscate(
+                                    'SL: ${!isOkx && coin.total == null ? '—' : NumberFormat("#,##0.00##", "en_US").format(eq)}',
+                                    isHidden,
+                                  ),
+                                  style: TextStyle(
+                                    color: subtitleColor,
+                                    fontSize: 12,
+                                  ),
                                 ),
-                              ),
-                            ],
-                          ],
-                        ),
-                        trailing: PortfolioCurrencyAmount(
-                          usdtAmount: currentUsdValue,
-                          currencyMode: currency,
-                          vndRate: exchangeRate,
-                          hidden: isHidden,
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          textAlign: TextAlign.right,
-                          primaryStyle: TextStyle(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 14,
-                            color: textColor,
+                                if (isBinance && !isHidden && costView != null)
+                                  Builder(
+                                    builder: (context) {
+                                      final estimate = estimatedBalance(
+                                        costView,
+                                        _costFinished,
+                                        coin,
+                                      );
+                                      if (estimate == null) {
+                                        return const SizedBox.shrink();
+                                      }
+                                      final vnd =
+                                          currency == CurrencyDisplayMode.vnd;
+                                      return Text(
+                                        estimatedPnlText(
+                                          estimate,
+                                          rate: vnd ? exchangeRate : 1,
+                                          unit: vnd ? 'đ' : 'USDT',
+                                        ),
+                                        style: TextStyle(
+                                          color: subtitleColor,
+                                          fontSize: 12,
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                if (realtimePriceStr != null) ...[
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    '\$$realtimePriceStr',
+                                    style: TextStyle(
+                                      color: textColor,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                            trailing: unpriced
+                                ? Text(isHidden ? '******' : 'Chưa định giá')
+                                : PortfolioCurrencyAmount(
+                                    usdtAmount: currentUsdValue,
+                                    currencyMode: currency,
+                                    vndRate: exchangeRate,
+                                    hidden: isHidden,
+                                    crossAxisAlignment: CrossAxisAlignment.end,
+                                    textAlign: TextAlign.right,
+                                    primaryStyle: TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 14,
+                                      color: textColor,
+                                    ),
+                                    secondaryStyle: TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 12,
+                                      color: subtitleColor,
+                                    ),
+                                  ),
                           ),
-                          secondaryStyle: TextStyle(
-                            fontWeight: FontWeight.w600,
-                            fontSize: 12,
-                            color: subtitleColor,
-                          ),
-                        ),
+                          Divider(height: 1, color: palette.border),
+                        ],
                       ),
                     );
                   },
                 ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
   Widget _buildAssetSummary({
+    required bool isBinance,
+    required bool combined,
+    required bool totalMissing,
     required double totalEquity,
     required double baseEquity,
     required double unrealizedPnl,
@@ -444,23 +637,32 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
         FittedBox(
           fit: BoxFit.scaleDown,
           alignment: Alignment.centerLeft,
-          child: PortfolioCurrencyAmount(
-            usdtAmount: totalEquity,
-            currencyMode: currency,
-            vndRate: exchangeRate,
-            hidden: isHidden,
-            primaryStyle: TextStyle(
-              color: textColor,
-              fontSize: 30,
-              fontWeight: FontWeight.w800,
-              letterSpacing: -0.5,
-            ),
-            secondaryStyle: TextStyle(
-              color: labelColor,
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
+          child: totalMissing
+              ? Text(
+                  isHidden ? '******' : '—',
+                  style: TextStyle(
+                    color: textColor,
+                    fontSize: 30,
+                    fontWeight: FontWeight.w800,
+                  ),
+                )
+              : PortfolioCurrencyAmount(
+                  usdtAmount: totalEquity,
+                  currencyMode: currency,
+                  vndRate: exchangeRate,
+                  hidden: isHidden,
+                  primaryStyle: TextStyle(
+                    color: textColor,
+                    fontSize: 30,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.5,
+                  ),
+                  secondaryStyle: TextStyle(
+                    color: labelColor,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
         ),
       ],
     );
@@ -477,22 +679,25 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
           ),
         ),
         const SizedBox(height: 4),
-        PortfolioCurrencyAmount(
-          usdtAmount: baseEquity,
-          currencyMode: currency,
-          vndRate: exchangeRate,
-          hidden: isHidden,
-          primaryStyle: TextStyle(
-            color: textColor,
-            fontSize: 13,
-            fontWeight: FontWeight.w700,
+        if (totalMissing)
+          Text(isHidden ? '******' : '—')
+        else
+          PortfolioCurrencyAmount(
+            usdtAmount: baseEquity,
+            currencyMode: currency,
+            vndRate: exchangeRate,
+            hidden: isHidden,
+            primaryStyle: TextStyle(
+              color: textColor,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+            ),
+            secondaryStyle: TextStyle(
+              color: labelColor,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
           ),
-          secondaryStyle: TextStyle(
-            color: labelColor,
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
       ],
     );
 
@@ -500,7 +705,9 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Lãi / lỗ chưa thực hiện',
+          isBinance && !combined
+              ? 'Lãi / lỗ chưa thực hiện · USDⓈ-M'
+              : 'Lãi / lỗ chưa thực hiện',
           style: TextStyle(
             color: labelColor,
             fontSize: 12,
@@ -557,56 +764,51 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
 
     return Padding(
       key: const Key('portfolio-asset-summary'),
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          if (constraints.maxWidth >= 640) {
-            return Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Expanded(flex: 2, child: totalBlock),
-                Container(
-                  width: 1,
-                  height: 56,
-                  margin: const EdgeInsets.symmetric(horizontal: 20),
-                  color: palette.border,
-                ),
-                Expanded(child: capitalBlock),
-                const SizedBox(width: 20),
-                Expanded(child: pnlBlock),
-              ],
-            );
-          }
-
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              totalBlock,
-              const SizedBox(height: 14),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.fromLTRB(24, 8, 24, 12),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: palette.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: palette.border),
+        ),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            if (constraints.maxWidth >= 640) {
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
+                  Expanded(flex: 2, child: totalBlock),
+                  Container(
+                    width: 1,
+                    height: 56,
+                    margin: const EdgeInsets.symmetric(horizontal: 20),
+                    color: palette.border,
+                  ),
                   Expanded(child: capitalBlock),
-                  const SizedBox(width: 16),
+                  const SizedBox(width: 20),
                   Expanded(child: pnlBlock),
                 ],
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
+              );
+            }
 
-  Widget _buildErrorState(
-    BuildContext context,
-    String errorMessage,
-    bool isDark,
-  ) {
-    return Center(
-      child: Text(
-        'Lỗi kết nối: $errorMessage',
-        style: TextStyle(color: AppPalette.of(context).ink),
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                totalBlock,
+                const SizedBox(height: 14),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(child: capitalBlock),
+                    const SizedBox(width: 16),
+                    Expanded(child: pnlBlock),
+                  ],
+                ),
+              ],
+            );
+          },
+        ),
       ),
     );
   }

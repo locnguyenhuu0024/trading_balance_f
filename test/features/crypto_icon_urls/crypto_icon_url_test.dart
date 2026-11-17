@@ -1,10 +1,30 @@
 import 'dart:io';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/widgets/crypto_icon.dart';
 
 void main() {
   group('crypto icon URLs', () {
+    testWidgets('network icon keeps original colors', (tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Center(
+            child: CryptoIcon(
+              symbol: 'BTC',
+              size: 24,
+              backgroundColor: Colors.white,
+              textColor: Colors.black,
+              textSize: 12,
+            ),
+          ),
+        ),
+      );
+      expect(find.byType(ColorFiltered), findsNothing);
+      expect(find.byType(Image), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+
     final screenFiles = [
       File('lib/features/market/presentation/market_screen.dart'),
       File('lib/features/orders/presentation/orders_screen.dart'),

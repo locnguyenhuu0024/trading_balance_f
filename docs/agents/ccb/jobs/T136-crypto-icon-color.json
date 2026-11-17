@@ -1,0 +1,31 @@
+{
+  "task_id": "T136",
+  "approved_plan_id": "PLAN-20261113-crypto-icon-color",
+  "task_file": "tasks/task_136_crypto_icon_color.md",
+  "optcodex_variant": "personal",
+  "optcodex_version": "1.4.0",
+  "baseline_version": "1.2.2",
+  "optcodex_source_revision": "42fe641fab7b6481f2e5b4898cd62be926250339",
+  "agent_role": "implementation_executor",
+  "route_class": "E1",
+  "route_binding": "EXPLICIT",
+  "parent_route_inheritance": "FORBIDDEN",
+  "model": "gpt-6.1-terra",
+  "effort": "low",
+  "planning_fanout": {
+    "required": false,
+    "status": "EXCEPTION",
+    "required_workstreams": 1,
+    "collected_workstreams": 0,
+    "reason": "SINGLE_MATERIAL_WORKSTREAM"
+  },
+  "allowed_writes": [
+    "lib/core/widgets/crypto_icon.dart",
+    "test/features/crypto_icon_urls/crypto_icon_url_test.dart"
+  ],
+  "dependencies": [],
+  "timeout_seconds": 1500,
+  "domain": "mobile",
+  "terra_trial": null,
+  "route_override": null
+}
