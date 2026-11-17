@@ -1,0 +1,21 @@
+# graphify exclusions — protected config, secrets, generated/vendored code
+.env*
+*.env
+.wrangler/
+.vercel/
+wrangler.jsonc
+backend/credential_helper.py
+backend/security.py
+**/__pycache__/
+.dart_tool/
+build/
+third_party/
+android/
+ios/
+macos/
+web/
+designs/
+graphify-out/
+*.lock
+pubspec.lock
+.flutter-plugins-dependencies
