@@ -206,175 +206,188 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
                       onRetry: _refreshMarket,
                     ),
                     data: (tickers) {
-                      return AppEntranceScope(child: ListView.builder(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 24,
-                          vertical: AppTokens.space2,
-                        ),
-                        itemCount: tickers.length,
-                        itemBuilder: (context, index) {
-                          final t = tickers[index];
-                          final currentPrice = t.last;
+                      return AppEntranceScope(
+                        child: ListView.builder(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 24,
+                            vertical: AppTokens.space2,
+                          ),
+                          itemCount: tickers.length,
+                          itemBuilder: (context, index) {
+                            final t = tickers[index];
+                            final currentPrice = t.last;
 
-                          // Tính toán lại % biến động dựa trên giá Live mới nhất
-                          final double currentChangePercent = t.open24h > 0
-                              ? ((currentPrice - t.open24h) / t.open24h) * 100
-                              : 0.0;
+                            // Tính toán lại % biến động dựa trên giá Live mới nhất
+                            final double currentChangePercent = t.open24h > 0
+                                ? ((currentPrice - t.open24h) / t.open24h) * 100
+                                : 0.0;
 
-                          final isPositive = currentChangePercent >= 0;
-                          final changeColor = isPositive
-                              ? palette.positive
-                              : palette.negative;
-                          final changeSign = isPositive ? '+' : '';
-                          final volFormatted =
-                              '\$${(t.vol24h / 1000000).toStringAsFixed(2)}M';
+                            final isPositive = currentChangePercent >= 0;
+                            final changeColor = isPositive
+                                ? palette.positive
+                                : palette.negative;
+                            final changeSign = isPositive ? '+' : '';
+                            final volFormatted =
+                                '\$${(t.vol24h / 1000000).toStringAsFixed(2)}M';
 
-                          // Thông minh hiển thị giá: Nếu coin rác (< $1) thì hiện nhiều số thập phân
-                          String priceFormatted;
-                          if (currentPrice < 1) {
-                            priceFormatted = NumberFormat(
-                              "#,##0.00####",
-                              "en_US",
-                            ).format(currentPrice);
-                          } else {
-                            priceFormatted = NumberFormat(
-                              "#,##0.00",
-                              "en_US",
-                            ).format(currentPrice);
-                          }
+                            // Thông minh hiển thị giá: Nếu coin rác (< $1) thì hiện nhiều số thập phân
+                            String priceFormatted;
+                            if (currentPrice < 1) {
+                              priceFormatted = NumberFormat(
+                                "#,##0.00####",
+                                "en_US",
+                              ).format(currentPrice);
+                            } else {
+                              priceFormatted = NumberFormat(
+                                "#,##0.00",
+                                "en_US",
+                              ).format(currentPrice);
+                            }
 
-                          return AppEntrance(index: index, child: Card(
-                            elevation: 0,
-                            color: cardColor,
-                            margin: const EdgeInsets.only(
-                              bottom: AppTokens.space2,
-                            ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(
-                                AppTokens.radiusMedium,
-                              ),
-                              side: BorderSide(color: borderColor),
-                            ),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: AppTokens.space3,
-                                vertical: AppTokens.space3,
-                              ),
-                              child: LayoutBuilder(
-                                builder: (context, constraints) {
-                                  final coinIdentity = Row(
-                                    children: [
-                                      CryptoIcon(
-                                        symbol: t.coinSymbol,
-                                        size: 36,
-                                        backgroundColor: iconBgColor,
-                                        textColor: textColor,
-                                        textSize: 14,
-                                      ),
-                                      const SizedBox(width: AppTokens.space3),
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Text(
-                                              t.coinSymbol,
+                            return AppEntrance(
+                              index: index,
+                              child: Card(
+                                elevation: 0,
+                                color: cardColor,
+                                margin: const EdgeInsets.only(
+                                  bottom: AppTokens.space2,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(
+                                    AppTokens.radiusMedium,
+                                  ),
+                                  side: BorderSide(color: borderColor),
+                                ),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: AppTokens.space3,
+                                    vertical: AppTokens.space3,
+                                  ),
+                                  child: LayoutBuilder(
+                                    builder: (context, constraints) {
+                                      final coinIdentity = Row(
+                                        children: [
+                                          CryptoIcon(
+                                            symbol: t.coinSymbol,
+                                            size: 36,
+                                            backgroundColor: iconBgColor,
+                                            textColor: textColor,
+                                            textSize: 14,
+                                          ),
+                                          const SizedBox(
+                                            width: AppTokens.space3,
+                                          ),
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  t.coinSymbol,
+                                                  style: TextStyle(
+                                                    fontWeight: FontWeight.bold,
+                                                    fontSize: 15,
+                                                    color: textColor,
+                                                  ),
+                                                ),
+                                                Text(
+                                                  t.instId,
+                                                  style: TextStyle(
+                                                    color: palette.muted,
+                                                    fontSize: 12,
+                                                  ),
+                                                ),
+                                                const SizedBox(
+                                                  height: AppTokens.space1,
+                                                ),
+                                                Text(
+                                                  'Vol 24h: $volFormatted',
+                                                  style: TextStyle(
+                                                    color: palette.muted,
+                                                    fontSize: 12,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ],
+                                      );
+                                      final quote = Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.end,
+                                        children: [
+                                          Text(
+                                            '\$$priceFormatted',
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 15,
+                                              color: textColor,
+                                              fontFeatures: const [
+                                                FontFeature.tabularFigures(),
+                                              ],
+                                            ),
+                                          ),
+                                          const SizedBox(
+                                            height: AppTokens.space2,
+                                          ),
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: AppTokens.space2,
+                                              vertical: AppTokens.space1,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: changeColor,
+                                              borderRadius:
+                                                  BorderRadius.circular(
+                                                    AppTokens.radiusSmall,
+                                                  ),
+                                            ),
+                                            child: Text(
+                                              '$changeSign${currentChangePercent.toStringAsFixed(2)}%',
                                               style: TextStyle(
+                                                color: palette.onStrong,
                                                 fontWeight: FontWeight.bold,
-                                                fontSize: 15,
-                                                color: textColor,
-                                              ),
-                                            ),
-                                            Text(
-                                              t.instId,
-                                              style: TextStyle(
-                                                color: palette.muted,
                                                 fontSize: 12,
                                               ),
                                             ),
+                                          ),
+                                        ],
+                                      );
+
+                                      if (constraints.maxWidth < 400) {
+                                        return Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.stretch,
+                                          children: [
+                                            coinIdentity,
                                             const SizedBox(
-                                              height: AppTokens.space1,
+                                              height: AppTokens.space2,
                                             ),
-                                            Text(
-                                              'Vol 24h: $volFormatted',
-                                              style: TextStyle(
-                                                color: palette.muted,
-                                                fontSize: 12,
-                                              ),
+                                            Align(
+                                              alignment: Alignment.centerRight,
+                                              child: quote,
                                             ),
                                           ],
-                                        ),
-                                      ),
-                                    ],
-                                  );
-                                  final quote = Column(
-                                    crossAxisAlignment: CrossAxisAlignment.end,
-                                    children: [
-                                      Text(
-                                        '\$$priceFormatted',
-                                        style: TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 15,
-                                          color: textColor,
-                                          fontFeatures: const [
-                                            FontFeature.tabularFigures(),
-                                          ],
-                                        ),
-                                      ),
-                                      const SizedBox(height: AppTokens.space2),
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: AppTokens.space2,
-                                          vertical: AppTokens.space1,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: changeColor,
-                                          borderRadius: BorderRadius.circular(
-                                            AppTokens.radiusSmall,
-                                          ),
-                                        ),
-                                        child: Text(
-                                          '$changeSign${currentChangePercent.toStringAsFixed(2)}%',
-                                          style: TextStyle(
-                                            color: palette.onStrong,
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 12,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  );
+                                        );
+                                      }
 
-                                  if (constraints.maxWidth < 400) {
-                                    return Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.stretch,
-                                      children: [
-                                        coinIdentity,
-                                        const SizedBox(
-                                          height: AppTokens.space2,
-                                        ),
-                                        Align(
-                                          alignment: Alignment.centerRight,
-                                          child: quote,
-                                        ),
-                                      ],
-                                    );
-                                  }
-
-                                  return Row(
-                                    children: [
-                                      Expanded(child: coinIdentity),
-                                      const SizedBox(width: AppTokens.space3),
-                                      quote,
-                                    ],
-                                  );
-                                },
+                                      return Row(
+                                        children: [
+                                          Expanded(child: coinIdentity),
+                                          const SizedBox(
+                                            width: AppTokens.space3,
+                                          ),
+                                          quote,
+                                        ],
+                                      );
+                                    },
+                                  ),
+                                ),
                               ),
-                            ),
-                          ));
-                        },
-                      ));
+                            );
+                          },
+                        ),
+                      );
                     },
                   ),
                 ),

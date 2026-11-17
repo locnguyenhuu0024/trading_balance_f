@@ -149,7 +149,10 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
                 child: fractalAsync.when(
                   // Rất quan trọng: Bỏ qua trạng thái Loading khi reload để app không bị chớp mỗi giây
                   skipLoadingOnReload: true,
-                  loading: () => const AppSkeleton(caption: 'Đang tải dữ liệu fractal…', itemHeight: 96),
+                  loading: () => const AppSkeleton(
+                    caption: 'Đang tải dữ liệu fractal…',
+                    itemHeight: 96,
+                  ),
                   error: (err, stack) => Center(
                     child: Text(
                       'Lỗi tải dữ liệu',
@@ -164,62 +167,75 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
                       color: palette.ink,
                       backgroundColor: palette.raised,
                       onRefresh: _refreshFractal,
-                      child: AppEntranceScope(child: ListView(
-                        padding: const EdgeInsets.all(AppTokens.space4),
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        children: <Widget>[
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  'MA TRẬN ĐỒNG PHA (CONFLUENCE)',
-                                  softWrap: true,
-                                  style: TextStyle(
-                                    color: palette.muted,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: AppTokens.space2),
-                              Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Container(
-                                    width: 8,
-                                    height: 8,
-                                    decoration: BoxDecoration(
-                                      color: palette.positive,
-                                      shape: BoxShape.circle,
+                      child: AppEntranceScope(
+                        child: ListView(
+                          padding: const EdgeInsets.all(AppTokens.space4),
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          children:
+                              <Widget>[
+                                    Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            'MA TRẬN ĐỒNG PHA (CONFLUENCE)',
+                                            softWrap: true,
+                                            style: TextStyle(
+                                              color: palette.muted,
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: AppTokens.space2),
+                                        Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Container(
+                                              width: 8,
+                                              height: 8,
+                                              decoration: BoxDecoration(
+                                                color: palette.positive,
+                                                shape: BoxShape.circle,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              'LIVE',
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.bold,
+                                                color: palette.muted,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ],
                                     ),
-                                  ),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    'LIVE',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.bold,
-                                      color: palette.muted,
+                                    const SizedBox(height: AppTokens.space4),
+                                    ...data.map(
+                                      (fData) => _buildFractalRow(
+                                        context,
+                                        fData,
+                                        isDark,
+                                        timeZoneId,
+                                      ),
                                     ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: AppTokens.space4),
-                          ...data.map(
-                            (fData) => _buildFractalRow(
-                              context,
-                              fData,
-                              isDark,
-                              timeZoneId,
-                            ),
-                          ),
-                          const SizedBox(height: 32),
-                          _buildLegend(isDark),
-                        ].asMap().entries.map((entry) => AppEntrance(index: entry.key, child: entry.value)).toList(),
-                      )),
+                                    const SizedBox(height: 32),
+                                    _buildLegend(isDark),
+                                  ]
+                                  .asMap()
+                                  .entries
+                                  .map(
+                                    (entry) => AppEntrance(
+                                      index: entry.key,
+                                      child: entry.value,
+                                    ),
+                                  )
+                                  .toList(),
+                        ),
+                      ),
                     );
                   },
                 ),

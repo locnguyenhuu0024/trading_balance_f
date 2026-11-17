@@ -235,6 +235,7 @@ class _AppEntranceState extends State<AppEntrance>
     if (animation == null) return widget.child;
     return FadeTransition(
       opacity: animation,
+      alwaysIncludeSemantics: true,
       child: AnimatedBuilder(
         animation: animation,
         child: widget.child,

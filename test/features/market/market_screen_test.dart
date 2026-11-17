@@ -92,15 +92,25 @@ void main() {
 
   testWidgets('market loading and rows use motion widgets', (tester) async {
     final pending = Completer<List<MarketTicker>>();
-    await tester.pumpWidget(ProviderScope(overrides: [
-      marketListProvider.overrideWith((ref) => pending.future),
-      isDarkModeProvider.overrideWithValue(false),
-    ], child: const MaterialApp(home: MarketScreen())));
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          marketListProvider.overrideWith((ref) => pending.future),
+          isDarkModeProvider.overrideWithValue(false),
+        ],
+        child: const MaterialApp(home: MarketScreen()),
+      ),
+    );
     expect(find.byType(AppSkeleton), findsOneWidget);
-    pending.complete([MarketTicker(instId: 'BTC-USDT', last: 1, open24h: 1, vol24h: 1)]);
+    pending.complete([
+      MarketTicker(instId: 'BTC-USDT', last: 1, open24h: 1, vol24h: 1),
+    ]);
     await tester.pump();
     await tester.pump();
-    expect(find.ancestor(of: find.text('BTC'), matching: find.byType(AppEntrance)), findsOneWidget);
+    expect(
+      find.ancestor(of: find.text('BTC'), matching: find.byType(AppEntrance)),
+      findsOneWidget,
+    );
   });
 
   testWidgets('Market renders its fetched ticker snapshot without WebSocket', (
@@ -173,14 +183,17 @@ void main() {
     final sharedRows = find.ancestor(of: bar, matching: find.byType(Row));
     expect(
       sharedRows.evaluate().any(
-        (row) => find.descendant(
-          of: find.byWidget(row.widget),
-          matching: headerRefresh,
-        ).evaluate().isNotEmpty,
+        (row) => find
+            .descendant(of: find.byWidget(row.widget), matching: headerRefresh)
+            .evaluate()
+            .isNotEmpty,
       ),
       isTrue,
     );
-    expect(tester.getCenter(bar).dx, lessThan(tester.getCenter(headerRefresh).dx));
+    expect(
+      tester.getCenter(bar).dx,
+      lessThan(tester.getCenter(headerRefresh).dx),
+    );
 
     final refresh = find.byTooltip('Làm mới dữ liệu');
     expect(refresh, findsOneWidget);

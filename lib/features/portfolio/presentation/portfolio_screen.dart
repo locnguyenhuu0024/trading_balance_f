@@ -367,12 +367,18 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
     if (!isOkx) {
       dynamicTotalEquity = double.tryParse(accountData.total ?? '') ?? 0.0;
     }
-    final summary = isBinance && costView != null && costView.available &&
-            _costFinished && !costView.loading
+    final summary =
+        isBinance &&
+            costView != null &&
+            costView.available &&
+            _costFinished &&
+            !costView.loading
         ? estimatedSummary(costView, _costFinished, accountData)
         : null;
     final combined = summary != null && summary.covered > 0;
-    final double baseEquity = dynamicTotalEquity - totalUnrealizedPnl -
+    final double baseEquity =
+        dynamicTotalEquity -
+        totalUnrealizedPnl -
         (combined ? summary.profit : 0);
     final ratioBase = isBinance
         ? accountData.balances
@@ -388,7 +394,9 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
         ? (totalUnrealizedPnl / ratioBase) * 100
         : 0.0;
 
-    final headlinePnl = combined ? totalUnrealizedPnl + summary.profit : totalUnrealizedPnl;
+    final headlinePnl = combined
+        ? totalUnrealizedPnl + summary.profit
+        : totalUnrealizedPnl;
     final headlineRatio = combined
         ? (baseEquity > 0 ? headlinePnl / baseEquity * 100 : 0.0)
         : pnlRatio;
@@ -398,189 +406,198 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
     final subtitleColor = palette.muted;
     final iconBgColor = palette.surface;
 
-    return AppEntranceScope(child: ListView(
-      physics: const AlwaysScrollableScrollPhysics(),
-      children: [
-        AppEntrance(index: 0, child: _buildAssetSummary(
-          isBinance: isBinance,
-          combined: combined,
-          totalMissing: !isOkx && accountData.total == null,
-          totalEquity: dynamicTotalEquity,
-          baseEquity: baseEquity,
-          unrealizedPnl: headlinePnl,
-          pnlRatio: headlineRatio,
-          isHidden: isHidden,
-          isDark: isDark,
-          currency: currency,
-          exchangeRate: exchangeRate,
-        )),
+    return AppEntranceScope(
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: [
+          AppEntrance(
+            index: 0,
+            child: _buildAssetSummary(
+              isBinance: isBinance,
+              combined: combined,
+              totalMissing: !isOkx && accountData.total == null,
+              totalEquity: dynamicTotalEquity,
+              baseEquity: baseEquity,
+              unrealizedPnl: headlinePnl,
+              pnlRatio: headlineRatio,
+              isHidden: isHidden,
+              isDark: isDark,
+              currency: currency,
+              exchangeRate: exchangeRate,
+            ),
+          ),
 
-        if (!isOkx)
+          if (!isOkx)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: PartialAccountNotice(
+                account: accountData,
+                showPartialLabel: false,
+                spotMarginAvailable: ref.watch(
+                  binanceSpotMarginAvailableProvider,
+                ),
+              ),
+            ),
+          Divider(height: 1, indent: 24, endIndent: 24, color: palette.border),
+
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: PartialAccountNotice(
-              account: accountData,
-              showPartialLabel: false,
-              spotMarginAvailable: ref.watch(
-                binanceSpotMarginAvailableProvider,
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
+            child: Text(
+              'Tài sản chi tiết',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: textColor,
               ),
             ),
           ),
-        Divider(height: 1, indent: 24, endIndent: 24, color: palette.border),
 
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
-          child: Text(
-            'Tài sản chi tiết',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.bold,
-              color: textColor,
-            ),
-          ),
-        ),
+          // DANH SÁCH COIN
+          accountData.balances.isEmpty
+              ? Center(
+                  child: Text(
+                    'Không có tài sản nào.',
+                    style: TextStyle(color: subtitleColor, fontSize: 12),
+                  ),
+                )
+              : ListView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 24,
+                    vertical: 4,
+                  ),
+                  itemCount: accountData.balances.length,
+                  itemBuilder: (context, index) {
+                    final coin = accountData.balances[index];
+                    final double eq = double.tryParse(coin.total ?? '') ?? 0.0;
+                    final String? realtimePriceStr = livePrices[coin.asset];
 
-        // DANH SÁCH COIN
-        accountData.balances.isEmpty
-            ? Center(
-                child: Text(
-                  'Không có tài sản nào.',
-                  style: TextStyle(color: subtitleColor, fontSize: 12),
-                ),
-              )
-            : ListView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 24,
-                  vertical: 4,
-                ),
-                itemCount: accountData.balances.length,
-                itemBuilder: (context, index) {
-                  final coin = accountData.balances[index];
-                  final double eq = double.tryParse(coin.total ?? '') ?? 0.0;
-                  final String? realtimePriceStr = livePrices[coin.asset];
+                    double currentUsdValue = 0.0;
+                    if (realtimePriceStr != null) {
+                      currentUsdValue =
+                          eq * (double.tryParse(realtimePriceStr) ?? 0.0);
+                    } else {
+                      currentUsdValue =
+                          double.tryParse(coin.valueUsdt ?? '') ?? 0.0;
+                    }
 
-                  double currentUsdValue = 0.0;
-                  if (realtimePriceStr != null) {
-                    currentUsdValue =
-                        eq * (double.tryParse(realtimePriceStr) ?? 0.0);
-                  } else {
-                    currentUsdValue =
-                        double.tryParse(coin.valueUsdt ?? '') ?? 0.0;
-                  }
+                    // Ẩn các loại coin có giá trị nhỏ hơn $0.01 (dust)
+                    final unpriced =
+                        !isOkx &&
+                        realtimePriceStr == null &&
+                        coin.valueUsdt == null;
+                    if (!unpriced &&
+                        (isOkx ? currentUsdValue : currentUsdValue.abs()) <
+                            0.01)
+                      return const SizedBox.shrink();
 
-                  // Ẩn các loại coin có giá trị nhỏ hơn $0.01 (dust)
-                  final unpriced =
-                      !isOkx &&
-                      realtimePriceStr == null &&
-                      coin.valueUsdt == null;
-                  if (!unpriced &&
-                      (isOkx ? currentUsdValue : currentUsdValue.abs()) < 0.01)
-                    return const SizedBox.shrink();
-
-                  return AppEntrance(index: index + 1, child: Column(
-                    children: [
-                      ListTile(
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 2,
-                        ),
-                        leading: CryptoIcon(
-                          symbol: coin.asset,
-                          size: 40,
-                          backgroundColor: iconBgColor,
-                          textColor: textColor,
-                          textSize: 14,
-                        ),
-                        title: Text(
-                          coin.asset,
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14,
-                            color: textColor,
-                          ),
-                        ),
-                        subtitle: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const SizedBox(height: 2),
-                            Text(
-                              _obfuscate(
-                                'SL: ${!isOkx && coin.total == null ? '—' : NumberFormat("#,##0.00##", "en_US").format(eq)}',
-                                isHidden,
-                              ),
+                    return AppEntrance(
+                      index: index + 1,
+                      child: Column(
+                        children: [
+                          ListTile(
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 2,
+                            ),
+                            leading: CryptoIcon(
+                              symbol: coin.asset,
+                              size: 40,
+                              backgroundColor: iconBgColor,
+                              textColor: textColor,
+                              textSize: 14,
+                            ),
+                            title: Text(
+                              coin.asset,
                               style: TextStyle(
-                                color: subtitleColor,
-                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                                color: textColor,
                               ),
                             ),
-                            if (isBinance && !isHidden && costView != null)
-                              Builder(
-                                builder: (context) {
-                                  final estimate = estimatedBalance(
-                                    costView,
-                                    _costFinished,
-                                    coin,
-                                  );
-                                  if (estimate == null)
-                                    return const SizedBox.shrink();
-                                  final vnd =
-                                      currency == CurrencyDisplayMode.vnd;
-                                  return Text(
-                                    estimatedPnlText(
-                                      estimate,
-                                      rate: vnd ? exchangeRate : 1,
-                                      unit: vnd ? 'đ' : 'USDT',
-                                    ),
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const SizedBox(height: 2),
+                                Text(
+                                  _obfuscate(
+                                    'SL: ${!isOkx && coin.total == null ? '—' : NumberFormat("#,##0.00##", "en_US").format(eq)}',
+                                    isHidden,
+                                  ),
+                                  style: TextStyle(
+                                    color: subtitleColor,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                if (isBinance && !isHidden && costView != null)
+                                  Builder(
+                                    builder: (context) {
+                                      final estimate = estimatedBalance(
+                                        costView,
+                                        _costFinished,
+                                        coin,
+                                      );
+                                      if (estimate == null)
+                                        return const SizedBox.shrink();
+                                      final vnd =
+                                          currency == CurrencyDisplayMode.vnd;
+                                      return Text(
+                                        estimatedPnlText(
+                                          estimate,
+                                          rate: vnd ? exchangeRate : 1,
+                                          unit: vnd ? 'đ' : 'USDT',
+                                        ),
+                                        style: TextStyle(
+                                          color: subtitleColor,
+                                          fontSize: 12,
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                if (realtimePriceStr != null) ...[
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    '\$$realtimePriceStr',
                                     style: TextStyle(
-                                      color: subtitleColor,
+                                      color: textColor,
                                       fontSize: 12,
+                                      fontWeight: FontWeight.w500,
                                     ),
-                                  );
-                                },
-                              ),
-                            if (realtimePriceStr != null) ...[
-                              const SizedBox(height: 2),
-                              Text(
-                                '\$$realtimePriceStr',
-                                style: TextStyle(
-                                  color: textColor,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                        trailing: unpriced
-                            ? Text(isHidden ? '******' : 'Chưa định giá')
-                            : PortfolioCurrencyAmount(
-                                usdtAmount: currentUsdValue,
-                                currencyMode: currency,
-                                vndRate: exchangeRate,
-                                hidden: isHidden,
-                                crossAxisAlignment: CrossAxisAlignment.end,
-                                textAlign: TextAlign.right,
-                                primaryStyle: TextStyle(
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 14,
-                                  color: textColor,
-                                ),
-                                secondaryStyle: TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 12,
-                                  color: subtitleColor,
-                                ),
-                              ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                            trailing: unpriced
+                                ? Text(isHidden ? '******' : 'Chưa định giá')
+                                : PortfolioCurrencyAmount(
+                                    usdtAmount: currentUsdValue,
+                                    currencyMode: currency,
+                                    vndRate: exchangeRate,
+                                    hidden: isHidden,
+                                    crossAxisAlignment: CrossAxisAlignment.end,
+                                    textAlign: TextAlign.right,
+                                    primaryStyle: TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 14,
+                                      color: textColor,
+                                    ),
+                                    secondaryStyle: TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 12,
+                                      color: subtitleColor,
+                                    ),
+                                  ),
+                          ),
+                          Divider(height: 1, color: palette.border),
+                        ],
                       ),
-                      Divider(height: 1, color: palette.border),
-                    ],
-                  ));
-                },
-              ),
-      ],
-    ));
+                    );
+                  },
+                ),
+        ],
+      ),
+    );
   }
 
   Widget _buildAssetSummary({

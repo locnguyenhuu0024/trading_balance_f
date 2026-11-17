@@ -15,7 +15,17 @@ Plan Steps: P02
 Requirements: REQ-106, REQ-107, REQ-108
 Decisions: D-024, D-025
 
-## Remediation R02 (current instruction)
+## Remediation R03 (current instruction)
+
+R02 (attempt 832e67d6) is in the working tree; host V4 689/689 pass, RED-140 observed, web build OK, format clean. Only the analyzer gate fails: 159 issues vs baseline 156, 0 errors. Write only these files; no other change.
+
+- AUD-140-07: `lib/core/widgets/app_motion.dart` ~L128 `palette.raised.withOpacity(.55)` (deprecated) → `palette.raised.withValues(alpha: .55)`.
+- AUD-140-08: `lib/features/orders/presentation/orders_screen.dart` ~L238 `final textColor = palette.ink;` in `build` is now unused (the replaced loader was its last use) → delete that line only.
+- AUD-140-09: `lib/features/portfolio/presentation/portfolio_screen.dart` ~L225 `final textColor = palette.ink;` now unused → delete that line only.
+- AUD-140-10: `test/features/orders/orders_binance_view_test.dart` L1 import of `app_motion.dart` is now unused → delete it.
+- Keep `dart format` clean. Expected after: `flutter analyze` ≤ 156 issues.
+
+## Remediation R02 (done)
 
 R01 (attempt 7f1c76de) is in the working tree; AUD-140-01..03 are fixed (host V4: 687 pass, 2 fail). Do not redo. Write only files in §4.
 

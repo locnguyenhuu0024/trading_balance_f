@@ -263,20 +263,38 @@ void main() {
       container.dispose();
     },
   );
-  testWidgets('isolated margin card shows profit on own capital', (tester) async {
+  testWidgets('isolated margin card shows profit on own capital', (
+    tester,
+  ) async {
     const row = MarginAccountRow(
-      key: InstrumentKey(exchange: ExchangeId.binance, product: 'MARGIN',
-          nativeId: 'BTCUSDT', base: 'BTC', quote: 'USDT'),
-      baseNet: '1', indexPrice: '80', quoteNet: '-50.5', quoteInterest: '0.5',
+      key: InstrumentKey(
+        exchange: ExchangeId.binance,
+        product: 'MARGIN',
+        nativeId: 'BTCUSDT',
+        base: 'BTC',
+        quote: 'USDT',
+      ),
+      baseNet: '1',
+      indexPrice: '80',
+      quoteNet: '-50.5',
+      quoteInterest: '0.5',
     );
-    const view = BinanceCostView(symbols: {
-      'Isolated Margin:BTCUSDT': BinanceSymbolCost(
-          CostState(quantity: 1, cost: 100, isMargin: true), completed: true),
-    });
+    const view = BinanceCostView(
+      symbols: {
+        'Isolated Margin:BTCUSDT': BinanceSymbolCost(
+          CostState(quantity: 1, cost: 100, isMargin: true),
+          completed: true,
+        ),
+      },
+    );
     final estimate = estimatedMargin(view, true, row, const AccountSnapshot());
-    await tester.pumpWidget(MaterialApp(home: Scaffold(
-      body: MarginAccountCard(row: row, estimate: estimate),
-    )));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MarginAccountCard(row: row, estimate: estimate),
+        ),
+      ),
+    );
     final pair = tester.widget<Text>(find.text('BTC/USDT'));
     expect(pair.style?.fontSize, 16);
     expect(pair.style?.fontWeight, FontWeight.bold);
@@ -284,49 +302,170 @@ void main() {
     final amount = tester.widget<Text>(find.text('-20.50 USDT'));
     expect(amount.style?.fontSize, 22);
     expect(amount.style?.color, PnlColors.lightNegative);
-    expect(tester.widget<Text>(find.text('(-41.00%)')).style?.color, PnlColors.lightNegative);
+    expect(
+      tester.widget<Text>(find.text('(-41.00%)')).style?.color,
+      PnlColors.lightNegative,
+    );
     expect(find.textContaining('Giá vốn TB 100.00'), findsOneWidget);
   });
-  testWidgets('margin profit, missing capital, messages and sparse rows', (tester) async {
-    const key = InstrumentKey(exchange: ExchangeId.binance, product: 'MARGIN', nativeId: 'BTCUSDT', base: 'BTC', quote: 'USDT');
-    const view = BinanceCostView(symbols: {
-      'Isolated Margin:BTCUSDT': BinanceSymbolCost(CostState(quantity: -1, cost: 100, isMargin: true), completed: true),
-    });
-    const short = MarginAccountRow(key: key, baseNet: '-1', indexPrice: '90', quoteNet: '150');
-    await tester.pumpWidget(MaterialApp(home: Scaffold(body: MarginAccountCard(row: short, estimate: estimatedMargin(view, true, short, const AccountSnapshot())))));
-    expect(tester.widget<Text>(find.text('+10.00 USDT')).style?.color, PnlColors.lightPositive);
-    expect(tester.widget<Text>(find.text('(+20.00%)')).style?.color, PnlColors.lightPositive);
-    const loss = MarginAccountRow(key: key, baseNet: '1', indexPrice: '80', quoteNet: '-100.5', quoteInterest: '0.5');
-    const longView = BinanceCostView(symbols: {
-      'Isolated Margin:BTCUSDT': BinanceSymbolCost(CostState(quantity: 1, cost: 100, isMargin: true), completed: true),
-    });
-    await tester.pumpWidget(MaterialApp(home: Scaffold(body: MarginAccountCard(row: loss, estimate: estimatedMargin(longView, true, loss, const AccountSnapshot())))));
+  testWidgets('margin profit, missing capital, messages and sparse rows', (
+    tester,
+  ) async {
+    const key = InstrumentKey(
+      exchange: ExchangeId.binance,
+      product: 'MARGIN',
+      nativeId: 'BTCUSDT',
+      base: 'BTC',
+      quote: 'USDT',
+    );
+    const view = BinanceCostView(
+      symbols: {
+        'Isolated Margin:BTCUSDT': BinanceSymbolCost(
+          CostState(quantity: -1, cost: 100, isMargin: true),
+          completed: true,
+        ),
+      },
+    );
+    const short = MarginAccountRow(
+      key: key,
+      baseNet: '-1',
+      indexPrice: '90',
+      quoteNet: '150',
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MarginAccountCard(
+            row: short,
+            estimate: estimatedMargin(
+              view,
+              true,
+              short,
+              const AccountSnapshot(),
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(
+      tester.widget<Text>(find.text('+10.00 USDT')).style?.color,
+      PnlColors.lightPositive,
+    );
+    expect(
+      tester.widget<Text>(find.text('(+20.00%)')).style?.color,
+      PnlColors.lightPositive,
+    );
+    const loss = MarginAccountRow(
+      key: key,
+      baseNet: '1',
+      indexPrice: '80',
+      quoteNet: '-100.5',
+      quoteInterest: '0.5',
+    );
+    const longView = BinanceCostView(
+      symbols: {
+        'Isolated Margin:BTCUSDT': BinanceSymbolCost(
+          CostState(quantity: 1, cost: 100, isMargin: true),
+          completed: true,
+        ),
+      },
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MarginAccountCard(
+            row: loss,
+            estimate: estimatedMargin(
+              longView,
+              true,
+              loss,
+              const AccountSnapshot(),
+            ),
+          ),
+        ),
+      ),
+    );
     expect(find.text('-20.50 USDT'), findsOneWidget);
     expect(find.textContaining('%)'), findsNothing);
-    await tester.pumpWidget(const MaterialApp(home: Scaffold(body: MarginAccountCard(row: loss, estimate: EstimatedPnlRow(null, 'Chưa đủ dữ liệu giá vốn')))));
-    expect(tester.widget<Text>(find.text('Chưa đủ dữ liệu giá vốn')).style?.color, AppPalette.light.muted);
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: MarginAccountCard(
+            row: loss,
+            estimate: EstimatedPnlRow(null, 'Chưa đủ dữ liệu giá vốn'),
+          ),
+        ),
+      ),
+    );
+    expect(
+      tester.widget<Text>(find.text('Chưa đủ dữ liệu giá vốn')).style?.color,
+      AppPalette.light.muted,
+    );
     expect(find.textContaining(' USDT'), findsNothing);
-    const sparse = MarginAccountRow(key: InstrumentKey(exchange: ExchangeId.binance, product: 'MARGIN', nativeId: 'ETH-USDT'));
-    await tester.pumpWidget(const MaterialApp(home: Scaffold(body: MarginAccountCard(row: sparse))));
+    const sparse = MarginAccountRow(
+      key: InstrumentKey(
+        exchange: ExchangeId.binance,
+        product: 'MARGIN',
+        nativeId: 'ETH-USDT',
+      ),
+    );
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(body: MarginAccountCard(row: sparse)),
+      ),
+    );
     expect(find.text('ETH-USDT'), findsOneWidget);
     expect(find.text('Isolated Margin'), findsOneWidget);
     expect(find.textContaining('—'), findsWidgets);
     expect(find.text('Lãi/lỗ ước tính'), findsNothing);
     expect(tester.takeException(), isNull);
-    await tester.pumpWidget(const MaterialApp(home: Scaffold(body: MarginAccountCard(row: MarginAccountRow()))));
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(body: MarginAccountCard(row: MarginAccountRow())),
+      ),
+    );
     expect(find.text('—'), findsNWidgets(5));
     expect(find.text('Cross Margin'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
-  testWidgets('margin card details are compact with 2 decimals', (tester) async {
+  testWidgets('margin card details are compact with 2 decimals', (
+    tester,
+  ) async {
     const row = MarginAccountRow(
-      key: InstrumentKey(exchange: ExchangeId.binance, product: 'MARGIN', nativeId: 'SOLUSDT', base: 'SOL', quote: 'USDT'),
-      baseNet: '1.031967', baseBorrowed: '0', baseInterest: '0',
-      quoteNet: '-53.69700399', quoteBorrowed: '53.56029479', quoteInterest: '0.1759292',
-      marginLevel: '1.53270549', liquidation: '54.63722695', indexPrice: '79.77249833',
+      key: InstrumentKey(
+        exchange: ExchangeId.binance,
+        product: 'MARGIN',
+        nativeId: 'SOLUSDT',
+        base: 'SOL',
+        quote: 'USDT',
+      ),
+      baseNet: '1.031967',
+      baseBorrowed: '0',
+      baseInterest: '0',
+      quoteNet: '-53.69700399',
+      quoteBorrowed: '53.56029479',
+      quoteInterest: '0.1759292',
+      marginLevel: '1.53270549',
+      liquidation: '54.63722695',
+      indexPrice: '79.77249833',
     );
-    await tester.pumpWidget(const MaterialApp(home: Scaffold(body: MarginAccountCard(row: row))));
-    for (final value in ['1.03', '-53.70', '53.56', '0.18', 'Mức ký quỹ 1.53', 'Giá thanh lý 54.64', 'Giá chỉ số 79.77', 'Net', 'Vay', 'Lãi vay']) {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(body: MarginAccountCard(row: row)),
+      ),
+    );
+    for (final value in [
+      '1.03',
+      '-53.70',
+      '53.56',
+      '0.18',
+      'Mức ký quỹ 1.53',
+      'Giá thanh lý 54.64',
+      'Giá chỉ số 79.77',
+      'Net',
+      'Vay',
+      'Lãi vay',
+    ]) {
       expect(find.text(value), findsOneWidget);
     }
     expect(find.text('0.00'), findsWidgets);
@@ -335,10 +474,21 @@ void main() {
   });
   testWidgets('margin card keeps tiny values and dashes', (tester) async {
     const row = MarginAccountRow(
-      key: InstrumentKey(exchange: ExchangeId.binance, product: 'MARGIN', nativeId: 'SOLUSDT', base: 'SOL', quote: 'USDT'),
-      baseNet: '0.00123', baseBorrowed: null,
+      key: InstrumentKey(
+        exchange: ExchangeId.binance,
+        product: 'MARGIN',
+        nativeId: 'SOLUSDT',
+        base: 'SOL',
+        quote: 'USDT',
+      ),
+      baseNet: '0.00123',
+      baseBorrowed: null,
     );
-    await tester.pumpWidget(const MaterialApp(home: Scaffold(body: MarginAccountCard(row: row))));
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(body: MarginAccountCard(row: row)),
+      ),
+    );
     expect(find.text('0.0012'), findsOneWidget);
     expect(find.text('—'), findsWidgets);
   });
@@ -426,14 +576,20 @@ void main() {
       final sharedRows = find.ancestor(of: bar, matching: find.byType(Row));
       expect(
         sharedRows.evaluate().any(
-          (row) => find.descendant(
-            of: find.byWidget(row.widget),
-            matching: headerRefresh,
-          ).evaluate().isNotEmpty,
+          (row) => find
+              .descendant(
+                of: find.byWidget(row.widget),
+                matching: headerRefresh,
+              )
+              .evaluate()
+              .isNotEmpty,
         ),
         isTrue,
       );
-      expect(tester.getCenter(bar).dx, lessThan(tester.getCenter(headerRefresh).dx));
+      expect(
+        tester.getCenter(bar).dx,
+        lessThan(tester.getCenter(headerRefresh).dx),
+      );
       expect(find.text('BTC/USDT'), findsWidgets);
       expect(find.text('BTCUSDT'), findsNothing);
       expect(find.text('Tất cả'), findsOneWidget);
@@ -531,7 +687,7 @@ void main() {
         state == 'empty' ? findsOneWidget : findsNothing,
       );
       if (state == 'loading')
-        expect(find.byType(AppSkeleton), findsWidgets);
+        expect(find.byType(CircularProgressIndicator), findsWidgets);
       if (state == 'error')
         expect(find.byType(AccountStateView), findsOneWidget);
       if (state == 'partial' || state == 'partialRows')

@@ -196,138 +196,149 @@ class _DetailsContent extends StatelessWidget {
       color: palette.ink,
       backgroundColor: palette.raised,
       onRefresh: onRefresh,
-      child: AppEntranceScope(child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
-        children: <Widget>[
-          Card(
-            key: const Key('portfolio-details-summary'),
-            elevation: 0,
-            margin: EdgeInsets.zero,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(AppTokens.radiusMedium),
-              side: BorderSide(color: palette.border),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Balances',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    'Total assets (${CurrencyDisplayMode.labelFor(currency)})',
-                    style: TextStyle(
-                      color: subtitle,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 5),
-                  if (!isOkx && account.total == null)
-                    Text(hidden ? '******' : '—')
-                  else
-                    PortfolioCurrencyAmount(
-                      usdtAmount: total,
-                      currencyMode: currency,
-                      vndRate: exchangeRate,
-                      hidden: hidden,
-                      primaryStyle: TextStyle(
-                        color: textColor,
-                        fontSize: 26,
-                        fontWeight: FontWeight.w800,
+      child: AppEntranceScope(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
+          children:
+              <Widget>[
+                    Card(
+                      key: const Key('portfolio-details-summary'),
+                      elevation: 0,
+                      margin: EdgeInsets.zero,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(
+                          AppTokens.radiusMedium,
+                        ),
+                        side: BorderSide(color: palette.border),
                       ),
-                      secondaryStyle: TextStyle(
-                        color: subtitle,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Balances',
+                              style: Theme.of(context).textTheme.titleMedium
+                                  ?.copyWith(fontWeight: FontWeight.w700),
+                            ),
+                            const SizedBox(height: 10),
+                            Text(
+                              'Total assets (${CurrencyDisplayMode.labelFor(currency)})',
+                              style: TextStyle(
+                                color: subtitle,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 5),
+                            if (!isOkx && account.total == null)
+                              Text(hidden ? '******' : '—')
+                            else
+                              PortfolioCurrencyAmount(
+                                usdtAmount: total,
+                                currencyMode: currency,
+                                vndRate: exchangeRate,
+                                hidden: hidden,
+                                primaryStyle: TextStyle(
+                                  color: textColor,
+                                  fontSize: 26,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                                secondaryStyle: TextStyle(
+                                  color: subtitle,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            if (!isOkx)
+                              PartialAccountNotice(
+                                account: account,
+                                spotMarginAvailable: spotMarginAvailable,
+                              ),
+                            const SizedBox(height: 10),
+                            Text(
+                              'Principal / base capital',
+                              style: TextStyle(
+                                color: subtitle,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            if (!isOkx && account.total == null)
+                              Text(
+                                hidden ? '******' : '—',
+                                key: const Key('portfolio-principal-base'),
+                              )
+                            else
+                              PortfolioCurrencyAmount(
+                                key: const Key('portfolio-principal-base'),
+                                usdtAmount: base,
+                                currencyMode: currency,
+                                vndRate: exchangeRate,
+                                hidden: hidden,
+                                primaryStyle: TextStyle(
+                                  color: textColor,
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                                secondaryStyle: TextStyle(
+                                  color: subtitle,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            const SizedBox(height: 14),
+                            if (!pnlRevealed)
+                              OutlinedButton.icon(
+                                key: const Key('portfolio-reveal-pnl'),
+                                onPressed: onRevealPnl,
+                                icon: const Icon(Icons.visibility_outlined),
+                                label: const Text('Reveal PnL for this visit'),
+                              )
+                            else
+                              _PnlBlock(
+                                isBinance: isBinance,
+                                pnl: pnl,
+                                ratio: ratio,
+                                currency: currency,
+                                exchangeRate: exchangeRate,
+                                hidden: hidden,
+                              ),
+                          ],
+                        ),
                       ),
                     ),
-                  if (!isOkx)
-                    PartialAccountNotice(
-                      account: account,
-                      spotMarginAvailable: spotMarginAvailable,
-                    ),
-                  const SizedBox(height: 10),
-                  Text(
-                    'Principal / base capital',
-                    style: TextStyle(
-                      color: subtitle,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  if (!isOkx && account.total == null)
+                    const SizedBox(height: 14),
                     Text(
-                      hidden ? '******' : '—',
-                      key: const Key('portfolio-principal-base'),
-                    )
-                  else
-                    PortfolioCurrencyAmount(
-                      key: const Key('portfolio-principal-base'),
-                      usdtAmount: base,
-                      currencyMode: currency,
-                      vndRate: exchangeRate,
-                      hidden: hidden,
-                      primaryStyle: TextStyle(
-                        color: textColor,
-                        fontSize: 17,
-                        fontWeight: FontWeight.w800,
-                      ),
-                      secondaryStyle: TextStyle(
-                        color: subtitle,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
+                      'Asset balances',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
-                  const SizedBox(height: 14),
-                  if (!pnlRevealed)
-                    OutlinedButton.icon(
-                      key: const Key('portfolio-reveal-pnl'),
-                      onPressed: onRevealPnl,
-                      icon: const Icon(Icons.visibility_outlined),
-                      label: const Text('Reveal PnL for this visit'),
-                    )
-                  else
-                    _PnlBlock(
-                      isBinance: isBinance,
-                      pnl: pnl,
-                      ratio: ratio,
-                      currency: currency,
-                      exchangeRate: exchangeRate,
-                      hidden: hidden,
-                    ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 14),
-          Text(
-            'Asset balances',
-            style: Theme.of(
-              context,
-            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 8),
-          if (account.balances.isEmpty)
-            const _DetailsState(message: 'No balances available.')
-          else
-            for (final coin in account.balances)
-              _BalanceTile(
-                coin: coin,
-                isOkx: isOkx,
-                value: values[coin],
-                currency: currency,
-                exchangeRate: exchangeRate,
-                hidden: hidden,
-              ),
-        ].asMap().entries.map((entry) => AppEntrance(index: entry.key, child: entry.value)).toList(),
-      )),
+                    const SizedBox(height: 8),
+                    if (account.balances.isEmpty)
+                      const _DetailsState(message: 'No balances available.')
+                    else
+                      for (final coin in account.balances)
+                        _BalanceTile(
+                          coin: coin,
+                          isOkx: isOkx,
+                          value: values[coin],
+                          currency: currency,
+                          exchangeRate: exchangeRate,
+                          hidden: hidden,
+                        ),
+                  ]
+                  .asMap()
+                  .entries
+                  .map(
+                    (entry) =>
+                        AppEntrance(index: entry.key, child: entry.value),
+                  )
+                  .toList(),
+        ),
+      ),
     );
   }
 }
