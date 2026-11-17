@@ -125,7 +125,7 @@ class _AppSkeletonState extends State<AppSkeleton>
                     shaderCallback: (bounds) => LinearGradient(
                       colors: [
                         Colors.transparent,
-                        palette.raised.withOpacity(.55),
+                        palette.raised.withValues(alpha: .55),
                         Colors.transparent,
                       ],
                       stops: const [.35, .5, .65],

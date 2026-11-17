@@ -235,7 +235,6 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
 
     final palette = AppPalette.of(context);
     final bgColor = palette.background;
-    final textColor = palette.ink;
     final filterControls = OrderFilterControls(
       binanceProducts: scope.exchange == ExchangeId.binance
           ? ref

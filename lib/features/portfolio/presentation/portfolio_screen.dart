@@ -222,7 +222,6 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
 
     final palette = AppPalette.of(context);
     final bgColor = palette.background;
-    final textColor = palette.ink;
 
     return Scaffold(
       backgroundColor: bgColor,

@@ -1,4 +1,3 @@
-import 'package:trading_balance_f/core/widgets/app_motion.dart';
 import 'dart:async';
 import 'package:trading_balance_f/features/orders/presentation/widgets/margin_account_card.dart';
 import 'package:trading_balance_f/exchanges/binance/binance_estimated_pnl.dart';

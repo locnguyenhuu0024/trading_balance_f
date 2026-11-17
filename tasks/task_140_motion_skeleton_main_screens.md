@@ -137,7 +137,19 @@ The executor sandbox cannot run Flutter. Write the complete change. Report `red`
 `BLOCKED` if a file outside §4 is needed, if a loader can only be replaced by changing provider/refresh behavior, or if the entrance would need `IgnorePointer`.
 
 ## 11. Execution Ledger
-(coordinator fills)
+
+- 9d2829a94ee8419a851746a87ac761fb (first pass, executor BLOCKED on grid test): REWORK — AUD-140-01..03; WIP `75e6111`.
+- 7f1c76dea0a3488ca89214a428033789 (R01): REWORK — 2 V4 failures, format (AUD-140-04..06); WIP `6b234b0`.
+- 832e67d6c4a744f7919e423cb3fe4c64 (R02): REWORK — analyzer 159 > 156 (AUD-140-07..10); WIP `22dc8c4`.
+- b6fa24620635420b9c9bb3ec138f552f (R03): PASS. All attempts in §4 scope, no unexpected paths; route gpt-6.1-terra/high, effective UNVERIFIABLE.
 
 ## 12. Coordinator Audit
-(coordinator fills)
+
+Verdict: PASS (2026-11-17).
+
+- RED-140 (host, pre-T140 `lib/` from `75e6111~1`, `app_motion.dart` removed): compile failure — `AppSkeleton`/`AppEntrance`/`AppEntranceScope` not found. Working tree restored afterwards.
+- GREEN-140 focused command: 43/43 pass. V4 `flutter test --no-pub`: 689/689 pass.
+- `dart format --set-exit-if-changed` on the 12 files: 0 changed.
+- Buildability: `flutter analyze` 155 issues (baseline 156), 0 errors; `flutter build web --no-pub` built. New baseline for T141: 155.
+- Coordinator decisions recorded: fixed-extent order grid keeps `GridView.builder` (existing tests) with per-item `AppEntrance`; the Binance margin-account loader is not part of this task and keeps its spinner; `AppEntrance` keeps content in the semantics tree during the fade (`alwaysIncludeSemantics: true`).
+- Reviewed: one shimmer controller per skeleton, entrance controllers only for index < 8 inside the scope window, all disposed; no `Timer`/`IgnorePointer`; reduced motion → no shimmer and no entrance. Protected config not read or changed.
