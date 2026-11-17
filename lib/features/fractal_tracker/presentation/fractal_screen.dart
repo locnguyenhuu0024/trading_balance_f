@@ -160,8 +160,9 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
                     ),
                   ),
                   data: (data) {
-                    if (data.isEmpty)
+                    if (data.isEmpty) {
                       return const Center(child: Text('Không có dữ liệu'));
+                    }
 
                     return RefreshIndicator(
                       color: palette.ink,
@@ -290,10 +291,12 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
       }
     }
 
-    if (maxHigh != null && data.currentPrice > maxHigh)
+    if (maxHigh != null && data.currentPrice > maxHigh) {
       maxHigh = data.currentPrice;
-    if (minLow != null && data.currentPrice < minLow)
+    }
+    if (minLow != null && data.currentPrice < minLow) {
       minLow = data.currentPrice;
+    }
     final openPriceText = openPrice != null
         ? formatAdaptiveNumber(openPrice.toString())
         : '--';
@@ -763,7 +766,7 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
 
     final blockColor = isEmpty
         ? palette.surface
-        : directionColor.withOpacity(0.12);
+        : directionColor.withValues(alpha: 0.12);
     final textColor = isEmpty ? palette.muted : directionColor;
 
     String timeStr = '';
@@ -802,7 +805,7 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
               borderRadius: BorderRadius.circular(AppTokens.radiusSmall),
               border: isEmpty
                   ? null
-                  : Border.all(color: textColor.withOpacity(0.5)),
+                  : Border.all(color: textColor.withValues(alpha: 0.5)),
             ),
             child: Stack(
               alignment: Alignment.center,

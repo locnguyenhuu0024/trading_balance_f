@@ -12,21 +12,21 @@ class ExchangeRegistration {
 
 final exchangeRegistryProvider = Provider<List<ExchangeRegistration>>(
   (ref) => [
-    ExchangeRegistration(
-      profile: const ConnectionProfile(
+    const ExchangeRegistration(
+      profile: ConnectionProfile(
         connectionId: 'okx-default',
         exchange: ExchangeId.okx,
         label: 'OKX',
       ),
-      adapter: const OkxAdapter(),
+      adapter: OkxAdapter(),
     ),
-    ExchangeRegistration(
-      profile: const ConnectionProfile(
+    const ExchangeRegistration(
+      profile: ConnectionProfile(
         connectionId: 'binance-default',
         exchange: ExchangeId.binance,
         label: 'Binance',
       ),
-      adapter: const BinanceAdapter(),
+      adapter: BinanceAdapter(),
     ),
   ],
 );

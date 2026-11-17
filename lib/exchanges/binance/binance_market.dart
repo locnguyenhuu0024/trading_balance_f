@@ -17,8 +17,9 @@ class BinanceMarket implements MarketSource {
   double _number(Object? value) => double.parse(value.toString());
   String _symbol(String id) {
     final value = id.trim().toUpperCase();
-    if (!RegExp(r'^[A-Z0-9]+USDT$').hasMatch(value))
+    if (!RegExp(r'^[A-Z0-9]+USDT$').hasMatch(value)) {
       throw ArgumentError.value(id, 'instrumentId');
+    }
     return value;
   }
 
@@ -77,8 +78,9 @@ class BinanceMarket implements MarketSource {
       if (row['status'] != 'TRADING' ||
           row['quoteAsset'] != 'USDT' ||
           (marketMode == SupportResistanceMarketMode.perpetual &&
-              row['contractType'] != 'PERPETUAL'))
+              row['contractType'] != 'PERPETUAL')) {
         continue;
+      }
       final id = row['symbol'] as String;
       if (!RegExp(r'^[A-Z0-9]+USDT$').hasMatch(id)) continue;
       result.add(
@@ -145,8 +147,9 @@ class BinanceMarket implements MarketSource {
         timeframe: timeframe,
         confirmed: true,
       );
-      if (!timeframe.isUtcAligned(time) || !candle.hasValidPrices)
-        throw FormatException('Invalid candle');
+      if (!timeframe.isUtcAligned(time) || !candle.hasValidPrices) {
+        throw const FormatException('Invalid candle');
+      }
       result.add(candle);
     }
     result.sort((a, b) => a.timestamp.compareTo(b.timestamp));

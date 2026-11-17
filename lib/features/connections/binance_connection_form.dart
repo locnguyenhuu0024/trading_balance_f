@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../../core/theme/app_theme.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -120,7 +119,7 @@ class _BinanceConnectionFormState extends ConsumerState<BinanceConnectionForm> {
           : error is ArgumentError
           ? ExchangeFailureKind.credential
           : ExchangeFailureKind.other;
-      if (mounted)
+      if (mounted) {
         setState(
           () => _message = switch (kind) {
             ExchangeFailureKind.credential => 'Khóa không hợp lệ',
@@ -128,6 +127,7 @@ class _BinanceConnectionFormState extends ConsumerState<BinanceConnectionForm> {
             _ => 'Không thể kiểm tra kết nối',
           },
         );
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }

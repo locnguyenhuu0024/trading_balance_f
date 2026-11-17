@@ -5,7 +5,6 @@ import '../../../core/widgets/account_state_view.dart';
 // File Path: lib/features/market/presentation/market_screen.dart
 // Note: Màn hình hiển thị Top 50 các đồng coin giao dịch SPOT có Volume lớn nhất
 
-import 'dart:ui' show FontFeature;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';

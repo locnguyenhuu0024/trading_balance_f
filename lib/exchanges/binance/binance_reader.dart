@@ -47,14 +47,16 @@ class BinanceReader {
         if (name == 'USD-M') {
           for (final row in (data['assets'] as List? ?? [])) {
             final amount = _n(row['marginBalance']);
-            if (amount != 0)
+            if (amount != 0) {
               pending.add((name, '${row['asset']}', amount, row));
+            }
           }
         } else if (name == 'Spot') {
           for (final row in (data['balances'] as List? ?? [])) {
             final amount = _n(row['free']) + _n(row['locked']);
-            if (amount != 0)
+            if (amount != 0) {
               pending.add((name, '${row['asset']}', amount, row));
+            }
           }
         } else if (name == 'Cross Margin') {
           for (final row in (data['userAssets'] as List? ?? [])) {
@@ -80,12 +82,14 @@ class BinanceReader {
               _n(base['borrowed']),
               _n(quote['netAsset']),
               _n(quote['borrowed']),
-            ].every((n) => n == 0))
+            ].every((n) => n == 0)) {
               continue;
+            }
             for (final asset in [base, quote]) {
               final amount = _n(asset['netAsset']);
-              if (amount != 0 || _n(asset['borrowed']) != 0)
+              if (amount != 0 || _n(asset['borrowed']) != 0) {
                 pending.add((name, '${asset['asset']}', amount, asset));
+              }
             }
             marginRows.add(
               MarginAccountRow(
@@ -113,8 +117,9 @@ class BinanceReader {
       } on BinancePrivateException catch (e) {
         _check(generation);
         if (e.failure.kind == ExchangeFailureKind.cancellation) rethrow;
-        if (e.failure.kind == ExchangeFailureKind.credential)
+        if (e.failure.kind == ExchangeFailureKind.credential) {
           credentialFailures++;
+        }
         results.add(WalletResult(wallet: name, available: false));
         issues.add('$name unavailable');
       }
@@ -124,8 +129,9 @@ class BinanceReader {
         ExchangeFailure(ExchangeFailureKind.credential),
       );
     }
-    if (!client.spotMarginAvailable)
+    if (!client.spotMarginAvailable) {
       issues.add('Spot and Margin are available in the app only');
+    }
     Map<String, double> prices = {};
     if (pending.any((row) => row.$2 != 'USDT' && row.$3 != 0)) {
       try {
@@ -259,10 +265,12 @@ class BinanceReader {
       }
     }
 
-    if (filter == 'ALL' || filter == 'SWAP')
+    if (filter == 'ALL' || filter == 'SWAP') {
       await load('/fapi/v1/openOrders', 'SWAP');
-    if (client.spotMarginAvailable && (filter == 'ALL' || filter == 'SPOT'))
+    }
+    if (client.spotMarginAvailable && (filter == 'ALL' || filter == 'SPOT')) {
       await load('/api/v3/openOrders', 'SPOT');
+    }
     if (client.spotMarginAvailable && (filter == 'ALL' || filter == 'MARGIN')) {
       await load('/sapi/v1/margin/openOrders', 'MARGIN');
       final account = await client.get('/sapi/v1/margin/isolated/account');
@@ -333,8 +341,9 @@ class BinanceReader {
         } catch (error) {
           _check(generation);
           if (error is BinancePrivateException &&
-              error.failure.kind == ExchangeFailureKind.cancellation)
+              error.failure.kind == ExchangeFailureKind.cancellation) {
             rethrow;
+          }
           issues.add('$product $symbol unavailable');
         }
       }

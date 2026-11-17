@@ -1,7 +1,6 @@
 // File Name: main.dart
 // File Path: lib/main.dart
 
-import 'dart:ui' show FontFeature;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -389,8 +388,9 @@ class WebStorageHelper extends SecureStorageHelper {
 
   @override
   Future<void> saveSelectedConnectionId(String id) async {
-    if (!await _prefs.setString('SELECTED_CONNECTION_ID', id))
+    if (!await _prefs.setString('SELECTED_CONNECTION_ID', id)) {
       throw StateError('Unable to save selected connection.');
+    }
   }
 
   @override
@@ -410,8 +410,9 @@ class WebStorageHelper extends SecureStorageHelper {
       _prefs.setString('BINANCE_API_KEY', apiKey),
       _prefs.setString('BINANCE_API_SECRET', apiSecret),
     ]);
-    if (results.any((result) => !result))
+    if (results.any((result) => !result)) {
       throw StateError('Unable to save Binance keys.');
+    }
   });
 
   @override
@@ -421,8 +422,9 @@ class WebStorageHelper extends SecureStorageHelper {
           _prefs.remove('BINANCE_API_KEY'),
           _prefs.remove('BINANCE_API_SECRET'),
         ]);
-        if (results.any((result) => !result))
+        if (results.any((result) => !result)) {
           throw StateError('Unable to clear Binance keys.');
+        }
       });
 
   @override

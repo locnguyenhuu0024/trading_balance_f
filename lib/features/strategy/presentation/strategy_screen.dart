@@ -211,7 +211,7 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
     _StrategyActions actionsFor(Map<String, dynamic> current) =>
         _strategyActionsFor(context, session, dashboard, current);
     final actions = actionsFor(strategy);
-    final openDetails = () => showDialog<void>(
+    Future<void?> openDetails() => showDialog<void>(
       context: context,
       builder: (dialogContext) => _StrategyDetailsDialog(
         dashboard: dashboard,
@@ -241,7 +241,7 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
     final id = _text(strategy['id']);
     final status = _text(strategy['status']).toUpperCase();
     final candidateStage = _text(strategy['draftStage']) == 'candidates';
-    final currentStrategy = () =>
+    Map<String, dynamic>? currentStrategy() =>
         dashboard.ownsSession ? dashboard.strategyById(id) : null;
     final oversizedDraft =
         (status == 'DRAFT' ||

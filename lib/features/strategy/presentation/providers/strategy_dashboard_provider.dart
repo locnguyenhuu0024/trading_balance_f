@@ -346,7 +346,7 @@ class StrategyRetryFlow {
         draft.id,
         token,
       );
-    } on Object catch (error) {
+    } on Object {
       _writeMayBeUncertain = true;
       await _refreshAfterUncertain();
       rethrow;

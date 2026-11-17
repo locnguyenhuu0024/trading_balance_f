@@ -125,10 +125,12 @@ class BinancePrivateClient {
         key: scheduleKey,
         request: () async {
           _checkGeneration(snapshot);
-          if (_timePaths.contains(path))
+          if (_timePaths.contains(path)) {
             return _fetchTime(host, path, snapshot);
-          if (!_offsets.containsKey(host))
+          }
+          if (!_offsets.containsKey(host)) {
             await _fetchTime(host, timePath, snapshot);
+          }
           for (var attempt = 0; ; attempt++) {
             _checkGeneration(snapshot);
             final timestamp = _clock().millisecondsSinceEpoch + _offsets[host]!;
@@ -186,10 +188,11 @@ class BinancePrivateClient {
     final response = await _fetch('$host$path', snapshot, authenticated: false);
     final data = response.data;
     final serverTime = data is Map ? data['serverTime'] : null;
-    if (serverTime is! int)
+    if (serverTime is! int) {
       throw const BinancePrivateException(
         ExchangeFailure(ExchangeFailureKind.other),
       );
+    }
     _checkGeneration(snapshot);
     _offsets[host] = serverTime - _clock().millisecondsSinceEpoch;
     return response;
@@ -223,8 +226,9 @@ class BinancePrivateClient {
     final data = response.data;
     final rawCode = data is Map ? data['code'] : null;
     final code = rawCode is int ? rawCode : int.tryParse('$rawCode');
-    if (status >= 200 && status < 300 && (code == null || code >= 0))
+    if (status >= 200 && status < 300 && (code == null || code >= 0)) {
       return response;
+    }
     final retryAfter = ForegroundReadGate.parseRetryAfter(
       response.headers.value('retry-after'),
       _clock(),

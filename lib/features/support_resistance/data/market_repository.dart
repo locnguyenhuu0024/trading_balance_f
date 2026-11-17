@@ -84,6 +84,7 @@ class SupportResistanceRepository implements MarketSource {
     return [];
   }
 
+  @override
   Future<List<SupportResistanceInstrument>> getInstruments({
     required SupportResistanceMarketMode marketMode,
   }) async {
@@ -156,6 +157,7 @@ class SupportResistanceRepository implements MarketSource {
     return List<SupportResistanceInstrument>.unmodifiable(instruments);
   }
 
+  @override
   Future<SupportResistanceTicker> getTicker({
     required SupportResistanceMarketMode marketMode,
     required String instrumentId,
@@ -189,6 +191,7 @@ class SupportResistanceRepository implements MarketSource {
     );
   }
 
+  @override
   Future<List<SupportResistanceCandle>> getCandles({
     required SupportResistanceMarketMode marketMode,
     required String instrumentId,
@@ -324,6 +327,7 @@ class SupportResistanceRepository implements MarketSource {
     return List<SupportResistanceCandle>.unmodifiable(selected);
   }
 
+  @override
   Future<SupportResistanceMarketSnapshot> loadLevels({
     required SupportResistanceMarketMode marketMode,
     required String instrumentId,

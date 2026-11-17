@@ -81,10 +81,11 @@ class ScopePicker extends ConsumerWidget {
                         ),
                         onTap: () {
                           Navigator.of(context).pop();
-                          if (!active)
+                          if (!active) {
                             ref.read(selectConnectionProvider)(
                               entry.profile.connectionId,
                             );
+                          }
                         },
                       ),
                     );

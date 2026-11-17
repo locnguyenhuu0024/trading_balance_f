@@ -403,14 +403,14 @@ class _StrategySettingsDialogState
                                 },
                                 child: Column(
                                   children: [
-                                    RadioListTile<String>(
-                                      key: const Key(
+                                    const RadioListTile<String>(
+                                      key: Key(
                                         'strategy-settings-sequential',
                                       ),
                                       enabled: false,
                                       value: 'sequential',
-                                      title: const Text('Hàng đợi tuần tự'),
-                                      subtitle: const Text(
+                                      title: Text('Hàng đợi tuần tự'),
+                                      subtitle: Text(
                                         'Chế độ này đang tạm dừng. Chiến thuật mới sử dụng Gửi theo lô.',
                                       ),
                                     ),

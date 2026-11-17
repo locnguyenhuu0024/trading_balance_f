@@ -295,8 +295,9 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
                             );
                           },
                           data: (data) {
-                            if (!isOkx && _costScope != scope)
+                            if (!isOkx && _costScope != scope) {
                               _startCost(scope, data);
+                            }
                             _syncTickerSubscription(
                               isOkx
                                   ? data.balances.map((e) => e.asset).toList()
@@ -488,8 +489,9 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
                         coin.valueUsdt == null;
                     if (!unpriced &&
                         (isOkx ? currentUsdValue : currentUsdValue.abs()) <
-                            0.01)
+                            0.01) {
                       return const SizedBox.shrink();
+                    }
 
                     return AppEntrance(
                       index: index + 1,
@@ -537,8 +539,9 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
                                         _costFinished,
                                         coin,
                                       );
-                                      if (estimate == null)
+                                      if (estimate == null) {
                                         return const SizedBox.shrink();
+                                      }
                                       final vnd =
                                           currency == CurrencyDisplayMode.vnd;
                                       return Text(

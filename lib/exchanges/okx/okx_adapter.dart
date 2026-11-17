@@ -117,15 +117,18 @@ class OkxAdapter implements ExchangeAdapter {
       invalidate(ordersFutureProvider);
   @override
   ExchangeFailure classify(Object error) {
-    if (isOkxReadCancellation(error))
+    if (isOkxReadCancellation(error)) {
       return const ExchangeFailure(ExchangeFailureKind.cancellation);
-    if (isTransientOkxReadFailure(error))
+    }
+    if (isTransientOkxReadFailure(error)) {
       return ExchangeFailure(
         ExchangeFailureKind.transient,
         retryAfter: okxReadRetryAfter(error, DateTime.now()),
       );
-    if (isTerminalOkxReadFailure(error))
+    }
+    if (isTerminalOkxReadFailure(error)) {
       return const ExchangeFailure(ExchangeFailureKind.credential);
+    }
     return const ExchangeFailure(ExchangeFailureKind.other);
   }
 }

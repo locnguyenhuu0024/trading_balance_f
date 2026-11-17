@@ -109,7 +109,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                 ),
             currentRead.asError?.error,
           )) {
-        return;
+      return;
       }
 
       if (currentTab == OrderTab.positions &&
@@ -125,8 +125,9 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                     (entry) => entry.profile.connectionId == scope.connectionId,
                   ),
               accountRead.asError?.error,
-            ))
+            )) {
           return;
+        }
       }
       _invalidateCurrentRead(scope, currentTab);
     });
@@ -152,8 +153,9 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
         scope.exchange == ExchangeId.binance &&
         (currentFilter == 'ALL' || currentFilter == 'MARGIN') &&
         currentRead.asData != null &&
-        ref.read(scopedAccountProvider(scope)).isLoading)
-      return;
+        ref.read(scopedAccountProvider(scope)).isLoading) {
+        return;
+    }
 
     setState(() => _manualRefreshInFlight = true);
     try {
@@ -429,8 +431,9 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                       : null;
                   final account = accountAsync?.valueOrNull;
                   if (_costScope != scope) _costFinished = false;
-                  if (account != null && _costScope != scope)
+                  if (account != null && _costScope != scope) {
                     _startCost(scope, account);
+                  }
                   final costView = showMargin
                       ? ref.watch(binanceCostStateProvider).valueOrNull
                       : null;
@@ -519,8 +522,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                               exchangeRate,
                               isBalanceHidden,
                             ),
-                          )
-                          .toList(growable: false),
+                          ),
                     ],
                   );
                 },

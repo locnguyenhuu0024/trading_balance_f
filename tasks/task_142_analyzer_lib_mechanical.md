@@ -15,7 +15,14 @@ Plan Steps: P01
 Requirements: REQ-201..REQ-203
 Decisions: D-026
 
-## Remediation R01 (current instruction)
+## Remediation R02 (current instruction)
+
+R01 (attempt 97141d8c) is in the working tree; host analyze on the 21 files: only one defect left, plus formatting. Do not redo.
+
+- AUD-142-01, syntax error. `lib/features/strategy/presentation/strategy_screen.dart:214` `Future<void?> openDetails() => showDialog<void>(` — `void?` is not valid Dart (8 parse errors, 1 undefined `openDetails`). Required: `Future<void> openDetails() => showDialog<void>(` . Nothing else in that function changes.
+- AUD-142-02, formatting. `dart format` still changes `lib/features/orders/presentation/orders_screen.dart`, `lib/features/strategy/presentation/strategy_settings_dialog.dart`, `lib/main.dart` (`strategy_screen.dart` could not be parsed yet). Required: format these four files to `dart format` style (80 columns). No logic change.
+
+## Remediation R01 (done)
 
 Attempt af43dec9 changed nothing because the sandbox cannot run Dart to locate issues. You do not need any tool: every issue is listed below with its exact `file:line:column` from the host analyzer (HEAD `e8f273e`). Fix exactly these 60 sites by reading the source, following §6. Hand-format to `dart format` style (80 columns, trailing commas as in the surrounding code); the coordinator runs `dart format` and the analyzer on the host. Line numbers refer to the file before your edits — work bottom-up within a file or re-locate by content.
 

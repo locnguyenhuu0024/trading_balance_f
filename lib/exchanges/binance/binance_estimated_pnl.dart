@@ -75,8 +75,9 @@ EstimatedPnlRow? estimatedBalance(
   AssetBalance balance,
 ) {
   if (balance.asset == 'USDT' ||
-      (balance.wallet != 'Spot' && balance.wallet != 'Cross Margin'))
+      (balance.wallet != 'Spot' && balance.wallet != 'Cross Margin')) {
     return null;
+  }
   final amount = _number(
     balance.wallet == 'Spot' ? balance.total : balance.net,
   );
@@ -173,14 +174,16 @@ EstimatedPnlSummary estimatedSummary(
         balance.asset != 'USDT' &&
         (_number(balance.wallet == 'Spot' ? balance.total : balance.net) ??
                 0) !=
-            0)
+            0) {
       add(estimatedBalance(view, finished, balance));
+    }
   }
   for (final row in account.marginRows) {
     if (row.key != null &&
         row.key!.base != 'USDT' &&
-        (_number(row.baseNet) ?? 0) != 0)
+        (_number(row.baseNet) ?? 0) != 0) {
       add(estimatedMargin(view, finished, row, account));
+    }
   }
   return EstimatedPnlSummary(
     profit, cost, covered, eligible, capitalComplete: capitalComplete,
@@ -200,8 +203,9 @@ String estimatedPnlText(
     parts.add(
       'Giá vốn TB ${(e.average * rate).toStringAsFixed(2)} · Ước tính ${signed(e.profit * rate)} $unit${percentage == null ? '' : ' (${signed(percentage)}%)'}',
     );
-    if (e.ratio < 0.999999)
+    if (e.ratio < 0.999999) {
       parts.add('tính trên ${(e.ratio * 100).toStringAsFixed(0)}% lượng');
+    }
   }
   if (row.message != null) parts.add(row.message!);
   if (row.stale && e != null) parts.add('chưa cập nhật');

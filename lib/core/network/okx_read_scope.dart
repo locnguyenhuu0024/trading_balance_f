@@ -76,13 +76,15 @@ Future<T> runOkxPrivateRead<T>({
     load: load,
     retryAfter: okxReadRetryAfter,
     classify: (error) {
-      if (isOkxReadCancellation(error))
+      if (isOkxReadCancellation(error)) {
         return const ExchangeFailure(ExchangeFailureKind.cancellation);
-      if (isTransientOkxReadFailure(error))
+      }
+      if (isTransientOkxReadFailure(error)) {
         return ExchangeFailure(
           ExchangeFailureKind.transient,
           retryAfter: okxReadRetryAfter(error, DateTime.now()),
         );
+      }
       return const ExchangeFailure(ExchangeFailureKind.other);
     },
   );
