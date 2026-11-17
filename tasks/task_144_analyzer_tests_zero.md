@@ -15,6 +15,15 @@ Plan Steps: P03
 Requirements: REQ-201, REQ-202, REQ-206
 Decisions: D-026, D-027
 
+## Remediation R01 (current instruction)
+
+Attempt cfc0958c is in the working tree (host: whole repo 2 issues, V4 691/691). Do not redo. Two follow-on issues created by the added `const`:
+
+- AUD-144-01: `test/features/orders/order_cancellation_flow_test.dart:110:13` unnecessary_const — the enclosing expression is now `const`, so the inner `identity: const {` must become `identity: {`.
+- AUD-144-02: `test/features/strategy/strategy_dashboard_controller_test.dart:845:7` prefer_const_declarations — `final uncertain = const StrategyApiException(` → `const uncertain = StrategyApiException(`.
+
+No other change. (Pre-existing whole-file `dart format` differences in `scope_bar_test.dart` and `orders_screen_position_layout_test.dart` were present at `e8f273e`; do not reformat those whole files.)
+
 ## 1. Dispatch Compliance
 
 The CCB dispatcher passes `--model gpt-6.1-terra` and `model_reasoning_effort=medium` on your command line, and your prompt states the route. This is the explicit binding. `UNVERIFIABLE` is a valid state; do not stop for it.

@@ -103,10 +103,10 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [secureStorageProvider.overrideWithValue(keys)],
-        child: MaterialApp(
+        child: const MaterialApp(
           home: MediaQuery(
-            data: const MediaQueryData(textScaler: TextScaler.linear(2)),
-            child: const Scaffold(
+            data: MediaQueryData(textScaler: TextScaler.linear(2)),
+            child: Scaffold(
               body: Align(
                 alignment: Alignment.topCenter,
                 child: SizedBox(width: 320, child: ScopeBar()),

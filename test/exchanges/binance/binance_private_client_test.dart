@@ -134,8 +134,9 @@ void main() {
     final pending = Completer<ResponseBody>();
     final started = Completer<void>();
     final fixture = Fixture((r) {
-      if (r.path.endsWith('/time'))
+      if (r.path.endsWith('/time')) {
         return Future.value(body({'serverTime': 1000}));
+      }
       started.complete();
       return pending.future;
     });
@@ -273,10 +274,12 @@ void main() {
       if (r.uri.path.endsWith('/time')) return body({'serverTime': 1000});
       if (r.uri.path == '/fapi/v3/account') return body({'assets': []});
       if (r.uri.path == '/api/v3/account') return body({'balances': []});
-      if (r.uri.path == '/sapi/v1/margin/account')
+      if (r.uri.path == '/sapi/v1/margin/account') {
         return body({'userAssets': []});
-      if (r.uri.path == '/sapi/v1/margin/isolated/account')
+      }
+      if (r.uri.path == '/sapi/v1/margin/isolated/account') {
         return body({'assets': []});
+      }
       return body({});
     });
     final reader = BinanceReader(

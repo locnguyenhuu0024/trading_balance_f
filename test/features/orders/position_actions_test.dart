@@ -63,7 +63,6 @@ OkxPosition _position({
 
 class _FakeTradeApi implements TradeApi {
   _FakeTradeApi({
-    this.configured = true,
     this.sessionRestorationSupported = false,
     this.restoredSession,
     this.restoreGate,
@@ -72,7 +71,7 @@ class _FakeTradeApi implements TradeApi {
     this.logoutFailure,
   });
 
-  final bool configured;
+  final bool configured = true;
   @override
   bool get isConfigured => configured;
   final bool sessionRestorationSupported;

@@ -1,5 +1,3 @@
-import 'dart:ui' show SemanticsFlag;
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/features/orders/presentation/providers/order_provider.dart';
@@ -32,11 +30,10 @@ void main() {
         ),
       ),
     );
-    final selected = tester
-        .getSemantics(find.bySemanticsLabel('Vị thế'))
-        .getSemanticsData();
-    expect(selected.hasFlag(SemanticsFlag.isSelected), isTrue);
-    expect(selected.hasFlag(SemanticsFlag.isButton), isTrue);
+    expect(
+      tester.getSemantics(find.bySemanticsLabel('Vị thế')),
+      isSemantics(isSelected: true, isButton: true),
+    );
     expect(
       tester.getSize(find.widgetWithText(TextButton, 'Vị thế')).height,
       greaterThanOrEqualTo(48),

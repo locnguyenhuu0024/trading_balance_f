@@ -218,7 +218,7 @@ void main() {
     tester,
   ) async {
     final storage = _FakeStorage();
-    final pasted =
+    const pasted =
         'API Key: demo-api\nSecret Key = demo:secret=tail\n'
         'Passphrase: demo-pass';
     var clipboardReads = 0;

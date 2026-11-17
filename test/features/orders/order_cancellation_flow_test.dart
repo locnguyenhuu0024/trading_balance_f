@@ -98,7 +98,7 @@ TradeSession _session(String token) => TradeSession(
   expiresAt: DateTime.now().add(const Duration(hours: 1)),
 );
 
-OkxPosition _position() => OkxPosition(
+OkxPosition _position() => const OkxPosition(
   instId: 'BTC-USDT-SWAP',
   instType: 'SWAP',
   posSide: 'net',
@@ -117,9 +117,9 @@ OkxPosition _position() => OkxPosition(
 );
 
 class _CancellationApi implements TradeApi {
-  _CancellationApi({this.configured = true});
+  _CancellationApi();
 
-  final bool configured;
+  final bool configured = true;
   @override
   bool get isConfigured => configured;
   @override

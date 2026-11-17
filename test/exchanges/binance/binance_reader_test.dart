@@ -76,22 +76,26 @@ void main() {
     bool unpriced = false,
   }) {
     final path = r.uri.path;
-    if (path.endsWith('/time'))
+    if (path.endsWith('/time')) {
       return {'serverTime': DateTime.now().millisecondsSinceEpoch};
-    if (path == '/api/v3/ticker/price')
+    }
+    if (path == '/api/v3/ticker/price') {
       return [
         {'symbol': 'BTCUSDT', 'price': '76000'},
         {'symbol': 'ETHUSDT', 'price': '2000'},
       ];
-    if (allFail || (crossFails && path == '/sapi/v1/margin/account'))
+    }
+    if (allFail || (crossFails && path == '/sapi/v1/margin/account')) {
       return {'code': -2015};
-    if (path == '/fapi/v3/account')
+    }
+    if (path == '/fapi/v3/account') {
       return {
         'assets': [
           {'asset': 'USDT', 'marginBalance': '1000.50'},
         ],
       };
-    if (path == '/api/v3/account')
+    }
+    if (path == '/api/v3/account') {
       return {
         'balances': [
           {'asset': 'BTC', 'free': '0.01', 'locked': '0'},
@@ -99,12 +103,14 @@ void main() {
           if (unpriced) {'asset': 'LDUSDT', 'free': '1', 'locked': '0'},
         ],
       };
-    if (path == '/sapi/v1/margin/account')
+    }
+    if (path == '/sapi/v1/margin/account') {
       return {
         'userAssets': [
           {'asset': 'ETH', 'netAsset': '-0.1', 'borrowed': '0.1'},
         ],
       };
+    }
     if (path == '/sapi/v1/margin/isolated/account') return {'assets': []};
     throw StateError('Unexpected $path');
   }
@@ -197,9 +203,10 @@ void main() {
   test('isolated margin maps pair fields and pending order query', () async {
     final t = Transport((r) {
       final path = r.uri.path;
-      if (path.endsWith('/time'))
+      if (path.endsWith('/time')) {
         return {'serverTime': DateTime.now().millisecondsSinceEpoch};
-      if (path == '/sapi/v1/margin/isolated/account')
+      }
+      if (path == '/sapi/v1/margin/isolated/account') {
         return {
           'assets': [
             {
@@ -223,6 +230,7 @@ void main() {
             },
           ],
         };
+      }
       if (path == '/sapi/v1/margin/openOrders') return [];
       return fixture(r);
     });
@@ -281,10 +289,12 @@ void main() {
   });
   test('web proxy includes Spot and Margin pending orders', () async {
     final t = Transport((r) {
-      if (r.uri.path.endsWith('/time'))
+      if (r.uri.path.endsWith('/time')) {
         return {'serverTime': DateTime.now().millisecondsSinceEpoch};
-      if (r.uri.path == '/sapi/v1/margin/isolated/account')
+      }
+      if (r.uri.path == '/sapi/v1/margin/isolated/account') {
         return {'assets': []};
+      }
       return <Object>[];
     });
     await make(t, web: true, proxy: 'https://proxy.example').readOrders('ALL');

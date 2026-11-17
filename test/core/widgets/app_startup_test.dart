@@ -183,13 +183,13 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(
-      MaterialApp(
+      const MaterialApp(
         home: MediaQuery(
-          data: const MediaQueryData(
+          data: MediaQueryData(
             disableAnimations: true,
             accessibleNavigation: true,
           ),
-          child: const AppStartupStatusView(isLoading: true),
+          child: AppStartupStatusView(isLoading: true),
         ),
       ),
     );

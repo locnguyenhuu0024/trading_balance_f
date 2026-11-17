@@ -310,7 +310,7 @@ void main() {
   });
 
   test('store separates keys, contains no secrets, and clears all', () async {
-    final symbol = const BinanceCostSymbol('Spot', 'BTCUSDT', 'BTC', 1);
+    const symbol = BinanceCostSymbol('Spot', 'BTCUSDT', 'BTC', 1);
     await store.write(
       symbol,
       const BinanceSymbolCost(

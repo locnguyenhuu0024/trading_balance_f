@@ -120,16 +120,16 @@ void main() {
     await _capture(tester, 'startup-desktop-error');
 
     await tester.pumpWidget(
-      RepaintBoundary(
-        key: const Key('startup-capture-root'),
+      const RepaintBoundary(
+        key: Key('startup-capture-root'),
         child: MaterialApp(
           debugShowCheckedModeBanner: false,
           home: MediaQuery(
-            data: const MediaQueryData(
+            data: MediaQueryData(
               disableAnimations: true,
               accessibleNavigation: true,
             ),
-            child: const AppStartupStatusView(isLoading: true),
+            child: AppStartupStatusView(isLoading: true),
           ),
         ),
       ),

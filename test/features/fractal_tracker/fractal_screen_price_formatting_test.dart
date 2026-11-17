@@ -1,7 +1,6 @@
 import 'package:trading_balance_f/core/widgets/app_motion.dart';
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';

@@ -685,12 +685,15 @@ void main() {
         find.text('Chưa có vị thế trên Binance'),
         state == 'empty' ? findsOneWidget : findsNothing,
       );
-      if (state == 'loading')
+      if (state == 'loading') {
         expect(find.byType(CircularProgressIndicator), findsWidgets);
-      if (state == 'error')
+      }
+      if (state == 'error') {
         expect(find.byType(AccountStateView), findsOneWidget);
-      if (state == 'partial' || state == 'partialRows')
+      }
+      if (state == 'partial' || state == 'partialRows') {
         expect(find.text('Không thể tải ví Margin chéo'), findsOneWidget);
+      }
       await tester.pumpWidget(const SizedBox());
       container.dispose();
     });
@@ -758,13 +761,13 @@ void main() {
     await tester.pumpWidget(
       UncontrolledProviderScope(
         container: container,
-        child: MaterialApp(
+        child: const MaterialApp(
           home: MediaQuery(
-            data: const MediaQueryData(
+            data: MediaQueryData(
               size: Size(320, 640),
               textScaler: TextScaler.linear(2),
             ),
-            child: const OrdersScreen(),
+            child: OrdersScreen(),
           ),
         ),
       ),

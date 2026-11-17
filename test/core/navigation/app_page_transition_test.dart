@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/navigation/main_navigation_shell.dart';
-import 'package:trading_balance_f/core/theme/app_theme.dart';
 import 'package:trading_balance_f/core/widgets/app_page_transition.dart';
 
 class _TrackedDestination extends StatefulWidget {

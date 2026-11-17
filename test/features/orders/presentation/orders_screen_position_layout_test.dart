@@ -576,7 +576,7 @@ void main() {
           await tester.pump();
           await tester.pump();
 
-          final expectedInstrumentLabel = 'BTCUSDT';
+          const expectedInstrumentLabel = 'BTCUSDT';
           final card = find
               .ancestor(
                 of: find.text(expectedInstrumentLabel),

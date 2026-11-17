@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import '../../support/backend_features_override.dart';
@@ -13,7 +12,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/theme/app_theme.dart';
 import 'package:trading_balance_f/core/theme/pnl_color.dart';
-import 'package:trading_balance_f/core/widgets/responsive_form_content.dart';
 import 'package:trading_balance_f/features/orders/data/trade_api_client.dart';
 import 'package:trading_balance_f/features/orders/presentation/providers/trade_session_provider.dart';
 import 'package:trading_balance_f/core/network/request_coordinator.dart';
@@ -209,7 +207,7 @@ void main() {
             builder: (context) => MediaQuery(
               data: MediaQuery.of(
                 context,
-              ).copyWith(textScaler: TextScaler.linear(1.5)),
+              ).copyWith(textScaler: const TextScaler.linear(1.5)),
               child: const StrategyScreen(),
             ),
           ),

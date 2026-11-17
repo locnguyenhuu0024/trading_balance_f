@@ -15,8 +15,8 @@ void main() {
       ),
       child: MaterialApp(
         home: inNavigationHost
-            ? NavigationPresentationScope(
-                child: const NavigationContentFrame(
+            ? const NavigationPresentationScope(
+                child: NavigationContentFrame(
                   child: SizedBox.expand(key: Key('content')),
                 ),
               )

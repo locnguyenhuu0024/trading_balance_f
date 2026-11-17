@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -89,9 +88,9 @@ Widget _previewApp(ThemeMode mode, {double appTextScale = 1.0}) {
       themeModeProvider.overrideWith((ref) => mode),
       appTextScaleProvider.overrideWith((ref) => appTextScale),
     ],
-    child: RepaintBoundary(
+    child: const RepaintBoundary(
       key: _portfolioPreviewKey,
-      child: const TradingBalanceApp(requireBiometrics: false),
+      child: TradingBalanceApp(requireBiometrics: false),
     ),
   );
 }
