@@ -185,7 +185,19 @@ The executor sandbox cannot run Flutter. Write the complete change. Report `red`
 `BLOCKED` if an issue can only be fixed in a file outside §4, or only by an `ignore` comment or a behavior change.
 
 ## 11. Execution Ledger
-(coordinator fills)
+
+- af43dec90dad46f09beabc549d17b755: executor BLOCKED, no files (no Dart in sandbox to locate issues) → exact locations added (`d961efa`).
+- 97141d8c84bc4d9098a901a1709110c9 (R01): REWORK — AUD-142-01 `Future<void?>` syntax error, AUD-142-02 format; WIP `9d626d3`.
+- bb57b56bf36045b9ae80b72cc5ade4a7 (R02): REWORK — AUD-142-03 doubled blank lines; WIP `6ccb9fe`.
+- dd8f98c692b244da8454842f15ffa51a (R03): PASS. All attempts in §4 scope; route gpt-6.1-terra/medium, effective UNVERIFIABLE.
 
 ## 12. Coordinator Audit
-(coordinator fills)
+
+Verdict: PASS (2026-11-17).
+
+- RED-142 (host, `e8f273e`): 60 issues in the 21 files.
+- GREEN-142: `flutter analyze --no-pub <21 files>` → `No issues found!`. V4 `flutter test --no-pub`: 691/691 pass.
+- Buildability: whole-repo analyze 95 issues (target ≤ 95), 0 errors; `flutter build web --no-pub` built.
+- No `// ignore` added; `analysis_options.yaml` untouched.
+- Format: 20/21 files clean. `binance_estimated_pnl.dart` was already not `dart format`-clean at `e8f273e` (constructor on one long line, pre-existing); T142's hunks there are formatted. Accepted as pre-existing debt, not reformatted (minimal change). Repo-wide 13 files are not `dart format`-clean; none is an analyzer issue.
+- Review: braces, `const`, imports, `@override`, local function declarations (`Future<void> openDetails()`, `Map<String, dynamic>? currentStrategy()`), `on Object {` keeps `rethrow`, `withValues(alpha:)` — no behavior change.

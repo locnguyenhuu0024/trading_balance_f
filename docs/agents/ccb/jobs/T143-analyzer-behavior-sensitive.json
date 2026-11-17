@@ -27,7 +27,7 @@
     "test/features/strategy/strategy_wizard_dialog_test.dart"
   ],
   "dependencies": [
-    "T142"
+    {"task_id": "T142", "status": "PASS"}
   ],
   "timeout_seconds": 2400,
   "domain": "mobile",

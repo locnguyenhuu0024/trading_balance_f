@@ -1,4 +1,3 @@
-
 import 'package:flutter/material.dart';
 
 /// Shared grayscale roles for screen-level presentation.
