@@ -513,7 +513,7 @@ class _SupportResistanceInstrumentPickerState
               child: instruments.when(
                 loading: () => const AppSkeleton(
                   caption: 'Đang tải danh sách coin…',
-                  itemHeight: 48,
+                  itemHeight: 64,
                 ),
                 error: (error, stack) => Center(
                   child: Column(

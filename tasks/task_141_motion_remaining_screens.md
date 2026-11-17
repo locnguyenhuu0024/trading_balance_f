@@ -107,7 +107,17 @@ The executor sandbox cannot run Flutter. Write the complete change. Report `red`
 `BLOCKED` if `app_motion.dart` must change, or a screen needs a file outside §4.
 
 ## 11. Execution Ledger
-(coordinator fills)
+
+- 384d888f7122461b83f928fc2e426d0b: executor BLOCKED, no files (main scroll view is `SingleChildScrollView` on two screens) → coordinator clarification in §6.1, `1238f57`.
+- 733915fc00604626b5c719b30f508685: REWORK — AUD-141-01 (skeleton `itemHeight: 48` overflow, coordinator contract error); WIP `3af565e`.
+- e295213809b347ac99f01a96623e4140 (R01): PASS. All attempts in §4 scope; route gpt-6.1-terra/medium, effective UNVERIFIABLE.
 
 ## 12. Coordinator Audit
-(coordinator fills)
+
+Verdict: PASS (2026-11-17).
+
+- RED-141 (host, T140 `lib/` for the 5 screens): `tool entrances animate and retain navigation` and the source check failed.
+- GREEN-141: 2/2 pass. V4 `flutter test --no-pub`: 691/691 pass.
+- `dart format --set-exit-if-changed`: clean.
+- Buildability: `flutter analyze` 155 issues (= baseline), 0 errors; `flutter build web --no-pub` built.
+- Review: scope + entrance on Strategy, Support-resistance coin cards, Tools, Settings, Connections; skeletons for Strategy, coin picker, Connections; picker rows and inline spinners untouched; no layout/provider/text change. Protected config not read or changed.
