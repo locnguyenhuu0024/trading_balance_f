@@ -1,3 +1,4 @@
+import '../../../core/widgets/app_motion.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -95,8 +96,7 @@ class _PortfolioDetailsScreenState
       ),
       body: NavigationContentFrame(
         child: async.when(
-          loading: () =>
-              Center(child: CircularProgressIndicator(color: foreground)),
+          loading: () => const AppSkeleton(),
           error: (error, _) => AccountStateView.fromError(
             error: error,
             registration: ref
@@ -196,9 +196,9 @@ class _DetailsContent extends StatelessWidget {
       color: palette.ink,
       backgroundColor: palette.raised,
       onRefresh: onRefresh,
-      child: ListView(
+      child: AppEntranceScope(child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
-        children: [
+        children: <Widget>[
           Card(
             key: const Key('portfolio-details-summary'),
             elevation: 0,
@@ -326,8 +326,8 @@ class _DetailsContent extends StatelessWidget {
                 exchangeRate: exchangeRate,
                 hidden: hidden,
               ),
-        ],
-      ),
+        ].asMap().entries.map((entry) => AppEntrance(index: entry.key, child: entry.value)).toList(),
+      )),
     );
   }
 }

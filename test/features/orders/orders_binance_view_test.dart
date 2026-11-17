@@ -1,3 +1,4 @@
+import 'package:trading_balance_f/core/widgets/app_motion.dart';
 import 'dart:async';
 import 'package:trading_balance_f/features/orders/presentation/widgets/margin_account_card.dart';
 import 'package:trading_balance_f/exchanges/binance/binance_estimated_pnl.dart';
@@ -530,7 +531,7 @@ void main() {
         state == 'empty' ? findsOneWidget : findsNothing,
       );
       if (state == 'loading')
-        expect(find.byType(CircularProgressIndicator), findsWidgets);
+        expect(find.byType(AppSkeleton), findsWidgets);
       if (state == 'error')
         expect(find.byType(AccountStateView), findsOneWidget);
       if (state == 'partial' || state == 'partialRows')

@@ -1,3 +1,4 @@
+import '../../../core/widgets/app_motion.dart';
 import '../../../core/widgets/scope_bar.dart';
 // File Name: fractal_screen.dart
 // File Path: lib/features/fractal_tracker/presentation/fractal_screen.dart
@@ -148,12 +149,7 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
                 child: fractalAsync.when(
                   // Rất quan trọng: Bỏ qua trạng thái Loading khi reload để app không bị chớp mỗi giây
                   skipLoadingOnReload: true,
-                  loading: () => const Center(
-                    child: FormPendingStatus(
-                      label: 'Đang tải dữ liệu fractal…',
-                      linear: false,
-                    ),
-                  ),
+                  loading: () => const AppSkeleton(caption: 'Đang tải dữ liệu fractal…', itemHeight: 96),
                   error: (err, stack) => Center(
                     child: Text(
                       'Lỗi tải dữ liệu',
@@ -168,10 +164,10 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
                       color: palette.ink,
                       backgroundColor: palette.raised,
                       onRefresh: _refreshFractal,
-                      child: ListView(
+                      child: AppEntranceScope(child: ListView(
                         padding: const EdgeInsets.all(AppTokens.space4),
                         physics: const AlwaysScrollableScrollPhysics(),
-                        children: [
+                        children: <Widget>[
                           Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -222,8 +218,8 @@ class _FractalScreenState extends ConsumerState<FractalScreen> {
                           ),
                           const SizedBox(height: 32),
                           _buildLegend(isDark),
-                        ],
-                      ),
+                        ].asMap().entries.map((entry) => AppEntrance(index: entry.key, child: entry.value)).toList(),
+                      )),
                     );
                   },
                 ),

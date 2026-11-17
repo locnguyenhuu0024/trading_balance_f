@@ -1,3 +1,4 @@
+import '../../../core/widgets/app_motion.dart';
 import '../../../core/widgets/scope_bar.dart';
 import '../../../core/widgets/account_state_view.dart';
 // File Name: orders_screen.dart
@@ -407,9 +408,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
               onRefresh: _refreshCurrentRead,
               child: positionsAsyncValue.when(
                 skipLoadingOnReload: false,
-                loading: () => Center(
-                  child: CircularProgressIndicator(color: palette.ink),
-                ),
+                loading: () => const AppSkeleton(itemHeight: 112),
                 error: (error, stack) => AccountStateView.fromError(
                   error: error,
                   registration: ref
@@ -541,8 +540,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
         onRefresh: _refreshCurrentRead,
         child: ordersAsyncValue.when(
           skipLoadingOnReload: false,
-          loading: () =>
-              Center(child: CircularProgressIndicator(color: palette.ink)),
+          loading: () => const AppSkeleton(itemHeight: 112),
           error: (error, stack) => AccountStateView.fromError(
             error: error,
             registration: ref

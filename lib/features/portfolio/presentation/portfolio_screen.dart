@@ -1,3 +1,4 @@
+import '../../../core/widgets/app_motion.dart';
 import '../../../core/widgets/scope_bar.dart';
 import '../../../core/widgets/account_state_view.dart';
 import '../../../exchanges/binance/binance_adapter.dart';
@@ -276,14 +277,10 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
                   child:
                       !portfolioAsyncValue.hasValue &&
                           portfolioAsyncValue.isLoading
-                      ? Center(
-                          child: CircularProgressIndicator(color: textColor),
-                        )
+                      ? const AppSkeleton()
                       : portfolioAsyncValue.when(
                           skipLoadingOnReload: false,
-                          loading: () => Center(
-                            child: CircularProgressIndicator(color: textColor),
-                          ),
+                          loading: () => const AppSkeleton(),
                           error: (error, stack) {
                             _syncTickerSubscription(const <String>[]);
                             return AccountStateView.fromError(
@@ -401,10 +398,10 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
     final subtitleColor = palette.muted;
     final iconBgColor = palette.surface;
 
-    return ListView(
+    return AppEntranceScope(child: ListView(
       physics: const AlwaysScrollableScrollPhysics(),
       children: [
-        _buildAssetSummary(
+        AppEntrance(index: 0, child: _buildAssetSummary(
           isBinance: isBinance,
           combined: combined,
           totalMissing: !isOkx && accountData.total == null,
@@ -416,7 +413,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
           isDark: isDark,
           currency: currency,
           exchangeRate: exchangeRate,
-        ),
+        )),
 
         if (!isOkx)
           Padding(
@@ -482,7 +479,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
                       (isOkx ? currentUsdValue : currentUsdValue.abs()) < 0.01)
                     return const SizedBox.shrink();
 
-                  return Column(
+                  return AppEntrance(index: index + 1, child: Column(
                     children: [
                       ListTile(
                         contentPadding: const EdgeInsets.symmetric(
@@ -579,11 +576,11 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
                       ),
                       Divider(height: 1, color: palette.border),
                     ],
-                  );
+                  ));
                 },
               ),
       ],
-    );
+    ));
   }
 
   Widget _buildAssetSummary({

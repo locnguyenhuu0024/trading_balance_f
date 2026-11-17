@@ -1,3 +1,4 @@
+import 'package:trading_balance_f/core/widgets/app_motion.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
@@ -176,6 +177,7 @@ void main() {
     await tester.pump();
     expect(find.textContaining('0.09117'), findsNothing);
     expect(find.text('Đang tải dữ liệu fractal…'), findsOneWidget);
+    expect(find.byType(AppSkeleton), findsOneWidget);
     pending.complete([]);
     await tester.pumpWidget(const SizedBox.shrink());
   });

@@ -1,3 +1,4 @@
+import '../../../core/widgets/app_motion.dart';
 import '../../../core/widgets/scope_bar.dart';
 import '../../../core/widgets/account_state_view.dart';
 // File Name: market_screen.dart
@@ -198,16 +199,14 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
                   backgroundColor: palette.raised,
                   onRefresh: _refreshMarket,
                   child: marketAsync.when(
-                    loading: () => Center(
-                      child: CircularProgressIndicator(color: textColor),
-                    ),
+                    loading: () => const AppSkeleton(itemHeight: 56),
                     error: (err, stack) => AccountStateView.fromError(
                       error: err,
                       registration: registration,
                       onRetry: _refreshMarket,
                     ),
                     data: (tickers) {
-                      return ListView.builder(
+                      return AppEntranceScope(child: ListView.builder(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 24,
                           vertical: AppTokens.space2,
@@ -244,7 +243,7 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
                             ).format(currentPrice);
                           }
 
-                          return Card(
+                          return AppEntrance(index: index, child: Card(
                             elevation: 0,
                             color: cardColor,
                             margin: const EdgeInsets.only(
@@ -373,9 +372,9 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
                                 },
                               ),
                             ),
-                          );
+                          ));
                         },
-                      );
+                      ));
                     },
                   ),
                 ),

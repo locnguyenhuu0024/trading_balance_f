@@ -15,6 +15,15 @@ Plan Steps: P02
 Requirements: REQ-106, REQ-107, REQ-108
 Decisions: D-024, D-025
 
+## Remediation R01 (current instruction)
+
+The first pass (attempt 9d2829a9) is in the working tree. Do not redo it. Write only files in §4. Host V4 had 113 failures from three causes:
+
+- AUD-140-01, duplicate keys (root cause of nearly all failures, including the "deactivated widget's ancestor" inspector errors). `AppSkeleton` gives every placeholder `Container` the same `const Key('app-skeleton-placeholder')` inside one `Column` → "Duplicate keys found". Required: key each placeholder `ValueKey('app-skeleton-placeholder-$i')`. In `app_motion_test.dart` count them with `find.byWidgetPredicate((w) => w.key is ValueKey<String> && (w.key! as ValueKey<String>).value.startsWith('app-skeleton-placeholder-'))` and `findsNWidgets(3)`.
+- AUD-140-02, fixed-extent grid. `responsive_order_grid.dart` `cardExtent != null` branch was changed from `GridView.builder` to a `ListView` of rows; `test/features/orders/presentation/widgets/responsive_order_grid_test.dart` and `test/widget_test.dart:172` (both outside scope, unchanged) require a `GridView`. Required (coordinator decision): restore that branch to the original `GridView.builder` exactly (same delegate, padding, `mainAxisExtent: cardExtent`) and only change `itemBuilder` to `(context, index) => AppEntrance(index: index, child: children[index])`. Leave the other two branches as they are now.
+- AUD-140-03, test bug. `app_motion_test.dart` checks `find.ancestor(of: text, matching: find.byType(FadeTransition))` findsNothing, but `MaterialApp`'s route transition already puts `FadeTransition`s above the child. Required: in every "no animation" check (index 9, reduced motion, late item, unscoped) assert instead that there is no `FadeTransition` between the `AppEntrance` and the child: `find.descendant(of: find.byType(AppEntrance), matching: find.byType(FadeTransition))` findsNothing (scope the `AppEntrance` finder with `find.byWidgetPredicate((w) => w is AppEntrance && w.index == 9)` where two entrances coexist). For the index-0 opacity check use `find.descendant(of: <index-0 AppEntrance>, matching: find.byType(FadeTransition)).first`.
+- Also run `dart format` (or hand-format to its style, 80 columns) on every file you touched; the first pass has long lines and an import placed before `package:` imports in `responsive_order_grid.dart` — put it after `app_theme.dart` import. No logic change beyond the three items.
+
 ## 1. Dispatch Compliance
 
 The CCB dispatcher passes `--model gpt-6.1-terra` and `model_reasoning_effort=high` on your command line, and your prompt states the route. This is the explicit binding. `UNVERIFIABLE` is a valid state; do not stop for it.

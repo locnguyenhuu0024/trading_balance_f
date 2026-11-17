@@ -1,3 +1,4 @@
+import 'package:trading_balance_f/core/widgets/app_motion.dart';
 import 'dart:async';
 
 import 'package:dio/dio.dart';
@@ -88,6 +89,19 @@ void main() {
       expect(client.paths.last, '/api/v3/ticker/24hr');
     },
   );
+
+  testWidgets('market loading and rows use motion widgets', (tester) async {
+    final pending = Completer<List<MarketTicker>>();
+    await tester.pumpWidget(ProviderScope(overrides: [
+      marketListProvider.overrideWith((ref) => pending.future),
+      isDarkModeProvider.overrideWithValue(false),
+    ], child: const MaterialApp(home: MarketScreen())));
+    expect(find.byType(AppSkeleton), findsOneWidget);
+    pending.complete([MarketTicker(instId: 'BTC-USDT', last: 1, open24h: 1, vol24h: 1)]);
+    await tester.pump();
+    await tester.pump();
+    expect(find.ancestor(of: find.text('BTC'), matching: find.byType(AppEntrance)), findsOneWidget);
+  });
 
   testWidgets('Market renders its fetched ticker snapshot without WebSocket', (
     tester,

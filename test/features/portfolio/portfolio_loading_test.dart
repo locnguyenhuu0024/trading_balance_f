@@ -1,3 +1,4 @@
+import 'package:trading_balance_f/core/widgets/app_motion.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
@@ -302,7 +303,7 @@ void main() {
     await tester.pump(const Duration(seconds: 5));
     await tester.pump();
     expect(loadCalls, 2);
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.byType(AppSkeleton), findsOneWidget);
     expect(find.text('Không thể tải dữ liệu'), findsNothing);
     expect(find.textContaining('balance failed'), findsNothing);
     expect(find.textContaining('retry failed'), findsNothing);
