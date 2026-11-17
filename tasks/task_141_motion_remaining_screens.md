@@ -60,6 +60,14 @@ Pattern: put `AppEntranceScope` directly around the screen's main `ListView`; wr
    - TEST-141-1 (source check, plain `test`): each of the 5 files contains `AppEntranceScope(` and `AppEntrance(`; strategy, support_resistance and connections also contain `AppSkeleton(`; strategy and support_resistance no longer contain `FormPendingStatus(` for those two captions (check that `'Đang tải chiến thuật…'` and `'Đang tải danh sách coin…'` appear only inside an `AppSkeleton(` call — simplest: `contains("AppSkeleton(caption: 'Đang tải chiến thuật…'")` etc.).
    - TEST-141-2 (widget): pump `ToolsScreen` in a `ProviderScope`/`MaterialApp` the same way existing tool tests do (if none exists, use the minimal overrides `tools_screen.dart` needs); after `pump(100 ms)` the first `_ToolCard`'s ancestor `FadeTransition` opacity < 1; after `pumpAndSettle` all four cards are fully visible and tapping the first card still navigates as before.
 
+### 6.1 Clarifications from the T140 audit (binding)
+
+- In TEST-141-2 do not use `find.ancestor(of: …, matching: find.byType(FadeTransition))`: `MaterialApp`'s route already adds `FadeTransition`s. Use `find.descendant(of: <first AppEntrance>, matching: find.byType(FadeTransition)).first`.
+- Any widget test that pumps a screen while an `AppSkeleton` is visible must use `pump(duration)`, never `pumpAndSettle` (the shimmer repeats).
+- If an existing test of these screens expects the old loader (`FormPendingStatus`/`CircularProgressIndicator`) for a loader you replace, that test is outside §4: return `BLOCKED` naming it instead of editing it.
+- Removing an old loader may leave a local variable or import unused — remove it. Use `withValues(alpha: …)`, not `withOpacity`.
+- Run `dart format` on every file you touch (80 columns); put new imports in the existing import group order. Analyzer baseline: 155 issues.
+
 ## 7. External Configuration / Environment Actions
 
 None.
