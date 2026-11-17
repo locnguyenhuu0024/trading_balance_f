@@ -34,7 +34,7 @@
     "test/features/fractal_tracker/fractal_screen_price_formatting_test.dart"
   ],
   "dependencies": [
-    "T139"
+    {"task_id": "T139", "status": "PASS"}
   ],
   "timeout_seconds": 2400,
   "domain": "mobile",
