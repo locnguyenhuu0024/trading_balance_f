@@ -1,0 +1,43 @@
+{
+  "task_id": "T140",
+  "approved_plan_id": "PLAN-20261117-motion-polish",
+  "task_file": "tasks/task_140_motion_skeleton_main_screens.md",
+  "optcodex_variant": "personal",
+  "optcodex_version": "1.4.0",
+  "baseline_version": "1.2.2",
+  "optcodex_source_revision": "42fe641fab7b6481f2e5b4898cd62be926250339",
+  "agent_role": "implementation_executor",
+  "route_class": "E3",
+  "route_binding": "EXPLICIT",
+  "parent_route_inheritance": "FORBIDDEN",
+  "model": "gpt-6.1-terra",
+  "effort": "high",
+  "planning_fanout": {
+    "required": false,
+    "status": "EXCEPTION",
+    "required_workstreams": 1,
+    "collected_workstreams": 0,
+    "reason": "SINGLE_MATERIAL_WORKSTREAM"
+  },
+  "allowed_writes": [
+    "lib/core/widgets/app_motion.dart",
+    "lib/features/portfolio/presentation/portfolio_screen.dart",
+    "lib/features/portfolio/presentation/portfolio_details_screen.dart",
+    "lib/features/orders/presentation/orders_screen.dart",
+    "lib/features/orders/presentation/widgets/responsive_order_grid.dart",
+    "lib/features/market/presentation/market_screen.dart",
+    "lib/features/fractal_tracker/presentation/fractal_screen.dart",
+    "test/core/widgets/app_motion_test.dart",
+    "test/features/portfolio/portfolio_loading_test.dart",
+    "test/features/orders/orders_binance_view_test.dart",
+    "test/features/market/market_screen_test.dart",
+    "test/features/fractal_tracker/fractal_screen_price_formatting_test.dart"
+  ],
+  "dependencies": [
+    "T139"
+  ],
+  "timeout_seconds": 2400,
+  "domain": "mobile",
+  "terra_trial": null,
+  "route_override": null
+}
