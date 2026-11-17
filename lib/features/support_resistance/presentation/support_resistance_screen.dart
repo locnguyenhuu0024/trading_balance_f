@@ -8,6 +8,7 @@ import '../../../core/exchange/exchange_registry.dart';
 import '../../../core/exchange/exchange_scope.dart';
 import '../../../core/formatting/adaptive_number_format.dart';
 import '../../../core/navigation/navigation_content_frame.dart';
+import '../../../core/widgets/app_motion.dart';
 import '../../../core/widgets/manual_refresh_button.dart';
 import '../../../core/widgets/responsive_form_content.dart';
 import '../data/watchlist_store.dart';
@@ -79,185 +80,194 @@ class _SupportResistanceScreenState
       child: Scaffold(
         backgroundColor: theme.colorScheme.surface,
         body: SafeArea(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
-            child: ResponsiveFormContent(
-              maxWidth: 960,
-              padding: EdgeInsets.zero,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      if (Navigator.of(context).canPop()) const BackButton(),
-                      Expanded(
-                        child: Text(
-                          'Hỗ trợ / kháng cự',
-                          style: theme.textTheme.headlineSmall?.copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      const Flexible(child: ScopeBar(compact: true)),
-                      ManualRefreshButton(
-                        buttonKey: const Key('support-resistance-refresh'),
-                        onRefresh: instrumentIds.isEmpty
-                            ? null
-                            : _refreshLevels,
-                        isBusy:
-                            _isRefreshing ||
-                            keys.any(
-                              (key) =>
-                                  levels.stateFor(key)?.status ==
-                                  SupportResistanceLevelsStatus.loading,
-                            ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Text('Nguồn giá: $label', style: theme.textTheme.bodySmall),
-                  const SizedBox(height: 12),
-                  Semantics(
-                    label: 'Thị trường',
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: SegmentedButton<SupportResistanceMarketMode>(
-                        segments:
-                            const <ButtonSegment<SupportResistanceMarketMode>>[
-                              ButtonSegment(
-                                value: SupportResistanceMarketMode.spot,
-                                label: Text('Spot'),
-                                icon: Icon(Icons.currency_exchange),
-                              ),
-                              ButtonSegment(
-                                value: SupportResistanceMarketMode.perpetual,
-                                label: Text('Perpetual'),
-                                icon: Icon(Icons.swap_vert),
-                              ),
-                            ],
-                        selected: <SupportResistanceMarketMode>{
-                          selection.marketMode,
-                        },
-                        onSelectionChanged: (selected) {
-                          if (selected.isNotEmpty) {
-                            unawaited(watchlist.setMarketMode(selected.first));
-                          }
-                        },
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Semantics(
-                    label: 'Khung thời gian',
-                    child: Wrap(
-                      spacing: 8,
+          child: AppEntranceScope(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
+              child: ResponsiveFormContent(
+                maxWidth: 960,
+                padding: EdgeInsets.zero,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
                       children: [
-                        for (final timeframe
-                            in SupportResistanceTimeframe.values)
-                          ChoiceChip(
-                            key: Key('timeframe-${timeframe.label}'),
-                            label: Text(timeframe.label),
-                            selected: selection.timeframe == timeframe,
-                            onSelected: (_) =>
-                                unawaited(watchlist.setTimeframe(timeframe)),
+                        if (Navigator.of(context).canPop()) const BackButton(),
+                        Expanded(
+                          child: Text(
+                            'Hỗ trợ / kháng cự',
+                            style: theme.textTheme.headlineSmall?.copyWith(
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
+                        ),
+                        const SizedBox(width: 8),
+                        const Flexible(child: ScopeBar(compact: true)),
+                        ManualRefreshButton(
+                          buttonKey: const Key('support-resistance-refresh'),
+                          onRefresh: instrumentIds.isEmpty
+                              ? null
+                              : _refreshLevels,
+                          isBusy:
+                              _isRefreshing ||
+                              keys.any(
+                                (key) =>
+                                    levels.stateFor(key)?.status ==
+                                    SupportResistanceLevelsStatus.loading,
+                              ),
+                        ),
                       ],
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          '${selection.marketMode == SupportResistanceMarketMode.spot ? 'Spot' : 'Perpetual'} · ${selection.timeframe.label} · ${instrumentIds.length}/10 coin',
-                          style: theme.textTheme.bodyMedium,
+                    const SizedBox(height: 12),
+                    Text('Nguồn giá: $label', style: theme.textTheme.bodySmall),
+                    const SizedBox(height: 12),
+                    Semantics(
+                      label: 'Thị trường',
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: SegmentedButton<SupportResistanceMarketMode>(
+                          segments:
+                              const <
+                                ButtonSegment<SupportResistanceMarketMode>
+                              >[
+                                ButtonSegment(
+                                  value: SupportResistanceMarketMode.spot,
+                                  label: Text('Spot'),
+                                  icon: Icon(Icons.currency_exchange),
+                                ),
+                                ButtonSegment(
+                                  value: SupportResistanceMarketMode.perpetual,
+                                  label: Text('Perpetual'),
+                                  icon: Icon(Icons.swap_vert),
+                                ),
+                              ],
+                          selected: <SupportResistanceMarketMode>{
+                            selection.marketMode,
+                          },
+                          onSelectionChanged: (selected) {
+                            if (selected.isNotEmpty) {
+                              unawaited(
+                                watchlist.setMarketMode(selected.first),
+                              );
+                            }
+                          },
                         ),
                       ),
-                      IconButton(
-                        key: const Key('support-resistance-add'),
-                        tooltip: 'Thêm coin',
-                        onPressed: () =>
-                            _openInstrumentPicker(selection.marketMode),
-                        icon: const Icon(Icons.add_circle_outline),
+                    ),
+                    const SizedBox(height: 12),
+                    Semantics(
+                      label: 'Khung thời gian',
+                      child: Wrap(
+                        spacing: 8,
+                        children: [
+                          for (final timeframe
+                              in SupportResistanceTimeframe.values)
+                            ChoiceChip(
+                              key: Key('timeframe-${timeframe.label}'),
+                              label: Text(timeframe.label),
+                              selected: selection.timeframe == timeframe,
+                              onSelected: (_) =>
+                                  unawaited(watchlist.setTimeframe(timeframe)),
+                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '${selection.marketMode == SupportResistanceMarketMode.spot ? 'Spot' : 'Perpetual'} · ${selection.timeframe.label} · ${instrumentIds.length}/10 coin',
+                            style: theme.textTheme.bodyMedium,
+                          ),
+                        ),
+                        IconButton(
+                          key: const Key('support-resistance-add'),
+                          tooltip: 'Thêm coin',
+                          onPressed: () =>
+                              _openInstrumentPicker(selection.marketMode),
+                          icon: const Icon(Icons.add_circle_outline),
+                        ),
+                      ],
+                    ),
+                    if (watchlist.saveError case final saveError?) ...[
+                      const SizedBox(height: 4),
+                      MaterialBanner(
+                        content: Text(saveError),
+                        actions: [
+                          TextButton(
+                            onPressed: watchlist.clearSaveError,
+                            child: const Text('Đóng'),
+                          ),
+                        ],
                       ),
                     ],
-                  ),
-                  if (watchlist.saveError case final saveError?) ...[
-                    const SizedBox(height: 4),
-                    MaterialBanner(
-                      content: Text(saveError),
-                      actions: [
-                        TextButton(
-                          onPressed: watchlist.clearSaveError,
-                          child: const Text('Đóng'),
-                        ),
-                      ],
-                    ),
-                  ],
-                  if (watchlist.loadError case final loadError?) ...[
-                    const SizedBox(height: 12),
-                    Text(
-                      loadError,
-                      style: TextStyle(color: theme.colorScheme.error),
-                    ),
-                    TextButton(
-                      onPressed: () => unawaited(watchlist.load()),
-                      child: const Text('Thử lại'),
-                    ),
-                  ],
-                  if (instrumentIds.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 48),
-                      child: Center(
-                        child: Column(
-                          children: [
-                            Icon(
-                              Icons.stacked_line_chart,
-                              size: 40,
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
-                            const SizedBox(height: 12),
-                            Text(
-                              'Chọn coin để bắt đầu',
-                              style: theme.textTheme.titleMedium,
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              'Thêm tối đa 10 cặp USDT đang giao dịch.',
-                              textAlign: TextAlign.center,
-                              style: theme.textTheme.bodyMedium?.copyWith(
+                    if (watchlist.loadError case final loadError?) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        loadError,
+                        style: TextStyle(color: theme.colorScheme.error),
+                      ),
+                      TextButton(
+                        onPressed: () => unawaited(watchlist.load()),
+                        child: const Text('Thử lại'),
+                      ),
+                    ],
+                    if (instrumentIds.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 48),
+                        child: Center(
+                          child: Column(
+                            children: [
+                              Icon(
+                                Icons.stacked_line_chart,
+                                size: 40,
                                 color: theme.colorScheme.onSurfaceVariant,
                               ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    )
-                  else
-                    for (final instrumentId in instrumentIds)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 10),
-                        child: _CoinLevelsCard(
-                          key: ValueKey(
-                            'support-resistance-card-$instrumentId',
+                              const SizedBox(height: 12),
+                              Text(
+                                'Chọn coin để bắt đầu',
+                                style: theme.textTheme.titleMedium,
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'Thêm tối đa 10 cặp USDT đang giao dịch.',
+                                textAlign: TextAlign.center,
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ],
                           ),
-                          marketMode: selection.marketMode,
-                          instrumentId: instrumentId,
-                          timeframe: selection.timeframe,
-                          state: levels.stateFor(
-                            SupportResistanceLevelsKey(
+                        ),
+                      )
+                    else
+                      for (final (index, instrumentId) in instrumentIds.indexed)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 10),
+                          child: AppEntrance(
+                            index: index,
+                            child: _CoinLevelsCard(
+                              key: ValueKey(
+                                'support-resistance-card-$instrumentId',
+                              ),
                               marketMode: selection.marketMode,
                               instrumentId: instrumentId,
                               timeframe: selection.timeframe,
+                              state: levels.stateFor(
+                                SupportResistanceLevelsKey(
+                                  marketMode: selection.marketMode,
+                                  instrumentId: instrumentId,
+                                  timeframe: selection.timeframe,
+                                ),
+                              ),
+                              onRemove: () => unawaited(
+                                watchlist.removeInstrument(instrumentId),
+                              ),
                             ),
                           ),
-                          onRemove: () => unawaited(
-                            watchlist.removeInstrument(instrumentId),
-                          ),
                         ),
-                      ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
@@ -501,11 +511,9 @@ class _SupportResistanceInstrumentPickerState
             const SizedBox(height: 8),
             Expanded(
               child: instruments.when(
-                loading: () => const Center(
-                  child: FormPendingStatus(
-                    label: 'Đang tải danh sách coin…',
-                    linear: false,
-                  ),
+                loading: () => const AppSkeleton(
+                  caption: 'Đang tải danh sách coin…',
+                  itemHeight: 48,
                 ),
                 error: (error, stack) => Center(
                   child: Column(

@@ -13,6 +13,7 @@ import '../../../core/security/secure_storage_helper.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/timezone/app_time_zone.dart';
 import '../../../core/typography/app_text_scale.dart';
+import '../../../core/widgets/app_motion.dart';
 import '../../../core/widgets/manual_refresh_button.dart';
 import '../../../core/widgets/responsive_form_content.dart';
 import '../../fractal_tracker/presentation/providers/fractal_provider.dart';
@@ -413,278 +414,303 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       backgroundColor: bgColor,
       body: SafeArea(
         child: NavigationContentFrame(
-          child: SingleChildScrollView(
-            child: ResponsiveFormContent(
-              maxWidth: 960,
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Row(
-                    children: [
-                      if (Navigator.of(context).canPop()) const BackButton(),
-                      const Expanded(
-                        child: Text(
-                          'Cài đặt',
-                          style: TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      const Flexible(child: ScopeBar(compact: true)),
-                      ManualRefreshButton(
-                        buttonKey: const Key('settings-manual-refresh'),
-                        onRefresh: _refreshExchangeRate,
-                        isBusy:
-                            _isRefreshingExchangeRate ||
-                            exchangeRateAsync.isLoading,
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  // ================= SECTION 1: GIAO DIỆN =================
-                  Padding(
-                    padding: const EdgeInsets.only(left: 8, bottom: 8),
-                    child: Text(
-                      'HIỂN THỊ & GIAO DIỆN',
-                      style: TextStyle(
-                        color: sectionTitleColor,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                  Card(
-                    elevation: 0,
-                    color: cardColor,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      side: BorderSide(color: palette.border),
-                    ),
-                    child: Column(
+          child: AppEntranceScope(
+            child: SingleChildScrollView(
+              child: ResponsiveFormContent(
+                maxWidth: 960,
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
                       children: [
-                        ListTile(
-                          leading: Icon(
-                            Icons.dark_mode_outlined,
-                            color: textColor,
-                            size: 22,
-                          ),
-                          title: Text(
-                            'Chế độ nền',
+                        if (Navigator.of(context).canPop()) const BackButton(),
+                        const Expanded(
+                          child: Text(
+                            'Cài đặt',
                             style: TextStyle(
-                              color: textColor,
-                              fontWeight: FontWeight.w500,
-                              fontSize: 14,
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
                             ),
                           ),
-                          subtitle: compactSettings ? themeModeSelector : null,
-                          trailing: compactSettings ? null : themeModeSelector,
                         ),
-                        Divider(height: 1, color: palette.border, indent: 52),
-                        _buildTimeZoneTile(
-                          timeZoneId: timeZoneId,
-                          textColor: textColor,
-                          cardColor: cardColor,
-                          sectionTitleColor: sectionTitleColor,
-                          compact: compactSettings,
-                        ),
-                        Divider(
-                          height: 1,
-                          color: isDark ? palette.border : palette.surface,
-                          indent: 52,
-                        ),
-                        ListTile(
-                          leading: Icon(
-                            Icons.attach_money_rounded,
-                            color: textColor,
-                            size: 22,
-                          ),
-                          title: Text(
-                            'Tiền tệ hiển thị',
-                            style: TextStyle(
-                              color: textColor,
-                              fontWeight: FontWeight.w500,
-                              fontSize: 14,
-                            ),
-                          ),
-                          subtitle: compactSettings
-                              ? Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    currencySelector,
-                                    if (currencyExchangeRate != null)
-                                      currencyExchangeRate,
-                                  ],
-                                )
-                              : currencyExchangeRate,
-                          trailing: compactSettings ? null : currencySelector,
-                        ),
-                        Divider(
-                          height: 1,
-                          color: isDark ? palette.border : palette.surface,
-                          indent: 52,
-                        ),
-                        ListTile(
-                          leading: Icon(
-                            Icons.text_fields_rounded,
-                            color: textColor,
-                            size: 22,
-                          ),
-                          title: Text(
-                            'Cỡ chữ ứng dụng',
-                            style: TextStyle(
-                              color: textColor,
-                              fontWeight: FontWeight.w500,
-                              fontSize: 14,
-                            ),
-                          ),
-                          subtitle: compactSettings
-                              ? appTextScaleSelector
-                              : null,
-                          trailing: compactSettings
-                              ? null
-                              : appTextScaleSelector,
+                        const SizedBox(width: 8),
+                        const Flexible(child: ScopeBar(compact: true)),
+                        ManualRefreshButton(
+                          buttonKey: const Key('settings-manual-refresh'),
+                          onRefresh: _refreshExchangeRate,
+                          isBusy:
+                              _isRefreshingExchangeRate ||
+                              exchangeRateAsync.isLoading,
                         ),
                       ],
                     ),
-                  ),
-
-                  const SizedBox(height: 24),
-
-                  // ================= SECTION 2: BẢO MẬT & TRẢI NGHIỆM =================
-                  Padding(
-                    padding: const EdgeInsets.only(left: 8, bottom: 8),
-                    child: Text(
-                      'BẢO MẬT & TRẢI NGHIỆM',
-                      style: TextStyle(
-                        color: sectionTitleColor,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                  Card(
-                    elevation: 0,
-                    color: cardColor,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      side: BorderSide(color: palette.border),
-                    ),
-                    child: Column(
-                      children: [
-                        SwitchListTile(
-                          secondary: Icon(
-                            Icons.visibility_off,
-                            color: textColor,
-                            size: 22,
-                          ),
-                          title: Text(
-                            'Ẩn số dư mặc định',
-                            style: TextStyle(
-                              color: textColor,
-                              fontWeight: FontWeight.w500,
-                              fontSize: 14,
-                            ),
-                          ),
-                          subtitle: Text(
-                            'Che tài sản khi vừa mở ứng dụng',
-                            style: TextStyle(
-                              color: sectionTitleColor,
-                              fontSize: 12,
-                            ),
-                          ),
-                          value: hideBalanceDefault,
-                          onChanged: (val) {
-                            ref
-                                    .read(defaultHideBalanceProvider.notifier)
-                                    .state =
-                                val;
-                            ref.read(hideBalanceProvider.notifier).state =
-                                val; // Cập nhật luôn màn chính
-                            _saveAllPreferences();
-                          },
-                        ),
-                        Divider(
-                          height: 1,
-                          color: isDark ? palette.border : palette.surface,
-                          indent: 52,
-                        ),
-                        SwitchListTile(
-                          secondary: Icon(
-                            Icons.fingerprint,
-                            color: textColor,
-                            size: 22,
-                          ),
-                          title: Text(
-                            'Khoá sinh trắc học',
-                            style: TextStyle(
-                              color: textColor,
-                              fontWeight: FontWeight.w500,
-                              fontSize: 14,
-                            ),
-                          ),
-                          subtitle: Text(
-                            'Yêu cầu vân tay / FaceID khi mở app',
-                            style: TextStyle(
-                              color: sectionTitleColor,
-                              fontSize: 12,
-                            ),
-                          ),
-                          value: bioAuth,
-                          onChanged: (val) {
-                            ref.read(biometricAuthProvider.notifier).state =
-                                val;
-                            _saveAllPreferences();
-                          },
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  const SizedBox(height: 24),
-
-                  if (backendFeaturesEnabled)
-                    Card(
-                      elevation: 0,
-                      color: cardColor,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                        side: BorderSide(color: palette.border),
-                      ),
-                      child: ListTile(
-                        key: const Key('settings-trade-access-button'),
-                        leading: Icon(Icons.key_rounded, color: textColor),
-                        title: Text(
-                          'API và giao dịch',
-                          style: TextStyle(
-                            color: textColor,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        subtitle: Text(
-                          'Cấu hình khóa OKX và quản lý phiên giao dịch',
-                          style: TextStyle(
-                            color: sectionTitleColor,
-                            fontSize: 12,
-                          ),
-                        ),
-                        trailing: Icon(
-                          Icons.chevron_right_rounded,
+                    const SizedBox(height: 12),
+                    // ================= SECTION 1: GIAO DIỆN =================
+                    Padding(
+                      padding: const EdgeInsets.only(left: 8, bottom: 8),
+                      child: Text(
+                        'HIỂN THỊ & GIAO DIỆN',
+                        style: TextStyle(
                           color: sectionTitleColor,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
                         ),
-                        onTap: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute<void>(
-                              builder: (_) => const SettingsTradeAccessPage(),
-                            ),
-                          );
-                        },
                       ),
                     ),
-                ],
+                    AppEntrance(
+                      index: 0,
+                      child: Card(
+                        elevation: 0,
+                        color: cardColor,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          side: BorderSide(color: palette.border),
+                        ),
+                        child: Column(
+                          children: [
+                            ListTile(
+                              leading: Icon(
+                                Icons.dark_mode_outlined,
+                                color: textColor,
+                                size: 22,
+                              ),
+                              title: Text(
+                                'Chế độ nền',
+                                style: TextStyle(
+                                  color: textColor,
+                                  fontWeight: FontWeight.w500,
+                                  fontSize: 14,
+                                ),
+                              ),
+                              subtitle: compactSettings
+                                  ? themeModeSelector
+                                  : null,
+                              trailing: compactSettings
+                                  ? null
+                                  : themeModeSelector,
+                            ),
+                            Divider(
+                              height: 1,
+                              color: palette.border,
+                              indent: 52,
+                            ),
+                            _buildTimeZoneTile(
+                              timeZoneId: timeZoneId,
+                              textColor: textColor,
+                              cardColor: cardColor,
+                              sectionTitleColor: sectionTitleColor,
+                              compact: compactSettings,
+                            ),
+                            Divider(
+                              height: 1,
+                              color: isDark ? palette.border : palette.surface,
+                              indent: 52,
+                            ),
+                            ListTile(
+                              leading: Icon(
+                                Icons.attach_money_rounded,
+                                color: textColor,
+                                size: 22,
+                              ),
+                              title: Text(
+                                'Tiền tệ hiển thị',
+                                style: TextStyle(
+                                  color: textColor,
+                                  fontWeight: FontWeight.w500,
+                                  fontSize: 14,
+                                ),
+                              ),
+                              subtitle: compactSettings
+                                  ? Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        currencySelector,
+                                        if (currencyExchangeRate != null)
+                                          currencyExchangeRate,
+                                      ],
+                                    )
+                                  : currencyExchangeRate,
+                              trailing: compactSettings
+                                  ? null
+                                  : currencySelector,
+                            ),
+                            Divider(
+                              height: 1,
+                              color: isDark ? palette.border : palette.surface,
+                              indent: 52,
+                            ),
+                            ListTile(
+                              leading: Icon(
+                                Icons.text_fields_rounded,
+                                color: textColor,
+                                size: 22,
+                              ),
+                              title: Text(
+                                'Cỡ chữ ứng dụng',
+                                style: TextStyle(
+                                  color: textColor,
+                                  fontWeight: FontWeight.w500,
+                                  fontSize: 14,
+                                ),
+                              ),
+                              subtitle: compactSettings
+                                  ? appTextScaleSelector
+                                  : null,
+                              trailing: compactSettings
+                                  ? null
+                                  : appTextScaleSelector,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 24),
+
+                    // ================= SECTION 2: BẢO MẬT & TRẢI NGHIỆM =================
+                    Padding(
+                      padding: const EdgeInsets.only(left: 8, bottom: 8),
+                      child: Text(
+                        'BẢO MẬT & TRẢI NGHIỆM',
+                        style: TextStyle(
+                          color: sectionTitleColor,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    AppEntrance(
+                      index: 1,
+                      child: Card(
+                        elevation: 0,
+                        color: cardColor,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          side: BorderSide(color: palette.border),
+                        ),
+                        child: Column(
+                          children: [
+                            SwitchListTile(
+                              secondary: Icon(
+                                Icons.visibility_off,
+                                color: textColor,
+                                size: 22,
+                              ),
+                              title: Text(
+                                'Ẩn số dư mặc định',
+                                style: TextStyle(
+                                  color: textColor,
+                                  fontWeight: FontWeight.w500,
+                                  fontSize: 14,
+                                ),
+                              ),
+                              subtitle: Text(
+                                'Che tài sản khi vừa mở ứng dụng',
+                                style: TextStyle(
+                                  color: sectionTitleColor,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              value: hideBalanceDefault,
+                              onChanged: (val) {
+                                ref
+                                        .read(
+                                          defaultHideBalanceProvider.notifier,
+                                        )
+                                        .state =
+                                    val;
+                                ref.read(hideBalanceProvider.notifier).state =
+                                    val; // Cập nhật luôn màn chính
+                                _saveAllPreferences();
+                              },
+                            ),
+                            Divider(
+                              height: 1,
+                              color: isDark ? palette.border : palette.surface,
+                              indent: 52,
+                            ),
+                            SwitchListTile(
+                              secondary: Icon(
+                                Icons.fingerprint,
+                                color: textColor,
+                                size: 22,
+                              ),
+                              title: Text(
+                                'Khoá sinh trắc học',
+                                style: TextStyle(
+                                  color: textColor,
+                                  fontWeight: FontWeight.w500,
+                                  fontSize: 14,
+                                ),
+                              ),
+                              subtitle: Text(
+                                'Yêu cầu vân tay / FaceID khi mở app',
+                                style: TextStyle(
+                                  color: sectionTitleColor,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              value: bioAuth,
+                              onChanged: (val) {
+                                ref.read(biometricAuthProvider.notifier).state =
+                                    val;
+                                _saveAllPreferences();
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 24),
+
+                    if (backendFeaturesEnabled)
+                      AppEntrance(
+                        index: 2,
+                        child: Card(
+                          elevation: 0,
+                          color: cardColor,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            side: BorderSide(color: palette.border),
+                          ),
+                          child: ListTile(
+                            key: const Key('settings-trade-access-button'),
+                            leading: Icon(Icons.key_rounded, color: textColor),
+                            title: Text(
+                              'API và giao dịch',
+                              style: TextStyle(
+                                color: textColor,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            subtitle: Text(
+                              'Cấu hình khóa OKX và quản lý phiên giao dịch',
+                              style: TextStyle(
+                                color: sectionTitleColor,
+                                fontSize: 12,
+                              ),
+                            ),
+                            trailing: Icon(
+                              Icons.chevron_right_rounded,
+                              color: sectionTitleColor,
+                            ),
+                            onTap: () {
+                              Navigator.of(context).push(
+                                MaterialPageRoute<void>(
+                                  builder: (_) =>
+                                      const SettingsTradeAccessPage(),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
               ),
             ),
           ),

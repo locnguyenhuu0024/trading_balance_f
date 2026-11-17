@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/pnl_color.dart';
+import '../../../core/widgets/app_motion.dart';
 import '../../../core/widgets/manual_refresh_button.dart';
 import '../../../core/widgets/responsive_form_content.dart';
 import '../../orders/data/trade_api_client.dart';
@@ -104,81 +105,95 @@ class _StrategyScreenState extends ConsumerState<StrategyScreen>
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 980),
-            child: ListView(
-              padding: EdgeInsets.fromLTRB(
-                width < 600 ? 14 : 24,
-                12,
-                width < 600 ? 14 : 24,
-                112,
-              ),
-              children: [
-                if (!sessionState.isAuthenticated || session == null)
-                  const _SignedOutCard()
-                else ...[
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: Wrap(
-                      alignment: WrapAlignment.end,
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        IconButton(
-                          key: const Key('strategy-create-button'),
-                          tooltip: 'Dựng chiến thuật',
-                          onPressed: dashboard == null
-                              ? null
-                              : () => _openWizard(context, session, dashboard),
-                          constraints: const BoxConstraints(
-                            minWidth: 48,
-                            minHeight: 48,
+            child: AppEntranceScope(
+              child: ListView(
+                padding: EdgeInsets.fromLTRB(
+                  width < 600 ? 14 : 24,
+                  12,
+                  width < 600 ? 14 : 24,
+                  112,
+                ),
+                children: [
+                  if (!sessionState.isAuthenticated || session == null)
+                    const AppEntrance(index: 0, child: _SignedOutCard())
+                  else ...[
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: Wrap(
+                        alignment: WrapAlignment.end,
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          IconButton(
+                            key: const Key('strategy-create-button'),
+                            tooltip: 'Dựng chiến thuật',
+                            onPressed: dashboard == null
+                                ? null
+                                : () =>
+                                      _openWizard(context, session, dashboard),
+                            constraints: const BoxConstraints(
+                              minWidth: 48,
+                              minHeight: 48,
+                            ),
+                            icon: const Icon(Icons.add),
                           ),
-                          icon: const Icon(Icons.add),
-                        ),
-                        IconButton(
-                          key: const Key('strategy-automatic-create-button'),
-                          tooltip: 'Dựng chiến thuật tự động',
-                          onPressed: dashboard == null
-                              ? null
-                              : () => _openAutomaticWizard(
-                                  context,
-                                  session,
-                                  dashboard,
-                                ),
-                          constraints: const BoxConstraints(
-                            minWidth: 48,
-                            minHeight: 48,
+                          IconButton(
+                            key: const Key('strategy-automatic-create-button'),
+                            tooltip: 'Dựng chiến thuật tự động',
+                            onPressed: dashboard == null
+                                ? null
+                                : () => _openAutomaticWizard(
+                                    context,
+                                    session,
+                                    dashboard,
+                                  ),
+                            constraints: const BoxConstraints(
+                              minWidth: 48,
+                              minHeight: 48,
+                            ),
+                            icon: const Icon(Icons.auto_awesome_outlined),
                           ),
-                          icon: const Icon(Icons.auto_awesome_outlined),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  if (dashboard?.loadError != null)
-                    _InlineNotice(
-                      message: dashboard!.loadError!,
-                      onRetry: dashboard.isLoading ? null : dashboard.refresh,
-                    ),
-                  if (dashboard?.isLoading == true &&
-                      dashboard!.strategies.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.all(36),
-                      child: FormPendingStatus(
-                        label: 'Đang tải chiến thuật…',
-                        linear: false,
+                        ],
                       ),
-                    )
-                  else if (dashboard?.strategies.isEmpty ?? true)
-                    const _EmptyStrategiesCard()
-                  else
-                    for (final strategy in dashboard!.strategies)
-                      _buildStrategyCard(context, session, dashboard, strategy),
-                  if (dashboard?.actionError != null)
-                    _InlineNotice(message: dashboard!.actionError!),
-                  if (dashboard?.deleteError != null)
-                    _InlineNotice(message: dashboard!.deleteError!),
+                    ),
+                    const SizedBox(height: 12),
+                    if (dashboard?.loadError != null)
+                      _InlineNotice(
+                        message: dashboard!.loadError!,
+                        onRetry: dashboard.isLoading ? null : dashboard.refresh,
+                      ),
+                    if (dashboard?.isLoading == true &&
+                        dashboard!.strategies.isEmpty)
+                      const SizedBox(
+                        height: 320,
+                        child: AppSkeleton(
+                          caption: 'Đang tải chiến thuật…',
+                          itemCount: 3,
+                          itemHeight: 96,
+                          padding: EdgeInsets.zero,
+                        ),
+                      )
+                    else if (dashboard?.strategies.isEmpty ?? true)
+                      const AppEntrance(index: 0, child: _EmptyStrategiesCard())
+                    else
+                      for (final (index, strategy)
+                          in dashboard!.strategies.indexed)
+                        AppEntrance(
+                          index: index,
+                          child: _buildStrategyCard(
+                            context,
+                            session,
+                            dashboard,
+                            strategy,
+                          ),
+                        ),
+                    if (dashboard?.actionError != null)
+                      _InlineNotice(message: dashboard!.actionError!),
+                    if (dashboard?.deleteError != null)
+                      _InlineNotice(message: dashboard!.deleteError!),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ),

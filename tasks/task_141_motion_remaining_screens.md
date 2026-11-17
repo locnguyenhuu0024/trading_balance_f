@@ -60,6 +60,12 @@ Pattern: put `AppEntranceScope` directly around the screen's main `ListView`; wr
    - TEST-141-1 (source check, plain `test`): each of the 5 files contains `AppEntranceScope(` and `AppEntrance(`; strategy, support_resistance and connections also contain `AppSkeleton(`; strategy and support_resistance no longer contain `FormPendingStatus(` for those two captions (check that `'Đang tải chiến thuật…'` and `'Đang tải danh sách coin…'` appear only inside an `AppSkeleton(` call — simplest: `contains("AppSkeleton(caption: 'Đang tải chiến thuật…'")` etc.).
    - TEST-141-2 (widget): pump `ToolsScreen` in a `ProviderScope`/`MaterialApp` the same way existing tool tests do (if none exists, use the minimal overrides `tools_screen.dart` needs); after `pump(100 ms)` the first `_ToolCard`'s ancestor `FadeTransition` opacity < 1; after `pumpAndSettle` all four cards are fully visible and tapping the first card still navigates as before.
 
+### Remediation R01 (current instruction)
+
+Attempt 733915fc is in the working tree (host: format clean, RED-141 observed, GREEN-141 2/2, analyze 155 / 0 errors, web build OK). Do not redo. One V4 failure:
+
+- AUD-141-01 (contract error, coordinator's): `support_resistance_screen_test.dart` "GREEN-30 selects two coins…" fails with "A RenderFlex overflowed by 4.0 pixels" in the skeleton placeholder. `itemHeight: 48` leaves 22 px inside the 12 px padding and border, but the two bars need 26 px. Required: in `support_resistance_screen.dart` change that `AppSkeleton` to `itemHeight: 64`. No other change; keep `dart format` clean.
+
 ### 6.1 Clarifications from the T140 audit (binding)
 
 - Coordinator decision on attempt 384d888f's blocker: where a screen uses `SingleChildScrollView` + `Column` instead of a `ListView` (Settings ~L416; Support-resistance ~L82/~L123), do NOT convert it. Wrap that existing `SingleChildScrollView` in `AppEntranceScope` and wrap each top-level card inside its `Column` in `AppEntrance(index: i)`. "Main `ListView`" in §6 means "the screen's main scroll view", whatever its type. Layout, padding and scroll physics stay unchanged.
