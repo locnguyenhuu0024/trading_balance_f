@@ -12,20 +12,20 @@ import re
 from pathlib import Path
 
 ROUTES = {
-    "E0": ("gpt-6-luna", "xhigh"),
-    "E1": ("gpt-6.1-terra", "low"),
-    "E2": ("gpt-6.1-terra", "medium"),
-    "E3": ("gpt-6.1-terra", "high"),
-    "E4": ("gpt-6.1-terra", "xhigh"),
-    "E5": ("gpt-6.1-terra", "max"),
+    "E0": ("gpt-6.1-terra", "low"),
+    "E1": ("gpt-6.1-terra", "medium"),
+    "E2": ("gpt-6.2-sol", "low"),
+    "E3": ("gpt-6.2-sol", "medium"),
+    "E4": ("gpt-6.2-sol", "high"),
+    "E5": ("gpt-6.2-sol", "xhigh"),
 }
 ALLOWED_ROUTES = {
-    "E0": {("gpt-6-luna", "xhigh")},
-    "E1": {("gpt-6.1-terra", "low"), ("gpt-6-luna", "xhigh")},
-    "E2": {("gpt-6.1-terra", "medium"), ("gpt-6.1-terra", "low")},
-    "E3": {("gpt-6.1-terra", "high"), ("gpt-6.1-terra", "medium")},
-    "E4": {("gpt-6.1-terra", "xhigh"), ("gpt-6.1-terra", "high")},
-    "E5": {("gpt-6.1-terra", "max"), ("gpt-6.1-terra", "xhigh")},
+    "E0": {("gpt-6.1-terra", "low")},
+    "E1": {("gpt-6.1-terra", "medium"), ("gpt-6.1-terra", "low")},
+    "E2": {("gpt-6.2-sol", "low"), ("gpt-6.1-terra", "medium"), ("gpt-6.1-terra", "high")},
+    "E3": {("gpt-6.2-sol", "medium"), ("gpt-6.2-sol", "low"), ("gpt-6.1-terra", "xhigh")},
+    "E4": {("gpt-6.2-sol", "high"), ("gpt-6.2-sol", "medium"), ("gpt-6.1-terra", "xhigh")},
+    "E5": {("gpt-6.2-sol", "xhigh"), ("gpt-6.2-sol", "high"), ("gpt-6.2-sol", "max"), ("gpt-6.1-terra", "max")},
 }
 POLICY_PATH = "docs/agents/framework/EXECUTOR_ROUTING_POLICY.json"
 SUPPORTED_VARIANTS = ("company", "personal", "frontend-company", "frontend-personal")
@@ -154,8 +154,8 @@ def load_route_policy(root: Path) -> dict:
         raise CompatibilityError("Invalid executor routing policy JSON") from exc
     if (not isinstance(obj, dict)
             or set(obj) != {"schema_version", "governance_contract", "defaults"}
-            or obj["schema_version"] != 2
-            or obj["governance_contract"] != "optcodex-executor-routing-v2"):
+            or obj["schema_version"] != 3
+            or obj["governance_contract"] != "optcodex-executor-routing-v3"):
         raise CompatibilityError("Invalid routing policy contract")
     defaults = obj["defaults"]
     if not isinstance(defaults, dict) or set(defaults) != set(ALLOWED_ROUTES):

@@ -13,6 +13,6 @@
 
 ## Executor and audit
 
-- E0/E1/E2 default to `gpt-6-luna` / `high|xhigh|max`; Terra/high E1 or Terra/xhigh E2 is allowed only as a specifically approved experimental route, never an automatic substitute.
+- Executor defaults follow v3: E0 Terra/low; E1 Terra/medium; E2 Sol/low; E3 Sol/medium; E4 Sol/high; E5 Sol/xhigh. A different allowlisted route requires explicit task approval; there is no automatic fallback. Preserve native mobile lifecycle/build/UI testing.
 - Preserve strict approval, protected-config restrictions, RED→GREEN, task buildability and final repository build, independent audit and company QA handoff where applicable.
 - Do not apply web-specific F0–F3 or pinned React/Vercel rules to native-only UI unless the project explicitly uses the relevant web technologies.

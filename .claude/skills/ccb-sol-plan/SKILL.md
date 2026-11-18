@@ -1,12 +1,12 @@
 ---
 name: ccb-sol-plan
-description: Preview and dispatch a bounded read-only GPT-6.1 Sol Medium planning proposal, while Claude Sonnet High owns canonical plans.
+description: Preview and dispatch a bounded read-only GPT-6.1 Sol Medium planning proposal, while Claude Opus Medium owns canonical plans.
 argument-hint: "[planning-root] [backend|web|mobile|cross_layer] [work-id]"
 ---
 
 # Sol Medium planning advisor (read-only)
 
-1. Main Claude Desktop chat is user-selected **Sonnet 5.5 High**; CCB cannot set/verify that effective model. Claude alone owns source-of-truth, approved SPEC/PLAN/TASK, fan-in, approval, QA, audit, and final build.
+1. Main Claude Desktop chat is user-selected **Opus 5.5 Medium**; CCB cannot set/verify that effective model. Claude alone owns source-of-truth, approved SPEC/PLAN/TASK, fan-in, approval, QA, audit, and final build.
 2. Load OptCodex baseline. Identify independent material Backend, Web and Mobile workstreams. Do not use one packet to falsely claim two separate workstreams completed.
 3. For each bounded workstream build an explicit coordinator-curated `.ccb/sol-planning/packets/<work-id>.json` packet. Required fields: plan_id, work_id, workstream, requirements[], repo_facts[], constraints[], questions[], source_classification="non_protected", approved_for_sol=true, approval_id. Review user/service sharing authorization before setting the flag. Never read/pass protected config, credentials, secrets or unapproved content; flag is not evidence of approval.
 4. Run `python3 scripts/ccb/sol_plan.py --plan-root "<root>" --packet "<root>/.ccb/sol-planning/packets/<work-id>.json"` as a **local preview**; it does not call Codex.

@@ -1,6 +1,6 @@
 @AGENTS.md
 
-# ClaudeCodex Bridge v0.7 — OptCodexRules v1.4.0 adapter
+# ClaudeCodex Bridge v0.9 — OptCodexRules v1.5.0 adapter
 
 This file is installed **beside** the chosen complete OptCodexRules variant, never in place of its `AGENTS.md`. Read that variant's pinned `BASELINE_AGENTS_*.md` in full before repository work as required by OptCodex. Its baseline, planning/audit framework, Ponytail adapter and variant-specific instructions outrank this bridge. Do not use the obsolete Google Drive baseline.
 
@@ -8,14 +8,14 @@ This file is installed **beside** the chosen complete OptCodexRules variant, nev
 
 If installation is requested, run the `/ccb-install` skill from a trusted CCB checkout. Identify domain backend/web/mobile and scope company/personal, show a no-write preview from `scripts/ccb/install.py`, obtain explicit user approval, then apply. Never silently replace existing project governance, delete old task artifacts, or alter Git state. Selected domain instructions are `.claude/rules/ccb-domain-{backend|web|mobile}.md` (only one should be installed). Mobile uses generic OptCodex baseline plus native rules; web uses upstream frontend variant with F0–F3. For multi-repo work select and install each repo separately.
 
-Read `model-routing.json` as advisory only; the validated project `docs/agents/framework/EXECUTOR_ROUTING_POLICY.json` is the runtime source of truth for E0–E5 defaults. CCB enforces the fixed allowlist and non-default approval. Sol is not an implementation writer.
+Read `model-routing.json` as advisory only; the validated project `docs/agents/framework/EXECUTOR_ROUTING_POLICY.json` is the runtime source of truth for E0–E5 defaults. CCB enforces the fixed allowlist and non-default approval. GPT-6.1 Sol is planning advisor only; GPT-6.2 Sol is an approved bounded implementation writer for E2–E5.
 
 ## Selected planning/orchestration workflow
 
-- Main Claude Code Desktop chat: **Sonnet 5.5 High**, selected by the user. No CCB script can change or prove the Claude runtime model/effort; verify the UI when needed rather than claiming a hidden effective route.
+- Main Claude Code Desktop chat: **Opus 5.5 Medium**, selected by the user. No CCB script can change or prove the Claude runtime model/effort; verify the UI when needed rather than claiming a hidden effective route.
 - **GPT-6.1 Sol Medium** is the default proposed planning **advisor** through `/ccb-sol-plan` after the coordinator has curated an approved non-protected packet. It produces only proposals for distinct Backend/Frontend workstreams; the user/service-sharing gate is mandatory. Do not send protected config, private secrets or unapproved project material to Sol.
 - Claude owns all canonical requirements, SPEC, PLAN, TASK, fan-in, approval, delegation, independent audit, final build and QA. The Sol proposal is not itself an approved plan or a PASS verdict. If Sol is unavailable, report the blocker and obtain an authorized alternative instead of silently claiming the planned workflow happened.
-- Luna/xhigh is E0 default; Terra/low, medium, high, xhigh and max are E1–E5 defaults from validated routing policy v2. Never dispatch them before explicit approval of the currently presented plan.
+- Validated executor defaults: E0 Terra/low; E1 Terra/medium; E2 Sol/low; E3 Sol/medium; E4 Sol/high; E5 Sol/xhigh. Never dispatch before approval of the currently presented plan.
 
 ## Role translation (coordinator remains Claude)
 
@@ -27,8 +27,12 @@ Read `model-routing.json` as advisory only; the validated project `docs/agents/f
 
 - Install one of `company`, `personal`, `frontend-company`, `frontend-personal` from OptCodexRules; install CCB only after the complete variant is present.
 - Verify `optcodex.lock.json` and `scripts/ccb/compat.py` before dispatch. If pinned governance files drift or a version/variant is unsupported, stop and reconcile; never silently bypass the lock.
-- Validated route policy v2 defaults: E0 Luna/xhigh; E1 Terra/low; E2 Terra/medium; E3 Terra/high; E4 Terra/xhigh; E5 Terra/max. Only approved and allowlisted task-specific overrides are permitted; E5 is exceptional, not a blanket escalation. Both model and effort must be explicitly bound and unavailable requested route means BLOCKED_ROUTE. Legacy v1.3 E1/E2 task manifests must be reclassified and reapproved, never silently reinterpreted.
+- Validated route policy v3 defaults: E0 Terra/low; E1 Terra/medium; E2 Sol/low; E3 Sol/medium; E4 Sol/high; E5 Sol/xhigh. Only approved and allowlisted task-specific overrides are permitted; E5 is exceptional, not a blanket escalation. Both model and effort must be explicitly bound and unavailable requested route means BLOCKED_ROUTE. Legacy v1.4 E0–E5 task manifests must be reclassified and reapproved, never silently reinterpreted.
 - The user must approve the **currently presented** plan, not merely a manifest carrying the same plan ID. Do not dispatch when approval provenance is unclear.
+
+## Optional Graphify context discovery (pilot, coordinator only)
+
+If a user-provided, project-local graph exists and a structural codebase question or cross-module change would benefit, use /ccb-graph-context. Its Python adapter reads the selected graph under a validated project/domain registry stored outside Git; company and personal data must not be mixed. Graph evidence, even EXTRACTED edges, is not a substitute for reading actual approved source lines and tests. Never allow graph results to become task approval, route escalation or independent audit PASS. Do not run Graphify install/update or enable strict read hooks via CCB. The Graphify CLI may touch its own generated query-stamp cache; graph outputs must stay out of writer checkouts/Git status. A failed/stale/missing graph is a recoverable discovery limitation; use bounded permitted source search.
 
 ## Phase-specific loading
 
@@ -38,7 +42,7 @@ Read `model-routing.json` as advisory only; the validated project `docs/agents/f
 
 ## Git, concurrency and safety
 
-Do not alter Git history, stage, commit, push or create/delete worktrees without separate specific user approval. CCB v0.7 serializes writers in a clean checkout. Never read or modify protected configuration/environment content. JSON reports, task manifests and Git path checks are **not security sandboxes**. Do not mark an executor result PASS: always audit independently. Load `docs/agents/framework/CCB_PROTOCOL.md` only when preparing or reviewing a CCB handoff.
+Do not alter Git history, stage, commit, push or create/delete worktrees without separate specific user approval. CCB v0.9 serializes writers in a clean checkout. Never read or modify protected configuration/environment content. JSON reports, task manifests and Git path checks are **not security sandboxes**. Do not mark an executor result PASS: always audit independently. Load `docs/agents/framework/CCB_PROTOCOL.md` only when preparing or reviewing a CCB handoff.
 
 ## Mandatory task accounting for Claude
 

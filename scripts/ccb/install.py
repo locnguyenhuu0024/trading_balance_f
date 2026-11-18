@@ -35,6 +35,7 @@ COMMON = (
     ".claude/skills/ccb-install/SKILL.md",
     ".claude/skills/ccb-report/SKILL.md",
     ".claude/skills/ccb-sol-plan/SKILL.md",
+    ".claude/skills/ccb-graph-context/SKILL.md",
     "docs/agents/framework/CCB_PROTOCOL.md",
     "docs/agents/templates/CCB_JOB_TEMPLATE.json",
     "scripts/ccb/compat.py",
@@ -42,6 +43,7 @@ COMMON = (
     "scripts/ccb/install.py",
     "scripts/ccb/task_ledger.py",
     "scripts/ccb/sol_plan.py",
+    "scripts/ccb/graph_context.py",
     "schemas/ccb_sol_plan.schema.json",
     "schemas/ccb_executor_report.schema.json",
 )
@@ -120,17 +122,23 @@ def plan_copy(project: Path, source_files: dict):
             try:
                 load_route_policy(project)
             except CompatibilityError as exc:
-                # A version-1 E0/E1/E2 policy must NOT be interpreted as v2.
+                # An older v1/v2 policy must NOT be silently interpreted as v3.
                 # Surface it as a reviewed, backed-up migration conflict.
                 try:
                     legacy = json.loads(target.read_text(encoding="utf-8"))
                 except (ValueError, OSError) as read_error:
                     raise InstallError("Invalid existing routing policy") from read_error
-                if (not isinstance(legacy, dict)
-                        or legacy.get("schema_version") != 1
-                        or legacy.get("governance_contract") != "optcodex-executor-routing-v1"
-                        or not isinstance(legacy.get("defaults"), dict)
-                        or set(legacy["defaults"]) != {"E0", "E1", "E2"}):
+                is_legacy_v1 = (isinstance(legacy, dict)
+                        and legacy.get("schema_version") == 1
+                        and legacy.get("governance_contract") == "optcodex-executor-routing-v1"
+                        and isinstance(legacy.get("defaults"), dict)
+                        and set(legacy["defaults"]) == {"E0", "E1", "E2"})
+                is_legacy_v2 = (isinstance(legacy, dict)
+                        and legacy.get("schema_version") == 2
+                        and legacy.get("governance_contract") == "optcodex-executor-routing-v2"
+                        and isinstance(legacy.get("defaults"), dict)
+                        and set(legacy["defaults"]) == {"E0", "E1", "E2", "E3", "E4", "E5"})
+                if not (is_legacy_v1 or is_legacy_v2):
                     raise InstallError("Existing routing policy is not a recognized legacy policy") from exc
                 plan.append((rel, source, target, "conflict"))
                 continue

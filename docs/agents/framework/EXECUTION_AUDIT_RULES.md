@@ -49,12 +49,12 @@ Transport failures such as `ORCHESTRATION_TRANSPORT_ERROR`, environment blockers
 ### Executor-model selection and binding at dispatch
 
 For every implementation/remediation task, dispatch using the executor class recorded in the task/plan:
-- `E0` -> `gpt-6-luna` / `xhigh`;
-- `E1` -> `gpt-6.1-terra` / `low`;
-- `E2` -> `gpt-6.1-terra` / `medium`;
-- `E3` -> `gpt-6.1-terra` / `high`;
-- `E4` -> `gpt-6.1-terra` / `xhigh`;
-- `E5` -> `gpt-6.1-terra` / `max`.
+- `E0` -> `gpt-6.1-terra` / `low`;
+- `E1` -> `gpt-6.1-terra` / `medium`;
+- `E2` -> `gpt-6.2-sol` / `low`;
+- `E3` -> `gpt-6.2-sol` / `medium`;
+- `E4` -> `gpt-6.2-sol` / `high`;
+- `E5` -> `gpt-6.2-sol` / `xhigh`.
 
 The mapping above is the default runtime dispatch requirement sourced from validated EXECUTOR_ROUTING_POLICY.json; alternate allowlisted routes require specific user approval. Before each executor spawn, the coordinator must validate the task contains:
 - `Agent Role: implementation_executor`;
@@ -73,13 +73,13 @@ Then perform this dispatch state machine:
 6. `BLOCKED_ROUTE`: if the runtime cannot explicitly express the required child model/effort, do **not** spawn an inherited/default writer. Obtain a task-specific user decision for an alternate explicitly identified route/runtime.
 
 
-### Terra-first dynamic routing within fixed allowlist (OptCodex v1.4.0)
+### Dual-model dynamic routing within fixed allowlist (OptCodex v1.5.0)
 
-Executor routing follows validated EXECUTOR_ROUTING_POLICY.json (contract v2): E0 Luna/xhigh; E1 Terra/low; E2 Terra/medium; E3 Terra/high; E4 Terra/xhigh; E5 Terra/max. Classify by implementation entropy, not task size; E5 is exceptional and requires demonstrated need. Never silently fall back or self-escalate. Nondefault allowlisted routes require task-specific approval. Preserve explicit model+effort, approved task/scope, protected-file constraints, RED/GREEN, independent audit, buildability and final build.
+Executor routing follows validated EXECUTOR_ROUTING_POLICY.json (contract v3): E0 Terra/low; E1 Terra/medium; E2 Sol/low; E3 Sol/medium; E4 Sol/high; E5 Sol/xhigh. Classify by implementation entropy, not task size; E5 is exceptional and requires demonstrated need. Never silently fall back or self-escalate. Nondefault allowlisted routes require task-specific approval. Preserve explicit model+effort, approved task/scope, protected-file constraints, RED/GREEN, independent audit, buildability and final build.
 
 For fair A/B compare separate clean checkouts of the same base commit with the same approved SPEC/AC/tests; never run two writers on the same checkout. Keep RED/GREEN, Task Buildability, final build, protected file exclusions, independent audit and QA/explicit Git authorizations unchanged. Count unique logical task IDs separately from executor attempts/retries; record requested and only observed effective route, runtime duration and quota/tokens (unknown = null). Do not treat executor terminal output as audited PASS.
 
-If no class is recorded, the coordinator must classify implementation entropy before dispatch rather than silently defaulting to Max. Escalate only after evidence that the selected route is insufficient. An executor failure caused by unresolved requirement/design/architecture ambiguity returns to coordinator reasoning/replanning; it is not solved by blindly increasing executor effort. Terra is the default for E1–E5; Luna/xhigh is the E0 default. Any nondefault allowlisted route requires verified task-specific authorization.
+If no class is recorded, the coordinator must classify implementation entropy before dispatch rather than silently defaulting to Max. Escalate only after evidence that the selected route is insufficient. An executor failure caused by unresolved requirement/design/architecture ambiguity returns to coordinator reasoning/replanning; it is not solved by blindly increasing executor effort. Terra is the default for E1–E5; Terra/low is the E0 default. Any nondefault allowlisted route requires verified task-specific authorization.
 
 ### Mandatory executor route-compliance gate
 

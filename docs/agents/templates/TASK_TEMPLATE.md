@@ -3,9 +3,9 @@
 Status: PENDING | READY | EXECUTING | VERIFYING | PASS | REWORK | BLOCKED | BLOCKED_ROUTE
 Agent Role: implementation_executor
 Executor Class: E0 | E1 | E2 | E3 | E4 | E5
-Target Model: gpt-6-luna
-Target Effort: high | xhigh | max
-Target Route: gpt-6-luna / <high|xhigh|max>
+Target Model: <exact resolved model from validated routing policy v3>
+Target Effort: <exact resolved effort from validated routing policy v3>
+Target Route: <Target Model> / <Target Effort>
 Route Binding: EXPLICIT
 Parent Route Inheritance: FORBIDDEN
 Specification: `<path>`

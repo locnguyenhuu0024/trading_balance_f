@@ -1,15 +1,16 @@
 {
   "schema_version": 1,
-  "verified_on": "2026-10-27",
+  "verified_on": "2026-11-18",
   "openai_sources": [
-    "https://developers.openai.com/api/docs/models",
-    "https://developers.openai.com/api/docs/guides/model-selection",
-    "https://openai.com/index/introducing-gpt-6-1-terra/"
+    "https://developers.openai.com/api/docs/models/gpt-6.2-sol",
+    "https://developers.openai.com/api/docs/models/gpt-6.1-terra",
+    "https://developers.openai.com/api/docs/guides/reasoning",
+    "https://platform.claude.com/docs/en/models/opus-5-5/overview"
   ],
-  "policy_authority": "OptCodexRules 1.4.0: E0-E5 dynamic defaults under validated routing contract v2",
+  "policy_authority": "OptCodexRules v1.5.0: dual-model E0–E5 defaults under routing contract v3",
   "models": {
     "gpt-6-luna": {
-      "type": "executor",
+      "type": "legacy_reasoning_candidate",
       "best_for": [
         "mechanical",
         "bounded low-entropy code"
@@ -20,7 +21,7 @@
       }
     },
     "gpt-6.1-terra": {
-      "type": "candidate",
+      "type": "implementation_executor",
       "best_for": [
         "frontend visual assessment",
         "UI interaction",
@@ -33,7 +34,7 @@
       }
     },
     "gpt-6.1-sol": {
-      "type": "candidate",
+      "type": "planning_advisor",
       "best_for": [
         "complex backend architecture analysis",
         "cross-domain reasoning",
@@ -54,6 +55,19 @@
         "input": 10,
         "output": 50
       }
+    },
+    "gpt-6.2-sol": {
+      "type": "implementation_executor",
+      "best_for": [
+        "context-aware coding",
+        "multi-file integration",
+        "bounded complex implementation",
+        "hard debugging"
+      ],
+      "api_usd_per_million": {
+        "input": 2,
+        "output": 10
+      }
     }
   },
   "profiles": {
@@ -61,63 +75,84 @@
       "optcodex": "company|personal",
       "executor": {
         "E0": {
-          "model": "gpt-6-luna",
-          "effort": "xhigh"
-        },
-        "E1": {
           "model": "gpt-6.1-terra",
           "effort": "low"
         },
-        "E2": {
+        "E1": {
           "model": "gpt-6.1-terra",
           "effort": "medium"
         },
+        "E2": {
+          "model": "gpt-6.2-sol",
+          "effort": "low"
+        },
         "E3": {
-          "model": "gpt-6.1-terra",
-          "effort": "high"
+          "model": "gpt-6.2-sol",
+          "effort": "medium"
         },
         "E4": {
-          "model": "gpt-6.1-terra",
-          "effort": "xhigh"
+          "model": "gpt-6.2-sol",
+          "effort": "high"
         },
         "E5": {
-          "model": "gpt-6.1-terra",
-          "effort": "max"
+          "model": "gpt-6.2-sol",
+          "effort": "xhigh"
         }
       },
       "advisory_candidates": [
         "gpt-6.1-sol",
-        "gpt-6-astra"
+        "gpt-6.2-sol"
       ],
       "allowlisted_nondefault_routes": {
+        "E0": [],
         "E1": [
-          {
-            "model": "gpt-6-luna",
-            "effort": "xhigh"
-          }
-        ],
-        "E2": [
           {
             "model": "gpt-6.1-terra",
             "effort": "low"
           }
         ],
-        "E3": [
+        "E2": [
           {
             "model": "gpt-6.1-terra",
             "effort": "medium"
-          }
-        ],
-        "E4": [
+          },
           {
             "model": "gpt-6.1-terra",
             "effort": "high"
           }
         ],
-        "E5": [
+        "E3": [
+          {
+            "model": "gpt-6.2-sol",
+            "effort": "low"
+          },
           {
             "model": "gpt-6.1-terra",
             "effort": "xhigh"
+          }
+        ],
+        "E4": [
+          {
+            "model": "gpt-6.2-sol",
+            "effort": "medium"
+          },
+          {
+            "model": "gpt-6.1-terra",
+            "effort": "xhigh"
+          }
+        ],
+        "E5": [
+          {
+            "model": "gpt-6.2-sol",
+            "effort": "high"
+          },
+          {
+            "model": "gpt-6.2-sol",
+            "effort": "max"
+          },
+          {
+            "model": "gpt-6.1-terra",
+            "effort": "max"
           }
         ]
       }
@@ -126,63 +161,84 @@
       "optcodex": "frontend-company|frontend-personal",
       "executor": {
         "E0": {
-          "model": "gpt-6-luna",
-          "effort": "xhigh"
-        },
-        "E1": {
           "model": "gpt-6.1-terra",
           "effort": "low"
         },
-        "E2": {
+        "E1": {
           "model": "gpt-6.1-terra",
           "effort": "medium"
         },
+        "E2": {
+          "model": "gpt-6.2-sol",
+          "effort": "low"
+        },
         "E3": {
-          "model": "gpt-6.1-terra",
-          "effort": "high"
+          "model": "gpt-6.2-sol",
+          "effort": "medium"
         },
         "E4": {
-          "model": "gpt-6.1-terra",
-          "effort": "xhigh"
+          "model": "gpt-6.2-sol",
+          "effort": "high"
         },
         "E5": {
-          "model": "gpt-6.1-terra",
-          "effort": "max"
+          "model": "gpt-6.2-sol",
+          "effort": "xhigh"
         }
       },
       "advisory_candidates": [
-        "gpt-6.1-terra",
-        "gpt-6.1-sol"
+        "gpt-6.1-sol",
+        "gpt-6.2-sol"
       ],
       "allowlisted_nondefault_routes": {
+        "E0": [],
         "E1": [
-          {
-            "model": "gpt-6-luna",
-            "effort": "xhigh"
-          }
-        ],
-        "E2": [
           {
             "model": "gpt-6.1-terra",
             "effort": "low"
           }
         ],
-        "E3": [
+        "E2": [
           {
             "model": "gpt-6.1-terra",
             "effort": "medium"
-          }
-        ],
-        "E4": [
+          },
           {
             "model": "gpt-6.1-terra",
             "effort": "high"
           }
         ],
-        "E5": [
+        "E3": [
+          {
+            "model": "gpt-6.2-sol",
+            "effort": "low"
+          },
           {
             "model": "gpt-6.1-terra",
             "effort": "xhigh"
+          }
+        ],
+        "E4": [
+          {
+            "model": "gpt-6.2-sol",
+            "effort": "medium"
+          },
+          {
+            "model": "gpt-6.1-terra",
+            "effort": "xhigh"
+          }
+        ],
+        "E5": [
+          {
+            "model": "gpt-6.2-sol",
+            "effort": "high"
+          },
+          {
+            "model": "gpt-6.2-sol",
+            "effort": "max"
+          },
+          {
+            "model": "gpt-6.1-terra",
+            "effort": "max"
           }
         ]
       }
@@ -191,80 +247,101 @@
       "optcodex": "company|personal plus CCB mobile overlay",
       "executor": {
         "E0": {
-          "model": "gpt-6-luna",
-          "effort": "xhigh"
-        },
-        "E1": {
           "model": "gpt-6.1-terra",
           "effort": "low"
         },
-        "E2": {
+        "E1": {
           "model": "gpt-6.1-terra",
           "effort": "medium"
         },
+        "E2": {
+          "model": "gpt-6.2-sol",
+          "effort": "low"
+        },
         "E3": {
-          "model": "gpt-6.1-terra",
-          "effort": "high"
+          "model": "gpt-6.2-sol",
+          "effort": "medium"
         },
         "E4": {
-          "model": "gpt-6.1-terra",
-          "effort": "xhigh"
+          "model": "gpt-6.2-sol",
+          "effort": "high"
         },
         "E5": {
-          "model": "gpt-6.1-terra",
-          "effort": "max"
+          "model": "gpt-6.2-sol",
+          "effort": "xhigh"
         }
       },
       "advisory_candidates": [
-        "gpt-6.1-terra",
-        "gpt-6.1-sol"
+        "gpt-6.1-sol",
+        "gpt-6.2-sol"
       ],
       "allowlisted_nondefault_routes": {
+        "E0": [],
         "E1": [
-          {
-            "model": "gpt-6-luna",
-            "effort": "xhigh"
-          }
-        ],
-        "E2": [
           {
             "model": "gpt-6.1-terra",
             "effort": "low"
           }
         ],
-        "E3": [
+        "E2": [
           {
             "model": "gpt-6.1-terra",
             "effort": "medium"
-          }
-        ],
-        "E4": [
+          },
           {
             "model": "gpt-6.1-terra",
             "effort": "high"
           }
         ],
-        "E5": [
+        "E3": [
+          {
+            "model": "gpt-6.2-sol",
+            "effort": "low"
+          },
           {
             "model": "gpt-6.1-terra",
             "effort": "xhigh"
+          }
+        ],
+        "E4": [
+          {
+            "model": "gpt-6.2-sol",
+            "effort": "medium"
+          },
+          {
+            "model": "gpt-6.1-terra",
+            "effort": "xhigh"
+          }
+        ],
+        "E5": [
+          {
+            "model": "gpt-6.2-sol",
+            "effort": "high"
+          },
+          {
+            "model": "gpt-6.2-sol",
+            "effort": "max"
+          },
+          {
+            "model": "gpt-6.1-terra",
+            "effort": "max"
           }
         ]
       }
     }
   },
   "selection_rules": [
-    "E0-E5: Luna/xhigh, Terra/low, Terra/medium, Terra/high, Terra/xhigh, Terra/max respectively; classification by implementation entropy and task complexity, not file count.",
-    "Never silently reclassify E1/E2 from pre-v1.4 manifests; require migration and explicit approval of current task.",
-    "Only allowlisted nondefault routes with separate task-specific route_override and matching CLI ID; no silent fallback or parent-route inheritance.",
-    "E5 Max exceptional, not default for difficult sounding tasks; unresolved requirements go back to planner.",
-    "Claude coordinator owns plan/audit/QA; Sol remains advisory and Codex executor reports never count as audit PASS."
+    "v3 E0–E5: Terra low, Terra medium, Sol low, Sol medium, Sol high, Sol xhigh; classify by implementation entropy, not file count or S/M/L tier.",
+    "Legacy v2 TASK/job manifests require fresh classification and approval against the v3 policy; do not relabel silently.",
+    "Only allowlisted task-approved route_overrides with matching CLI IDs; unavailable model or effort fails BLOCKED_ROUTE, no fallback or inherited parent route.",
+    "E5 Sol xhigh is exceptional; Sol max and Terra high/xhigh/max only for separately authorized A/B or exceptional routes, not default.",
+    "Claude Opus 5.5 Medium is user-selected coordinator and independent auditor; GPT-6.1 Sol Medium remains noncanonical read-only planning advisor, GPT-6.2 Sol may write only under approved E-class executor contract."
   ],
   "planning_pilot": {
     "orchestrator": {
       "provider": "anthropic",
-      "model": "claude-sonnet-5.5",
-      "effort": "high",
+      "model": "claude-opus-5-5",
+      "effort": "medium",
       "selected_in": "Claude Code Desktop",
       "runtime_binding": "USER_SELECTED_NOT_ENFORCED"
     },
@@ -282,10 +359,10 @@
       "output": "non-canonical structured planning proposal",
       "data_sharing": "only explicitly approved non-protected packets"
     },
-    "spec_plan_tasks_owner": "Claude Sonnet 5.5 High",
-    "auditor": "Claude Sonnet 5.5 High",
-    "default_executor": "GPT-6 Luna/xhigh E0; GPT-6.1 Terra low–max E1–E5",
+    "spec_plan_tasks_owner": "Claude Opus 5.5 Medium",
+    "auditor": "Claude Opus 5.5 Medium",
+    "default_executor": "E0 Terra low; E1 Terra medium; E2 Sol low; E3 Sol medium; E4 Sol high; E5 Sol xhigh",
     "optional_executor": "Approved allowlisted nondefault routes only"
   },
-  "routing_source": "docs/agents/framework/EXECUTOR_ROUTING_POLICY.json contract v2 (installed upstream, dynamically validated)"
+  "routing_source": "docs/agents/framework/EXECUTOR_ROUTING_POLICY.json contract v3 (installed upstream, dynamically validated)"
 }

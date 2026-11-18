@@ -1,30 +1,30 @@
 {
-  "schema_version": 2,
-  "governance_contract": "optcodex-executor-routing-v2",
+  "schema_version": 3,
+  "governance_contract": "optcodex-executor-routing-v3",
   "defaults": {
     "E0": {
-      "model": "gpt-6-luna",
-      "effort": "xhigh"
-    },
-    "E1": {
       "model": "gpt-6.1-terra",
       "effort": "low"
     },
-    "E2": {
+    "E1": {
       "model": "gpt-6.1-terra",
       "effort": "medium"
     },
+    "E2": {
+      "model": "gpt-6.2-sol",
+      "effort": "low"
+    },
     "E3": {
-      "model": "gpt-6.1-terra",
-      "effort": "high"
+      "model": "gpt-6.2-sol",
+      "effort": "medium"
     },
     "E4": {
-      "model": "gpt-6.1-terra",
-      "effort": "xhigh"
+      "model": "gpt-6.2-sol",
+      "effort": "high"
     },
     "E5": {
-      "model": "gpt-6.1-terra",
-      "effort": "max"
+      "model": "gpt-6.2-sol",
+      "effort": "xhigh"
     }
   }
 }

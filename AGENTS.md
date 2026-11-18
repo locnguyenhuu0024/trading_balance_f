@@ -1,12 +1,12 @@
-# AGENTS.md — OptCodex + Ponytail v1.4.0
+# AGENTS.md — OptCodex + Ponytail v1.5.0
 
 > Thin bootstrap for personal OptCodex. GitHub is the only maintained source of truth.
 
 ## 0. Binding baseline
 
-Before repository work, read `BASELINE_AGENTS_OptCodex-Personal-v1.2.2.md` in full. It is the binding source of truth for roles, planning, approval, source-of-truth precedence, protected configuration, external services, task scope, mandatory explicit child model/effort binding, verification, audit, and telemetry. This overlay does not weaken or replace any baseline rule.
+Before repository work, read `BASELINE_AGENTS_OptCodex-Personal-v1.2.3.md` in full. It is the binding source of truth for roles, planning, approval, source-of-truth precedence, protected configuration, external services, task scope, mandatory explicit child model/effort binding, verification, audit, and telemetry. This overlay does not weaken or replace any baseline rule.
 
-Executor routing uses validated `docs/agents/framework/EXECUTOR_ROUTING_POLICY.json` (v2): E0 Luna/xhigh, E1 Terra/low, E2 Terra/medium, E3 Terra/high, E4 Terra/xhigh, E5 Terra/max; only a separately approved task-specific override may use an allowlisted alternative. Governance, scope, audit, approval and protected-config rules remain binding; no silent model/effort substitution.
+Executor routing uses validated `docs/agents/framework/EXECUTOR_ROUTING_POLICY.json` (v3): E0 Terra/low, E1 Terra/medium, E2 Sol/low, E3 Sol/medium, E4 Sol/high, E5 Sol/xhigh; only a separately approved task-specific override may use an allowlisted alternative. Governance, scope, audit, approval and protected-config rules remain binding; no silent model/effort substitution.
 
 ## 1. Progressive Ponytail integration
 

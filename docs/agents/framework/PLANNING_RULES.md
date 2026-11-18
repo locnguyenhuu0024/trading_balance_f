@@ -131,12 +131,12 @@ Before finalizing each task, classify its **implementation entropy** separately 
 
 | Executor class | Use when | Target |
 | --- | --- | --- |
-| `E0 — mechanical` | repetitive/obvious changes with almost no coding judgment | `gpt-6-luna` / `xhigh` |
-| `E1 — simple bounded` | CRUD, mapping, local tests with explicit behavior | `gpt-6.1-terra` / `low` |
-| `E2 — routine` | routine API/service/UI implementation, clear invariants/AC | `gpt-6.1-terra` / `medium` |
-| `E3 — multi-file integration` | multiple modules, nontrivial integration, established contracts | `gpt-6.1-terra` / `high` |
-| `E4 — hard bounded` | complex SQL, concurrency, difficult debugging, interdependent invariants | `gpt-6.1-terra` / `xhigh` |
-| `E5 — exceptional bounded` | intrinsically difficult algorithms or state machines with decisions already resolved | `gpt-6.1-terra` / `max` |
+| `E0 — mechanical` | repetitive/obvious changes with almost no coding judgment | `gpt-6.1-terra` / `low` |
+| `E1 — simple bounded` | CRUD, mapping, local tests with explicit behavior | `gpt-6.1-terra` / `medium` |
+| `E2 — routine` | routine API/service/UI implementation, clear invariants/AC | `gpt-6.2-sol` / `low` |
+| `E3 — multi-file integration` | multiple modules, nontrivial integration, established contracts | `gpt-6.2-sol` / `medium` |
+| `E4 — hard bounded` | complex SQL, concurrency, difficult debugging, interdependent invariants | `gpt-6.2-sol` / `high` |
+| `E5 — exceptional bounded` | intrinsically difficult algorithms or state machines with decisions already resolved | `gpt-6.2-sol` / `xhigh` |
 
 Planning rules:
 - Record a complete executor dispatch contract in each task artifact; do not record only a human-readable route label. Required fields are `Agent Role: implementation_executor`, `Executor Class`, `Target Model`, `Target Effort`, `Route Binding: EXPLICIT`, and `Parent Route Inheritance: FORBIDDEN`.
@@ -146,9 +146,9 @@ Planning rules:
 - Prefer the lowest sufficient executor class when the task has been made mechanical enough; do not use `E5` as a blanket safety default.
 - If the task still requires product/architecture invention, it is not ready for any executor class; return to clarification/planning.
 
-### Terra-first dynamic routing within fixed allowlist (OptCodex v1.4.0)
+### Dual-model dynamic routing within fixed allowlist (OptCodex v1.5.0)
 
-Executor routing follows the validated EXECUTOR_ROUTING_POLICY.json v2: E0 Luna/xhigh, E1 Terra/low, E2 Terra/medium, E3 Terra/high, E4 Terra/xhigh, E5 Terra/max. Classify by implementation entropy and failure/rework evidence; do not escalate solely from task size. E5 is exceptional. No silent fallback, self-escalation, unapproved scope or protected-file access. Nondefault allowlisted routes require independently verified task-specific user approval.
+Executor routing follows the validated EXECUTOR_ROUTING_POLICY.json v2: E0 Terra/low, E1 Terra/medium, E2 Sol/low, E3 Sol/medium, E4 Sol/high, E5 Sol/xhigh. Classify by implementation entropy and failure/rework evidence; do not escalate solely from task size. E5 is exceptional. No silent fallback, self-escalation, unapproved scope or protected-file access. Nondefault allowlisted routes require independently verified task-specific user approval.
 
 For fair A/B compare separate clean checkouts of the same base commit with the same approved SPEC/AC/tests; never run two writers on the same checkout. Keep RED/GREEN, Task Buildability, final build, protected file exclusions, independent audit and QA/explicit Git authorizations unchanged. Count unique logical task IDs separately from executor attempts/retries; record requested and only observed effective route, runtime duration and quota/tokens (unknown = null). Do not treat executor terminal output as audited PASS.
 
