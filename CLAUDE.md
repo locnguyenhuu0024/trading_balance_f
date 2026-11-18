@@ -8,19 +8,21 @@ This file is installed **beside** the chosen complete OptCodexRules variant, nev
 
 If installation is requested, run the `/ccb-install` skill from a trusted CCB checkout. Identify domain backend/web/mobile and scope company/personal, show a no-write preview from `scripts/ccb/install.py`, obtain explicit user approval, then apply. Never silently replace existing project governance, delete old task artifacts, or alter Git state. Selected domain instructions are `.claude/rules/ccb-domain-{backend|web|mobile}.md` (only one should be installed). Mobile uses generic OptCodex baseline plus native rules; web uses upstream frontend variant with F0–F3. For multi-repo work select and install each repo separately.
 
-Read `model-routing.json` as advisory only; the validated project `docs/agents/framework/EXECUTOR_ROUTING_POLICY.json` is the runtime source of truth for E0–E5 defaults. CCB enforces the fixed allowlist and non-default approval. GPT-6.1 Sol is planning advisor only; GPT-6.2 Sol is an approved bounded implementation writer for E2–E5.
+Read `model-routing.json` as advisory only; the validated project `docs/agents/framework/EXECUTOR_ROUTING_POLICY.json` is the runtime source of truth for E0–E5 defaults. CCB enforces the fixed allowlist and non-default approval. Claude Opus 5.5 Medium is the default Planning Advisor in the same Claude Code session as Coordinator; GPT-6.1 Sol is an explicit opt-in external advisor only. GPT-6.2 Sol remains an approved bounded implementation writer for E2–E5.
 
 ## Selected planning/orchestration workflow
 
-- Main Claude Code Desktop chat: **Opus 5.5 Medium**, selected by the user. No CCB script can change or prove the Claude runtime model/effort; verify the UI when needed rather than claiming a hidden effective route.
-- **GPT-6.1 Sol Medium** is the default proposed planning **advisor** through `/ccb-sol-plan` after the coordinator has curated an approved non-protected packet. It produces only proposals for distinct Backend/Frontend workstreams; the user/service-sharing gate is mandatory. Do not send protected config, private secrets or unapproved project material to Sol.
-- Claude owns all canonical requirements, SPEC, PLAN, TASK, fan-in, approval, delegation, independent audit, final build and QA. The Sol proposal is not itself an approved plan or a PASS verdict. If Sol is unavailable, report the blocker and obtain an authorized alternative instead of silently claiming the planned workflow happened.
-- Validated executor defaults: E0 Terra/low; E1 Terra/medium; E2 Sol/low; E3 Sol/medium; E4 Sol/high; E5 Sol/xhigh. Never dispatch before approval of the currently presented plan.
+- Main Claude Code Desktop chat: **Opus 5.5 Medium**, selected by the user. CCB cannot change or verify the effective Claude runtime model/effort; confirm the UI when required.
+- **Default Planning Advisor: Claude Opus 5.5 Medium in the SAME coordinator session.** Use a distinct advisory analysis phase (requirements, repository evidence, assumptions, risks, API contracts, alternatives and proposed tasks), then reconcile and author canonical SPEC/PLAN/TASK without a cross-provider packet handoff. A phase is not an independent subagent.
+- **Mandatory fan-out is unchanged.** Where two or more material workstreams are independently analyzable (including material backend + frontend), dispatch separate native Claude reasoning children when available, collect distinct actual results, and reconcile them in the coordinator session. Request Opus 5.5 Medium for children if runtime selection is supported; never assert child model/effort when not observable. If dispatch is unavailable, record the permitted `UNAVAILABLE` state and exact reason; never claim single-session analysis satisfied a required independent fan-out.
+- **GPT-6.1 Sol Medium via `/ccb-sol-plan` is opt-in ONLY**, requiring a distinct user request and separately authorized non-protected data-sharing packet; never launch it automatically, silently fall back, or claim its output is an approved plan.
+- Claude alone owns canonical requirements, SPEC/PLAN/TASK, fan-in, approval, delegation, independent post-execution audit, final build and QA. No planning phase authorizes implementation until the currently presented plan is approved.
+- Validated executor defaults are unchanged: E0 Terra/low; E1 Terra/medium; E2 Sol/low; E3 Sol/medium; E4 Sol/high; E5 Sol/xhigh.
 
 ## Role translation (coordinator remains Claude)
 
 - **Claude Code** is the coordinator/planner/auditor, owns requirements, SPEC/PLAN/TASK, approvals, dependency fan-out/fan-in, routing, acceptance, integration and telemetry. Its own model is chosen by the Claude runtime, not by OptCodex's `gpt-6.1-sol` coordinator route.
-- **Codex CLI** provides a bounded **implementation_executor** transport plus a separate read-only Sol Medium planning-advisor transport. Neither replaces Claude's canonical ownership, QA role or independent audit.
+- **Codex CLI** provides the bounded **implementation_executor** transport. A separate read-only Sol Medium advisory transport remains installed only for explicit opt-in; default planning never invokes Codex. Neither replaces Claude's canonical ownership, QA role or independent audit.
 - Keep OptCodex tiers S/M/L, C/R/E classification semantics, mandatory material-workstream planning fan-out, task buildability, mandatory final build, RED-before-GREEN, QA handoff, and protected-config/Git boundaries.
 
 ## Compatibility is fail-closed
@@ -48,6 +50,6 @@ Do not alter Git history, stage, commit, push or create/delete worktrees without
 
 For every newly created canonical task, call `python3 scripts/ccb/task_ledger.py plan --project "<planning-root>" --plan-id <approved_plan_id> --task-id <task_id>`. For substantive Claude coordinator/reasoning/audit work, pair `work --role coordinator|reasoning|auditor --work-id <stable_run_id> --state STARTED|FINISHED` when observable. Codex dispatch writes start/finish attempts automatically. After independent audit call `task_ledger.py audit --project ... --plan-id ... --task-id ... --attempt-id ... --verdict PASS|REWORK|BLOCKED`. The ledger is local and outside Git; do not invent usage or count retries as tasks. Report with `/ccb-report`. Always preserve canonical OptCodex coordinator telemetry separately. A missing/degraded ledger is a blocker for new Codex writers until repaired.
 
-## Sol planning attempt accounting
+## Planning attempt accounting
 
-`scripts/ccb/sol_plan.py` automatically records planning start/finish events under the synthetic workstream key `__planning__`. These planning events must **not** count as implementation tasks in `task_ledger.py report`; only actual TASK IDs count. Claude continues to record canonical OptCodex telemetry and audits independently.
+Default same-session Opus planning is recorded via coordinator/reasoning work events and canonical OptCodex planning telemetry when observable; never manufacture subagent dispatches, model binding or quota metrics. Optional, explicitly requested `scripts/ccb/sol_plan.py` records external planning attempts under the synthetic `__planning__` key. These events must **not** count as implementation tasks; only actual TASK IDs count.

@@ -34,7 +34,7 @@
       }
     },
     "gpt-6.1-sol": {
-      "type": "planning_advisor",
+      "type": "optional_external_planning_advisor",
       "best_for": [
         "complex backend architecture analysis",
         "cross-domain reasoning",
@@ -68,6 +68,15 @@
         "input": 2,
         "output": 10
       }
+    },
+    "claude-opus-5-5": {
+      "type": "coordinator_and_default_planning_advisor",
+      "best_for": [
+        "continuous in-session requirements analysis",
+        "repository-grounded planning",
+        "workstream fan-in and canonical SPEC/PLAN/TASK"
+      ],
+      "runtime_binding": "USER_SELECTED_NOT_ENFORCED"
     }
   },
   "profiles": {
@@ -100,8 +109,7 @@
         }
       },
       "advisory_candidates": [
-        "gpt-6.1-sol",
-        "gpt-6.2-sol"
+        "claude-opus-5-5"
       ],
       "allowlisted_nondefault_routes": {
         "E0": [],
@@ -155,7 +163,10 @@
             "effort": "max"
           }
         ]
-      }
+      },
+      "optional_external_advisory_candidates": [
+        "gpt-6.1-sol"
+      ]
     },
     "web": {
       "optcodex": "frontend-company|frontend-personal",
@@ -186,8 +197,7 @@
         }
       },
       "advisory_candidates": [
-        "gpt-6.1-sol",
-        "gpt-6.2-sol"
+        "claude-opus-5-5"
       ],
       "allowlisted_nondefault_routes": {
         "E0": [],
@@ -241,7 +251,10 @@
             "effort": "max"
           }
         ]
-      }
+      },
+      "optional_external_advisory_candidates": [
+        "gpt-6.1-sol"
+      ]
     },
     "mobile": {
       "optcodex": "company|personal plus CCB mobile overlay",
@@ -272,8 +285,7 @@
         }
       },
       "advisory_candidates": [
-        "gpt-6.1-sol",
-        "gpt-6.2-sol"
+        "claude-opus-5-5"
       ],
       "allowlisted_nondefault_routes": {
         "E0": [],
@@ -327,7 +339,10 @@
             "effort": "max"
           }
         ]
-      }
+      },
+      "optional_external_advisory_candidates": [
+        "gpt-6.1-sol"
+      ]
     }
   },
   "selection_rules": [
@@ -335,7 +350,7 @@
     "Legacy v2 TASK/job manifests require fresh classification and approval against the v3 policy; do not relabel silently.",
     "Only allowlisted task-approved route_overrides with matching CLI IDs; unavailable model or effort fails BLOCKED_ROUTE, no fallback or inherited parent route.",
     "E5 Sol xhigh is exceptional; Sol max and Terra high/xhigh/max only for separately authorized A/B or exceptional routes, not default.",
-    "Claude Opus 5.5 Medium is user-selected coordinator and independent auditor; GPT-6.1 Sol Medium remains noncanonical read-only planning advisor, GPT-6.2 Sol may write only under approved E-class executor contract."
+    "Claude Opus 5.5 Medium is the user-selected coordinator, default in-session planning advisor, canonical SPEC/PLAN/TASK owner and independent post-execution auditor. Native Claude reasoning children are preferred for mandatory fan-out; GPT-6.1 Sol Medium is explicit opt-in external advisory only. Neither advisor pass nor any proposal authorizes executor dispatch."
   ],
   "planning_pilot": {
     "orchestrator": {
@@ -346,23 +361,33 @@
       "runtime_binding": "USER_SELECTED_NOT_ENFORCED"
     },
     "advisor": {
-      "provider": "openai",
-      "model": "gpt-6.1-sol",
+      "provider": "anthropic",
+      "model": "claude-opus-5-5",
       "effort": "medium",
-      "transport": "codex exec isolated read-only",
+      "transport": "same Claude Code session; native Claude reasoning children where multi-workstream fan-out is mandatory and available",
+      "runtime_binding": "USER_SELECTED_NOT_ENFORCED",
       "workstreams": [
         "backend",
         "web",
         "mobile",
         "cross_layer"
       ],
-      "output": "non-canonical structured planning proposal",
-      "data_sharing": "only explicitly approved non-protected packets"
+      "output": "advisory phase with evidence, assumptions, risks, contracts and suggested tasks; coordinator owns canonical SPEC/PLAN/TASK",
+      "data_sharing": "use the existing Claude Code project access boundary; do not forward project material to a different provider by default"
     },
     "spec_plan_tasks_owner": "Claude Opus 5.5 Medium",
     "auditor": "Claude Opus 5.5 Medium",
     "default_executor": "E0 Terra low; E1 Terra medium; E2 Sol low; E3 Sol medium; E4 Sol high; E5 Sol xhigh",
-    "optional_executor": "Approved allowlisted nondefault routes only"
+    "optional_executor": "Approved allowlisted nondefault routes only",
+    "optional_external_advisor": {
+      "provider": "openai",
+      "model": "gpt-6.1-sol",
+      "effort": "medium",
+      "transport": "codex exec isolated read-only via /ccb-sol-plan",
+      "activation": "EXPLICIT_USER_REQUEST_ONLY",
+      "output": "non-canonical structured planning proposal",
+      "data_sharing": "only separately approved non-protected packets with a matching approval ID"
+    }
   },
   "routing_source": "docs/agents/framework/EXECUTOR_ROUTING_POLICY.json contract v3 (installed upstream, dynamically validated)"
 }
