@@ -19,6 +19,7 @@ import 'core/timezone/app_time_zone.dart';
 import 'core/typography/app_text_scale.dart';
 import 'core/widgets/app_page_transition.dart';
 import 'core/widgets/app_startup.dart';
+import 'features/avatar/avatar_licenses.dart';
 import 'features/portfolio/presentation/portfolio_screen.dart'
     show hideBalanceProvider;
 import 'features/settings/presentation/settings_screen.dart';
@@ -33,6 +34,7 @@ class AppStartupData {
     required this.currency,
     required this.timeZoneId,
     required this.appTextScale,
+    this.avatarEnabled = false,
     this.selectedConnectionId = defaultConnectionId,
   });
 
@@ -43,6 +45,7 @@ class AppStartupData {
   final String currency;
   final String timeZoneId;
   final double appTextScale;
+  final bool avatarEnabled;
   final String selectedConnectionId;
 }
 
@@ -100,6 +103,13 @@ Future<AppStartupData> initializeAppStartup({
     debugPrint('App text-scale restoration failed; using the default.');
   }
 
+  var avatarEnabled = false;
+  try {
+    avatarEnabled = await helper.getAvatarEnabled();
+  } catch (_) {
+    debugPrint('Avatar preference restoration failed; using the default.');
+  }
+
   var selectedConnectionId = defaultConnectionId;
   try {
     selectedConnectionId = await helper.getSelectedConnectionId();
@@ -120,6 +130,7 @@ Future<AppStartupData> initializeAppStartup({
     currency: currencyStr,
     timeZoneId: initialTimeZoneId,
     appTextScale: appTextScale,
+    avatarEnabled: avatarEnabled,
     selectedConnectionId: selectedConnectionId,
   );
 }
@@ -153,6 +164,7 @@ Widget buildInitializedApp(AppStartupData startup, {Widget? home}) {
       currencyProvider.overrideWith((ref) => startup.currency),
       appTimeZoneProvider.overrideWith((ref) => startup.timeZoneId),
       appTextScaleProvider.overrideWith((ref) => startup.appTextScale),
+      avatarEnabledProvider.overrideWith((ref) => startup.avatarEnabled),
     ],
     child: TradingBalanceApp(
       requireBiometrics: startup.requireBiometrics,
@@ -163,6 +175,7 @@ Widget buildInitializedApp(AppStartupData startup, {Widget? home}) {
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  registerAvatarLicenses();
   runApp(
     AppStartup<AppStartupData>(
       initialize: initializeAppStartup,
@@ -483,6 +496,21 @@ class WebStorageHelper extends SecureStorageHelper {
     );
     if (!didSave) {
       throw StateError('Không thể lưu cỡ chữ ứng dụng trên Web.');
+    }
+  }
+
+  @override
+  Future<bool> getAvatarEnabled() async =>
+      _prefs.getString('AVATAR_ENABLED') == 'true';
+
+  @override
+  Future<void> saveAvatarEnabled(bool enabled) async {
+    final didSave = await _prefs.setString(
+      'AVATAR_ENABLED',
+      enabled.toString(),
+    );
+    if (!didSave) {
+      throw StateError('Unable to save the avatar preference on the web.');
     }
   }
 

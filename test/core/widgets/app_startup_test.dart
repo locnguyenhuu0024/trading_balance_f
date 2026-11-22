@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:trading_balance_f/core/security/secure_storage_helper.dart';
 import 'package:trading_balance_f/core/exchange/exchange_scope.dart';
 import 'package:trading_balance_f/core/timezone/app_time_zone.dart';
@@ -13,7 +14,7 @@ import 'package:trading_balance_f/main.dart' as app;
 import 'package:trading_balance_f/features/portfolio/presentation/portfolio_screen.dart'
     show hideBalanceProvider;
 import 'package:trading_balance_f/features/settings/presentation/settings_screen.dart'
-    show currencyProvider, themeModeProvider;
+    show avatarEnabledProvider, currencyProvider, themeModeProvider;
 
 class _StartupStorage extends SecureStorageHelper {
   _StartupStorage({
@@ -22,6 +23,7 @@ class _StartupStorage extends SecureStorageHelper {
     this.calls,
     this.selection = 'okx-default',
     this.failSelection = false,
+    this.failAvatarRead = false,
   }) : super(const FlutterSecureStorage());
 
   final bool failBiometricRead;
@@ -29,6 +31,13 @@ class _StartupStorage extends SecureStorageHelper {
   final List<String>? calls;
   final String selection;
   final bool failSelection;
+  final bool failAvatarRead;
+
+  @override
+  Future<bool> getAvatarEnabled() async {
+    if (failAvatarRead) throw StateError('unreadable avatar preference');
+    return false;
+  }
 
   @override
   Future<String> getSelectedConnectionId() async {
@@ -77,6 +86,57 @@ class _StartupStorage extends SecureStorageHelper {
 }
 
 void main() {
+  test('RED-147 avatar read failure defaults to off', () async {
+    final storage = _StartupStorage(failAvatarRead: true);
+    addTearDown(storage.dispose);
+
+    final startup = await app.initializeAppStartup(
+      isWeb: false,
+      createNativeStorage: () => storage,
+      initializeTimeZone: () {},
+      retireLegacyBackgroundService: () async {},
+    );
+
+    expect(startup.avatarEnabled, isFalse);
+    expect(startup.appTextScale, 1.25);
+  });
+
+  for (final isWeb in [false, true]) {
+    testWidgets(
+      'GREEN-147 restores the stored avatar preference on ${isWeb ? 'web' : 'native'}',
+      (tester) async {
+        if (isWeb) {
+          SharedPreferences.setMockInitialValues({'AVATAR_ENABLED': 'true'});
+        } else {
+          FlutterSecureStorage.setMockInitialValues({'AVATAR_ENABLED': 'true'});
+          addTearDown(() => FlutterSecureStorage.setMockInitialValues({}));
+        }
+
+        final startup = await app.initializeAppStartup(
+          isWeb: isWeb,
+          initializeTimeZone: () {},
+          retireLegacyBackgroundService: () async {},
+        );
+        addTearDown(startup.secureStorage.dispose);
+        expect(startup.avatarEnabled, isTrue);
+
+        await tester.pumpWidget(
+          app.buildInitializedApp(
+            startup,
+            home: Consumer(
+              builder: (_, ref, _) =>
+                  Text('avatar:${ref.watch(avatarEnabledProvider)}'),
+            ),
+          ),
+        );
+        expect(find.text('avatar:true'), findsOneWidget);
+
+        await startup.secureStorage.saveAvatarEnabled(false);
+        expect(await startup.secureStorage.getAvatarEnabled(), isFalse);
+      },
+    );
+  }
+
   testWidgets(
     'failed initialization keeps account UI hidden and retry waits for success',
     (tester) async {

@@ -24,6 +24,7 @@ import 'settings_trade_access_page.dart';
 final themeModeProvider = StateProvider<ThemeMode>((ref) => ThemeMode.system);
 final currencyProvider = StateProvider<String>((ref) => 'USD');
 final defaultHideBalanceProvider = StateProvider<bool>((ref) => false);
+final avatarEnabledProvider = StateProvider<bool>((ref) => false);
 final biometricAuthProvider = StateProvider<bool>((ref) => true);
 
 // --- Provider lấy tỷ giá ---
@@ -46,6 +47,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   static const _timeZoneDescription =
       'Áp dụng cho toàn bộ mốc thời gian trong ứng dụng.';
 
+  bool _isSavingAvatar = false;
+  bool _hasUserChangedAvatar = false;
   bool _isSavingTimeZone = false;
   bool _isSavingAppTextScale = false;
   bool _hasUserChangedAppTextScale = false;
@@ -98,6 +101,39 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       if (!_hasUserChangedAppTextScale) {
         ref.read(appTextScaleProvider.notifier).state = appTextScale;
       }
+    }
+
+    var avatarEnabled = false;
+    try {
+      avatarEnabled = await storage.getAvatarEnabled();
+    } catch (_) {
+      // Use the default when the preference cannot be read.
+    }
+    if (mounted && !_hasUserChangedAvatar) {
+      ref.read(avatarEnabledProvider.notifier).state = avatarEnabled;
+    }
+  }
+
+  Future<void> _saveAvatarEnabled(bool enabled) async {
+    if (_isSavingAvatar) return;
+
+    final storage = ref.read(secureStorageProvider);
+    final notifier = ref.read(avatarEnabledProvider.notifier);
+    final previousValue = notifier.state;
+    _hasUserChangedAvatar = true;
+    notifier.state = enabled;
+    setState(() => _isSavingAvatar = true);
+    try {
+      await storage.saveAvatarEnabled(enabled);
+    } catch (_) {
+      if (notifier.mounted) notifier.state = previousValue;
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Không lưu được cài đặt')));
+      }
+    } finally {
+      if (mounted) setState(() => _isSavingAvatar = false);
     }
   }
 
@@ -281,6 +317,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final exchangeRateAsync = ref.watch(vndExchangeRateProvider);
     final hideBalanceDefault = ref.watch(defaultHideBalanceProvider);
     final bioAuth = ref.watch(biometricAuthProvider);
+    final avatarEnabled = ref.watch(avatarEnabledProvider);
     final timeZoneId = ref.watch(appTimeZoneProvider);
     final appTextScale = ref.watch(appTextScaleProvider);
     final backendFeaturesEnabled = ref.watch(backendFeaturesEnabledProvider);
@@ -626,6 +663,50 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                     val; // Cập nhật luôn màn chính
                                 _saveAllPreferences();
                               },
+                            ),
+                            Divider(
+                              height: 1,
+                              color: isDark ? palette.border : palette.surface,
+                              indent: 52,
+                            ),
+                            SwitchListTile(
+                              key: const Key('settings-avatar-switch'),
+                              secondary: Icon(
+                                Icons.view_in_ar,
+                                color: textColor,
+                                size: 22,
+                              ),
+                              title: Text(
+                                'Nhân vật 3D',
+                                style: TextStyle(
+                                  color: textColor,
+                                  fontWeight: FontWeight.w500,
+                                  fontSize: 14,
+                                ),
+                              ),
+                              subtitle: Text(
+                                'Hiển thị nhân vật biểu cảm theo lãi/lỗ',
+                                style: TextStyle(
+                                  color: sectionTitleColor,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              value: avatarEnabled,
+                              onChanged: _isSavingAvatar
+                                  ? null
+                                  : _saveAvatarEnabled,
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(52, 0, 16, 12),
+                              child: Text(
+                                'Nhân vật 3D: VRM1_Constraint_Twist_Sample '
+                                '© 2022 pixiv Inc. (VRM Public License 1.0)',
+                                key: const Key('settings-avatar-credit'),
+                                style: TextStyle(
+                                  color: sectionTitleColor,
+                                  fontSize: 12,
+                                ),
+                              ),
                             ),
                             Divider(
                               height: 1,
