@@ -23,7 +23,7 @@ void main() {
   );
 
   test('GREEN-147 mood boundaries and wire names', () {
-    const cases = {
+    final cases = {
       1.0001: AvatarMood.mildHappy,
       4.99: AvatarMood.mildHappy,
       5.0: AvatarMood.strongHappy,
