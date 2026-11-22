@@ -136,3 +136,12 @@ Findings to fix:
 RED-146-R01: before changing `main.js`, a Node check that base64-encodes a 1 000 001-byte buffer as two chunks of 524 288 and 475 713 raw bytes, joins them and calls `atob` → throws `InvalidCharacterError` (observed). Record the output.
 GREEN-146-R01: `node --test tools/avatar/test/ && python3 -I -B tools/avatar/build.py --deps "$DEPS" && python3 -I -B tools/avatar/optimize_vrm.py check assets/avatar/avatar.vrm --source "$DEPS/Twist.vrm"` exits 0; `grep -c "file:" assets/avatar/index.html` ≥ 1; `assets/avatar/seed.vrm` absent; no `Seed-san` string in `tools/avatar` or `assets/avatar` (excluding the bundle's third-party legal comments).
 Buildability: `python3 -I -B tools/avatar/build.py --deps "$DEPS" && node --test tools/avatar/test/`.
+
+## 14. Remediation R02 (audit of R01 → REWORK)
+
+R01 (`f51c51eb…`) fixed AUD-146-2/3/4 and D-035 (verified: reproducible build, browser render, pat/poke/protocol). AUD-146-1 remains: the coordinator's R01 contract gave the wrong signs — with +1.2 / −1.2 the arms point **up**. VRM 1.0 normalized rig faces +Z with the model's left arm along +X, so a positive Z rotation raises the left arm.
+
+Allowed write files (exact): `tools/avatar/src/main.js`, `assets/avatar/avatar.bundle.js`.
+Fix: `leftUpperArm.rotation.z = -1.2`, `rightUpperArm.rotation.z = 1.2`, `leftLowerArm.rotation.z = -0.15`, `rightLowerArm.rotation.z = 0.15`; rebuild the bundle. Nothing else.
+RED-146-R02: before editing, `grep -n "leftUpperArm.rotation.z = 1.2" tools/avatar/src/main.js` finds the wrong sign (record output).
+GREEN-146-R02: `grep -n "leftUpperArm.rotation.z = -1.2" tools/avatar/src/main.js` matches; `node --test tools/avatar/test/ && python3 -I -B tools/avatar/build.py --deps "$DEPS"` exits 0. Visual check (arms down) is done by the coordinator.
