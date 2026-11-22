@@ -1,6 +1,6 @@
 # Task 150 — Avatar model catalog, Settings picker and model switching
 
-Status: READY
+Status: PASS
 Agent Role: implementation_executor
 Executor Class: E3
 Target Model: gpt-6.2-sol
@@ -79,7 +79,16 @@ A required API change outside §4 → BLOCKED.
 
 ## 12. Coordinator Audit
 
-Verdict: PENDING
+Attempts: `6719b042…` REWORK (only finding: coordinator contract omitted `avatar_mood_test.dart`), `f7908511…` PASS.
+Scope: PASS — exact allowlists, no unexpected/staged paths.
+Source review: catalog + `avatarModelById` fallback; per-model LicenseRegistry; `AVATAR_MODEL_ID` native/web/startup; settings row + dynamic credit; picker page with thumbnails, check icon, Semantics; factory takes `AvatarModel`; native loads `assets/avatar/<file>`; web iframe `?model=<id>`; home keyed `home-avatar-<id>`.
+RED (host, first): `--plain-name "RED-150"` 6/6 pass. GREEN (host, after): `--plain-name "GREEN-150"` 5/5 pass.
+V4 after R01: `flutter test --no-pub` 722/722 pass; `flutter analyze` No issues found.
+Buildability: `flutter build web --no-pub` ✓ (assets/avatar contains both VRMs and PNGs); `flutter build apk --debug --no-pub` ✓; `flutter build ios --simulator --debug --no-pub` ✓. macOS not rebuilt (signing BLOCKED_ENVIRONMENT unchanged).
+Device check (coordinator, iOS Simulator iPhone 16): pixiv-sample loads natively with visibly smoother edges; Settings shows "Chọn nhân vật / Pixiv Sample" + credit; picker lists both models with thumbnails and credits, check moves to Donut-Chan on tap; home shows Donut-Chan (native VRM 0.x path); after terminate + relaunch Donut-Chan is restored.
+Nit (non-blocking): the "Chọn nhân vật" row has no leading icon, so its text is not aligned with the icon rows above/below.
+Dispatch route compliance: UNVERIFIABLE (explicit gpt-6.2-sol / medium). Parent route inheritance: NO.
+Verdict: PASS
 
 ## 13. Remediation R01 (coordinator audit attempt 1 → REWORK)
 
