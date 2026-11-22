@@ -99,3 +99,11 @@ Existing settings tests break in ways requiring changes outside §4 → BLOCKED.
 ## 12. Coordinator Audit
 
 Verdict: PENDING
+
+## 13. Remediation R01 (coordinator audit attempt 1 → REWORK)
+
+Attempt 1 (`05daf9a6…`) is committed as the starting point. Host evidence: settings + startup RED-147/GREEN-147 pass; V2 `flutter test --no-pub test/features/settings test/core/widgets/app_startup_test.dart` 45/45 pass; source review OK.
+AUD-147-1 (Must): `test/features/avatar/avatar_mood_test.dart` does not compile — `const cases = {1.0001: …}` uses `double` keys in a constant map (`const_map_key_not_primitive_equality`, 8 analyzer errors). Change that declaration from `const` to `final`. Nothing else.
+Allowed write files (exact): `test/features/avatar/avatar_mood_test.dart`.
+RED-147-R01: before editing, record `grep -n "const cases" test/features/avatar/avatar_mood_test.dart` (matches).
+GREEN-147-R01: `grep -n "final cases" …` matches; coordinator runs `flutter analyze` and the tests on host.
