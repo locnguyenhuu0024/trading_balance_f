@@ -35,7 +35,8 @@ Success conditions:
 | OBS-218 | `lib/features/settings/presentation/settings_screen.dart` | providers L24-27, `_loadSavedPreferences` ~L73-102, hide-balance `SwitchListTile` ~L596-631 | Pattern to copy for the new switch. Strings are hardcoded Vietnamese. |
 | OBS-219 | `lib/features/strategy/presentation/strategy_screen.dart` | ~L30-47 | Existing `WidgetsBindingObserver` lifecycle pattern. |
 | OBS-220 | `lib/core/network/backend_data_client.dart` L6 | conditional import | Repository uses `if (dart.library.html)` conditional imports. No file in `lib/` imports `dart:html` or `package:web`. |
-| OBS-221 | Seed-san VRM meta (vrm-c/vrm-specification) | `VRMC_vrm.meta` | Female anime model; commercial use by corporation, redistribution and modification allowed; `creditNotation: required`; VRM Public License 1.0. Presets include happy, sad, angry, relaxed, surprised, neutral, blink, lookAt; has VRMC_springBone (28 joints). 10.9 MB; 15 PNG textures (11 × 1024²); ~45k triangles. |
+| OBS-221 | SUPERSEDED by D-035 — Seed-san VRM meta (vrm-c/vrm-specification) | `VRMC_vrm.meta` | Female anime model; commercial use by corporation, redistribution and modification allowed; `creditNotation: required`; VRM Public License 1.0. Presets include happy, sad, angry, relaxed, surprised, neutral, blink, lookAt; has VRMC_springBone (28 joints). 10.9 MB; 15 PNG textures (11 × 1024²); ~45k triangles. |
+| OBS-225 | `VRM1_Constraint_Twist_Sample.vrm` meta (vrm-c/vrm-specification, sha256 12c2b97e…31a2) | `VRMC_vrm.meta` | Female, long brown hair, anime style (visually verified in browser render 2026-11-22). (c) 2022 pixiv Inc.; VRM Public License 1.0; commercialUsage corporation; redistribution and modification allowed; creditNotation unnecessary. Presets happy, sad, angry, relaxed, surprised, neutral, blink, lookAt; VRMC_springBone, VRMC_node_constraint. 10.8 MB source; 19 PNG; optimized to ~3.9 MB. |
 | OBS-222 | npm registry 2026-11-22 | — | three 0.187.0; @pixiv/three-vrm 3.5.5 (peer three ≥0.137). IIFE bundle with GLTFLoader + VRMLoaderPlugin ≈ 943 KB min / 239 KB gzip. |
 | OBS-223 | pub.dev 2026-11-22 | webview_flutter 4.14.1 | Supports android, ios, macos; no web implementation. |
 | OBS-224 | local toolchain | — | node v26.8.2, npm 12.2.1, macOS `sips` available; Python Pillow not installed. Flutter 3.47.5. |
@@ -66,7 +67,7 @@ Inputs: `double? ratioPercent`, `bool hidden`. Output: `AvatarMood`. Pure functi
 
 ### REQ-211 — Setting
 The system MUST provide a persisted bool `AVATAR_ENABLED` (default false) loaded at startup into `avatarEnabledProvider`, saved on toggle, on native (secure storage) and web (`WebStorageHelper`, SharedPreferences). Read failure → false. Save failure → switch reverts and a SnackBar shows "Không lưu được cài đặt".
-Settings shows a `SwitchListTile` "Nhân vật 3D" / subtitle "Hiển thị nhân vật biểu cảm theo lãi/lỗ" in the "BẢO MẬT & TRẢI NGHIỆM" card, followed by the credit line "Seed-san model by VirtualCast, Inc. (VRM Public License 1.0)".
+Settings shows a `SwitchListTile` "Nhân vật 3D" / subtitle "Hiển thị nhân vật biểu cảm theo lãi/lỗ" in the "BẢO MẬT & TRẢI NGHIỆM" card, followed by the credit line "Nhân vật 3D: VRM1_Constraint_Twist_Sample © 2022 pixiv Inc. (VRM Public License 1.0)".
 
 ### REQ-212 — Home host
 When the setting is on, PortfolioScreen MUST show a floating avatar of 160×220 logical px (scaled ×0.8 when screen width < 360), default anchored bottom-right with 16 px margin inside the `NavigationContentFrame`, draggable by long-press-drag and clamped inside the frame. When off, no WebView/iframe is created. On iOS/Android/macOS it uses `webview_flutter`; on web an iframe via `HtmlElementView`.
@@ -85,11 +86,11 @@ Flutter MUST forward pointer samples over the avatar (down/move/up/cancel, CSS p
 After the reaction the PnL mood resumes. The page emits `interaction{kind}` (debounced ≥150 ms); Flutter calls `HapticFeedback.lightImpact()` (no-op where unsupported).
 
 ### REQ-214 — Runtime and assets
-`assets/avatar/` MUST contain `index.html` (classic `<script src="avatar.bundle.js">`, CSP `default-src 'self'; script-src 'self'; img-src 'self' blob: data:`, transparent background), `avatar.bundle.js` (IIFE of three 0.187.0 + GLTFLoader + @pixiv/three-vrm 3.5.5 + app runtime), `seed.vrm` (all images downscaled to ≤512², image/texture indices unchanged, all `VRMC_*` JSON extensions identical to the source), `LICENSES.md`. No network access at runtime. Renderer: alpha, no antialias, pixelRatio ≤ 2, 30 fps cap, render loop stopped while paused or document hidden, delta clamped ≤ 1/15 s. Procedural idle: breathing, gentle sway, auto blink. Moods crossfade (exponential approach). Strong moods add motion: strongHappy small bounce; strongSad head down.
-Model delivery: web page fetches `seed.vrm` relatively; native pages receive bytes from Flutter in base64 chunks (`loadModelChunk`).
+`assets/avatar/` MUST contain `index.html` (classic `<script src="avatar.bundle.js">`, CSP `default-src 'self' file:; script-src 'self' file:; img-src 'self' file: blob: data:; connect-src 'self' file: blob: data:` (`file:` because native pages load from file URLs), transparent background), `avatar.bundle.js` (IIFE of three 0.187.0 + GLTFLoader + @pixiv/three-vrm 3.5.5 + app runtime), `avatar.vrm` (all images downscaled to ≤512², image/texture indices unchanged, all `VRMC_*` JSON extensions identical to the source), `LICENSES.md`. No network access at runtime. Renderer: alpha, no antialias, pixelRatio ≤ 2, 30 fps cap, render loop stopped while paused or document hidden, delta clamped ≤ 1/15 s. Procedural idle: breathing, gentle sway, auto blink. Moods crossfade (exponential approach). Strong moods add motion: strongHappy small bounce; strongSad head down.
+Model delivery: web page fetches `avatar.vrm` relatively; native pages receive bytes from Flutter in base64 chunks (`loadModelChunk`).
 
 ### REQ-215 — Licenses
-`LicenseRegistry` MUST include three.js (MIT), @pixiv/three-vrm (MIT) and Seed-san (VRM Public License 1.0, © VirtualCast, Inc.) so they appear in Flutter's license page; `LICENSES.md` ships the same texts.
+`LicenseRegistry` MUST include three.js (MIT), @pixiv/three-vrm (MIT) and VRM1_Constraint_Twist_Sample (VRM Public License 1.0, © 2022 pixiv Inc.) so they appear in Flutter's license page; `LICENSES.md` ships the same texts.
 
 ## 6. Data Contract
 
@@ -215,8 +216,8 @@ Rollout: ships default off. Rollback: users switch off; code rollback = revert t
 - AC-213: Given the switch on and data loaded, the home screen shows the avatar and the renderer receives the derived mood; loading/error → neutral; refresh does not recreate it.
 - AC-214: Given iOS, Android, macOS and web builds, the avatar loads offline and reacts to mood changes (manual device check, user-run).
 - AC-215: Pat/stroke/poke/swipe produce the REQ-213 reactions and a haptic on supported devices (manual) and the page classifier passes its automated cases.
-- AC-216: Settings shows the credit line; Flutter license page lists three.js, three-vrm, Seed-san.
-- AC-217: Optimized `seed.vrm` ≤ 6 MB, all images ≤ 512², VRMC extensions preserved; bundle ≤ 1.1 MB.
+- AC-216: Settings shows the credit line; Flutter license page lists three.js, three-vrm, VRM1_Constraint_Twist_Sample.
+- AC-217: Optimized `avatar.vrm` ≤ 6 MB, all images ≤ 512², VRMC extensions preserved; bundle ≤ 1.1 MB.
 
 ## 20. Requirement Traceability
 
@@ -245,4 +246,5 @@ Rollout: ships default off. Rollback: users switch off; code rollback = revert t
 
 | Revision | Change | Reason |
 |---|---|---|
+| 1.2 | Model switched to pixiv `VRM1_Constraint_Twist_Sample` (D-035); asset renamed `avatar.vrm`; credit text updated | Visual audit of T146 showed Seed-san is not clearly female (D-034). |
 | 1.1 | §17 `web` constraint `^1.1.0` → `^0.5.1`; `LICENSES.txt` → `LICENSES.md`; build script `build.sh` → `build.py`; JS tests `*.test.js` | `flutter pub get` failed: `web_socket_channel ^2.4.4` requires `web ^0.5.0` (user report); CCB dispatcher allowlist accepts only `.py/.js/.html/.md/.vrm/.dart` for these files. No requirement change. |

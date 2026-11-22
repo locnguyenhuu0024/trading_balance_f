@@ -56,3 +56,9 @@ Impacts: REQ-214, P01, T146
 - CD-2: Avatar drag position is in-memory only and resets to bottom-right when the home screen is rebuilt (tab or scope switch). Persisting position is out of scope.
 - CD-3: The JS bundle is built from a committed build script that installs pinned npm packages into a temporary directory; no `package.json` is added to the repository (protected manifest).
 - CD-4: On any runtime `error` (WebGL unavailable, context lost, model parse failure) the overlay hides itself for the life of the screen; the setting is unchanged.
+
+### D-035 — Switch model to the pixiv female sample
+Source: T146 audit (2026-11-22). Rendering showed Seed-san with short hair and an androgynous look; the coordinator's earlier claim that Seed-san was a long-haired female was wrong (not visually verified at the time).
+Decision (user, 2026-11-22): use `VRM1_Constraint_Twist_Sample` from `vrm-c/vrm-specification/samples` — female, long brown hair, anime style; (c) 2022 pixiv Inc.; VRM Public License 1.0 with commercialUsage `corporation`, allowRedistribution `true`, modification `allowModificationRedistribution`, creditNotation `unnecessary`. The app still credits pixiv. Bundled file renamed `assets/avatar/avatar.vrm`.
+Supersedes: Seed-san choice in OBS-221 / REQ-214 / REQ-215.
+Impacts: REQ-211, REQ-214, REQ-215, AC-216, AC-217, T146 (R01), T147, T148

@@ -17,7 +17,7 @@ Acceptance: AC-210..AC-217
 
 Decisions: D-030..D-034, CD-1..CD-4.
 Repository: clean `main` at `4eac0f2`; OptCodex personal 1.5.1 / baseline 1.2.3 lock verified.
-Network: T146 downloads pinned npm packages (three 0.187.0, @pixiv/three-vrm 3.5.5, esbuild 0.25.10) and the Seed-san VRM from `raw.githubusercontent.com/vrm-c/vrm-specification`. Approval of this plan is the explicit permission for these downloads.
+Network: T146 downloads pinned npm packages (three 0.187.0, @pixiv/three-vrm 3.5.5, esbuild 0.25.10) and the sample VRM model (D-035: `VRM1_Constraint_Twist_Sample`) from `raw.githubusercontent.com/vrm-c/vrm-specification`. Approval of this plan is the explicit permission for these downloads.
 
 ## 3. Repository Impact
 
@@ -26,7 +26,7 @@ Network: T146 downloads pinned npm packages (three 0.187.0, @pixiv/three-vrm 3.5
 | Runtime src | `tools/avatar/src/{bridge,protocol,mood,gesture,hit,main,entry}.js` | page runtime | ADD |
 | Runtime build | `tools/avatar/build.py`, `tools/avatar/optimize_vrm.py`, `tools/avatar/README.md` | build/optimize | ADD |
 | Runtime tests | `tools/avatar/test/*.test.js` | node --test | ADD |
-| Assets | `assets/avatar/{index.html,avatar.bundle.js,seed.vrm,LICENSES.md}` | bundled | ADD (generated/committed) |
+| Assets | `assets/avatar/{index.html,avatar.bundle.js,avatar.vrm,LICENSES.md}` | bundled | ADD (generated/committed) |
 | Domain | `lib/features/avatar/domain/avatar_mood.dart` | `AvatarMood`, `avatarMoodFor` | ADD |
 | Settings | `lib/core/security/secure_storage_helper.dart` | `_avatarEnabled`, `getAvatarEnabled`, `saveAvatarEnabled` | MODIFY |
 | Startup | `lib/main.dart` | `AppStartupData.avatarEnabled`, `initializeAppStartup`, `buildInitializedApp`, `WebStorageHelper` | MODIFY |
@@ -73,7 +73,7 @@ Implements REQ-213 (page side), REQ-214, REQ-215 (LICENSES.md); AC-215 (auto par
 1. Pure ES modules `protocol.js`, `mood.js`, `gesture.js` (no three import) + `node --test` suites.
 2. `hit.js` (bone projection regions), `bridge.js` (AvatarChannel / postMessage adapter), `main.js` (renderer, loader, idle, moods, reactions, pause, chunks), `entry.js`.
 3. `build.py`: temp dir (or `--deps` cache) → `npm install --no-save --ignore-scripts three@0.187.0 @pixiv/three-vrm@3.5.5 esbuild@0.25.10` → esbuild IIFE → `assets/avatar/avatar.bundle.js`.
-4. `optimize_vrm.py` (stdlib only + macOS `sips`): parse GLB, downscale PNG images > 512² to 512² (keep image/texture indices and the thumbnail), rewrite buffer/bufferViews, assert `VRMC_*` extension JSON unchanged → `assets/avatar/seed.vrm`.
+4. `optimize_vrm.py` (stdlib only + macOS `sips`): parse GLB, downscale PNG images > 512² to 512² (keep image/texture indices and the thumbnail), rewrite buffer/bufferViews, assert `VRMC_*` extension JSON unchanged → `assets/avatar/avatar.vrm`.
 5. `index.html`, `LICENSES.md`, `README.md` (how to rebuild, pinned versions, source URL + license).
 RED/GREEN: RED-146 / GREEN-146 (spec §13).
 
@@ -88,7 +88,7 @@ RED/GREEN: RED-147 / GREEN-147.
 ### P03 — Home host (T148)
 Implements REQ-212, REQ-213 (Flutter side); AC-213..AC-215.
 1. `AvatarRenderer` interface + factory provider; conditional import native/web.
-2. Native: `WebViewController` (JS unrestricted, transparent bg guarded, `AvatarChannel`), `loadFlutterAsset('assets/avatar/index.html')`, on `ready` send `setReducedMotion`, `setMood`, then model chunks (`rootBundle.load('assets/avatar/seed.vrm')`, base64, 512 KB chunks).
+2. Native: `WebViewController` (JS unrestricted, transparent bg guarded, `AvatarChannel`), `loadFlutterAsset('assets/avatar/index.html')`, on `ready` send `setReducedMotion`, `setMood`, then model chunks (`rootBundle.load('assets/avatar/avatar.vrm')`, base64, 512 KB chunks).
 3. Web: `ui_web.platformViewRegistry` iframe (`assets/assets/avatar/index.html`, `pointer-events:none`, transparent, no border), `window.onMessage` origin-checked.
 4. `FloatingAvatar`: Stack-positioned, long-press drag + clamp, pointer forwarding (throttle 30 Hz), lifecycle observer, haptics, Semantics, hide on `error`, fade-in on `modelLoaded`.
 5. PortfolioScreen: extract headline computation to a private helper (no math change), compute `avatarMoodFor`, wrap Column in Stack, add overlay when enabled.
@@ -99,7 +99,7 @@ RED/GREEN: RED-148 / GREEN-148.
 | Test | Proves | Level | Command |
 |---|---|---|---|
 | TEST-146 | RED/GREEN-146 | unit (node) | `node --test tools/avatar/test/` |
-| TEST-146b | bundle + VRM build | script | `python3 -I -B tools/avatar/build.py && python3 -I tools/avatar/optimize_vrm.py check assets/avatar/seed.vrm` |
+| TEST-146b | bundle + VRM build | script | `python3 -I -B tools/avatar/build.py && python3 -I tools/avatar/optimize_vrm.py check assets/avatar/avatar.vrm` |
 | TEST-147 | RED/GREEN-147 | unit/widget | `flutter test --no-pub test/features/avatar/avatar_mood_test.dart test/features/settings/settings_avatar_toggle_test.dart test/core/widgets/app_startup_test.dart` |
 | TEST-148 | RED/GREEN-148 | widget (fake renderer) | `flutter test --no-pub test/features/portfolio/portfolio_avatar_test.dart test/features/avatar/floating_avatar_test.dart` |
 | MAN-148 | AC-214, AC-215 | manual, user-run | run on iOS sim, Android device, macOS, Chrome; checklist in T148 |
@@ -178,3 +178,4 @@ Default off. Rollback: revert feature files; user removes pubspec entries.
 | Revision | Change | Reason |
 |---|---|---|
 | 1.1 | Executor-facing file names aligned to dispatcher allowlist; `web: ^0.5.1`; offline deps cache pre-staged by coordinator for T146 (downloads authorized by plan approval) | Execution-time constraints; no scope/requirement change. Approved revision 1 remains the governing plan. |
+| 1.2 | D-035 model switch; T146 remediation R01 (arm rest pose, per-chunk base64, CSP `file:`, live swipe yaw, model swap) | T146 audit REWORK + user decision |

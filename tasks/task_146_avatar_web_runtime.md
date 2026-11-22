@@ -116,3 +116,23 @@ Version incompatibility between three 0.187.0 and three-vrm 3.5.5 at bundle time
 ## 12. Coordinator Audit
 
 Verdict: PENDING
+
+## 13. Remediation R01 (coordinator audit attempt 1 → REWORK)
+
+Attempt 1 (`b1d7a2b6…`) is committed on the branch as the starting point. Keep everything not listed here unchanged.
+
+Allowed write files for R01 (exact): `tools/avatar/src/main.js`, `tools/avatar/test/mood.test.js`, `tools/avatar/README.md`, `tools/avatar/optimize_vrm.py`, `assets/avatar/index.html`, `assets/avatar/avatar.bundle.js`, `assets/avatar/LICENSES.md`, `assets/avatar/avatar.vrm` (new), `assets/avatar/seed.vrm` (delete).
+
+Model source (offline cache, sha256 `12c2b97e95e700783a6a550dc0eee2d7880aeedccef9ae67bc4c5a2f0f2631a2`): `$DEPS/Twist.vrm` = `VRM1_Constraint_Twist_Sample.vrm` from `https://raw.githubusercontent.com/vrm-c/vrm-specification/master/samples/VRM1_Constraint_Twist_Sample/vrm/VRM1_Constraint_Twist_Sample.vrm`.
+
+Findings to fix:
+- AUD-146-1 (Must): the model renders in T-pose. In `pose()`, set a relaxed rest pose on normalized bones every frame before `vrm.update`: `leftUpperArm.rotation.z = +1.2`, `rightUpperArm.rotation.z = -1.2`, `leftLowerArm.rotation.z = +0.15`, `rightLowerArm.rotation.z = -0.15` (VRM 1.0 normalized rig, +X = model's left). Guard for missing bones. Arms must hang down along the body in the browser render.
+- AUD-146-2 (Must): `addChunk` joins base64 strings before `atob`; independently padded chunks (e.g. 512 KiB raw slices, 524288 mod 3 ≠ 0) contain `=` mid-string and fail. Decode each chunk separately into its own `Uint8Array`, then concatenate in index order.
+- AUD-146-3 (Must): native pages load from `file:` URLs; `'self'` may not match there. CSP becomes `default-src 'self' file:; script-src 'self' file:; img-src 'self' file: blob: data:; connect-src 'self' file: blob: data:`.
+- AUD-146-4 (Should): swipe rotation is applied only on pointer-up. While a non-head drag is active, set `yaw = (x - startX) * 0.01` live on each `move`; keep the damped return after release and keep the `swipe` interaction event on up.
+- D-035 (Must): replace the model. Generate `assets/avatar/avatar.vrm` with `python3 -I -B tools/avatar/optimize_vrm.py optimize "$DEPS/Twist.vrm" assets/avatar/avatar.vrm`; delete `assets/avatar/seed.vrm`; `main.js` web path fetches `avatar.vrm`; `optimize_vrm.py` docstring/messages must not name Seed-san (its default size limit 6 000 000 stays); `README.md` and `LICENSES.md` name `VRM1_Constraint_Twist_Sample`, (c) 2022 pixiv Inc., VRM Public License 1.0, source URL; remove Seed-san/VirtualCast text.
+- Add to `mood.test.js` nothing new unless needed; do not weaken existing tests.
+
+RED-146-R01: before changing `main.js`, a Node check that base64-encodes a 1 000 001-byte buffer as two chunks of 524 288 and 475 713 raw bytes, joins them and calls `atob` → throws `InvalidCharacterError` (observed). Record the output.
+GREEN-146-R01: `node --test tools/avatar/test/ && python3 -I -B tools/avatar/build.py --deps "$DEPS" && python3 -I -B tools/avatar/optimize_vrm.py check assets/avatar/avatar.vrm --source "$DEPS/Twist.vrm"` exits 0; `grep -c "file:" assets/avatar/index.html` ≥ 1; `assets/avatar/seed.vrm` absent; no `Seed-san` string in `tools/avatar` or `assets/avatar` (excluding the bundle's third-party legal comments).
+Buildability: `python3 -I -B tools/avatar/build.py --deps "$DEPS" && node --test tools/avatar/test/`.
