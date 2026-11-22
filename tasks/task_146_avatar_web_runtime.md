@@ -1,6 +1,6 @@
 # Task 146 — Avatar page runtime and bundled assets
 
-Status: READY
+Status: PASS
 Agent Role: implementation_executor
 Executor Class: E3
 Target Model: gpt-6.2-sol
@@ -115,7 +115,19 @@ Version incompatibility between three 0.187.0 and three-vrm 3.5.5 at bundle time
 
 ## 12. Coordinator Audit
 
-Verdict: PENDING
+Scope: PASS — every attempt stayed inside its exact allowlist (dispatcher name-only check, no unexpected/staged paths).
+Acceptance criteria: AC-217 PASS (bundle 778 089 B ≤ 1.1 MB; avatar.vrm 3 885 572 B ≤ 6 MB; 19 PNG ≤ 512²; VRMC extensions, image/texture indices and non-image bufferViews identical to source). AC-215 automated part PASS (node tests); browser check: pat/poke/swipe/pettingStart/pettingEnd emitted from bone regions; manual device part remains MAN-148.
+Test quality: PASS — 12 node tests cover protocol rejection, mood targets/crossfade, gesture thresholds.
+RED evidence: PASS (attempt 1 negative cases; R01 atob InvalidCharacterError; R02 wrong-sign grep).
+GREEN evidence: PASS — coordinator re-ran `node --test` (12/12) and rebuilt bundle + model in an isolated copy: byte-identical to committed assets.
+RED-before-GREEN: PASS (per executor reports; ordering not independently observable).
+Evidence reused vs rerun: tests and build rerun by coordinator; visual render in local browser (Chromium) of host page with iframe mirroring the Flutter web setup: transparent background, model loads (`ready`, `modelLoaded`), strongHappy/strongSad expressions, arms at rest after R02, protocol errors on v2/non-JSON.
+Architecture/contract conformance: PASS after R01/R02 (findings AUD-146-1..4, D-035).
+Dispatch route compliance: UNVERIFIABLE (explicit gpt-6.2-sol / medium binding; effective route not exposed).
+Parent route inheritance: NO
+Task buildability gate: PASS (`python3 -I -B tools/avatar/build.py --deps "$DEPS" && node --test tools/avatar/test/`).
+Not verified here: native WebView (file: URL, CSP with `file:`, chunked model transfer) — covered by T148 + MAN-148.
+Verdict: PASS (attempts: 3 — b1d7a2b6 REWORK, f51c51eb REWORK, 6b1152e5 PASS). R02 REWORK cause was a coordinator contract error (arm rotation sign), not executor quality.
 
 ## 13. Remediation R01 (coordinator audit attempt 1 → REWORK)
 
