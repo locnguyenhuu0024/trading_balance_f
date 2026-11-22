@@ -248,3 +248,38 @@ Rollout: ships default off. Rollback: users switch off; code rollback = revert t
 |---|---|---|
 | 1.2 | Model switched to pixiv `VRM1_Constraint_Twist_Sample` (D-035); asset renamed `avatar.vrm`; credit text updated | Visual audit of T146 showed Seed-san is not clearly female (D-034). |
 | 1.1 | §17 `web` constraint `^1.1.0` → `^0.5.1`; `LICENSES.txt` → `LICENSES.md`; build script `build.sh` → `build.py`; JS tests `*.test.js` | `flutter pub get` failed: `web_socket_channel ^2.4.4` requires `web ^0.5.0` (user report); CCB dispatcher allowlist accepts only `.py/.js/.html/.md/.vrm/.dart` for these files. No requirement change. |
+
+## Revision 2 — model picker, Donut-Chan, render quality (2026-11-22)
+
+Status: READY_FOR_PLAN. Decisions D-037..D-039, CD-5..CD-8. Evidence: MAN-148 Android (user): APK runs, avatar works; blurry details and jagged silhouette edges (cause: 512 px textures — eyes/face sources are 1024 px — `antialias:false`, pixelRatio ≤ 2 on 2.75–3.5 DPR screens). Reasoning fan-out RSN-003 (runtime) and RSN-004 (Flutter) collected.
+
+### Observed facts
+| ID | Source | Observation |
+|---|---|---|
+| OBS-226 | `Donut-Chan.vrm` (27.3 MB) | VRM 0.x (`extensions.VRM`), 72 blendshape groups (joy/sorrow/fun/angry presets; custom `Surprised`), 24 spring groups, ~56.6k tris, 33 PNG (many 2048²), morph targets dense (110 of 218 morph accessors all-zero). |
+| OBS-227 | three-vrm 3.5.5 | `VRMUtils.rotateVRM0` sets `vrm.scene.rotation.y = π` for metaVersion "0"; VRM0 normalized bones keep the model's local frame, so X/Z rotations must be negated for VRM0; expression presets joy→happy, sorrow→sad, fun→relaxed mapped by the loader; `lookAt.faceFront` handled. |
+| OBS-228 | local test render (current bundle) | Donut-Chan faces away and arms point up; framing slightly different (head 1.368 m, hips 0.887 m vs pixiv 1.395/0.908). |
+| OBS-229 | optimizer at 1024 (copy) | pixiv 10.78 → 5.48 MB; Donut-Chan 27.3 → 14.76 MB (≈9.8 MB non-image, mostly dense morph data; sparse estimate ≈ 8–8.5 MB total). |
+
+### Requirements
+- REQ-216 (quality): renderer `antialias:true`, pixelRatio `min(dpr,3)`; all bundled models re-optimized with `--max-side 1024`; embedded thumbnail image may be shrunk to 256 px.
+- REQ-217 (multi-model runtime): the page supports VRM 0.x and 1.0. For metaVersion "0": base yaw π (combined with gesture yaw, not overwritten), sign `s=-1` applied to every procedural X/Z bone rotation (chest pitch, head pitch/tilt/sway, upper/lower arm rest pose); `surprised` falls back to a custom expression named `Surprised`. Camera framing computed after load from head (H) and hips (P) world Y: S=H−P, top=H+0.73·S, bottom=P−0.20·S, centre and half-height from these, width from aspect; `camera.updateMatrixWorld()`/`updateProjectionMatrix()` after changes. Pure modules `framing.js`, `models.js`, `pose.js` (rest-pose/sign) are unit-tested.
+- REQ-218 (selection transport): web iframe URL `index.html?model=<id>`; the page maps `id` through an allowlist `{ 'pixiv-sample': 'pixiv-sample.vrm', 'donut-chan': 'donut-chan.vrm' }` (id must match `^[a-z0-9-]{1,32}$`); unknown/missing → `pixiv-sample`. Native: Flutter loads `assets/avatar/<file>` and sends chunks (unchanged protocol).
+- REQ-219 (Flutter catalog + picker): `AvatarModel {id, name, file, thumbnail, credit, licenseText}` catalog with `avatarModelById(id)` → default for unknown; persisted `AVATAR_MODEL_ID` (native + web helper, startup override, read failure → default); Settings row "Chọn nhân vật" under the "Nhân vật 3D" switch (disabled while the avatar is off) showing current model name; the credit line follows the selected model; picker page lists every model with 48 px thumbnail (`errorBuilder` → icon), name, credit/license, check icon + `Semantics(selected)`, optimistic save with rollback + SnackBar "Không lưu được cài đặt"; LicenseRegistry entry per model; home host keyed by model id so switching recreates the renderer with the new model.
+- REQ-220 (assets): `assets/avatar/` contains `pixiv-sample.vrm`, `donut-chan.vrm`, `pixiv-sample.png`, `donut-chan.png`, bundle, `index.html`, `LICENSES.md` (adds Donut-Chan, Public Domain, Kana Fuyuko); `avatar.vrm` removed. Size limits: pixiv ≤ 6 MB, Donut-Chan ≤ 10 MB.
+
+### Acceptance criteria
+- AC-218: browser render of each model faces the camera, arms down at rest, upper body framed with the head near the top (coordinator visual check) — both models.
+- AC-219: page unit tests: framing reproduces pixiv frame (centre 1.28, half 0.47 ±1e-3) and keeps Donut-Chan head-top in view; model id validation rejects `../x`, `avatar.vrm`, upper case, empty, unknown → default; VRM0 rest pose has negated X/Z.
+- AC-220: `optimize_vrm.py check` passes for both outputs against their sources (extensions preserved, images ≤ 1024, sparse morph decode equals source, size limits).
+- AC-221: Settings: picker lists both models with credits; selecting Donut-Chan persists (native + web) and survives restart; unknown stored id → pixiv; credit line follows selection; license page lists both models.
+- AC-222: home: changing the selected model disposes the old renderer and creates a new one with the new model file; Android/iOS device check (user) shows sharper edges.
+
+### RED / GREEN
+- RED-149: optimizer `check` on a Donut-Chan output fails today ("Required VRMC extensions are missing"); framing/models/pose tests fail before the modules exist.
+- GREEN-149: node tests pass; both models optimized and checked; bundle rebuilt.
+- RED-150: unknown stored model id / failed save / missing thumbnail cases (fallbacks asserted).
+- GREEN-150: selection persists and recreates the host with the new file; picker semantics/check icon.
+
+### Protected configuration
+None — `pubspec.yaml` already declares the `assets/avatar/` directory, which covers the new files.

@@ -178,4 +178,45 @@ Default off. Rollback: revert feature files; user removes pubspec entries.
 | Revision | Change | Reason |
 |---|---|---|
 | 1.1 | Executor-facing file names aligned to dispatcher allowlist; `web: ^0.5.1`; offline deps cache pre-staged by coordinator for T146 (downloads authorized by plan approval) | Execution-time constraints; no scope/requirement change. Approved revision 1 remains the governing plan. |
+| 2.0 | Revision 2 added (model picker, Donut-Chan, quality) — READY_FOR_APPROVAL | User request 2026-11-22 |
 | 1.2 | D-035 model switch; T146 remediation R01 (arm rest pose, per-chunk base64, CSP `file:`, live swipe yaw, model swap) | T146 audit REWORK + user decision |
+
+## Revision 2 — model picker, Donut-Chan, render quality (2026-11-22)
+
+Plan ID: PLAN-20261122-pnl-avatar-3d-r2
+Status: READY_FOR_APPROVAL
+Implements: REQ-216..REQ-220; AC-218..AC-222. Decisions D-037..D-039, CD-5..CD-8.
+T148 remains VERIFYING (MAN-148: iOS simulator PASS; Android device runs — quality finding addressed here).
+
+### Planning workstreams
+| Workstream | Material | Independent | Route | Run | Adoption |
+|---|---|---|---|---|---|
+| Avatar runtime (VRM0, framing, quality, optimizer, assets) | YES | YES | R2 / claude-opus (effort not bindable) | RSN-003 | USED |
+| Flutter catalog + picker + host | YES | YES | R2 / claude-opus (effort not bindable) | RSN-004 | USED |
+
+Fan-out Required: YES · Required 2 · Actual 2 · Compliance: PASS (effort UNVERIFIABLE).
+Synthesis: model ids/files unified (CD-5); pubspec needs no change (directory entry); thumbnails need `.png` in the dispatcher allowlist (CD-8).
+
+### Preconditions
+- User approves this revision **and** the one-line allowlist change adding `.png` to `scripts/ccb/dispatch.py` (separate commit).
+- Coordinator stages the Donut-Chan source into the offline deps cache (`$DEPS/Donut-Chan.vrm`, copied from `~/Downloads/Donut-Chan/`), sha256 recorded in T149.
+
+### Steps and tasks
+| Task | Step | REQ/AC | Depends | Class | Route | Allowed writes |
+|---|---|---|---|---|---|---|
+| T149 | P04 runtime + assets | REQ-216/217/218/220; AC-218..220 | — | E3 | gpt-6.2-sol / medium | `tools/avatar/src/{main,framing,models,pose}.js`, `tools/avatar/test/{framing,models,pose}.test.js`, `tools/avatar/optimize_vrm.py`, `tools/avatar/README.md`, `assets/avatar/{index.html,avatar.bundle.js,LICENSES.md,pixiv-sample.vrm,donut-chan.vrm,pixiv-sample.png,donut-chan.png,avatar.vrm(delete)}` |
+| T150 | P05 Flutter catalog + picker | REQ-219, REQ-218 (Flutter side); AC-221, AC-222 | T149 | E3 | gpt-6.2-sol / medium | `lib/features/avatar/domain/avatar_model.dart`, `lib/features/avatar/avatar_licenses.dart`, `lib/features/avatar/presentation/{avatar_renderer,avatar_renderer_native,avatar_renderer_web,floating_avatar}.dart`, `lib/features/settings/presentation/{settings_screen,settings_avatar_model_page}.dart`, `lib/features/portfolio/presentation/portfolio_screen.dart`, `lib/core/security/secure_storage_helper.dart`, `lib/main.dart`, tests listed in T150 |
+
+Serial (one writer per checkout): T149 → T150 → final integration (V4, analyze, web/apk/ios builds) → user device check.
+
+### Verification
+- T149: `node --test tools/avatar/test/`; `python3 -I -B tools/avatar/build.py --deps "$DEPS"`; `optimize_vrm.py check` for both models; coordinator browser render of both models (AC-218).
+- T150: focused RED/GREEN widget tests on host, analyze, `flutter build web --no-pub`; final V4 `flutter test --no-pub`, apk/ios builds; iOS simulator check of switching.
+
+### Risks
+| ID | Risk | Mitigation |
+|---|---|---|
+| RISK-216 | Sparse re-encoding corrupts morphs | decode round-trip equality in `check`; visual expression check |
+| RISK-217 | App size +~9 MB (Donut) and +1.6 MB (pixiv at 1024) | sparse morphs; thumbnail shrink |
+| RISK-218 | MSAA + DPR 3 cost on low-end Android | small canvas, 30 fps cap, pause; user device check |
+| RISK-219 | Donut-Chan 109 morph targets per face primitive heavier on GPU | observe on device; fall back to pixiv default |
