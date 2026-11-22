@@ -1,4 +1,4 @@
-"""Resize embedded Seed-san PNG textures and verify VRM extension preservation."""
+"""Resize embedded PNG textures and verify VRM extension preservation."""
 
 import argparse
 import json

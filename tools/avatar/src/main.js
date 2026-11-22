@@ -15,7 +15,7 @@ const EXPRESSIONS = ['happy', 'sad', 'relaxed', 'surprised', 'blink'];
 
 document.addEventListener('DOMContentLoaded', () => {
   const canvas = document.querySelector('canvas');
-  // CSSOM property assignments work with the page's self-only CSP.
+  // CSSOM property assignments work without inline styles in the CSP.
   document.body.style.margin = '0';
   document.body.style.overflow = 'hidden';
   document.body.style.background = 'transparent';
@@ -88,7 +88,15 @@ document.addEventListener('DOMContentLoaded', () => {
       VRMUtils.combineSkeletons(gltf.scene);
       vrm.scene.traverse((object) => { object.frustumCulled = false; });
       const bone = (name) => vrm.humanoid.getNormalizedBoneNode(name);
-      bones = {head: bone('head'), chest: bone('chest') ?? bone('spine'), hips: bone('hips')};
+      bones = {
+        head: bone('head'),
+        chest: bone('chest') ?? bone('spine'),
+        hips: bone('hips'),
+        leftUpperArm: bone('leftUpperArm'),
+        rightUpperArm: bone('rightUpperArm'),
+        leftLowerArm: bone('leftLowerArm'),
+        rightLowerArm: bone('rightLowerArm'),
+      };
       scene.add(vrm.scene);
       syncLoop();
     } catch (error) {
@@ -110,12 +118,22 @@ document.addEventListener('DOMContentLoaded', () => {
     const complete = chunks;
     chunks = undefined;
     loadModel(() => {
-      const ordered = [];
-      for (let index = 0; index < n; index += 1) ordered.push(complete.get(index));
-      const decoded = atob(ordered.join(''));
-      const bytes = new Uint8Array(decoded.length);
-      for (let index = 0; index < bytes.length; index += 1) {
-        bytes[index] = decoded.charCodeAt(index);
+      const decodedChunks = [];
+      let byteLength = 0;
+      for (let index = 0; index < n; index += 1) {
+        const decoded = atob(complete.get(index));
+        const chunk = new Uint8Array(decoded.length);
+        for (let byte = 0; byte < chunk.length; byte += 1) {
+          chunk[byte] = decoded.charCodeAt(byte);
+        }
+        decodedChunks.push(chunk);
+        byteLength += chunk.length;
+      }
+      const bytes = new Uint8Array(byteLength);
+      let offset = 0;
+      for (const chunk of decodedChunks) {
+        bytes.set(chunk, offset);
+        offset += chunk.length;
       }
       return bytes.buffer;
     });
@@ -149,14 +167,15 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!loadedFrame || paused || document.hidden) return;
     const {phase, x, y} = msg;
     const dx = pointer ? x - pointer.startX : 0;
+    const region = phase === 'down' ? hitTest(x, y, bones) : undefined;
     if (phase === 'down') {
-      pointer = {x, y, startX: x};
+      pointer = {x, y, startX: x, region};
     } else if (phase === 'move' && pointer) {
       Object.assign(pointer, {x, y});
+      if (pointer.region !== 'head') yaw = dx * 0.01;
     } else if (phase === 'up' || phase === 'cancel') {
       pointer = undefined;
     }
-    const region = phase === 'down' ? hitTest(x, y, bones) : undefined;
     interact(classifier.sample({...msg, region}), dx);
   }
 
@@ -218,13 +237,17 @@ document.addEventListener('DOMContentLoaded', () => {
     const idle = reducedMotion ? 0 : Math.sin(elapsed * 1.8);
     vrm.scene.position.y = reducedMotion ? 0 : bounce * (1 - Math.cos(elapsed * 6)) / 2;
     vrm.scene.rotation.z = idle * 0.022;
-    yaw *= Math.exp(-4 * dt);
+    if (!pointer || pointer.region === 'head') yaw *= Math.exp(-4 * dt);
     vrm.scene.rotation.y = yaw;
     bones.chest.rotation.x = idle * 0.024;
     bones.head.rotation.x = -headPitch;
     const headTilt = reaction?.kind === 'pat' ? 0.18 : 0;
     const headSway = petting && !reducedMotion ? 0.14 * Math.sin(elapsed * 9) : 0;
     bones.head.rotation.z = headTilt + headSway;
+    if (bones.leftUpperArm) bones.leftUpperArm.rotation.z = 1.2;
+    if (bones.rightUpperArm) bones.rightUpperArm.rotation.z = -1.2;
+    if (bones.leftLowerArm) bones.leftLowerArm.rotation.z = 0.15;
+    if (bones.rightLowerArm) bones.rightLowerArm.rotation.z = -0.15;
 
     if (vrm.lookAt && pointer) {
       bones.head.getWorldPosition(headPosition).project(camera);
@@ -292,7 +315,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   if (!native && !failed) {
     loadModel(async () => {
-      const response = await fetch('seed.vrm', {redirect: 'error'});
+      const response = await fetch('avatar.vrm', {redirect: 'error'});
       if (!response.ok) throw new Error(`Model load failed (${response.status})`);
       return response.arrayBuffer();
     });

@@ -49,6 +49,10 @@ LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-## Seed-san
+## VRM1_Constraint_Twist_Sample
 
-Seed-san © VirtualCast, Inc. — VRM Public License 1.0 — https://vrm.dev/licenses/1.0/
+Copyright (c) 2022 pixiv Inc.
+
+[VRM Public License 1.0](https://vrm.dev/licenses/1.0/)
+
+[Original VRM1_Constraint_Twist_Sample model](https://raw.githubusercontent.com/vrm-c/vrm-specification/master/samples/VRM1_Constraint_Twist_Sample/vrm/VRM1_Constraint_Twist_Sample.vrm)
