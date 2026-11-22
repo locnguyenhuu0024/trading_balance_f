@@ -80,3 +80,11 @@ A required API change outside §4 → BLOCKED.
 ## 12. Coordinator Audit
 
 Verdict: PENDING
+
+## 13. Remediation R01 (coordinator audit attempt 1 → REWORK)
+
+Attempt `6719b042…` committed as the starting point. Host evidence: analyze clean; RED-150 6/6 then GREEN-150 5/5 pass; V4 720 pass / 1 fail.
+AUD-150-1 (Must; coordinator contract omission — the file was not in the allowlist): `test/features/avatar/avatar_mood_test.dart` "GREEN-147 registers each avatar license once" still expects the package `VRM1_Constraint_Twist_Sample (VRM model)`. Replace that single expected entry with `Pixiv Sample (VRM model)` and `Donut-Chan (VRM model)` (each `hasLength(1)`). Nothing else.
+Allowed write files (exact): `test/features/avatar/avatar_mood_test.dart`.
+RED-150-R01: record `grep -n "VRM1_Constraint_Twist_Sample (VRM model)" test/features/avatar/avatar_mood_test.dart` (matches) before editing.
+GREEN-150-R01: grep finds `Pixiv Sample (VRM model)` and `Donut-Chan (VRM model)`; coordinator reruns V4 on host.
