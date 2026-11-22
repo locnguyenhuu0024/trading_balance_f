@@ -22,6 +22,8 @@ import '../../../core/exchange/exchange_models.dart';
 import '../../../core/exchange/exchange_registry.dart';
 import '../../../core/exchange/exchange_scope.dart';
 import '../../../core/exchange/scoped_read.dart';
+import '../../avatar/domain/avatar_mood.dart';
+import '../../avatar/presentation/floating_avatar.dart';
 import '../../settings/presentation/settings_screen.dart';
 import '../../market/presentation/providers/market_provider.dart';
 import '../../../core/network/okx_websocket_service.dart';
@@ -214,6 +216,19 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
     if (!isOkx) _syncTickerSubscription(const <String>[]);
 
     final isBalanceHidden = ref.watch(hideBalanceProvider);
+    final avatarEnabled = ref.watch(avatarEnabledProvider);
+    final avatarAccount = avatarEnabled && !portfolioAsyncValue.hasError
+        ? portfolioAsyncValue.valueOrNull
+        : null;
+    final avatarRatio = avatarAccount == null
+        ? null
+        : _portfolioHeadline(
+            avatarAccount,
+            isOkx,
+            scope.exchange == ExchangeId.binance,
+            livePrices,
+            costView,
+          ).ratio;
     final isDark = ref.watch(isDarkModeProvider);
     final currency = ref.watch(currencyProvider);
 
@@ -227,97 +242,108 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
       backgroundColor: bgColor,
       body: SafeArea(
         child: NavigationContentFrame(
-          child: Column(
+          child: Stack(
             children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
-                child: Row(
-                  children: [
-                    const Expanded(
-                      child: Text(
-                        'Tài sản',
-                        style: TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
+              Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
+                    child: Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            'Tài sản',
+                            style: TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
                         ),
-                      ),
+                        const SizedBox(width: 8),
+                        const Flexible(child: ScopeBar(compact: true)),
+                        ManualRefreshButton(
+                          buttonKey: const Key('portfolio-manual-refresh'),
+                          onRefresh: _refreshPortfolioAndRate,
+                          isBusy:
+                              _pageRefreshInFlight ||
+                              _portfolioRefreshInFlight ||
+                              portfolioAsyncValue.isLoading ||
+                              exchangeRateAsync.isLoading,
+                        ),
+                        IconButton(
+                          icon: Icon(
+                            isBalanceHidden
+                                ? Icons.visibility_off
+                                : Icons.visibility,
+                            size: 22,
+                          ),
+                          tooltip: isBalanceHidden ? 'Hiện số dư' : 'Ẩn số dư',
+                          onPressed: () =>
+                              ref.read(hideBalanceProvider.notifier).state =
+                                  !isBalanceHidden,
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 8),
-                    const Flexible(child: ScopeBar(compact: true)),
-                    ManualRefreshButton(
-                      buttonKey: const Key('portfolio-manual-refresh'),
+                  ),
+                  Expanded(
+                    child: RefreshIndicator(
+                      color: palette.ink,
+                      backgroundColor: palette.raised,
                       onRefresh: _refreshPortfolioAndRate,
-                      isBusy:
-                          _pageRefreshInFlight ||
-                          _portfolioRefreshInFlight ||
-                          portfolioAsyncValue.isLoading ||
-                          exchangeRateAsync.isLoading,
+                      child:
+                          !portfolioAsyncValue.hasValue &&
+                              portfolioAsyncValue.isLoading
+                          ? const AppSkeleton()
+                          : portfolioAsyncValue.when(
+                              skipLoadingOnReload: false,
+                              loading: () => const AppSkeleton(),
+                              error: (error, stack) {
+                                _syncTickerSubscription(const <String>[]);
+                                return AccountStateView.fromError(
+                                  error: error,
+                                  registration: ref
+                                      .read(exchangeRegistryProvider)
+                                      .firstWhere(
+                                        (entry) =>
+                                            entry.profile.connectionId ==
+                                            scope.connectionId,
+                                      ),
+                                  onRetry: _refreshPortfolioAndRate,
+                                );
+                              },
+                              data: (data) {
+                                if (!isOkx && _costScope != scope) {
+                                  _startCost(scope, data);
+                                }
+                                _syncTickerSubscription(
+                                  isOkx
+                                      ? data.balances
+                                            .map((e) => e.asset)
+                                            .toList()
+                                      : const <String>[],
+                                );
+                                return _buildPortfolioData(
+                                  data,
+                                  isOkx,
+                                  scope.exchange == ExchangeId.binance,
+                                  livePrices,
+                                  isBalanceHidden,
+                                  isDark,
+                                  currency,
+                                  exchangeRate,
+                                  costView,
+                                );
+                              },
+                            ),
                     ),
-                    IconButton(
-                      icon: Icon(
-                        isBalanceHidden
-                            ? Icons.visibility_off
-                            : Icons.visibility,
-                        size: 22,
-                      ),
-                      tooltip: isBalanceHidden ? 'Hiện số dư' : 'Ẩn số dư',
-                      onPressed: () =>
-                          ref.read(hideBalanceProvider.notifier).state =
-                              !isBalanceHidden,
-                    ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-              Expanded(
-                child: RefreshIndicator(
-                  color: palette.ink,
-                  backgroundColor: palette.raised,
-                  onRefresh: _refreshPortfolioAndRate,
-                  child:
-                      !portfolioAsyncValue.hasValue &&
-                          portfolioAsyncValue.isLoading
-                      ? const AppSkeleton()
-                      : portfolioAsyncValue.when(
-                          skipLoadingOnReload: false,
-                          loading: () => const AppSkeleton(),
-                          error: (error, stack) {
-                            _syncTickerSubscription(const <String>[]);
-                            return AccountStateView.fromError(
-                              error: error,
-                              registration: ref
-                                  .read(exchangeRegistryProvider)
-                                  .firstWhere(
-                                    (entry) =>
-                                        entry.profile.connectionId ==
-                                        scope.connectionId,
-                                  ),
-                              onRetry: _refreshPortfolioAndRate,
-                            );
-                          },
-                          data: (data) {
-                            if (!isOkx && _costScope != scope) {
-                              _startCost(scope, data);
-                            }
-                            _syncTickerSubscription(
-                              isOkx
-                                  ? data.balances.map((e) => e.asset).toList()
-                                  : const <String>[],
-                            );
-                            return _buildPortfolioData(
-                              data,
-                              isOkx,
-                              scope.exchange == ExchangeId.binance,
-                              livePrices,
-                              isBalanceHidden,
-                              isDark,
-                              currency,
-                              exchangeRate,
-                              costView,
-                            );
-                          },
-                        ),
+              if (avatarEnabled)
+                FloatingAvatar(
+                  key: const ValueKey('home-avatar'),
+                  mood: avatarMoodFor(avatarRatio, hidden: isBalanceHidden),
                 ),
-              ),
             ],
           ),
         ),
@@ -329,15 +355,17 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
     return isHidden ? '******' : value;
   }
 
-  Widget _buildPortfolioData(
+  ({
+    bool combined,
+    double totalEquity,
+    double baseEquity,
+    double pnl,
+    double ratio,
+  }) _portfolioHeadline(
     AccountSnapshot accountData,
     bool isOkx,
     bool isBinance,
     Map<String, String> livePrices,
-    bool isHidden,
-    bool isDark,
-    String currency,
-    double exchangeRate,
     BinanceCostView? costView,
   ) {
     double dynamicTotalEquity = 0.0;
@@ -401,6 +429,33 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
         ? (baseEquity > 0 ? headlinePnl / baseEquity * 100 : 0.0)
         : pnlRatio;
 
+    return (
+      combined: combined,
+      totalEquity: dynamicTotalEquity,
+      baseEquity: baseEquity,
+      pnl: headlinePnl,
+      ratio: headlineRatio,
+    );
+  }
+
+  Widget _buildPortfolioData(
+    AccountSnapshot accountData,
+    bool isOkx,
+    bool isBinance,
+    Map<String, String> livePrices,
+    bool isHidden,
+    bool isDark,
+    String currency,
+    double exchangeRate,
+    BinanceCostView? costView,
+  ) {
+    final headline = _portfolioHeadline(
+      accountData,
+      isOkx,
+      isBinance,
+      livePrices,
+      costView,
+    );
     final palette = AppPalette.forBrightness(isDark);
     final textColor = palette.ink;
     final subtitleColor = palette.muted;
@@ -414,12 +469,12 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
             index: 0,
             child: _buildAssetSummary(
               isBinance: isBinance,
-              combined: combined,
+              combined: headline.combined,
               totalMissing: !isOkx && accountData.total == null,
-              totalEquity: dynamicTotalEquity,
-              baseEquity: baseEquity,
-              unrealizedPnl: headlinePnl,
-              pnlRatio: headlineRatio,
+              totalEquity: headline.totalEquity,
+              baseEquity: headline.baseEquity,
+              unrealizedPnl: headline.pnl,
+              pnlRatio: headline.ratio,
               isHidden: isHidden,
               isDark: isDark,
               currency: currency,
