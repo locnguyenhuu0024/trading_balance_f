@@ -16,4 +16,6 @@ argument-hint: "[job.json] [report.json]"
 6. Before overall completion require OptCodex final integration audit AND mandatory final repository build. Publish required company Dev→QA artifacts only under the governing QA contract.
 7. After genuinely independent audit, record the audit verdict in local CCB task ledger: `python3 scripts/ccb/task_ledger.py audit --project "<planning-root>" --plan-id <plan_id> --task-id <task_id> --attempt-id <attempt_id> --verdict PASS|REWORK|BLOCKED`. Never call PASS on the basis of Codex's structured report. Validate the active project routing default or approved nondefault `route_override`; verify route and authorization independently. Only Claude coordinator writes canonical OptCodex telemetry. Do not commit, merge, reset or change Git history without separate approval.
 
+8. After an independent audit PASS and durable TASK/ledger reconciliation, optionally consider a focused compact under `CONTEXT_DISCIPLINE_RULES.md` if stale logs dominate and the next work differs. Do **not** compact on each task, use the Codex result as PASS, or hide REWORK/UNKNOWN behind a summary. After any manual/auto compact, re-verify current plan approval, task state, E-route, runtime handles and evidence before further dispatch.
+
 Inputs: $ARGUMENTS

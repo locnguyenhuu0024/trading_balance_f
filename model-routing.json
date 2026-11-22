@@ -7,7 +7,7 @@
     "https://developers.openai.com/api/docs/guides/reasoning",
     "https://platform.claude.com/docs/en/models/opus-5-5/overview"
   ],
-  "policy_authority": "OptCodexRules v1.5.0: dual-model E0–E5 defaults under routing contract v3",
+  "policy_authority": "OptCodexRules v1.5.1: dual-model E0–E5 defaults under routing contract v3",
   "models": {
     "gpt-6-luna": {
       "type": "legacy_reasoning_candidate",

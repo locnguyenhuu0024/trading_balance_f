@@ -8,6 +8,8 @@ Produce the minimum set of artifacts that makes implementation mechanical, bound
 
 The planner owns unresolved product, business, data, security, compatibility, and architecture decisions. The executor must not invent them.
 
+For long planning, noisy context or a compact/resume transition, load `CONTEXT_DISCIPLINE_RULES.md` on demand. Maintain a bounded TARGET/BOUNDARY/EVIDENCE/NEXT/OPEN frame, not repeated speculative prose. A compact summary does not replace canonical SPEC/PLAN or approval.
+
 ## 2. Planning tiers
 
 Choose the smallest tier that preserves correctness.
@@ -148,7 +150,7 @@ Planning rules:
 
 ### Dual-model dynamic routing within fixed allowlist (OptCodex v1.5.0)
 
-Executor routing follows the validated EXECUTOR_ROUTING_POLICY.json v2: E0 Terra/low, E1 Terra/medium, E2 Sol/low, E3 Sol/medium, E4 Sol/high, E5 Sol/xhigh. Classify by implementation entropy and failure/rework evidence; do not escalate solely from task size. E5 is exceptional. No silent fallback, self-escalation, unapproved scope or protected-file access. Nondefault allowlisted routes require independently verified task-specific user approval.
+Executor routing follows the validated EXECUTOR_ROUTING_POLICY.json v3: E0 Terra/low, E1 Terra/medium, E2 Sol/low, E3 Sol/medium, E4 Sol/high, E5 Sol/xhigh. Classify by implementation entropy and failure/rework evidence; do not escalate solely from task size. E5 is exceptional. No silent fallback, self-escalation, unapproved scope or protected-file access. Nondefault allowlisted routes require independently verified task-specific user approval.
 
 For fair A/B compare separate clean checkouts of the same base commit with the same approved SPEC/AC/tests; never run two writers on the same checkout. Keep RED/GREEN, Task Buildability, final build, protected file exclusions, independent audit and QA/explicit Git authorizations unchanged. Count unique logical task IDs separately from executor attempts/retries; record requested and only observed effective route, runtime duration and quota/tokens (unknown = null). Do not treat executor terminal output as audited PASS.
 

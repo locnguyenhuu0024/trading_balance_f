@@ -1,4 +1,4 @@
-# OptCodex + Ponytail — personal v1.5.0
+# OptCodex + Ponytail — personal v1.5.1
 
 This is the self-contained `personal` rule bundle, maintained **only on GitHub**.
 

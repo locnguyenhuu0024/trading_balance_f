@@ -1,6 +1,8 @@
 # Execution and Audit Rules
 
 > Load this file after explicit execution authorization, before the first implementation/audit cycle. Do not automatically load planning templates again.
+>
+> For long TASKs, noisy context or compact/resume, load `CONTEXT_DISCIPLINE_RULES.md` on demand. A compact boundary follows independent audit PASS, not merely executor completion; protect running handles and approval.
 
 ## 1. Dispatch contract
 
@@ -42,7 +44,7 @@ For each agent run, preserve when observable:
 - for reasoning subagents, coordinator adoption: `USED|PARTIAL|DISCARDED`;
 - after audit, route assessment: `FIT|UNDERPOWERED|OVERPOWERED|UNKNOWN` with one concise evidence-based reason.
 
-Do not log every shell/tool call or raw output. Aggregate tool activity as counts/categories when useful; formal verification commands may remain in normal executor/audit evidence, while telemetry stores only the verification ID/level/outcome/duration summary.
+Do not log every shell/tool call or raw output. Aggregate tool activity as counts/categories when useful; formal verification commands may remain in normal executor/audit evidence, while telemetry stores only the verification ID/level/outcome/duration summary. Keep a bounded TARGET/BOUNDARY/EVIDENCE/NEXT/OPEN frame and only milestone deltas; stop repeated speculation and raw log dumping.
 
 Transport failures such as `ORCHESTRATION_TRANSPORT_ERROR`, environment blockers, SSPI activation/clear events, and telemetry-write failures should each produce a concise event so weekly analysis can distinguish model quality from infrastructure noise.
 
@@ -79,7 +81,7 @@ Executor routing follows validated EXECUTOR_ROUTING_POLICY.json (contract v3): E
 
 For fair A/B compare separate clean checkouts of the same base commit with the same approved SPEC/AC/tests; never run two writers on the same checkout. Keep RED/GREEN, Task Buildability, final build, protected file exclusions, independent audit and QA/explicit Git authorizations unchanged. Count unique logical task IDs separately from executor attempts/retries; record requested and only observed effective route, runtime duration and quota/tokens (unknown = null). Do not treat executor terminal output as audited PASS.
 
-If no class is recorded, the coordinator must classify implementation entropy before dispatch rather than silently defaulting to Max. Escalate only after evidence that the selected route is insufficient. An executor failure caused by unresolved requirement/design/architecture ambiguity returns to coordinator reasoning/replanning; it is not solved by blindly increasing executor effort. Terra is the default for E1–E5; Terra/low is the E0 default. Any nondefault allowlisted route requires verified task-specific authorization.
+If no class is recorded, the coordinator must classify implementation entropy before dispatch rather than silently defaulting to Max. Escalate only after evidence that the selected route is insufficient. An executor failure caused by unresolved requirement/design/architecture ambiguity returns to coordinator reasoning/replanning; it is not solved by blindly increasing executor effort. Terra is the default for E0–E1; GPT-6.2 Sol is the default for E2–E5 under contract v3. Any nondefault allowlisted route requires verified task-specific authorization.
 
 ### Mandatory executor route-compliance gate
 

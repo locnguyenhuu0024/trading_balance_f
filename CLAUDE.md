@@ -1,6 +1,6 @@
 @AGENTS.md
 
-# ClaudeCodex Bridge v0.9 — OptCodexRules v1.5.0 adapter
+# ClaudeCodex Bridge v0.9 — OptCodexRules v1.5.1 adapter
 
 This file is installed **beside** the chosen complete OptCodexRules variant, never in place of its `AGENTS.md`. Read that variant's pinned `BASELINE_AGENTS_*.md` in full before repository work as required by OptCodex. Its baseline, planning/audit framework, Ponytail adapter and variant-specific instructions outrank this bridge. Do not use the obsolete Google Drive baseline.
 
@@ -41,6 +41,11 @@ If a user-provided, project-local graph exists and a structural codebase questio
 - Planning: baseline → `PLANNING_RULES.md` → relevant template(s), mandatory fan-out. Frontend: additionally `frontend/FRONTEND_DESIGN_RULES.md` (F0–F3).
 - Execution/audit: `EXECUTION_AUDIT_RULES.md` → task-specific contract → Ponytail minimal *complete* change → RED/GREEN → Task Buildability Gate → independent audit → final repository build.
 - Company variants: preserve Dev→QA publication gate. Personal variants: preserve RTK/Headroom profile. Telemetry follows OptCodex's `AGENT_TELEMETRY_SCHEMA.md` and is coordinator-written only.
+- For substantive long TASKs, context drift, compact or resume, load pinned `docs/agents/framework/CONTEXT_DISCIPLINE_RULES.md` **on demand**, not in every short session. Keep TARGET/BOUNDARY/EVIDENCE/NEXT/OPEN concise; preserve audit and approvals in canonical artifacts.
+
+## Context and compaction safety
+
+Default: keep Claude Code auto-compact enabled; **do not compact after every TASK**. Suggest focused `/compact` only at useful phase boundaries after *independent audit PASS* and durable evidence/ledger reconciliation; an executor `REVIEW_REQUIRED` is not completion. A session summary cannot approve the plan or prove model routing, test/build evidence or audit. Before compact protect running/UNKNOWN writer handles; after manual/auto compact re-verify current-plan approval, TASK state, source and applicable rules. Claude Code slash commands are user/runtime actions, not shell commands or automated CCB hooks. No global setting or PreCompact hook is installed.
 
 ## Git, concurrency and safety
 

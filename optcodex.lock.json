@@ -1,22 +1,23 @@
 {
   "schema_version": 1,
   "source_repository": "locnguyenhuu0024/OptCodexRules",
-  "source_revision": "453719e9468b98e208d0292c83f28a67df322f7b",
+  "source_revision": "cb599908d6d37a76dd82f4a2dfe7895a55dc522d",
   "variants": {
     "company": {
-      "variant_version": "1.5.0",
+      "variant_version": "1.5.1",
       "baseline_version": "2.2.3",
       "baseline_file": "BASELINE_AGENTS_OptCodex-v2.2.3.md",
       "pinned_files": {
-        "AGENTS.md": "58189a3032429ce4182c9827c789fd4a3290f8d0",
+        "AGENTS.md": "c8219f6787bbec358ba73d2b04c9f9e7e918cf6b",
         "BASELINE_AGENTS_OptCodex-v2.2.3.md": "259c777afd27641f0658d34a0ce118cc85607a47",
-        "VERSION": "bc80560fad66ca670bdfbd1e5c973a024d4d0325",
-        "docs/agents/framework/PLANNING_RULES.md": "e773620df915dae34cbacfa006e882afebc60d15",
-        "docs/agents/framework/EXECUTION_AUDIT_RULES.md": "bdd14f422bb40097d306a7818c0738e17826ff13",
+        "VERSION": "26ca594609a93d60b6543102d639fa76b50a6925",
+        "docs/agents/framework/PLANNING_RULES.md": "d0227765f90c84580bc0c49cbb75ce0a91e5c885",
+        "docs/agents/framework/EXECUTION_AUDIT_RULES.md": "a4385bd7aae581cb178552e75c433dc58186805c",
         "docs/agents/framework/PONYTAIL_RULES.md": "6786686b1b7c7d976a21bf9441e3d3cd8409223d",
         "docs/agents/framework/AGENT_TELEMETRY_SCHEMA.md": "166e27e37ff10cb31259bf2946f7b0cb094307b7",
         "docs/agents/framework/QA_HANDOFF_CONTRACT.md": "c4f91ed52f33d5ea5af096b6d9d8d41085e55e5a",
-        "BASELINE_VERSION": "585940699b5b99df6541c819a773ef738985a956"
+        "BASELINE_VERSION": "585940699b5b99df6541c819a773ef738985a956",
+        "docs/agents/framework/CONTEXT_DISCIPLINE_RULES.md": "c537cdfa934d6528a513e5d077db31cf0d787c24"
       },
       "required_paths": [
         "AGENTS.md",
@@ -27,6 +28,7 @@
         "VERSION",
         "docs/agents/framework/AGENT_TELEMETRY_SCHEMA.md",
         "docs/agents/framework/EXECUTION_AUDIT_RULES.md",
+        "docs/agents/framework/CONTEXT_DISCIPLINE_RULES.md",
         "docs/agents/framework/PLANNING_RULES.md",
         "docs/agents/framework/PONYTAIL_RULES.md",
         "docs/agents/framework/QA_HANDOFF_CONTRACT.md",
@@ -55,18 +57,19 @@
       ]
     },
     "personal": {
-      "variant_version": "1.5.0",
+      "variant_version": "1.5.1",
       "baseline_version": "1.2.3",
       "baseline_file": "BASELINE_AGENTS_OptCodex-Personal-v1.2.3.md",
       "pinned_files": {
-        "AGENTS.md": "2668a4a2e5f2f18b8bad3ce5b806ab55df34306c",
+        "AGENTS.md": "b7e8907bef36c3dac7a20ad297f7b804441d6cd6",
         "BASELINE_AGENTS_OptCodex-Personal-v1.2.3.md": "4d7d6d898a18ca7319c3934b520674ce4b706ebb",
-        "VERSION": "bc80560fad66ca670bdfbd1e5c973a024d4d0325",
-        "docs/agents/framework/PLANNING_RULES.md": "e42cd03c55e2b5455e6359398243d76bdc5ce0da",
-        "docs/agents/framework/EXECUTION_AUDIT_RULES.md": "a4ad67cfcd83991b25407b7dd25f391159ad7d94",
+        "VERSION": "26ca594609a93d60b6543102d639fa76b50a6925",
+        "docs/agents/framework/PLANNING_RULES.md": "48679d3cb42583a2042d2e0b600c979bdcf5629e",
+        "docs/agents/framework/EXECUTION_AUDIT_RULES.md": "839ad8103109d594674c9d7ca5e2447d67b51ccf",
         "docs/agents/framework/PONYTAIL_RULES.md": "6786686b1b7c7d976a21bf9441e3d3cd8409223d",
         "docs/agents/framework/AGENT_TELEMETRY_SCHEMA.md": "166e27e37ff10cb31259bf2946f7b0cb094307b7",
-        "docs/agents/framework/profiles/CONTEXT_OPTIMIZATION.md": "281f93058ff9f53a85f4c5d04aa7e2420fd6a1f5"
+        "docs/agents/framework/profiles/CONTEXT_OPTIMIZATION.md": "281f93058ff9f53a85f4c5d04aa7e2420fd6a1f5",
+        "docs/agents/framework/CONTEXT_DISCIPLINE_RULES.md": "c537cdfa934d6528a513e5d077db31cf0d787c24"
       },
       "required_paths": [
         "AGENTS.md",
@@ -76,6 +79,7 @@
         "VERSION",
         "docs/agents/framework/AGENT_TELEMETRY_SCHEMA.md",
         "docs/agents/framework/EXECUTION_AUDIT_RULES.md",
+        "docs/agents/framework/CONTEXT_DISCIPLINE_RULES.md",
         "docs/agents/framework/PLANNING_RULES.md",
         "docs/agents/framework/PONYTAIL_RULES.md",
         "docs/agents/framework/profiles/CONTEXT_OPTIMIZATION.md",
@@ -93,20 +97,21 @@
       ]
     },
     "frontend-company": {
-      "variant_version": "1.5.0",
+      "variant_version": "1.5.1",
       "baseline_version": "2.2.3",
       "baseline_file": "BASELINE_AGENTS_OptCodex-v2.2.3.md",
       "pinned_files": {
-        "AGENTS.md": "6f5aa128d536b010d84b45e33c67a9cb0579f888",
+        "AGENTS.md": "16e36e411d686390c10de1c574df7d7942fc36e4",
         "BASELINE_AGENTS_OptCodex-v2.2.3.md": "259c777afd27641f0658d34a0ce118cc85607a47",
-        "VERSION": "bc80560fad66ca670bdfbd1e5c973a024d4d0325",
-        "docs/agents/framework/PLANNING_RULES.md": "e773620df915dae34cbacfa006e882afebc60d15",
-        "docs/agents/framework/EXECUTION_AUDIT_RULES.md": "bdd14f422bb40097d306a7818c0738e17826ff13",
+        "VERSION": "26ca594609a93d60b6543102d639fa76b50a6925",
+        "docs/agents/framework/PLANNING_RULES.md": "d0227765f90c84580bc0c49cbb75ce0a91e5c885",
+        "docs/agents/framework/EXECUTION_AUDIT_RULES.md": "a4385bd7aae581cb178552e75c433dc58186805c",
         "docs/agents/framework/PONYTAIL_RULES.md": "6786686b1b7c7d976a21bf9441e3d3cd8409223d",
         "docs/agents/framework/AGENT_TELEMETRY_SCHEMA.md": "8fe0483b0e00fb596dcaa1dbb4125ba751f2da2b",
         "docs/agents/framework/QA_HANDOFF_CONTRACT.md": "c4f91ed52f33d5ea5af096b6d9d8d41085e55e5a",
         "docs/agents/framework/frontend/FRONTEND_DESIGN_RULES.md": "0a6a2a9683196da5699b7a77e197ce8f306d06d9",
-        "BASELINE_VERSION": "585940699b5b99df6541c819a773ef738985a956"
+        "BASELINE_VERSION": "585940699b5b99df6541c819a773ef738985a956",
+        "docs/agents/framework/CONTEXT_DISCIPLINE_RULES.md": "c537cdfa934d6528a513e5d077db31cf0d787c24"
       },
       "required_paths": [
         "AGENTS.md",
@@ -118,6 +123,7 @@
         "VERSION",
         "docs/agents/framework/AGENT_TELEMETRY_SCHEMA.md",
         "docs/agents/framework/EXECUTION_AUDIT_RULES.md",
+        "docs/agents/framework/CONTEXT_DISCIPLINE_RULES.md",
         "docs/agents/framework/PLANNING_RULES.md",
         "docs/agents/framework/PONYTAIL_RULES.md",
         "docs/agents/framework/QA_HANDOFF_CONTRACT.md",
@@ -164,19 +170,20 @@
       ]
     },
     "frontend-personal": {
-      "variant_version": "1.5.0",
+      "variant_version": "1.5.1",
       "baseline_version": "1.2.3",
       "baseline_file": "BASELINE_AGENTS_OptCodex-Personal-v1.2.3.md",
       "pinned_files": {
-        "AGENTS.md": "4c17fe8a42975684791e79517bee7a7eab691b06",
+        "AGENTS.md": "808d611e0f7113f24da51ae8a7101e59e71ac7b0",
         "BASELINE_AGENTS_OptCodex-Personal-v1.2.3.md": "4d7d6d898a18ca7319c3934b520674ce4b706ebb",
-        "VERSION": "bc80560fad66ca670bdfbd1e5c973a024d4d0325",
-        "docs/agents/framework/PLANNING_RULES.md": "e42cd03c55e2b5455e6359398243d76bdc5ce0da",
-        "docs/agents/framework/EXECUTION_AUDIT_RULES.md": "a4ad67cfcd83991b25407b7dd25f391159ad7d94",
+        "VERSION": "26ca594609a93d60b6543102d639fa76b50a6925",
+        "docs/agents/framework/PLANNING_RULES.md": "48679d3cb42583a2042d2e0b600c979bdcf5629e",
+        "docs/agents/framework/EXECUTION_AUDIT_RULES.md": "839ad8103109d594674c9d7ca5e2447d67b51ccf",
         "docs/agents/framework/PONYTAIL_RULES.md": "6786686b1b7c7d976a21bf9441e3d3cd8409223d",
         "docs/agents/framework/AGENT_TELEMETRY_SCHEMA.md": "8fe0483b0e00fb596dcaa1dbb4125ba751f2da2b",
         "docs/agents/framework/profiles/CONTEXT_OPTIMIZATION.md": "281f93058ff9f53a85f4c5d04aa7e2420fd6a1f5",
-        "docs/agents/framework/frontend/FRONTEND_DESIGN_RULES.md": "086cd2761d9a4c422876fb3fee81b0b0fe098d7d"
+        "docs/agents/framework/frontend/FRONTEND_DESIGN_RULES.md": "086cd2761d9a4c422876fb3fee81b0b0fe098d7d",
+        "docs/agents/framework/CONTEXT_DISCIPLINE_RULES.md": "c537cdfa934d6528a513e5d077db31cf0d787c24"
       },
       "required_paths": [
         "AGENTS.md",
@@ -187,6 +194,7 @@
         "VERSION",
         "docs/agents/framework/AGENT_TELEMETRY_SCHEMA.md",
         "docs/agents/framework/EXECUTION_AUDIT_RULES.md",
+        "docs/agents/framework/CONTEXT_DISCIPLINE_RULES.md",
         "docs/agents/framework/PLANNING_RULES.md",
         "docs/agents/framework/PONYTAIL_RULES.md",
         "docs/agents/framework/frontend/FRONTEND_DESIGN_RULES.md",

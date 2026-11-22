@@ -1,4 +1,4 @@
-# AGENTS.md — OptCodex + Ponytail v1.5.0
+# AGENTS.md — OptCodex + Ponytail v1.5.1
 
 > Thin bootstrap for personal OptCodex. GitHub is the only maintained source of truth.
 
@@ -21,6 +21,8 @@ Use the baseline's local coordinator for task classification (S/M/L), reasoning 
 3. After explicit approval, load `docs/agents/framework/EXECUTION_AUDIT_RULES.md`; delegate each bounded task to the correctly bound executor.
 4. Execute RED then GREEN, build and test at the required scope; independent coordinator audit includes minimality without downgrading safety.
 5. Use existing telemetry and release/documentation conventions. Do not modify Git history or push without the requisite user authorization.
+
+For long-running work, context saturation, compact or resume, load `docs/agents/framework/CONTEXT_DISCIPLINE_RULES.md` on demand. Preserve canonical evidence and approval; do not compact after every TASK or mistake executor completion for audit PASS.
 
 ## 3. Personal context optimization
 

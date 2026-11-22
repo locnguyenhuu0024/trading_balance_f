@@ -2,7 +2,7 @@
 
 ## Binding upstream
 
-Source of truth: `locnguyenhuu0024/OptCodexRules`, governance blob hashes pinned in `optcodex.lock.json`, release `1.5.0`. Each installed target must contain the **complete** selected variant: `company`, `personal`, `frontend-company`, `frontend-personal`. Use its exact `AGENTS.md`, immutable baseline, `PLANNING_RULES.md`, `EXECUTION_AUDIT_RULES.md`, Ponytail, telemetry schema and variant-specific frontend/QA/RTK instructions. No Google Drive baselines; do not vendor or silently rewrite OptCodex governance.
+Source of truth: `locnguyenhuu0024/OptCodexRules`, governance blob hashes pinned in `optcodex.lock.json`, release `1.5.1`. Each installed target must contain the **complete** selected variant: `company`, `personal`, `frontend-company`, `frontend-personal`. Use its exact `AGENTS.md`, immutable baseline, `PLANNING_RULES.md`, `EXECUTION_AUDIT_RULES.md`, Ponytail, telemetry schema and variant-specific frontend/QA/RTK instructions. No Google Drive baselines; do not vendor or silently rewrite OptCodex governance.
 
 `scripts/ccb/compat.py` verifies exact Git blob hashes for pinned governance files. Drift, missing paths, symlinks, unknown variant or mismatched baseline/version => BLOCKED before Codex launches. Changing hash-pinned governance requires a reviewed lock bump plus tests; changing only allowlisted routing defaults does not. A modified target OptCodex is not automatically certified.
 
@@ -43,6 +43,14 @@ Mandatory `agent_role=implementation_executor`, `route_binding=EXPLICIT`, `paren
 - On timeout/unknown writer state, terminate best effort and BLOCK; do not automatically retry or delete user changes.
 - Full executor output is not retained; review the structured report. The report itself is untrusted and not an independent audit.
 
+## Context discipline, compact and recovery (v1.5.1)
+
+The complete selected OptCodex variant must include the exactly hash-pinned `docs/agents/framework/CONTEXT_DISCIPLINE_RULES.md`. Load it on demand for long tasks, noisy context, compact or resume. A CCB installation lacking this file, with a stale hash or older `variant_version`, is **BLOCKED**; never silently treat a legacy project as v1.5.1. Existing projects must use preview-first, reviewed managed upgrades and backups.
+
+The Claude coordinator uses bounded TARGET/BOUNDARY/EVIDENCE/NEXT/OPEN milestones; avoid repetitive plan recitation, broad unbounded reading and speculative rework. Keep Claude Code auto-compact as fallback; do not compact after every TASK or fabricate a `/compact` tool action. A useful manual compact is suggested only at a verified task/phase boundary: executor terminal result collected, independent audit PASS and durable task ledger/evidence reconciled. `REVIEW_REQUIRED` is never audit PASS. If context fills during an active task, preserve the current running handle/verification state and allow native auto-compact rather than block it.
+
+After **manual or auto** compact/resume, re-verify current-plan approval, canonical SPEC/PLAN/TASK versions, exact route and user approval, task status, evidence and running/unknown handles from source files/runtime; the compaction summary is non-authoritative. If contradictory, stop and record `CONTEXT_RECOVERY_CONFLICT`; no new writer dispatch or PASS until resolved. Path-specific rules/nested CLAUDE.md may need relevant files reopened after compact; do not re-read unrelated files or protected configs. No hook or global Claude settings change is authorized by this policy.
+
 ## Verification and variant gates
 
 Claude audit independently verifies RED then GREEN, tests, Task Buildability Gate for every code-changing task, and the mandatory final repository build after final integration. Reuse valid evidence and stop wasteful environment retries. Use Ponytail reuse-first/minimal **complete** change review, never as permission to omit safety, tests or necessary caller updates.
@@ -60,7 +68,7 @@ Run against a disposable, correctly pinned variant checkout, after explicit plan
 
 ## Dual-model runtime routing and persistent task counting
 
-OptCodex v1.5.0 uses E0 Terra/low; E1 Terra/medium; E2 Sol/low; E3 Sol/medium; E4 Sol/high; E5 Sol/xhigh. E5 is exceptional; Sol max or Terra high/xhigh/max are optional allowlisted task-specific routes, not automatic escalation. Nondefault routes require `route_override` and matching `--approved-route-override-id`; legacy `terra_trial` remains explicit/approval-bound and never substitutes for fresh v3 plan approval.
+OptCodex v1.5.1 uses E0 Terra/low; E1 Terra/medium; E2 Sol/low; E3 Sol/medium; E4 Sol/high; E5 Sol/xhigh. E5 is exceptional; Sol max or Terra high/xhigh/max are optional allowlisted task-specific routes, not automatic escalation. Nondefault routes require `route_override` and matching `--approved-route-override-id`; legacy `terra_trial` remains explicit/approval-bound and never substitutes for fresh v3 plan approval.
 
 A separate local append-only ledger at `~/.ccb/task-ledger/events.jsonl` (override via `CCB_TASK_LEDGER_PATH`, absolute outside checkout) records stable `(project_id, approved_plan_id, task_id)`, executor attempt IDs, audit outcomes and optional Claude work units. Planner calls `task_ledger.py plan` and Claude `work` entries, dispatcher records start/finish, auditor calls `audit`. Use `task_ledger.py report --since YYYY-MM-DD --until YYYY-MM-DD --project ROOT --format json|csv`. Counts never substitute for coordinator-owned OptCodex telemetry or independent audit; no token/quota guesses. `REVIEW_REQUIRED` is not PASS. Separate checkout per comparative A/B arm, no concurrent writers on shared checkout.
 

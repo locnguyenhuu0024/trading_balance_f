@@ -9,12 +9,13 @@ argument-hint: "[path/to/ccb-job.json]"
 
 1. Verify the job is a canonical `jobs/T01.json` (or `docs/agents/ccb/jobs/T01.json`) manifest **inside** the selected plan root. Independently verify **conversation-level authorization** for the currently presented and unchanged SPEC/PLAN/TASK. A matching CLI `approved-plan-id` is not authorization by itself.
 2. Verify required planning workstream fan-out and reconciled workstream results (or an explicitly allowed and recorded `UNAVAILABLE`/exception), all predecessor tasks PASS, no in-flight writer, safe allowed write surfaces, testable RED/GREEN, and Task Buildability criteria.
-3. Confirm OptCodexRules v1.5.0 and pinned governance hashes; validate routing contract v3 (E0 Terra/low; E1 Terra/medium; E2 Sol/low; E3 Sol/medium; E4 Sol/high; E5 Sol/xhigh). Classify by implementation entropy, not document tier. Existing pre-v1.4 E1/E2 manifests must be reclassified and approved anew. Nondefault allowlisted route needs `route_override`, verified user consent and `--approved-route-override-id`; never silent fallback.
+3. Confirm OptCodexRules v1.5.1 and pinned governance hashes; validate routing contract v3 (E0 Terra/low; E1 Terra/medium; E2 Sol/low; E3 Sol/medium; E4 Sol/high; E5 Sol/xhigh). Classify by implementation entropy, not document tier. Existing pre-v1.4 E1/E2 manifests must be reclassified and approved anew. Nondefault allowlisted route needs `route_override`, verified user consent and `--approved-route-override-id`; never silent fallback.
 4. Read `EXECUTION_AUDIT_RULES.md` and variant rules for this execution cycle; pass only the bounded task contract and necessary non-protected context to Codex.
 5. From a **clean** checkout containing the full selected variant:
    `python3 scripts/ccb/dispatch.py --manifest <job> --repo <worker-root> --plan-root <plan-root> --execute --approved-plan-id <current-plan-id>`
    Run without `--execute` first for safe preflight. If nondefault route explicitly approved, include `--approved-route-override-id <id>`; for an explicitly approved legacy Terra trial use `--approved-experiment-id <id>`. Codex execution records `ATTEMPT_STARTED` and `ATTEMPT_FINISHED` automatically in the task ledger outside Git. On Windows use `py -3`.
 6. Do not pass `--yolo`, `danger-full-access` or untrusted override flags. Never create worktrees, commit, stage, reset or merge without separate specific Git authorization.
 7. On REVIEW_REQUIRED, invoke `/ccb-audit`; on BLOCKED preserve all changes. If model/effort or effective route mismatch becomes observable, record ROUTE_MISMATCH and stop.
+8. Before a long wave or compaction, follow pinned `CONTEXT_DISCIPLINE_RULES.md`: preserve canonical TASK, approval, exact E-route, active/UNKNOWN executor handles and required wait/collect identities. Never compact just because Codex exited, lose the handle, duplicate a writer or promote REVIEW_REQUIRED to audit PASS.
 
 Job: $ARGUMENTS
