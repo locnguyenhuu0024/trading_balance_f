@@ -1,6 +1,6 @@
 # Task 147 — Avatar mood mapping, setting persistence and licenses
 
-Status: READY
+Status: PASS
 Agent Role: implementation_executor
 Executor Class: E2
 Target Model: gpt-6.2-sol
@@ -98,7 +98,19 @@ Existing settings tests break in ways requiring changes outside §4 → BLOCKED.
 
 ## 12. Coordinator Audit
 
-Verdict: PENDING
+Scope: PASS — attempt 1 and R01 stayed inside the exact allowlist (no unexpected/staged paths).
+Acceptance criteria: AC-210, AC-211 (mood table incl. ±1/±5 boundaries, NaN/∞/null, hidden), AC-212 (default off, toggle persists, native + web startup restore, read failure → off, save failure reverts + SnackBar), AC-216 (credit text in Settings; LicenseRegistry lists three.js, @pixiv/three-vrm, VRM1_Constraint_Twist_Sample) — PASS on host.
+Test quality: PASS after R01 (attempt 1 test file did not compile).
+RED evidence: host `flutter test --no-pub <3 files> --plain-name "RED-147"` → 3/3 pass (negative scenarios asserted).
+GREEN evidence: host same files `--plain-name "GREEN-147"` → 5/5 pass, run after RED.
+RED-before-GREEN: PASS (coordinator host order).
+Evidence reused vs rerun: all formal evidence produced by the coordinator on host; executor sandbox cannot run Flutter (SDK cache write denied).
+V2: `flutter test --no-pub test/features/avatar test/features/settings test/core/widgets/app_startup_test.dart` → 48/48 pass.
+Architecture/contract conformance: PASS (storage pattern mirrors saveAppTextScale; WebStorageHelper overrides; startup override; idempotent license registration).
+Dispatch route compliance: UNVERIFIABLE (explicit gpt-6.2-sol / low; effective route not exposed).
+Parent route inheritance: NO
+Task buildability gate: PASS — `flutter analyze --no-pub --no-fatal-infos --no-fatal-warnings` → No issues found; `flutter build web --no-pub` → Built build/web.
+Verdict: PASS (attempts: 2 — 05daf9a6 REWORK, bf233b67 PASS).
 
 ## 13. Remediation R01 (coordinator audit attempt 1 → REWORK)
 
