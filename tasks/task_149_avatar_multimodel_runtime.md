@@ -1,6 +1,6 @@
 # Task 149 — Avatar runtime: VRM 0.x support, auto-framing, quality, Donut-Chan assets
 
-Status: PENDING
+Status: READY
 Agent Role: implementation_executor
 Executor Class: E3
 Target Model: gpt-6.2-sol
@@ -91,4 +91,5 @@ Verdict: PENDING (coordinator renders both models in a local browser for AC-218)
 
 ## 13. Coordinator staging
 
-Donut-Chan source sha256: PENDING (filled before dispatch).
+Donut-Chan source: `$DEPS/Donut-Chan.vrm` copied from the user's download `~/Downloads/Donut-Chan/Donut-Chan.vrm`, sha256 `e8637e8134ccba06d3751b3ed79d3f04e03a0061e4bc9012e247ec1d53d2ae58` (27 317 092 bytes).
+Approval: user approved revision 2 and the `.png` allowlist change on 2026-11-22 ("Duyệt, chạy T149").

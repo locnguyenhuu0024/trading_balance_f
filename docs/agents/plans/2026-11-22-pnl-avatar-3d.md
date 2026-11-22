@@ -184,7 +184,7 @@ Default off. Rollback: revert feature files; user removes pubspec entries.
 ## Revision 2 — model picker, Donut-Chan, render quality (2026-11-22)
 
 Plan ID: PLAN-20261122-pnl-avatar-3d-r2
-Status: READY_FOR_APPROVAL
+Status: APPROVED (user, 2026-11-22)
 Implements: REQ-216..REQ-220; AC-218..AC-222. Decisions D-037..D-039, CD-5..CD-8.
 T148 remains VERIFYING (MAN-148: iOS simulator PASS; Android device runs — quality finding addressed here).
 
