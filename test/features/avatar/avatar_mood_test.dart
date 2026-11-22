@@ -57,7 +57,8 @@ void main() {
     for (final package in [
       'three.js',
       '@pixiv/three-vrm',
-      'VRM1_Constraint_Twist_Sample (VRM model)',
+      'Pixiv Sample (VRM model)',
+      'Donut-Chan (VRM model)',
     ]) {
       expect(packages.where((name) => name == package), hasLength(1));
     }
