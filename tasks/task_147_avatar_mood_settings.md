@@ -1,6 +1,6 @@
 # Task 147 — Avatar mood mapping, setting persistence and licenses
 
-Status: PENDING
+Status: READY
 Agent Role: implementation_executor
 Executor Class: E2
 Target Model: gpt-6.2-sol
@@ -66,12 +66,12 @@ None.
 ### RED — RED-147
 Command: `flutter test --no-pub test/features/avatar/avatar_mood_test.dart test/features/settings/settings_avatar_toggle_test.dart test/core/widgets/app_startup_test.dart --plain-name "RED"`
 Expected: `avatarMoodFor(6, hidden:true)`, `(null)`, `(double.nan)`, `(1.0)`, `(-1.0)` → neutral; startup getter throws → `avatarEnabled == false`; save throws → switch back to off + SnackBar text.
-Status: PENDING
+Status: READY
 
 ### GREEN — GREEN-147
 Command: same files, `--plain-name "GREEN"`
 Expected: 1.0001 → mildHappy; 4.99 → mildHappy; 5 → strongHappy; 12 → strongHappy; −1.0001 → mildSad; −4.99 → mildSad; −5 → strongSad; −20 → strongSad; fresh storage → switch off; toggle on → `saveAvatarEnabled(true)` called and provider true; native and web startup with stored `'true'` → provider true; credit text found; `LicenseRegistry.licenses` includes `three.js`, `@pixiv/three-vrm`, `VRM1_Constraint_Twist_Sample (VRM model)`.
-Status: PENDING
+Status: READY
 
 Executor sandbox cannot run Flutter: write complete code, report RED/GREEN `NOT_RUN` (order named), buildability `BLOCKED` with that reason. Coordinator runs them on host.
 Verification ceiling: V2.
