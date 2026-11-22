@@ -1,6 +1,6 @@
 # Task 149 — Avatar runtime: VRM 0.x support, auto-framing, quality, Donut-Chan assets
 
-Status: READY
+Status: PASS
 Agent Role: implementation_executor
 Executor Class: E3
 Target Model: gpt-6.2-sol
@@ -87,7 +87,16 @@ Sparse encoding cannot pass the round-trip check → keep dense for that accesso
 
 ## 11. Coordinator Audit
 
-Verdict: PENDING (coordinator renders both models in a local browser for AC-218)
+Attempt `4667b1d0…` (1 attempt).
+Scope: PASS — exact allowlist, no unexpected/staged paths.
+Source review: VRM0 base yaw combined with gesture yaw; X/Z sign flip via `axisSign`; rest pose from `restPose`; `surprised`→`Surprised` fallback; framing after load with camera matrix updates; `antialias:true`, DPR ≤ 3; web model via allowlisted `resolveModel`.
+RED: executor reported optimizer check failure on Donut-Chan and missing modules before implementation.
+GREEN (coordinator rerun): `node --test tools/avatar/test/` 18/18; isolated rebuild of bundle, both VRMs and both PNGs byte-identical to committed files; `check` PASS — pixiv-sample.vrm 4 903 744 B (≤ 6 MB, 717 accessors equal), donut-chan.vrm 8 070 888 B (≤ 10 MB, 259 accessors equal), images ≤ 1024, thumbnails 256×256.
+AC-218 (coordinator, local Chromium, side-by-side iframes `?model=`): both models load (`ready`, `modelLoaded`), face the camera, arms down, upper body framed, edges visibly smoother; Donut-Chan strongHappy smile, strongSad head down, poke → surprised; hit regions after VRM0 rotation: 5 taps `pat`, 13 `poke` on a 40 px grid.
+Nit (non-blocking): `models.js` uses `Object.hasOwn` (ES2022 runtime; web path only) — very old browsers would fall to an error; acceptable for current targets.
+Dispatch route compliance: UNVERIFIABLE (explicit gpt-6.2-sol / medium). Parent route inheritance: NO.
+Task buildability gate: PASS.
+Verdict: PASS
 
 ## 13. Coordinator staging
 
