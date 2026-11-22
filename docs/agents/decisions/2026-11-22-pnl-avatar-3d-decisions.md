@@ -62,3 +62,8 @@ Source: T146 audit (2026-11-22). Rendering showed Seed-san with short hair and a
 Decision (user, 2026-11-22): use `VRM1_Constraint_Twist_Sample` from `vrm-c/vrm-specification/samples` — female, long brown hair, anime style; (c) 2022 pixiv Inc.; VRM Public License 1.0 with commercialUsage `corporation`, allowRedistribution `true`, modification `allowModificationRedistribution`, creditNotation `unnecessary`. The app still credits pixiv. Bundled file renamed `assets/avatar/avatar.vrm`.
 Supersedes: Seed-san choice in OBS-221 / REQ-214 / REQ-215.
 Impacts: REQ-211, REQ-214, REQ-215, AC-216, AC-217, T146 (R01), T147, T148
+
+### D-036 — Coordinator edits pubspec.yaml assets (user instruction)
+Source: user message 2026-11-22 ("Bạn tự thêm đi") after being asked to add the asset entry.
+Decision: one-off exception to the protected-configuration boundary, authorized by direct user instruction (baseline priority 1). The coordinator read only the `flutter:` section (lines 71–82) and inserted `assets: - assets/avatar/`. No other protected file read or changed. Not a standing permission.
+Impacts: T148 precondition (spec §17 item 2)
