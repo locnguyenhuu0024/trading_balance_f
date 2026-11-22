@@ -244,10 +244,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const headTilt = reaction?.kind === 'pat' ? 0.18 : 0;
     const headSway = petting && !reducedMotion ? 0.14 * Math.sin(elapsed * 9) : 0;
     bones.head.rotation.z = headTilt + headSway;
-    if (bones.leftUpperArm) bones.leftUpperArm.rotation.z = 1.2;
-    if (bones.rightUpperArm) bones.rightUpperArm.rotation.z = -1.2;
-    if (bones.leftLowerArm) bones.leftLowerArm.rotation.z = 0.15;
-    if (bones.rightLowerArm) bones.rightLowerArm.rotation.z = -0.15;
+    if (bones.leftUpperArm) bones.leftUpperArm.rotation.z = -1.2;
+    if (bones.rightUpperArm) bones.rightUpperArm.rotation.z = 1.2;
+    if (bones.leftLowerArm) bones.leftLowerArm.rotation.z = -0.15;
+    if (bones.rightLowerArm) bones.rightLowerArm.rotation.z = 0.15;
 
     if (vrm.lookAt && pointer) {
       bones.head.getWorldPosition(headPosition).project(camera);
