@@ -52,6 +52,8 @@ dependencies:
   local_auth: ^3.0.1
   flutter_background_service: ^5.1.0
   flutter_local_notifications: ^21.0.0
+  webview_flutter: ^4.14.1
+  web: ^1.1.0
 
 dev_dependencies:
   flutter_test:
