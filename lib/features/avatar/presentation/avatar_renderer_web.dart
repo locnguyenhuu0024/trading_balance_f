@@ -5,14 +5,27 @@ import 'dart:ui_web' as ui_web;
 import 'package:flutter/widgets.dart';
 import 'package:web/web.dart' as web;
 
+import '../domain/avatar_model.dart';
 import '../domain/avatar_mood.dart';
 import 'avatar_renderer.dart';
 
-AvatarRenderer createPlatformAvatarRenderer() => _WebAvatarRenderer();
+AvatarRenderer createPlatformAvatarRenderer(AvatarModel model) =>
+    _WebAvatarRenderer(model);
 
 class _WebAvatarRenderer implements AvatarRenderer {
-  _WebAvatarRenderer() {
-    ui_web.platformViewRegistry.registerViewFactory(_viewType, _createIframe);
+  _WebAvatarRenderer(AvatarModel model) {
+    final src =
+        'assets/assets/avatar/index.html?model='
+        '${Uri.encodeQueryComponent(model.id)}';
+    ui_web.platformViewRegistry.registerViewFactory(
+      _viewType,
+      (int _) => web.HTMLIFrameElement()
+        ..src = src
+        ..tabIndex = -1
+        ..setAttribute('aria-hidden', 'true')
+        ..style.cssText =
+            'border:0;width:100%;height:100%;background:transparent;pointer-events:none;opacity:0',
+    );
     _messages = web.EventStreamProviders.messageEvent
         .forTarget(web.window)
         .listen(_receive);
@@ -28,13 +41,6 @@ class _WebAvatarRenderer implements AvatarRenderer {
   bool _reducedMotion = false;
   bool _ready = false;
   bool _failed = false;
-
-  static web.HTMLIFrameElement _createIframe(int _) => web.HTMLIFrameElement()
-    ..src = 'assets/assets/avatar/index.html'
-    ..tabIndex = -1
-    ..setAttribute('aria-hidden', 'true')
-    ..style.cssText =
-        'border:0;width:100%;height:100%;background:transparent;pointer-events:none;opacity:0';
 
   void _receive(web.MessageEvent message) {
     final frameWindow = _iframe?.contentWindow;

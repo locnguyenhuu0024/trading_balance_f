@@ -22,6 +22,7 @@ import '../../../core/exchange/exchange_models.dart';
 import '../../../core/exchange/exchange_registry.dart';
 import '../../../core/exchange/exchange_scope.dart';
 import '../../../core/exchange/scoped_read.dart';
+import '../../avatar/domain/avatar_model.dart';
 import '../../avatar/domain/avatar_mood.dart';
 import '../../avatar/presentation/floating_avatar.dart';
 import '../../settings/presentation/settings_screen.dart';
@@ -217,6 +218,7 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
 
     final isBalanceHidden = ref.watch(hideBalanceProvider);
     final avatarEnabled = ref.watch(avatarEnabledProvider);
+    final model = avatarModelById(ref.watch(avatarModelIdProvider));
     final avatarAccount = avatarEnabled && !portfolioAsyncValue.hasError
         ? portfolioAsyncValue.valueOrNull
         : null;
@@ -341,7 +343,8 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
               ),
               if (avatarEnabled)
                 FloatingAvatar(
-                  key: const ValueKey('home-avatar'),
+                  key: ValueKey('home-avatar-${model.id}'),
+                  model: model,
                   mood: avatarMoodFor(avatarRatio, hidden: isBalanceHidden),
                 ),
             ],

@@ -1,6 +1,7 @@
-import '../../../core/widgets/scope_bar.dart';
 // File Name: settings_screen.dart
 // File Path: lib/features/settings/presentation/settings_screen.dart
+
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -16,8 +17,11 @@ import '../../../core/typography/app_text_scale.dart';
 import '../../../core/widgets/app_motion.dart';
 import '../../../core/widgets/manual_refresh_button.dart';
 import '../../../core/widgets/responsive_form_content.dart';
+import '../../../core/widgets/scope_bar.dart';
+import '../../avatar/domain/avatar_model.dart';
 import '../../fractal_tracker/presentation/providers/fractal_provider.dart';
 import '../../portfolio/presentation/portfolio_screen.dart';
+import 'settings_avatar_model_page.dart';
 import 'settings_trade_access_page.dart';
 
 // --- Các Provider quản lý cấu hình toàn cục ---
@@ -75,6 +79,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   Future<void> _loadSavedPreferences() async {
     final storage = ref.read(secureStorageProvider);
+    unawaited(_loadSavedAvatarModel(storage));
     final hideBalance = await storage.getHideBalanceDefault();
     final bioAuth = await storage.getBiometricAuth();
     final themeModeStr = await storage.getThemeMode();
@@ -111,6 +116,27 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
     if (mounted && !_hasUserChangedAvatar) {
       ref.read(avatarEnabledProvider.notifier).state = avatarEnabled;
+    }
+  }
+
+  Future<void> _loadSavedAvatarModel(SecureStorageHelper storage) async {
+    var selectionChanged = false;
+    final subscription = ref.listenManual(
+      avatarModelIdProvider,
+      (_, _) => selectionChanged = true,
+    );
+
+    var modelId = defaultAvatarModelId;
+    try {
+      modelId = avatarModelById(await storage.getAvatarModelId()).id;
+    } catch (_) {
+      // Use the default when the preference cannot be read.
+    } finally {
+      if (mounted) subscription.close();
+    }
+
+    if (mounted && !selectionChanged) {
+      ref.read(avatarModelIdProvider.notifier).state = modelId;
     }
   }
 
@@ -318,6 +344,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final hideBalanceDefault = ref.watch(defaultHideBalanceProvider);
     final bioAuth = ref.watch(biometricAuthProvider);
     final avatarEnabled = ref.watch(avatarEnabledProvider);
+    final avatarModel = avatarModelById(ref.watch(avatarModelIdProvider));
     final timeZoneId = ref.watch(appTimeZoneProvider);
     final appTextScale = ref.watch(appTextScaleProvider);
     final backendFeaturesEnabled = ref.watch(backendFeaturesEnabledProvider);
@@ -696,11 +723,25 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                   ? null
                                   : _saveAvatarEnabled,
                             ),
+                            ListTile(
+                              key: const Key('settings-avatar-model-button'),
+                              title: const Text('Chọn nhân vật'),
+                              subtitle: Text(avatarModel.name),
+                              trailing: const Icon(Icons.chevron_right),
+                              enabled: avatarEnabled,
+                              onTap: avatarEnabled
+                                  ? () => Navigator.of(context).push(
+                                      MaterialPageRoute<void>(
+                                        builder: (_) =>
+                                            const SettingsAvatarModelPage(),
+                                      ),
+                                    )
+                                  : null,
+                            ),
                             Padding(
                               padding: const EdgeInsets.fromLTRB(52, 0, 16, 12),
                               child: Text(
-                                'Nhân vật 3D: VRM1_Constraint_Twist_Sample '
-                                '© 2022 pixiv Inc. (VRM Public License 1.0)',
+                                avatarModel.credit,
                                 key: const Key('settings-avatar-credit'),
                                 style: TextStyle(
                                   color: sectionTitleColor,

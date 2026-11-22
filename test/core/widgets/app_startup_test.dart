@@ -10,6 +10,7 @@ import 'package:trading_balance_f/core/exchange/exchange_scope.dart';
 import 'package:trading_balance_f/core/timezone/app_time_zone.dart';
 import 'package:trading_balance_f/core/typography/app_text_scale.dart';
 import 'package:trading_balance_f/core/widgets/app_startup.dart';
+import 'package:trading_balance_f/features/avatar/domain/avatar_model.dart';
 import 'package:trading_balance_f/main.dart' as app;
 import 'package:trading_balance_f/features/portfolio/presentation/portfolio_screen.dart'
     show hideBalanceProvider;
@@ -24,6 +25,8 @@ class _StartupStorage extends SecureStorageHelper {
     this.selection = 'okx-default',
     this.failSelection = false,
     this.failAvatarRead = false,
+    this.failAvatarModelRead = false,
+    this.avatarModelId,
   }) : super(const FlutterSecureStorage());
 
   final bool failBiometricRead;
@@ -32,6 +35,14 @@ class _StartupStorage extends SecureStorageHelper {
   final String selection;
   final bool failSelection;
   final bool failAvatarRead;
+  final bool failAvatarModelRead;
+  final String? avatarModelId;
+
+  @override
+  Future<String?> getAvatarModelId() async {
+    if (failAvatarModelRead) throw StateError('unreadable avatar model');
+    return avatarModelId;
+  }
 
   @override
   Future<bool> getAvatarEnabled() async {
@@ -86,6 +97,74 @@ class _StartupStorage extends SecureStorageHelper {
 }
 
 void main() {
+  for (final failRead in [true, false]) {
+    testWidgets(
+      'RED-150 ${failRead ? 'failed read' : 'unknown id'} defaults to Pixiv Sample',
+      (tester) async {
+        final storage = _StartupStorage(
+          failAvatarModelRead: failRead,
+          avatarModelId: 'unknown',
+        );
+        addTearDown(storage.dispose);
+        final startup = await app.initializeAppStartup(
+          isWeb: false,
+          createNativeStorage: () => storage,
+          initializeTimeZone: () {},
+          retireLegacyBackgroundService: () async {},
+        );
+        expect(startup.avatarModelId, 'pixiv-sample');
+
+        await tester.pumpWidget(
+          app.buildInitializedApp(
+            startup,
+            home: Consumer(
+              builder: (_, ref, _) => Text(ref.watch(avatarModelIdProvider)),
+            ),
+          ),
+        );
+        expect(find.text('pixiv-sample'), findsOneWidget);
+      },
+    );
+  }
+
+  for (final isWeb in [false, true]) {
+    testWidgets(
+      'GREEN-150 persists and restores Donut-Chan on ${isWeb ? 'web' : 'native'}',
+      (tester) async {
+        if (isWeb) {
+          SharedPreferences.setMockInitialValues({});
+        } else {
+          FlutterSecureStorage.setMockInitialValues({});
+          addTearDown(() => FlutterSecureStorage.setMockInitialValues({}));
+        }
+
+        Future<app.AppStartupData> start() => app.initializeAppStartup(
+          isWeb: isWeb,
+          initializeTimeZone: () {},
+          retireLegacyBackgroundService: () async {},
+        );
+
+        final first = await start();
+        addTearDown(first.secureStorage.dispose);
+        expect(first.avatarModelId, 'pixiv-sample');
+        await first.secureStorage.saveAvatarModelId('donut-chan');
+
+        final startup = await start();
+        addTearDown(startup.secureStorage.dispose);
+        expect(startup.avatarModelId, 'donut-chan');
+        await tester.pumpWidget(
+          app.buildInitializedApp(
+            startup,
+            home: Consumer(
+              builder: (_, ref, _) => Text(ref.watch(avatarModelIdProvider)),
+            ),
+          ),
+        );
+        expect(find.text('donut-chan'), findsOneWidget);
+      },
+    );
+  }
+
   test('RED-147 avatar read failure defaults to off', () async {
     final storage = _StartupStorage(failAvatarRead: true);
     addTearDown(storage.dispose);

@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/currency/currency_display_mode.dart';
 import 'package:trading_balance_f/core/network/okx_websocket_service.dart';
+import 'package:trading_balance_f/features/avatar/domain/avatar_model.dart';
 import 'package:trading_balance_f/features/avatar/domain/avatar_mood.dart';
 import 'package:trading_balance_f/features/avatar/presentation/avatar_renderer.dart';
 import 'package:trading_balance_f/features/market/presentation/providers/market_provider.dart';
@@ -24,13 +25,55 @@ const _sixPercent = OkxAccountData(
 );
 
 void main() {
+  testWidgets('GREEN-150 switching models replaces the loading renderer', (
+    tester,
+  ) async {
+    final createdModels = <AvatarModel>[];
+    final renderers = <FakeAvatarRenderer>[];
+    final container = await _mountPortfolio(
+      tester,
+      load: () async => _sixPercent,
+      factory: (model) {
+        createdModels.add(model);
+        final renderer = FakeAvatarRenderer();
+        renderers.add(renderer);
+        return renderer;
+      },
+    );
+    expect(createdModels.single.id, 'pixiv-sample');
+    expect(
+      find.byKey(const ValueKey('home-avatar-pixiv-sample')),
+      findsOneWidget,
+    );
+
+    container.read(avatarModelIdProvider.notifier).state = 'donut-chan';
+    await tester.pump();
+
+    expect(createdModels.map((model) => model.id), [
+      'pixiv-sample',
+      'donut-chan',
+    ]);
+    expect(createdModels.last.file, 'donut-chan.vrm');
+    expect(renderers.first.disposed, isTrue);
+    expect(renderers.last.disposed, isFalse);
+    expect(
+      find.byKey(const ValueKey('home-avatar-pixiv-sample')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('home-avatar-donut-chan')),
+      findsOneWidget,
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('RED setting off creates no renderer', (tester) async {
     var creations = 0;
     await _mountPortfolio(
       tester,
       enabled: false,
       load: () async => _sixPercent,
-      factory: () {
+      factory: (_) {
         creations++;
         return FakeAvatarRenderer();
       },
@@ -48,7 +91,7 @@ void main() {
     await _mountPortfolio(
       tester,
       load: () => pending.future,
-      factory: () => renderer,
+      factory: (_) => renderer,
     );
     expect(renderer.moods, [AvatarMood.neutral]);
 
@@ -66,7 +109,7 @@ void main() {
       tester,
       hidden: true,
       load: () async => _sixPercent,
-      factory: () => renderer,
+      factory: (_) => renderer,
     );
     expect(find.byKey(const Key('portfolio-asset-summary')), findsOneWidget);
     expect(renderer.moods, [AvatarMood.neutral]);
@@ -85,7 +128,7 @@ void main() {
         reads++;
         return reads == 1 ? Future.value(_sixPercent) : refresh.future;
       },
-      factory: () => renderer,
+      factory: (_) => renderer,
     );
     expect(renderer.moods.last, AvatarMood.strongHappy);
 
@@ -111,7 +154,7 @@ void main() {
           reads++;
           return _sixPercent;
         },
-        factory: () {
+        factory: (_) {
           creations++;
           return renderer;
         },
@@ -139,7 +182,7 @@ void main() {
         tester,
         enabled: false,
         load: () async => _sixPercent,
-        factory: () => renderer,
+        factory: (_) => renderer,
       );
 
       container.read(avatarEnabledProvider.notifier).state = true;

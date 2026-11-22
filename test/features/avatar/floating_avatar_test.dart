@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:trading_balance_f/features/avatar/domain/avatar_model.dart';
 import 'package:trading_balance_f/features/avatar/domain/avatar_mood.dart';
 import 'package:trading_balance_f/features/avatar/presentation/avatar_renderer.dart';
 import 'package:trading_balance_f/features/avatar/presentation/floating_avatar.dart';
@@ -191,7 +192,7 @@ Future<void> _mount(
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
-        avatarRendererFactoryProvider.overrideWithValue(() => renderer),
+        avatarRendererFactoryProvider.overrideWithValue((_) => renderer),
       ],
       child: MaterialApp(
         home: Builder(
@@ -199,11 +200,16 @@ Future<void> _mount(
             data: MediaQuery.of(
               context,
             ).copyWith(disableAnimations: reducedMotion),
-            child: const Scaffold(
+            child: Scaffold(
               body: SizedBox.expand(
                 key: _frameKey,
                 child: Stack(
-                  children: [FloatingAvatar(mood: AvatarMood.neutral)],
+                  children: [
+                    FloatingAvatar(
+                      model: avatarModelById(null),
+                      mood: AvatarMood.neutral,
+                    ),
+                  ],
                 ),
               ),
             ),

@@ -81,7 +81,7 @@ void main() {
     );
     expect(
       credit.data,
-      'Nhân vật 3D: VRM1_Constraint_Twist_Sample © 2022 pixiv Inc. '
+      'VRM1_Constraint_Twist_Sample © 2022 pixiv Inc. '
       '(VRM Public License 1.0)',
     );
 

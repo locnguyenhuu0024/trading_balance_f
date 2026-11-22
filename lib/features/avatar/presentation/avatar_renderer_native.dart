@@ -6,19 +6,22 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import '../domain/avatar_model.dart';
 import '../domain/avatar_mood.dart';
 import 'avatar_renderer.dart';
 
-AvatarRenderer createPlatformAvatarRenderer() => _NativeAvatarRenderer();
+AvatarRenderer createPlatformAvatarRenderer(AvatarModel model) =>
+    _NativeAvatarRenderer(model);
 
 class _NativeAvatarRenderer implements AvatarRenderer {
-  _NativeAvatarRenderer() {
+  _NativeAvatarRenderer(this._model) {
     unawaited(_loadPage());
   }
 
   static const _channel = 'AvatarChannel';
   static const _chunkSize = 512 * 1024;
 
+  final AvatarModel _model;
   final _controller = WebViewController();
   final _events = StreamController<AvatarEvent>();
   AvatarMood _mood = AvatarMood.neutral;
@@ -85,8 +88,9 @@ class _NativeAvatarRenderer implements AvatarRenderer {
         if (_paused) _send({'type': 'setPaused', 'paused': true}),
       ]);
       if (!_active) return;
-      final model = await rootBundle.load('assets/avatar/avatar.vrm');
-      final bytes = Uint8List.sublistView(model);
+      final data = await rootBundle.load('assets/avatar/${_model.file}');
+      if (!_active) return;
+      final bytes = Uint8List.sublistView(data);
       final count = (bytes.length + _chunkSize - 1) ~/ _chunkSize;
       for (var index = 0; index < count && _active; index++) {
         final start = index * _chunkSize;

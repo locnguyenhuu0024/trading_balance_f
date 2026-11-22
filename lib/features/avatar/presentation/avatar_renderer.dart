@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../domain/avatar_model.dart';
 import '../domain/avatar_mood.dart';
 import 'avatar_renderer_native.dart'
     if (dart.library.js_interop) 'avatar_renderer_web.dart';
@@ -42,7 +43,7 @@ abstract class AvatarRenderer {
   void dispose();
 }
 
-typedef AvatarRendererFactory = AvatarRenderer Function();
+typedef AvatarRendererFactory = AvatarRenderer Function(AvatarModel model);
 
 final avatarRendererFactoryProvider = Provider<AvatarRendererFactory>(
   (ref) => createPlatformAvatarRenderer,

@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 
+import 'domain/avatar_model.dart';
+
 abstract final class _AvatarLicenses {
   static bool registered = false;
 }
@@ -13,11 +15,11 @@ void registerAvatarLicenses() {
     yield const LicenseEntryWithLineBreaks([
       '@pixiv/three-vrm',
     ], _threeVrmLicense);
-    yield const LicenseEntryWithLineBreaks(
-      ['VRM1_Constraint_Twist_Sample (VRM model)'],
-      'VRM1_Constraint_Twist_Sample (c) 2022 pixiv Inc. '
-      'Licensed under VRM Public License 1.0 (https://vrm.dev/licenses/1.0/).',
-    );
+    for (final model in avatarModels) {
+      yield LicenseEntryWithLineBreaks([
+        '${model.name} (VRM model)',
+      ], model.licenseText);
+    }
   });
 }
 

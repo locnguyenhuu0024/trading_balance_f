@@ -5,11 +5,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../domain/avatar_model.dart';
 import '../domain/avatar_mood.dart';
 import 'avatar_renderer.dart';
 
 class FloatingAvatar extends ConsumerStatefulWidget {
-  const FloatingAvatar({super.key, required this.mood});
+  const FloatingAvatar({super.key, required this.model, required this.mood});
+
+  final AvatarModel model;
 
   final AvatarMood mood;
 
@@ -35,7 +38,7 @@ class _FloatingAvatarState extends ConsumerState<FloatingAvatar>
   @override
   void initState() {
     super.initState();
-    _renderer = ref.read(avatarRendererFactoryProvider)();
+    _renderer = ref.read(avatarRendererFactoryProvider)(widget.model);
     _events = _renderer.events.listen(_onAvatarEvent);
     _renderer.setMood(widget.mood);
     final binding = WidgetsBinding.instance;

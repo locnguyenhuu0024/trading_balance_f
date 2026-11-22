@@ -20,6 +20,7 @@ import 'core/typography/app_text_scale.dart';
 import 'core/widgets/app_page_transition.dart';
 import 'core/widgets/app_startup.dart';
 import 'features/avatar/avatar_licenses.dart';
+import 'features/avatar/domain/avatar_model.dart';
 import 'features/portfolio/presentation/portfolio_screen.dart'
     show hideBalanceProvider;
 import 'features/settings/presentation/settings_screen.dart';
@@ -35,6 +36,7 @@ class AppStartupData {
     required this.timeZoneId,
     required this.appTextScale,
     this.avatarEnabled = false,
+    this.avatarModelId = defaultAvatarModelId,
     this.selectedConnectionId = defaultConnectionId,
   });
 
@@ -46,6 +48,7 @@ class AppStartupData {
   final String timeZoneId;
   final double appTextScale;
   final bool avatarEnabled;
+  final String avatarModelId;
   final String selectedConnectionId;
 }
 
@@ -110,6 +113,13 @@ Future<AppStartupData> initializeAppStartup({
     debugPrint('Avatar preference restoration failed; using the default.');
   }
 
+  var avatarModelId = defaultAvatarModelId;
+  try {
+    avatarModelId = avatarModelById(await helper.getAvatarModelId()).id;
+  } catch (_) {
+    debugPrint('Avatar model restoration failed; using the default.');
+  }
+
   var selectedConnectionId = defaultConnectionId;
   try {
     selectedConnectionId = await helper.getSelectedConnectionId();
@@ -131,6 +141,7 @@ Future<AppStartupData> initializeAppStartup({
     timeZoneId: initialTimeZoneId,
     appTextScale: appTextScale,
     avatarEnabled: avatarEnabled,
+    avatarModelId: avatarModelId,
     selectedConnectionId: selectedConnectionId,
   );
 }
@@ -165,6 +176,9 @@ Widget buildInitializedApp(AppStartupData startup, {Widget? home}) {
       appTimeZoneProvider.overrideWith((ref) => startup.timeZoneId),
       appTextScaleProvider.overrideWith((ref) => startup.appTextScale),
       avatarEnabledProvider.overrideWith((ref) => startup.avatarEnabled),
+      avatarModelIdProvider.overrideWith(
+        (ref) => avatarModelById(startup.avatarModelId).id,
+      ),
     ],
     child: TradingBalanceApp(
       requireBiometrics: startup.requireBiometrics,
@@ -511,6 +525,18 @@ class WebStorageHelper extends SecureStorageHelper {
     );
     if (!didSave) {
       throw StateError('Unable to save the avatar preference on the web.');
+    }
+  }
+
+  @override
+  Future<String?> getAvatarModelId() async =>
+      _prefs.getString('AVATAR_MODEL_ID');
+
+  @override
+  Future<void> saveAvatarModelId(String id) async {
+    final didSave = await _prefs.setString('AVATAR_MODEL_ID', id);
+    if (!didSave) {
+      throw StateError('Unable to save the avatar model on the web.');
     }
   }
 
