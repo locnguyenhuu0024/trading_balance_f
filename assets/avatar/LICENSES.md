@@ -51,8 +51,18 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ## VRM1_Constraint_Twist_Sample
 
+Bundled as `pixiv-sample.vrm` and `pixiv-sample.png`.
+
 Copyright (c) 2022 pixiv Inc.
 
 [VRM Public License 1.0](https://vrm.dev/licenses/1.0/)
 
 [Original VRM1_Constraint_Twist_Sample model](https://raw.githubusercontent.com/vrm-c/vrm-specification/master/samples/VRM1_Constraint_Twist_Sample/vrm/VRM1_Constraint_Twist_Sample.vrm)
+
+## Donut-Chan
+
+Bundled as `donut-chan.vrm` and `donut-chan.png`.
+
+Kana Fuyuko. Public Domain.
+
+[Original Donut-Chan model, BOOTH item 5975245](https://booth.pm/en/items/5975245)

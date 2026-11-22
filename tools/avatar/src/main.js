@@ -5,9 +5,12 @@ import {
 import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
 import {VRMLoaderPlugin, VRMUtils} from '@pixiv/three-vrm';
 import {connect, send} from './bridge.js';
+import {frame as frameAvatar} from './framing.js';
 import {createClassifier} from './gesture.js';
 import {createHitTest} from './hit.js';
 import {motion, step, targets} from './mood.js';
+import {resolveModel} from './models.js';
+import {axisSign, restPose} from './pose.js';
 
 const FRAME_MS = 1000 / 30;
 const MAX_DELTA = 1 / 15;
@@ -49,6 +52,11 @@ document.addEventListener('DOMContentLoaded', () => {
   let renderer;
   let vrm;
   let bones;
+  let halfHeight = camera.top;
+  let baseYaw;
+  let boneSign;
+  let armPose;
+  let surpriseExpression;
   let failed = false;
   let loading = false;
   let loadedFrame = false;
@@ -97,7 +105,24 @@ document.addEventListener('DOMContentLoaded', () => {
         leftLowerArm: bone('leftLowerArm'),
         rightLowerArm: bone('rightLowerArm'),
       };
+      const isVrm0 = vrm.meta?.metaVersion === '0';
+      baseYaw = isVrm0 ? Math.PI : 0;
+      boneSign = axisSign(isVrm0);
+      armPose = restPose(isVrm0);
+      const expressions = vrm.expressionManager;
+      surpriseExpression = expressions?.getExpression('surprised') ? 'surprised' : 'Surprised';
+      vrm.scene.rotation.y = baseYaw;
       scene.add(vrm.scene);
+      vrm.scene.updateMatrixWorld(true);
+      const framing = frameAvatar({
+        headY: bones.head.getWorldPosition(headPosition).y,
+        hipsY: bones.hips.getWorldPosition(headPosition).y,
+      });
+      camera.position.y = framing.centerY;
+      halfHeight = framing.halfHeight;
+      camera.top = halfHeight;
+      camera.bottom = -halfHeight;
+      resize();
       syncLoop();
     } catch (error) {
       fail('load', error);
@@ -204,13 +229,15 @@ document.addEventListener('DOMContentLoaded', () => {
   function resize() {
     const width = canvas.clientWidth;
     const height = canvas.clientHeight;
-    if (!width || !height) return;
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.setSize(width, height, false);
-    const halfWidth = 0.47 * width / height;
-    camera.left = -halfWidth;
-    camera.right = halfWidth;
+    if (width && height) {
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 3));
+      renderer.setSize(width, height, false);
+      const halfWidth = halfHeight * width / height;
+      camera.left = -halfWidth;
+      camera.right = halfWidth;
+    }
     camera.updateProjectionMatrix();
+    camera.updateMatrixWorld();
   }
 
   function pose(dt) {
@@ -229,7 +256,7 @@ document.addEventListener('DOMContentLoaded', () => {
     for (const name of EXPRESSIONS) {
       const target = name === 'blink' && elapsed < blinkEnd ? 1 : (expression[name] ?? 0);
       weights[name] = step(weights[name], target, dt, name === 'blink' ? 28 : 9);
-      vrm.expressionManager?.setValue(name, weights[name]);
+      vrm.expressionManager?.setValue(name === 'surprised' ? surpriseExpression : name, weights[name]);
     }
 
     const reducedMotion = hostReducedMotion || motionPreference.matches;
@@ -238,16 +265,16 @@ document.addEventListener('DOMContentLoaded', () => {
     vrm.scene.position.y = reducedMotion ? 0 : bounce * (1 - Math.cos(elapsed * 6)) / 2;
     vrm.scene.rotation.z = idle * 0.022;
     if (!pointer || pointer.region === 'head') yaw *= Math.exp(-4 * dt);
-    vrm.scene.rotation.y = yaw;
-    bones.chest.rotation.x = idle * 0.024;
-    bones.head.rotation.x = -headPitch;
+    vrm.scene.rotation.y = baseYaw + yaw;
+    bones.chest.rotation.x = boneSign * idle * 0.024;
+    bones.head.rotation.x = -boneSign * headPitch;
     const headTilt = reaction?.kind === 'pat' ? 0.18 : 0;
     const headSway = petting && !reducedMotion ? 0.14 * Math.sin(elapsed * 9) : 0;
-    bones.head.rotation.z = headTilt + headSway;
-    if (bones.leftUpperArm) bones.leftUpperArm.rotation.z = -1.2;
-    if (bones.rightUpperArm) bones.rightUpperArm.rotation.z = 1.2;
-    if (bones.leftLowerArm) bones.leftLowerArm.rotation.z = -0.15;
-    if (bones.rightLowerArm) bones.rightLowerArm.rotation.z = 0.15;
+    bones.head.rotation.z = boneSign * (headTilt + headSway);
+    if (bones.leftUpperArm) bones.leftUpperArm.rotation.z = armPose.leftUpperArmZ;
+    if (bones.rightUpperArm) bones.rightUpperArm.rotation.z = armPose.rightUpperArmZ;
+    if (bones.leftLowerArm) bones.leftLowerArm.rotation.z = armPose.leftLowerArmZ;
+    if (bones.rightLowerArm) bones.rightLowerArm.rotation.z = armPose.rightLowerArmZ;
 
     if (vrm.lookAt && pointer) {
       bones.head.getWorldPosition(headPosition).project(camera);
@@ -304,7 +331,7 @@ document.addEventListener('DOMContentLoaded', () => {
   send({v: 1, type: 'ready', version: 1});
   try {
     canvas.addEventListener('webglcontextlost', () => fail('webgl', 'WebGL context lost'));
-    renderer = new WebGLRenderer({canvas, alpha: true, antialias: false, powerPreference: 'low-power'});
+    renderer = new WebGLRenderer({canvas, alpha: true, antialias: true, powerPreference: 'low-power'});
     renderer.setClearColor(0x000000, 0);
     resize();
     window.addEventListener('resize', resize);
@@ -315,7 +342,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   if (!native && !failed) {
     loadModel(async () => {
-      const response = await fetch('avatar.vrm', {redirect: 'error'});
+      const response = await fetch(resolveModel(location.search), {redirect: 'error'});
       if (!response.ok) throw new Error(`Model load failed (${response.status})`);
       return response.arrayBuffer();
     });
