@@ -106,3 +106,15 @@ Decision: parts hair, eyes, top, bottom (incl. one-piece dress), shoes, accessor
 - CD-10: Bridge `setColors {colors:{part:'#rrggbb'}}` always carries the full state (missing = original, `{}` = reset); page stores it, applies after model load before the first frame, coalesces updates to ≤ 1 per 100 ms. Parts per model are static in the Flutter catalog.
 - CD-11: Customize page edits a draft: preview updates live; "Lưu" persists and updates the home avatar; back with unsaved changes asks to discard; "Khôi phục mặc định" clears the draft (saved on "Lưu").
 - CD-12: Storage: one key `AVATAR_COLORS` = JSON `{modelId: {part: "#rrggbb"}}`, tolerant decode (bad data dropped), native + web, startup preload.
+
+## Revision 3.1 (2026-11-24) — fix Donut-Chan part mapping and initial colours
+
+### D-043 — Donut-Chan parts follow its outfit
+Source: user after T152 device findings (AUD-152-1). Decision: Donut-Chan customization parts = Tóc, Mắt, Váy (pinafore + blouse + hem), Nơ & huy hiệu, Tất, Giày, Miếng dán, Phụ kiện (ears + tail). Pixiv Sample keeps Tóc, Mắt, Áo, Quần/Váy, Giày.
+
+### D-044 — Colour wheel starts at the part's original colour
+Source: user (AUD-152-2). Decision: an unset part shows and starts from its measured original mean colour, not black.
+
+### Coordinator design decisions
+- CD-13: Runtime part rules are an ordered list: exact Donut-Chan material-name prefixes first (unique to that model), then the generic VRoid regexes. No model id needed on the page (native receives bytes only).
+- CD-14: Existing saved Donut-Chan `top`/`bottom` colours are dropped by `restrictTo(parts)` (those parts no longer exist for that model) — effectively a reset for Donut-Chan only.

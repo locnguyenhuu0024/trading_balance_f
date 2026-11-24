@@ -312,3 +312,35 @@ Status: READY_FOR_PLAN. Decisions D-040..D-042, CD-9..CD-12. Fan-out RSN-005 (ru
 
 ### Protected configuration (user-owned)
 `pubspec.yaml` → `dependencies:` add `flutter_colorpicker: ^1.1.0`; run `flutter pub get`. Blocks T152 build: YES.
+
+## Revision 3.1 — Donut-Chan part mapping and initial colours (2026-11-24)
+
+Status: READY_FOR_PLAN. Decisions D-043, D-044, CD-13, CD-14. Findings AUD-152-1, AUD-152-2.
+
+### Observed facts (coordinator probe, solid-green per material, front + back renders)
+| ID | Material (Donut-Chan) | Visible as |
+|---|---|---|
+| OBS-235 | `N00_002_03_Tops_01_CLOTH_02` | pinafore dress + blouse |
+| OBS-236 | `N00_002_03_Tops_01_CLOTH_03` | small back hem |
+| OBS-237 | `N00_002_03_Tops_01_CLOTH_01` | big back bow |
+| OBS-238 | `N00_007_01_Tops_01_CLOTH_02` | neck bow |
+| OBS-239 | `N00_007_01_Tops_01_CLOTH_01` | chest donut badge |
+| OBS-240 | `N00_010_01_Onepiece_00_CLOTH_01`, `_CLOTH_02` | socks and leg straps |
+| OBS-241 | `N00_010_01_Onepiece_00_CLOTH_03` | arm plasters |
+| OBS-242 | `N00_008_01_Shoes_01_CLOTH_01`, `_CLOTH_02` | shoes |
+| OBS-243 | `Accessory_CatEar_01_CLOTH`, `Accessory_FoxTail_01_CLOTH` | ears, tail |
+
+Measured original mean colours (opaque pixels of each part's main texture):
+pixiv-sample — hair `#6d4b3a`, eyes `#0f0904`, top `#f8f6f6`, bottom `#050505`, shoes `#929aab`;
+donut-chan — hair `#c4b68b`, eyes `#415130`, dress `#f7bdc0`, bows `#f8a5b0`, socks `#f5b4bd`, shoes `#f0bec4`, plasters `#d6cac6`, accessory `#e5d9b6`.
+
+### Requirements
+- REQ-226 (runtime rules): `PARTS` = hair, eyes, top, bottom, shoes, accessory, dress, bows, socks, plasters. `partForMaterial(name)` checks, in order: `N00_002_03_Tops_01_CLOTH_02` / `N00_002_03_Tops_01_CLOTH_03` → dress; `N00_002_03_Tops_01_CLOTH_01` / `N00_007_01_Tops_01_CLOTH_01` / `N00_007_01_Tops_01_CLOTH_02` → bows; `N00_010_01_Onepiece_00_CLOTH_01` / `_CLOTH_02` → socks; `N00_010_01_Onepiece_00_CLOTH_03` → plasters; then the generic rules of REQ-221 (prefix match tolerates ` (Instance)` / ` (Outline)` suffixes). Protocol accepts the extended PARTS.
+- REQ-227 (Flutter parts): `AvatarPart` gains `dress` (Váy), `bows` (Nơ & huy hiệu), `socks` (Tất), `plasters` (Miếng dán); donut-chan parts = [hair, eyes, dress, bows, socks, shoes, plasters, accessory] in that order; pixiv-sample unchanged.
+- REQ-228 (initial colours): `AvatarModel` carries an original swatch per part (values above); an unset part's chip shows that swatch (labelled "Mặc định" in Semantics) and the colour wheel starts from it; touching the wheel sets a colour, "Khôi phục mặc định" still clears.
+
+### Acceptance criteria
+- AC-227: node tests — every Donut-Chan material listed above maps to its part; Pixiv mapping unchanged; GLB coverage: each declared part of each model matches ≥ 1 material.
+- AC-228: coordinator browser check — Donut-Chan `dress` recolors pinafore + blouse only, `bows` the bows + badge, `socks` the socks, `plasters` the plasters.
+- AC-229: Flutter tests — donut-chan chips are the 8 parts in order; pixiv unchanged; unset chip shows the original swatch and the picker starts from it; stale donut `top`/`bottom` colours are dropped.
+- AC-230: iOS simulator check of the Donut-Chan customize page.

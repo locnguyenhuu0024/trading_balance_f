@@ -178,6 +178,7 @@ Default off. Rollback: revert feature files; user removes pubspec entries.
 | Revision | Change | Reason |
 |---|---|---|
 | 1.1 | Executor-facing file names aligned to dispatcher allowlist; `web: ^0.5.1`; offline deps cache pre-staged by coordinator for T146 (downloads authorized by plan approval) | Execution-time constraints; no scope/requirement change. Approved revision 1 remains the governing plan. |
+| 3.1 | Revision 3.1 added (Donut part mapping, initial colours) — READY_FOR_APPROVAL | T152 device findings |
 | 3.0 | Revision 3 added (colour customization) — READY_FOR_APPROVAL | User request 2026-11-24 |
 | 2.0 | Revision 2 added (model picker, Donut-Chan, quality) — READY_FOR_APPROVAL | User request 2026-11-22 |
 | 1.2 | D-035 model switch; T146 remediation R01 (arm rest pose, per-chunk base64, CSP `file:`, live swipe yaw, model swap) | T146 audit REWORK + user decision |
@@ -254,3 +255,17 @@ T151: node tests, bundle build, coordinator browser recolor check of both models
 | RISK-221 | Recolor jank on low-end Android while dragging (Donut top 5.2 Mpx) | cached luminance, changed parts only, 100 ms coalescing both sides |
 | RISK-222 | Extra memory for caches (~15–20 MB worst case) | lazy per part; freed on teardown |
 | RISK-223 | Hair highlights (emissive) keep original hue | accepted for now; revisit after visual check |
+
+## Revision 3.1 — Donut-Chan part mapping and initial colours (2026-11-24)
+
+Plan ID: PLAN-20261124-pnl-avatar-3d-r3b
+Status: READY_FOR_APPROVAL
+Implements: REQ-226..REQ-228; AC-227..AC-230. Decisions D-043, D-044, CD-13, CD-14.
+Planning workstreams: remediation of revision 3 contracts; evidence gathered by coordinator probe (OBS-235..243); fan-out record of revision 3 (RSN-005/006, PASS) applies.
+
+| Task | REQ/AC | Depends | Class | Route | Allowed writes |
+|---|---|---|---|---|---|
+| T153 runtime part rules | REQ-226; AC-227, AC-228 | T151, T152 PASS | E2 | gpt-6.2-sol / low | `tools/avatar/src/recolor.js`, `tools/avatar/test/recolor.test.js`, `tools/avatar/test/protocol.test.js`, `tools/avatar/test/models.test.js`, `tools/avatar/README.md`, `assets/avatar/avatar.bundle.js` |
+| T154 Flutter parts + swatches | REQ-227, REQ-228; AC-229, AC-230 | T153 PASS | E2 | gpt-6.2-sol / low | `lib/features/avatar/domain/avatar_colors.dart`, `lib/features/avatar/domain/avatar_model.dart`, `lib/features/settings/presentation/settings_avatar_customize_page.dart`, `test/features/avatar/avatar_colors_test.dart`, `test/features/avatar/avatar_model_test.dart`, `test/features/settings/settings_avatar_customize_page_test.dart` |
+
+Verification: T153 node tests + bundle rebuild + browser part check; T154 RED/GREEN on host, analyze, web build, V4, iOS simulator.
