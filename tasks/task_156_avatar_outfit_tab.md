@@ -1,6 +1,6 @@
 # Task 156 — Avatar customize: "Phối đồ" tab, outfit storage and renderer wiring
 
-Status: READY
+Status: PASS
 Agent Role: implementation_executor
 Executor Class: E3
 Target Model: gpt-6.2-sol
@@ -63,11 +63,17 @@ Same files plus `test/features/portfolio/portfolio_avatar_test.dart`, `test/feat
 
 ### Task Buildability Gate
 Command: `flutter analyze --no-pub --no-fatal-infos --no-fatal-warnings && flutter build web --no-pub`
-Result: PENDING
+Result: PASS (coordinator, host)
 
 ## 12. Coordinator Audit
 
-Verdict: PENDING
+Attempts `ca14dca8…` (REWORK, AUD-156-1, test only) and R01 `b1d555e0…`. Scope: exact allowlist both times.
+Review: `avatar_outfit.dart` per §6.1 (one item per slot via `equippedItems`, first wins); executor-added `decodeAvatarColorsWithOutfits` is required so borrowed-part colours (e.g. `dress` on Pixiv) survive restart — accepted. Native renderer streams each donor once after `AvatarModelLoaded`, serialized, reusing the 512 KiB chunker; `outfit` errors never hide the view (renderer + `AvatarView`). Home restricts outfit to `itemsForModel` and colours to `effectiveParts`. Customize page: tabs only for models with items, index-switched body, selection falls back to the first part, one `Lưu` writes outfits then colours with two-provider rollback (and re-saves the previous outfit if colours fail), reset touches colours only.
+Host evidence after R01: analyze No issues; RED-156 7/7; GREEN-156 11/11; V4 `flutter test --no-pub` 761/761; builds web ✓, apk debug ✓, iOS simulator ✓.
+iOS Simulator (coordinator, iPhone 16): Pixiv customize page shows tabs "Màu sắc"/"Phối đồ" with original swatches and the picker starting at the original hair colour (AC-230); equipping "Váy Donut-Chan" + "Giày Donut-Chan" streams the donor natively and dresses the preview; colour chips become Tóc/Mắt/Váy/Nơ & huy hiệu/Giày with Donut swatches; recolouring Váy green updates the preview live; "Lưu" then app relaunch → home avatar is Pixiv in the green Donut dress.
+Note (pre-existing, not this task): the picker's Semantics label merges HueRingPicker's "Hex" text.
+Dispatch route: UNVERIFIABLE (explicit gpt-6.2-sol / medium). Buildability: PASS.
+Verdict: PASS
 
 ## 13. Remediation R01 (coordinator audit attempt 1 → REWORK)
 

@@ -36,11 +36,9 @@ void main() {
     (tester) async {
       final fixture = await _open(tester);
       final semantics = tester.ensureSemantics();
-      addTearDown(semantics.dispose);
       expect(find.text('Áo'), findsOneWidget);
       expect(find.text('Quần/Váy'), findsOneWidget);
-      await tester.tap(find.text('Áo'));
-      await tester.pump();
+      await _tapText(tester, 'Áo');
 
       await _tapText(tester, 'Phối đồ');
       expect(find.byType(TabBarView), findsNothing);
@@ -60,12 +58,16 @@ void main() {
       expect(find.text('Quần/Váy'), findsNothing);
       expect(find.text('Váy'), findsOneWidget);
       expect(find.text('Nơ & huy hiệu'), findsOneWidget);
-      expect(find.bySemanticsLabel('Chọn màu Tóc'), findsOneWidget);
+      final hairChip = tester.widget<ChoiceChip>(
+        find.widgetWithText(ChoiceChip, 'Tóc'),
+      );
+      expect(hairChip.selected, isTrue);
       await _tapText(tester, 'Váy');
       expect(
         tester.widget<HueRingPicker>(find.byType(HueRingPicker)).pickerColor,
         const Color(0xfff7bdc0),
       );
+      semantics.dispose();
     },
   );
 
