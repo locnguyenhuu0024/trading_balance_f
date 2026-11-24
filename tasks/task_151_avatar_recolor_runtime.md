@@ -1,6 +1,6 @@
 # Task 151 — Avatar runtime: per-part recolor and `setColors` bridge
 
-Status: PENDING
+Status: READY
 Agent Role: implementation_executor
 Executor Class: E3
 Target Model: gpt-6.2-sol

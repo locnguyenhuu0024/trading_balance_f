@@ -225,7 +225,7 @@ Serial (one writer per checkout): T149 → T150 → final integration (V4, analy
 ## Revision 3 — per-part colour customization (2026-11-24)
 
 Plan ID: PLAN-20261124-pnl-avatar-3d-r3
-Status: READY_FOR_APPROVAL
+Status: APPROVED (user, 2026-11-24)
 Implements: REQ-221..REQ-225; AC-223..AC-226. Decisions D-040..D-042, CD-9..CD-12.
 
 ### Planning workstreams
