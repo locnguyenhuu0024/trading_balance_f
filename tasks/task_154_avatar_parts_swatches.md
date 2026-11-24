@@ -61,3 +61,11 @@ Result: PENDING
 ## 12. Coordinator Audit
 
 Verdict: PENDING
+
+## 13. Remediation R01 (coordinator audit attempt 1 → REWORK)
+
+Attempt `f7a16849…` committed as the starting point (7131067). Host evidence: analyze clean; RED-154 2/2 pass; GREEN-154 2 pass / 1 fail; V4 742 pass / 1 fail.
+AUD-154-1 (Must; test defect): "GREEN-154 Donut-Chan shows ordered parts and original swatches" fails with "A SemanticsHandle was active at the end of the test" — `addTearDown(semantics.dispose)` runs after Flutter's end-of-test handle check. Remove the `addTearDown(semantics.dispose);` line and call `semantics.dispose();` as the last statement of that test body. Nothing else.
+Allowed write files (exact): `test/features/settings/settings_avatar_customize_page_test.dart`.
+RED-154-R01: record `grep -n "addTearDown(semantics.dispose)" test/features/settings/settings_avatar_customize_page_test.dart` (matches) before editing.
+GREEN-154-R01: grep no longer matches and `semantics.dispose();` is present; coordinator reruns GREEN-154 and V4 on host.
