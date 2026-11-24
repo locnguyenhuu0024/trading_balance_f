@@ -22,6 +22,7 @@ import 'core/widgets/app_startup.dart';
 import 'features/avatar/avatar_licenses.dart';
 import 'features/avatar/domain/avatar_colors.dart';
 import 'features/avatar/domain/avatar_model.dart';
+import 'features/avatar/domain/avatar_outfit.dart';
 import 'features/portfolio/presentation/portfolio_screen.dart'
     show hideBalanceProvider;
 import 'features/settings/presentation/settings_screen.dart';
@@ -39,6 +40,7 @@ class AppStartupData {
     this.avatarEnabled = false,
     this.avatarModelId = defaultAvatarModelId,
     this.avatarColors = const {},
+    this.avatarOutfits = const {},
     this.selectedConnectionId = defaultConnectionId,
   });
 
@@ -52,6 +54,7 @@ class AppStartupData {
   final bool avatarEnabled;
   final String avatarModelId;
   final Map<String, AvatarColors> avatarColors;
+  final Map<String, List<String>> avatarOutfits;
   final String selectedConnectionId;
 }
 
@@ -123,9 +126,19 @@ Future<AppStartupData> initializeAppStartup({
     debugPrint('Avatar model restoration failed; using the default.');
   }
 
+  var avatarOutfits = const <String, List<String>>{};
+  try {
+    avatarOutfits = decodeAvatarOutfits(await helper.getAvatarOutfitsJson());
+  } catch (_) {
+    debugPrint('Avatar outfit restoration failed; using defaults.');
+  }
+
   var avatarColors = const <String, AvatarColors>{};
   try {
-    avatarColors = decodeAvatarColorsMap(await helper.getAvatarColorsJson());
+    avatarColors = decodeAvatarColorsWithOutfits(
+      await helper.getAvatarColorsJson(),
+      avatarOutfits,
+    );
   } catch (_) {
     debugPrint('Avatar colour restoration failed; using defaults.');
   }
@@ -153,6 +166,7 @@ Future<AppStartupData> initializeAppStartup({
     avatarEnabled: avatarEnabled,
     avatarModelId: avatarModelId,
     avatarColors: avatarColors,
+    avatarOutfits: avatarOutfits,
     selectedConnectionId: selectedConnectionId,
   );
 }
@@ -188,6 +202,7 @@ Widget buildInitializedApp(AppStartupData startup, {Widget? home}) {
       appTextScaleProvider.overrideWith((ref) => startup.appTextScale),
       avatarEnabledProvider.overrideWith((ref) => startup.avatarEnabled),
       avatarColorsProvider.overrideWith((ref) => startup.avatarColors),
+      avatarOutfitsProvider.overrideWith((ref) => startup.avatarOutfits),
       avatarModelIdProvider.overrideWith(
         (ref) => avatarModelById(startup.avatarModelId).id,
       ),
@@ -560,6 +575,17 @@ class WebStorageHelper extends SecureStorageHelper {
   Future<void> saveAvatarColorsJson(String json) async {
     if (!await _prefs.setString('AVATAR_COLORS', json)) {
       throw StateError('Unable to save avatar colours on the web.');
+    }
+  }
+
+  @override
+  Future<String?> getAvatarOutfitsJson() async =>
+      _prefs.getString('AVATAR_OUTFITS');
+
+  @override
+  Future<void> saveAvatarOutfitsJson(String json) async {
+    if (!await _prefs.setString('AVATAR_OUTFITS', json)) {
+      throw StateError('Unable to save avatar outfits on the web.');
     }
   }
 

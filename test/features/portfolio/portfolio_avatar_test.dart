@@ -8,6 +8,7 @@ import 'package:trading_balance_f/core/network/okx_websocket_service.dart';
 import 'package:trading_balance_f/features/avatar/domain/avatar_colors.dart';
 import 'package:trading_balance_f/features/avatar/domain/avatar_model.dart';
 import 'package:trading_balance_f/features/avatar/domain/avatar_mood.dart';
+import 'package:trading_balance_f/features/avatar/domain/avatar_outfit.dart';
 import 'package:trading_balance_f/features/avatar/presentation/avatar_renderer.dart';
 import 'package:trading_balance_f/features/market/presentation/providers/market_provider.dart';
 import 'package:trading_balance_f/features/orders/data/trade_api_client.dart';
@@ -26,6 +27,51 @@ const _sixPercent = OkxAccountData(
 );
 
 void main() {
+  testWidgets('GREEN-156 home filters stale outfits and restricts colours', (
+    tester,
+  ) async {
+    final renderer = FakeAvatarRenderer();
+    const item = 'donut-chan:outfit';
+    final dress = AvatarColors.empty.withPart(
+      AvatarPart.dress,
+      const Color(0xff552299),
+    );
+    final colors = dress.withPart(AvatarPart.top, const Color(0xff667788));
+    final container = await _mountPortfolio(
+      tester,
+      load: () async => _sixPercent,
+      factory: (_) => renderer,
+      outfits: const {
+        'pixiv-sample': ['obsolete', item, item],
+      },
+      colors: {'pixiv-sample': colors},
+    );
+    expect(renderer.outfits, [
+      [item],
+    ]);
+    expect(renderer.colors, [dress]);
+
+    container.read(avatarOutfitsProvider.notifier).state = const {
+      'pixiv-sample': ['obsolete', item, 'another-obsolete-item'],
+    };
+    await tester.pump();
+    expect(renderer.outfits, [
+      [item],
+    ]);
+    expect(renderer.colors, [dress]);
+
+    container.read(avatarOutfitsProvider.notifier).state = const {};
+    await tester.pump();
+    expect(renderer.outfits, [
+      [item],
+      <String>[],
+    ]);
+    expect(renderer.colors, [
+      dress,
+      colors.restrictTo([AvatarPart.top]),
+    ]);
+  });
+
   testWidgets('GREEN-152 home sends selected model colours only on change', (
     tester,
   ) async {
@@ -244,6 +290,7 @@ Future<ProviderContainer> _mountPortfolio(
   bool enabled = true,
   bool hidden = false,
   Map<String, AvatarColors> colors = const {},
+  Map<String, List<String>> outfits = const {},
 }) async {
   tester.view.physicalSize = const Size(800, 1200);
   tester.view.devicePixelRatio = 1;
@@ -264,6 +311,7 @@ Future<ProviderContainer> _mountPortfolio(
         hideBalanceProvider.overrideWith((ref) => hidden),
         avatarEnabledProvider.overrideWith((ref) => enabled),
         avatarColorsProvider.overrideWith((ref) => colors),
+        avatarOutfitsProvider.overrideWith((ref) => outfits),
         avatarRendererFactoryProvider.overrideWithValue(factory),
       ],
       child: const MaterialApp(home: PortfolioScreen()),

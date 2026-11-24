@@ -109,6 +109,29 @@ void main() {
     expect(storage.savedId, isNull);
   });
 
+  testWidgets('GREEN-156 the Pixiv customization entry opens the outfit tab', (
+    tester,
+  ) async {
+    final renderer = FakeAvatarRenderer();
+    await _mount(
+      tester,
+      _AvatarModelStorage(),
+      home: const SettingsAvatarModelPage(),
+      rendererFactory: (model) {
+        expect(model.id, 'pixiv-sample');
+        return renderer;
+      },
+    );
+
+    await tester.tap(
+      find.byKey(const ValueKey('avatar-customize-pixiv-sample')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Phối đồ'));
+    await tester.pumpAndSettle();
+    expect(find.text('Váy Donut-Chan'), findsOneWidget);
+  });
+
   testWidgets('RED-150 failed save rolls back and reports the error', (
     tester,
   ) async {

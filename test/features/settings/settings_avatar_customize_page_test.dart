@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/security/secure_storage_helper.dart';
 import 'package:trading_balance_f/features/avatar/domain/avatar_colors.dart';
 import 'package:trading_balance_f/features/avatar/domain/avatar_mood.dart';
+import 'package:trading_balance_f/features/avatar/domain/avatar_outfit.dart';
 import 'package:trading_balance_f/features/avatar/presentation/avatar_renderer.dart';
 import 'package:trading_balance_f/features/settings/presentation/settings_avatar_customize_page.dart';
 
@@ -18,10 +19,195 @@ const _green = Color(0xff228833);
 const _blue = Color(0xff224499);
 const _pixiv = 'pixiv-sample';
 const _donut = 'donut-chan';
+const _dress = 'donut-chan:outfit';
+const _shoes = 'donut-chan:shoes';
 final _savedHair = AvatarColors.empty.withPart(AvatarPart.hair, _blue);
 final _otherModel = AvatarColors.empty.withPart(AvatarPart.accessory, _green);
 
 void main() {
+  testWidgets('RED-156 Donut-Chan customization has no tabs', (tester) async {
+    await _open(tester, modelId: _donut);
+    expect(find.byType(TabBar), findsNothing);
+    expect(find.byType(HueRingPicker), findsOneWidget);
+  });
+
+  testWidgets(
+    'GREEN-156 equipping a dress changes the preview and colour parts',
+    (tester) async {
+      final fixture = await _open(tester);
+      final semantics = tester.ensureSemantics();
+      addTearDown(semantics.dispose);
+      expect(find.text('Áo'), findsOneWidget);
+      expect(find.text('Quần/Váy'), findsOneWidget);
+      await tester.tap(find.text('Áo'));
+      await tester.pump();
+
+      await _tapText(tester, 'Phối đồ');
+      expect(find.byType(TabBarView), findsNothing);
+      expect(find.bySemanticsLabel('Trang phục: Đồ gốc'), findsOneWidget);
+      expect(
+        find.bySemanticsLabel('Trang phục: Váy Donut-Chan'),
+        findsOneWidget,
+      );
+      await _tapText(tester, 'Váy Donut-Chan');
+      expect(fixture.renderer.outfits, [
+        <String>[],
+        [_dress],
+      ]);
+      await _tapText(tester, 'Màu sắc');
+
+      expect(find.text('Áo'), findsNothing);
+      expect(find.text('Quần/Váy'), findsNothing);
+      expect(find.text('Váy'), findsOneWidget);
+      expect(find.text('Nơ & huy hiệu'), findsOneWidget);
+      expect(find.bySemanticsLabel('Chọn màu Tóc'), findsOneWidget);
+      await _tapText(tester, 'Váy');
+      expect(
+        tester.widget<HueRingPicker>(find.byType(HueRingPicker)).pickerColor,
+        const Color(0xfff7bdc0),
+      );
+    },
+  );
+
+  testWidgets('GREEN-156 one save persists the outfit and borrowed colour', (
+    tester,
+  ) async {
+    final fixture = await _open(
+      tester,
+      pixivColors: _savedHair.withPart(AvatarPart.top, _green),
+    );
+    await _tapText(tester, 'Phối đồ');
+    await _tapText(tester, 'Váy Donut-Chan');
+    await _tapText(tester, 'Màu sắc');
+    await _tapText(tester, 'Váy');
+    await _changeColor(tester, _red);
+    await tester.tap(find.text('Lưu'));
+    await tester.pump();
+
+    expect(fixture.storage.writes, ['outfits', 'colors']);
+    final outfits = decodeAvatarOutfits(fixture.storage.outfitJson);
+    expect(outfits, {
+      _pixiv: [_dress],
+    });
+    final expected = _savedHair.withPart(AvatarPart.dress, _red);
+    expect(
+      decodeAvatarColorsWithOutfits(
+        fixture.storage.writtenJson,
+        outfits,
+      )[_pixiv],
+      expected,
+    );
+    expect(fixture.container.read(avatarColorsProvider)[_pixiv], expected);
+    expect(fixture.container.read(avatarOutfitsProvider), outfits);
+
+    fixture.storage.pending.complete();
+    await tester.pumpAndSettle();
+    expect(find.byType(SettingsAvatarCustomizePage), findsNothing);
+  });
+
+  for (final failOutfits in [true, false]) {
+    testWidgets(
+      'RED-156 ${failOutfits ? 'outfit' : 'colour'} write failure rolls back both providers',
+      (tester) async {
+        final fixture = await _open(
+          tester,
+          outfits: const {
+            _pixiv: [_shoes],
+          },
+          failOutfits: failOutfits,
+        );
+        await _tapText(tester, 'Phối đồ');
+        await _tapText(tester, 'Váy Donut-Chan');
+        await _tapText(tester, 'Màu sắc');
+        await _changeColor(tester, _red);
+        await tester.tap(find.text('Lưu'));
+        await tester.pump();
+        if (!failOutfits) {
+          expect(fixture.container.read(avatarOutfitsProvider)[_pixiv], [
+            _shoes,
+            _dress,
+          ]);
+          expect(
+            fixture.container.read(
+              avatarColorsProvider,
+            )[_pixiv]?[AvatarPart.hair],
+            _red,
+          );
+          fixture.storage.pending.completeError(StateError('write failed'));
+        }
+        await tester.pumpAndSettle();
+
+        expect(fixture.container.read(avatarOutfitsProvider), {
+          _pixiv: [_shoes],
+        });
+        expect(fixture.container.read(avatarColorsProvider), {
+          _pixiv: _savedHair,
+          _donut: _otherModel,
+        });
+        expect(
+          fixture.storage.writes,
+          failOutfits ? ['outfits'] : ['outfits', 'colors', 'outfits'],
+        );
+        if (!failOutfits) {
+          expect(decodeAvatarOutfits(fixture.storage.outfitJson), {
+            _pixiv: [_shoes],
+          });
+        }
+        expect(find.text('Không lưu được cài đặt'), findsOneWidget);
+        expect(find.byType(SettingsAvatarCustomizePage), findsOneWidget);
+      },
+    );
+  }
+
+  testWidgets('RED-156 an outfit-only draft triggers the discard dialog', (
+    tester,
+  ) async {
+    final fixture = await _open(tester);
+    await _tapText(tester, 'Phối đồ');
+    await _tapText(tester, 'Váy Donut-Chan');
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.text('Bỏ thay đổi?'), findsOneWidget);
+    await _tapText(tester, 'Bỏ thay đổi');
+    expect(find.byType(SettingsAvatarCustomizePage), findsNothing);
+    expect(fixture.storage.writes, isEmpty);
+  });
+
+  testWidgets(
+    'GREEN-156 resetting colours preserves outfit until confirmed clear',
+    (tester) async {
+      final fixture = await _open(
+        tester,
+        outfits: const {
+          _pixiv: [_dress],
+        },
+      );
+      await _tapText(tester, 'Khôi phục mặc định');
+      await _tapText(tester, 'Khôi phục');
+      expect(fixture.renderer.colors.last, AvatarColors.empty);
+      expect(fixture.renderer.outfits, [
+        [_dress],
+      ]);
+      expect(find.text('Váy'), findsOneWidget);
+
+      await _tapText(tester, 'Phối đồ');
+      await _tapText(tester, 'Bỏ phối đồ');
+      expect(find.text('Bỏ phối đồ?'), findsOneWidget);
+      await _tapText(tester, 'Hủy');
+      expect(fixture.renderer.outfits, [
+        [_dress],
+      ]);
+      await _tapText(tester, 'Bỏ phối đồ');
+      await tester.tap(find.widgetWithText(TextButton, 'Bỏ phối đồ'));
+      await tester.pumpAndSettle();
+      expect(fixture.renderer.outfits, [
+        [_dress],
+        <String>[],
+      ]);
+      expect(fixture.renderer.colors.last, AvatarColors.empty);
+    },
+  );
+
   testWidgets('RED-154 the unset Donut-Chan picker starts at original hair', (
     tester,
   ) async {
@@ -209,6 +395,13 @@ void main() {
   });
 }
 
+Future<void> _tapText(WidgetTester tester, String text) async {
+  final target = find.text(text);
+  await tester.ensureVisible(target);
+  await tester.tap(target);
+  await tester.pumpAndSettle();
+}
+
 Future<void> _changeColor(WidgetTester tester, Color color) async {
   tester
       .widget<HueRingPicker>(find.byType(HueRingPicker))
@@ -222,17 +415,24 @@ Future<
 _open(
   WidgetTester tester, {
   String modelId = _pixiv,
+  AvatarColors? pixivColors,
   AvatarColors? donutColors,
+  Map<String, List<String>> outfits = const {},
+  bool failOutfits = false,
 }) async {
-  final storage = _Storage();
+  final storage = _Storage(failOutfits: failOutfits);
   final renderer = FakeAvatarRenderer();
   addTearDown(storage.dispose);
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
         secureStorageProvider.overrideWithValue(storage),
+        avatarOutfitsProvider.overrideWith((ref) => outfits),
         avatarColorsProvider.overrideWith(
-          (ref) => {_pixiv: _savedHair, _donut: donutColors ?? _otherModel},
+          (ref) => {
+            _pixiv: pixivColors ?? _savedHair,
+            _donut: donutColors ?? _otherModel,
+          },
         ),
         avatarRendererFactoryProvider.overrideWithValue((_) => renderer),
       ],
@@ -261,13 +461,24 @@ _open(
 }
 
 class _Storage extends SecureStorageHelper {
-  _Storage() : super(const FlutterSecureStorage());
+  _Storage({required this.failOutfits}) : super(const FlutterSecureStorage());
 
+  final bool failOutfits;
   final pending = Completer<void>();
+  final writes = <String>[];
   String? writtenJson;
+  String? outfitJson;
+
+  @override
+  Future<void> saveAvatarOutfitsJson(String json) async {
+    writes.add('outfits');
+    if (failOutfits) throw StateError('write failed');
+    outfitJson = json;
+  }
 
   @override
   Future<void> saveAvatarColorsJson(String json) {
+    writes.add('colors');
     writtenJson = json;
     return pending.future;
   }

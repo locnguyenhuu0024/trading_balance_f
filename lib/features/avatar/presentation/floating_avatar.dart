@@ -13,11 +13,13 @@ class FloatingAvatar extends StatefulWidget {
     required this.model,
     required this.mood,
     this.colors = AvatarColors.empty,
+    this.outfit = const [],
   });
 
   final AvatarModel model;
   final AvatarMood mood;
   final AvatarColors colors;
+  final List<String> outfit;
 
   @override
   State<FloatingAvatar> createState() => _FloatingAvatarState();
@@ -59,6 +61,7 @@ class _FloatingAvatarState extends State<FloatingAvatar> {
                 model: widget.model,
                 mood: widget.mood,
                 colors: widget.colors,
+                outfit: widget.outfit,
                 semanticsLabel: 'Nhân vật 3D',
                 onDragStart: () => _dragOrigin = position,
                 onDragUpdate: (details) {

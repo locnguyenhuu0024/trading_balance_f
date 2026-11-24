@@ -38,6 +38,7 @@ abstract class AvatarRenderer {
   Widget buildView();
   void setMood(AvatarMood mood);
   void setColors(AvatarColors colors);
+  void setOutfit(List<String> itemIds);
   void setPaused(bool paused);
   void setReducedMotion(bool reducedMotion);
   void sendPointer(String phase, double x, double y, int tMs);

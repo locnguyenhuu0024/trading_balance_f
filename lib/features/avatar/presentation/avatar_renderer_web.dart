@@ -39,6 +39,7 @@ class _WebAvatarRenderer implements AvatarRenderer {
   late final StreamSubscription<web.MessageEvent> _messages;
   AvatarMood _mood = AvatarMood.neutral;
   AvatarColors _colors = AvatarColors.empty;
+  List<String> _outfit = const [];
   bool _paused = false;
   bool _reducedMotion = false;
   bool _ready = false;
@@ -61,12 +62,13 @@ class _WebAvatarRenderer implements AvatarRenderer {
     if (event == null) return;
     if (event is AvatarModelLoaded) _iframe?.style.opacity = '1';
     _events.add(event);
-    if (event is AvatarError) _failed = true;
+    if (event is AvatarError && event.code != 'outfit') _failed = true;
     if (event is AvatarReady && !_ready) {
       _ready = true;
       setReducedMotion(_reducedMotion);
       setMood(_mood);
       setColors(_colors);
+      setOutfit(_outfit);
       if (_paused) setPaused(true);
     }
   }
@@ -104,6 +106,12 @@ class _WebAvatarRenderer implements AvatarRenderer {
   void setColors(AvatarColors colors) {
     _colors = colors;
     _send({'type': 'setColors', 'colors': colors.toJson()});
+  }
+
+  @override
+  void setOutfit(List<String> itemIds) {
+    _outfit = List.unmodifiable(itemIds);
+    _send({'type': 'setOutfit', 'items': _outfit});
   }
 
   @override

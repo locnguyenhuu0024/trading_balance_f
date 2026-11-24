@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -15,6 +16,7 @@ class AvatarView extends ConsumerStatefulWidget {
     required this.model,
     required this.mood,
     required this.colors,
+    this.outfit = const [],
     required this.semanticsLabel,
     this.onDragStart,
     this.onDragUpdate,
@@ -25,6 +27,7 @@ class AvatarView extends ConsumerStatefulWidget {
 
   final AvatarMood mood;
   final AvatarColors colors;
+  final List<String> outfit;
   final String semanticsLabel;
   final VoidCallback? onDragStart;
   final GestureLongPressMoveUpdateCallback? onDragUpdate;
@@ -55,6 +58,7 @@ class _AvatarViewState extends ConsumerState<AvatarView>
     _events = _renderer.events.listen(_onAvatarEvent);
     _renderer.setMood(widget.mood);
     _renderer.setColors(widget.colors);
+    _renderer.setOutfit(widget.outfit);
     final binding = WidgetsBinding.instance;
     binding.addObserver(this);
     final lifecycle = binding.lifecycleState;
@@ -81,6 +85,9 @@ class _AvatarViewState extends ConsumerState<AvatarView>
     if (widget.mood != oldWidget.mood) {
       _renderer.setMood(widget.mood);
     }
+    if (!listEquals(widget.outfit, oldWidget.outfit)) {
+      _renderer.setOutfit(widget.outfit);
+    }
     if (widget.colors != oldWidget.colors) {
       _renderer.setColors(widget.colors);
     }
@@ -105,8 +112,8 @@ class _AvatarViewState extends ConsumerState<AvatarView>
         break;
       case AvatarModelLoaded():
         if (!_loaded) setState(() => _loaded = true);
-      case AvatarError():
-        setState(() => _failed = true);
+      case AvatarError(:final code):
+        if (code != 'outfit') setState(() => _failed = true);
       case AvatarInteraction():
         unawaited(HapticFeedback.lightImpact());
     }

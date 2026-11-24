@@ -178,6 +178,7 @@ class SecureStorageHelper {
   static const String _avatarEnabled = 'AVATAR_ENABLED';
   static const String _avatarModelId = 'AVATAR_MODEL_ID';
   static const String _avatarColors = 'AVATAR_COLORS';
+  static const String _avatarOutfits = 'AVATAR_OUTFITS';
   static const String _rememberedTradePasswordPrefix =
       'REMEMBERED_TRADE_PASSWORD_V1_';
   final Map<String, Future<void>> _rememberedTradePasswordTails = {};
@@ -366,6 +367,12 @@ class SecureStorageHelper {
 
   Future<void> saveAvatarColorsJson(String json) {
     return _storage.write(key: _avatarColors, value: json);
+  }
+
+  Future<String?> getAvatarOutfitsJson() => _storage.read(key: _avatarOutfits);
+
+  Future<void> saveAvatarOutfitsJson(String json) {
+    return _storage.write(key: _avatarOutfits, value: json);
   }
 
   /// NÂNG CẤP: Lưu trữ Tùy chọn ứng dụng bao gồm cả Theme và Currency

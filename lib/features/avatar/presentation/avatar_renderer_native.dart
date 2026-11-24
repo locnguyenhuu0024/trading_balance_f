@@ -9,6 +9,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import '../domain/avatar_colors.dart';
 import '../domain/avatar_model.dart';
 import '../domain/avatar_mood.dart';
+import '../domain/avatar_outfit.dart';
 import 'avatar_renderer.dart';
 
 AvatarRenderer createPlatformAvatarRenderer(AvatarModel model) =>
@@ -27,6 +28,10 @@ class _NativeAvatarRenderer implements AvatarRenderer {
   final _events = StreamController<AvatarEvent>();
   AvatarMood _mood = AvatarMood.neutral;
   AvatarColors _colors = AvatarColors.empty;
+  List<String> _outfit = const [];
+  final _streamedDonors = <String>{};
+  bool _modelLoaded = false;
+  bool _streamingDonors = false;
   bool _paused = false;
   bool _reducedMotion = false;
   bool _ready = false;
@@ -71,7 +76,7 @@ class _NativeAvatarRenderer implements AvatarRenderer {
     if (!_active) return;
     final event = decodeAvatarEvent(raw);
     if (event == null) return;
-    if (event is AvatarError) {
+    if (event is AvatarError && event.code != 'outfit') {
       _fail(event);
       return;
     }
@@ -79,6 +84,10 @@ class _NativeAvatarRenderer implements AvatarRenderer {
     if (event is AvatarReady && !_ready) {
       _ready = true;
       unawaited(_initializePage());
+    }
+    if (event is AvatarModelLoaded) {
+      _modelLoaded = true;
+      unawaited(_streamDonors());
     }
   }
 
@@ -88,25 +97,51 @@ class _NativeAvatarRenderer implements AvatarRenderer {
         _send({'type': 'setReducedMotion', 'on': _reducedMotion}),
         _send({'type': 'setMood', 'mood': _mood.wireName}),
         _send({'type': 'setColors', 'colors': _colors.toJson()}),
+        _send({'type': 'setOutfit', 'items': _outfit}),
         if (_paused) _send({'type': 'setPaused', 'paused': true}),
       ]);
-      if (!_active) return;
-      final data = await rootBundle.load('assets/avatar/${_model.file}');
-      if (!_active) return;
-      final bytes = Uint8List.sublistView(data);
-      final count = (bytes.length + _chunkSize - 1) ~/ _chunkSize;
-      for (var index = 0; index < count && _active; index++) {
-        final start = index * _chunkSize;
-        final end = math.min(start + _chunkSize, bytes.length);
-        await _send({
-          'type': 'loadModelChunk',
-          'i': index,
-          'n': count,
-          'b64': base64Encode(Uint8List.sublistView(bytes, start, end)),
-        });
-      }
+      if (_active) await _streamModel(_model);
     } catch (error) {
       _fail(AvatarError('load', error.toString()));
+    }
+  }
+
+  Future<void> _streamModel(AvatarModel model, {bool donor = false}) async {
+    final data = await rootBundle.load('assets/avatar/${model.file}');
+    final bytes = Uint8List.sublistView(data);
+    final count = (bytes.length + _chunkSize - 1) ~/ _chunkSize;
+    for (var index = 0; index < count && _active; index++) {
+      final start = index * _chunkSize;
+      final end = math.min(start + _chunkSize, bytes.length);
+      await _send({
+        'type': donor ? 'loadDonorChunk' : 'loadModelChunk',
+        if (donor) 'model': model.id,
+        'i': index,
+        'n': count,
+        'b64': base64Encode(Uint8List.sublistView(bytes, start, end)),
+      });
+    }
+  }
+
+  Future<void> _streamDonors() async {
+    if (!_modelLoaded || _streamingDonors) return;
+    _streamingDonors = true;
+    try {
+      while (_active) {
+        final donorId = equippedItems(_model.id, _outfit)
+            .map((item) => item.donorModelId)
+            .where((id) => !_streamedDonors.contains(id))
+            .firstOrNull;
+        if (donorId == null) return;
+        _streamedDonors.add(donorId);
+        try {
+          await _streamModel(avatarModelById(donorId), donor: true);
+        } catch (error) {
+          if (_active) _events.add(AvatarError('outfit', error.toString()));
+        }
+      }
+    } finally {
+      _streamingDonors = false;
     }
   }
 
@@ -145,6 +180,13 @@ class _NativeAvatarRenderer implements AvatarRenderer {
   void setColors(AvatarColors colors) {
     _colors = colors;
     unawaited(_send({'type': 'setColors', 'colors': colors.toJson()}));
+  }
+
+  @override
+  void setOutfit(List<String> itemIds) {
+    _outfit = List.unmodifiable(itemIds);
+    unawaited(_send({'type': 'setOutfit', 'items': _outfit}));
+    unawaited(_streamDonors());
   }
 
   @override

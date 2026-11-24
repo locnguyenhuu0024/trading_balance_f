@@ -110,6 +110,27 @@ void main() {
     },
   );
 
+  testWidgets('RED-156 an outfit error leaves the avatar and bridge active', (
+    tester,
+  ) async {
+    final renderer = FakeAvatarRenderer();
+    await _mount(tester, renderer);
+    renderer.emit(const AvatarModelLoaded());
+    await tester.pumpAndSettle();
+
+    renderer.emit(const AvatarError('outfit', 'Donor unavailable'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(avatarFakeKey), findsOneWidget);
+    expect(
+      tester.widget<AnimatedOpacity>(find.byType(AnimatedOpacity)).opacity,
+      1,
+    );
+
+    renderer.emit(const AvatarError('load', 'Model unavailable'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(avatarFakeKey), findsNothing);
+  });
+
   testWidgets('GREEN-152 floating view keeps the renderer on colour changes', (
     tester,
   ) async {
@@ -148,6 +169,37 @@ void main() {
     expect(renderer.disposed, isFalse);
     expect(find.byKey(avatarFakeKey), findsOneWidget);
   });
+
+  testWidgets(
+    'GREEN-156 floating view sends outfits on init and real changes',
+    (tester) async {
+      final renderer = FakeAvatarRenderer();
+      const outfit = ['donut-chan:outfit'];
+
+      Future<void> show(List<String> items) => tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            avatarRendererFactoryProvider.overrideWithValue((_) => renderer),
+          ],
+          child: MaterialApp(
+            home: FloatingAvatar(
+              model: avatarModelById(null),
+              mood: AvatarMood.neutral,
+              outfit: items,
+            ),
+          ),
+        ),
+      );
+
+      await show(outfit);
+      expect(renderer.outfits, [outfit]);
+      await show([...outfit]);
+      expect(renderer.outfits, [outfit]);
+      await show([]);
+      expect(renderer.outfits, [outfit, <String>[]]);
+      expect(renderer.disposed, isFalse);
+    },
+  );
 
   testWidgets('GREEN scales on a narrow viewport and clamps long-press drag', (
     tester,
@@ -264,6 +316,7 @@ class FakeAvatarRenderer implements AvatarRenderer {
   final _events = StreamController<AvatarEvent>();
   final moods = <AvatarMood>[];
   final colors = <AvatarColors>[];
+  final outfits = <List<String>>[];
   final pauses = <bool>[];
   final motion = <bool>[];
   final pointers = <({String phase, Offset position, int timeMs})>[];
@@ -282,6 +335,9 @@ class FakeAvatarRenderer implements AvatarRenderer {
 
   @override
   void setColors(AvatarColors value) => colors.add(value);
+
+  @override
+  void setOutfit(List<String> itemIds) => outfits.add(List.of(itemIds));
 
   @override
   void setPaused(bool paused) => pauses.add(paused);

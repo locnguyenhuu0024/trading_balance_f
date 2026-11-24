@@ -25,6 +25,7 @@ import '../../../core/exchange/scoped_read.dart';
 import '../../avatar/domain/avatar_colors.dart';
 import '../../avatar/domain/avatar_model.dart';
 import '../../avatar/domain/avatar_mood.dart';
+import '../../avatar/domain/avatar_outfit.dart';
 import '../../avatar/presentation/floating_avatar.dart';
 import '../../settings/presentation/settings_screen.dart';
 import '../../market/presentation/providers/market_provider.dart';
@@ -220,6 +221,12 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
     final isBalanceHidden = ref.watch(hideBalanceProvider);
     final avatarEnabled = ref.watch(avatarEnabledProvider);
     final model = avatarModelById(ref.watch(avatarModelIdProvider));
+    final outfit = avatarEnabled
+        ? equippedItems(
+            model.id,
+            ref.watch(avatarOutfitsProvider)[model.id] ?? const [],
+          ).map((item) => item.id).toList()
+        : const <String>[];
     final avatarAccount = avatarEnabled && !portfolioAsyncValue.hasError
         ? portfolioAsyncValue.valueOrNull
         : null;
@@ -347,10 +354,11 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
                   key: ValueKey('home-avatar-${model.id}'),
                   model: model,
                   mood: avatarMoodFor(avatarRatio, hidden: isBalanceHidden),
+                  outfit: outfit,
                   colors:
                       (ref.watch(avatarColorsProvider)[model.id] ??
                               AvatarColors.empty)
-                          .restrictTo(model.parts),
+                          .restrictTo(effectiveParts(model, outfit)),
                 ),
             ],
           ),
@@ -369,7 +377,8 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
     double baseEquity,
     double pnl,
     double ratio,
-  }) _portfolioHeadline(
+  })
+  _portfolioHeadline(
     AccountSnapshot accountData,
     bool isOkx,
     bool isBinance,

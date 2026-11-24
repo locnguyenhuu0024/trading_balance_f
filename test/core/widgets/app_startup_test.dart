@@ -12,6 +12,7 @@ import 'package:trading_balance_f/core/typography/app_text_scale.dart';
 import 'package:trading_balance_f/core/widgets/app_startup.dart';
 import 'package:trading_balance_f/features/avatar/domain/avatar_colors.dart';
 import 'package:trading_balance_f/features/avatar/domain/avatar_model.dart';
+import 'package:trading_balance_f/features/avatar/domain/avatar_outfit.dart';
 import 'package:trading_balance_f/main.dart' as app;
 import 'package:trading_balance_f/features/portfolio/presentation/portfolio_screen.dart'
     show hideBalanceProvider;
@@ -30,6 +31,7 @@ class _StartupStorage extends SecureStorageHelper {
     this.avatarModelId,
     this.avatarColorsJson,
     this.failAvatarColorsRead = false,
+    this.failAvatarOutfitsRead = false,
   }) : super(const FlutterSecureStorage());
 
   final bool failBiometricRead;
@@ -42,6 +44,13 @@ class _StartupStorage extends SecureStorageHelper {
   final String? avatarModelId;
   final String? avatarColorsJson;
   final bool failAvatarColorsRead;
+  final bool failAvatarOutfitsRead;
+
+  @override
+  Future<String?> getAvatarOutfitsJson() async {
+    if (failAvatarOutfitsRead) throw StateError('unreadable avatar outfits');
+    return null;
+  }
 
   @override
   Future<String?> getAvatarColorsJson() async {
@@ -108,6 +117,79 @@ class _StartupStorage extends SecureStorageHelper {
 }
 
 void main() {
+  test(
+    'RED-156 outfit read failure leaves model and colour restoration intact',
+    () async {
+      final storage = _StartupStorage(
+        failAvatarOutfitsRead: true,
+        avatarModelId: 'donut-chan',
+        avatarColorsJson: '{"donut-chan":{"dress":"#aa3322"}}',
+      );
+      addTearDown(storage.dispose);
+      final startup = await app.initializeAppStartup(
+        isWeb: false,
+        createNativeStorage: () => storage,
+        initializeTimeZone: () {},
+        retireLegacyBackgroundService: () async {},
+      );
+      expect(startup.avatarOutfits, isEmpty);
+      expect(startup.avatarModelId, 'donut-chan');
+      expect(
+        startup.avatarColors['donut-chan']?[AvatarPart.dress],
+        const Color(0xffaa3322),
+      );
+    },
+  );
+
+  for (final isWeb in [false, true]) {
+    testWidgets(
+      'GREEN-156 restores outfits and borrowed colours on ${isWeb ? 'web' : 'native'}',
+      (tester) async {
+        if (isWeb) {
+          SharedPreferences.setMockInitialValues({});
+        } else {
+          FlutterSecureStorage.setMockInitialValues({});
+          addTearDown(() => FlutterSecureStorage.setMockInitialValues({}));
+        }
+        Future<app.AppStartupData> start() => app.initializeAppStartup(
+          isWeb: isWeb,
+          initializeTimeZone: () {},
+          retireLegacyBackgroundService: () async {},
+        );
+
+        final first = await start();
+        addTearDown(first.secureStorage.dispose);
+        expect(first.avatarOutfits, isEmpty);
+        const json =
+            '{"pixiv-sample":["donut-chan:outfit","donut-chan:shoes"]}';
+        await first.secureStorage.saveAvatarOutfitsJson(json);
+        await first.secureStorage.saveAvatarColorsJson(
+          '{"pixiv-sample":{"hair":"#112233","dress":"#552299","plasters":"#123456"}}',
+        );
+
+        final restored = await start();
+        addTearDown(restored.secureStorage.dispose);
+        expect(restored.avatarOutfits, {
+          'pixiv-sample': ['donut-chan:outfit', 'donut-chan:shoes'],
+        });
+        final restoredColors = restored.avatarColors['pixiv-sample']!;
+        expect(restoredColors[AvatarPart.hair], const Color(0xff112233));
+        expect(restoredColors[AvatarPart.dress], const Color(0xff552299));
+        expect(restoredColors[AvatarPart.plasters], isNull);
+        await tester.pumpWidget(
+          app.buildInitializedApp(
+            restored,
+            home: Consumer(
+              builder: (_, ref, _) =>
+                  Text(encodeAvatarOutfits(ref.watch(avatarOutfitsProvider))),
+            ),
+          ),
+        );
+        expect(find.text(json), findsOneWidget);
+      },
+    );
+  }
+
   for (final failRead in [false, true]) {
     test(
       'RED-152 startup tolerates ${failRead ? 'unreadable' : 'corrupt'} colours',
