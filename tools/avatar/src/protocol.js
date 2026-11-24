@@ -1,9 +1,15 @@
+import {DONORS, ITEMS} from './items.js';
 import {MOODS} from './mood.js';
 import {PARTS} from './recolor.js';
 
 const moods = Object.keys(MOODS);
 const phases = ['down', 'move', 'up', 'cancel'];
 const hexColor = /^#[0-9a-f]{6}$/i;
+
+function validChunk({i, n, b64}) {
+  return Number.isSafeInteger(i) && Number.isSafeInteger(n) && i >= 0 && i < n &&
+    typeof b64 === 'string' && b64.length > 0 && !/[^A-Za-z0-9+/=]/.test(b64);
+}
 
 export function parse(raw) {
   let msg;
@@ -36,6 +42,14 @@ export function parse(raw) {
       valid = typeof msg.paused === 'boolean';
       fieldCount = 1;
       break;
+    case 'setOutfit': {
+      const {items} = msg;
+      valid = Array.isArray(items) && items.length <= 3 &&
+        [...items].every((id) => typeof id === 'string' && Object.hasOwn(ITEMS, id)) &&
+        new Set(items).size === items.length;
+      fieldCount = 1;
+      break;
+    }
     case 'setReducedMotion':
       valid = typeof msg.on === 'boolean';
       fieldCount = 1;
@@ -45,10 +59,12 @@ export function parse(raw) {
       fieldCount = 4;
       break;
     case 'loadModelChunk':
-      valid = Number.isSafeInteger(msg.i) && Number.isSafeInteger(msg.n) &&
-        msg.i >= 0 && msg.i < msg.n && typeof msg.b64 === 'string' &&
-        msg.b64.length > 0 && !/[^A-Za-z0-9+/=]/.test(msg.b64);
+      valid = validChunk(msg);
       fieldCount = 3;
+      break;
+    case 'loadDonorChunk':
+      valid = DONORS.includes(msg.model) && validChunk(msg);
+      fieldCount = 4;
       break;
     default:
       return {ok: false, error: 'Unknown avatar message type'};

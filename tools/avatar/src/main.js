@@ -1,22 +1,131 @@
 import {
-  AmbientLight, DirectionalLight, LoadingManager, Object3D, OrthographicCamera,
-  Scene, Source, Vector3, WebGLRenderer,
+  AmbientLight, DirectionalLight, Group, LoadingManager, Object3D, OrthographicCamera,
+  Scene, Skeleton, SkinnedMesh, Source, Vector3, WebGLRenderer,
 } from 'three';
 import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
 import {VRMLoaderPlugin, VRMUtils} from '@pixiv/three-vrm';
 import {connect, send} from './bridge.js';
+import {createAssembler} from './chunks.js';
 import {frame as frameAvatar} from './framing.js';
 import {createClassifier} from './gesture.js';
 import {createHitTest} from './hit.js';
+import {ITEMS, itemForMaterial, resolveOutfit} from './items.js';
 import {motion, step, targets} from './mood.js';
-import {resolveModel} from './models.js';
+import {MODELS, resolveModel} from './models.js';
 import {axisSign, restPose} from './pose.js';
+import {bindMatrix, boneKey, flipFor, flipLocal, planChain, rebindInverse} from './rebind.js';
 import {colorize, luminance, parseHex, partForMaterial} from './recolor.js';
 
 const FRAME_MS = 1000 / 30;
 const MAX_DELTA = 1 / 15;
 const COLOR_INTERVAL_MS = 100;
 const EXPRESSIONS = ['happy', 'sad', 'relaxed', 'surprised', 'blink'];
+const ITEM_IDS = Object.keys(ITEMS);
+
+function materialName({material}) {
+  return [].concat(material)[0]?.name;
+}
+
+async function fetchModel(url) {
+  const response = await fetch(url, {redirect: 'error'});
+  if (!response.ok) throw new Error(`Model load failed (${response.status})`);
+  return response.arrayBuffer();
+}
+
+function collectResources(roots) {
+  const geometries = new Set();
+  const materials = new Set();
+  const skeletons = new Set();
+  const textures = new Set();
+  for (const root of roots) {
+    root.traverse(({geometry, material, skeleton}) => {
+      if (geometry) geometries.add(geometry);
+      if (skeleton) skeletons.add(skeleton);
+      if (material) for (const entry of [].concat(material)) materials.add(entry);
+    });
+  }
+  for (const material of materials) {
+    for (const value of Object.values(material)) {
+      if (value?.isTexture) textures.add(value);
+    }
+    for (const uniform of Object.values(material.uniforms ?? {})) {
+      if (uniform.value?.isTexture) textures.add(uniform.value);
+    }
+  }
+  return {geometries, materials, skeletons, textures};
+}
+
+function disposeDonor(scene, keptGroups) {
+  const donor = collectResources([scene]);
+  const kept = collectResources(keptGroups);
+  for (const geometry of donor.geometries) if (!kept.geometries.has(geometry)) geometry.dispose();
+  for (const material of donor.materials) if (!kept.materials.has(material)) material.dispose();
+  for (const skeleton of donor.skeletons) skeleton.dispose();
+
+  // Several textures can share the same decoded image, including retained textures.
+  const keptImages = new Set([...kept.textures].map((texture) => texture.source.data));
+  const releasedImages = new Set();
+  for (const texture of donor.textures) {
+    if (kept.textures.has(texture)) continue;
+    texture.dispose();
+    const image = texture.source.data;
+    if (!keptImages.has(image) && typeof ImageBitmap !== 'undefined' && image instanceof ImageBitmap) {
+      releasedImages.add(image);
+    }
+  }
+  for (const image of releasedImages) image.close();
+}
+
+function transferDonor(donor, target) {
+  VRMUtils.removeUnnecessaryVertices(donor.scene);
+  donor.scene.updateMatrixWorld(true);
+  target.scene.updateMatrixWorld(true);
+
+  const flip = flipFor(donor.meta?.metaVersion, target.meta?.metaVersion);
+  const mappedBones = new Map();
+  target.scene.traverse((object) => {
+    if (object.isBone && object.name.startsWith('J_Bip')) mappedBones.set(boneKey(object.name), object);
+  });
+  const boneAttachments = [];
+  function mapBone(bone) {
+    for (const source of planChain(bone, (key) => mappedBones.has(key))) {
+      const copy = source.clone(false);
+      copy.name = `donor:${source.name}`;
+      const {position, quaternion} = flipLocal(source.position, source.quaternion, flip);
+      copy.position.copy(position);
+      copy.quaternion.copy(quaternion);
+      const parent = source.parent && mappedBones.get(boneKey(source.parent.name));
+      boneAttachments.push([parent ?? target.scene, copy]);
+      mappedBones.set(boneKey(source.name), copy);
+    }
+    return mappedBones.get(boneKey(bone.name));
+  }
+
+  const groups = new Map(ITEM_IDS.map((id) => {
+    const group = new Group();
+    group.name = id;
+    group.visible = false;
+    return [id, group];
+  }));
+  donor.scene.traverse((mesh) => {
+    if (!mesh.isSkinnedMesh) return;
+    const group = groups.get(itemForMaterial(materialName(mesh)));
+    if (!group) return;
+    const {bones, boneInverses} = mesh.skeleton;
+    const reboundBones = bones.map(mapBone);
+    const inverses = boneInverses.map((inverse) => rebindInverse(flip, inverse));
+    const copy = new SkinnedMesh(mesh.geometry, mesh.material);
+    copy.bind(new Skeleton(reboundBones, inverses), bindMatrix());
+    copy.frustumCulled = false;
+    group.add(copy);
+  });
+  for (const [id, group] of groups) {
+    if (!group.children.length) throw new Error(`No donor meshes found for ${id}`);
+  }
+  for (const [parent, bone] of boneAttachments) parent.add(bone);
+  for (const group of groups.values()) target.scene.add(group);
+  return groups;
+}
 
 document.addEventListener('DOMContentLoaded', () => {
   const canvas = document.querySelector('canvas');
@@ -62,8 +171,15 @@ document.addEventListener('DOMContentLoaded', () => {
   let failed = false;
   let loading = false;
   let loadedFrame = false;
-  let chunks;
-  let chunkCount = 0;
+  let modelChunks;
+  let currentModelId;
+  let supportsOutfit = false;
+  let outfit = [];
+  let outfitGroups = new Map();
+  const targetMeshes = [];
+  let donorState = 'none';
+  let donorChunks;
+  let donorBytes;
   let mood = 'neutral';
   let paused = false;
   let hostReducedMotion = false;
@@ -120,19 +236,19 @@ document.addEventListener('DOMContentLoaded', () => {
     material.needsUpdate = true;
   }
 
-  function applyColors() {
+  function applyColors(force = false) {
     vrm.scene.traverse(({material}) => {
       if (!material) return;
       for (const item of Array.isArray(material) ? material : [material]) {
         const part = partForMaterial(item.name);
-        if (!part || colors[part] === appliedColors[part]) continue;
+        if (!part || (!force && colors[part] === appliedColors[part])) continue;
+        const color = colors[part];
         let original = originalMaterials.get(item);
         if (!original) {
-          if (!item.map) continue;
+          if (!color || !item.map) continue;
           original = {map: item.map, shade: item.shadeMultiplyTexture};
           originalMaterials.set(item, original);
         }
-        const color = colors[part];
         const map = color ? recolorTexture(original.map, color) : original.map;
         const shade = color && original.shade ? map : original.shade;
         setMaterialTextures(item, map, shade);
@@ -169,10 +285,82 @@ document.addEventListener('DOMContentLoaded', () => {
   function fail(code, error) {
     if (failed) return;
     failed = true;
-    chunks = undefined;
+    modelChunks = undefined;
+    donorChunks = undefined;
+    donorBytes = undefined;
     disposeColors();
     syncLoop();
     send({v: 1, type: 'error', code, message: error instanceof Error ? error.message : String(error)});
+  }
+
+  function failOutfit(error) {
+    donorState = 'failed';
+    donorChunks = undefined;
+    donorBytes = undefined;
+    if (outfitGroups.size) {
+      for (const group of outfitGroups.values()) group.visible = false;
+      for (const mesh of targetMeshes) mesh.visible = true;
+    }
+    send({v: 1, type: 'error', code: 'outfit', message: error instanceof Error ? error.message : String(error)});
+  }
+
+  function applyOutfit() {
+    const {show, hide} = resolveOutfit(outfit, currentModelId);
+    for (const [id, group] of outfitGroups) group.visible = show.has(id);
+    for (const mesh of targetMeshes) mesh.visible = !hide.some((rule) => rule.test(materialName(mesh)));
+    appliedColors = {};
+    applyColors(true);
+  }
+
+  async function loadDonor(bytes) {
+    if (failed) return;
+    donorState = 'parsing';
+    try {
+      const gltf = await loader.parseAsync(bytes, '');
+      try {
+        if (failed) return;
+        const donor = gltf.userData.vrm;
+        if (!donor) throw new Error('The donor model has no VRM data');
+        outfitGroups = transferDonor(donor, vrm);
+      } finally {
+        disposeDonor(gltf.scene, outfitGroups.values());
+      }
+      donorState = 'ready';
+      applyOutfit();
+    } catch (error) {
+      if (!failed) failOutfit(error);
+    }
+  }
+
+  function startDonor() {
+    if (!supportsOutfit) return;
+    if (native) {
+      if (!donorBytes) return;
+      const bytes = donorBytes;
+      donorBytes = undefined;
+      loadDonor(bytes.buffer);
+    } else if (donorState === 'none' && outfit.length) {
+      donorState = 'receiving';
+      fetchModel(MODELS['donut-chan']).then(loadDonor, (error) => {
+        if (!failed) failOutfit(error);
+      });
+    }
+  }
+
+  function addDonorChunk({i, n, b64}) {
+    if (!native || (vrm && !supportsOutfit) || donorBytes ||
+        (donorState !== 'none' && donorState !== 'receiving')) return;
+    donorState = 'receiving';
+    donorChunks ??= createAssembler();
+    try {
+      donorBytes = donorChunks.add(i, n, b64);
+      if (donorBytes) {
+        donorChunks = undefined;
+        startDonor();
+      }
+    } catch (error) {
+      failOutfit(error);
+    }
   }
 
   async function loadModel(getBytes) {
@@ -182,9 +370,22 @@ document.addEventListener('DOMContentLoaded', () => {
       if (failed) return;
       vrm = gltf.userData.vrm;
       if (!vrm) throw new Error('The model has no VRM data');
+      if (native) {
+        const names = [vrm.meta?.name, vrm.meta?.title];
+        if (names.includes('VRM1_Constraint_Twist_Sample')) currentModelId = 'pixiv-sample';
+        else if (names.includes('Donut-Chan')) currentModelId = 'donut-chan';
+      }
+      supportsOutfit = resolveOutfit(ITEM_IDS, currentModelId).show.size > 0;
+      if (!supportsOutfit) {
+        donorChunks = undefined;
+        donorBytes = undefined;
+      }
       VRMUtils.removeUnnecessaryVertices(gltf.scene);
       VRMUtils.combineSkeletons(gltf.scene);
-      vrm.scene.traverse((object) => { object.frustumCulled = false; });
+      vrm.scene.traverse((object) => {
+        object.frustumCulled = false;
+        if (object.isMesh) targetMeshes.push(object);
+      });
       const bone = (name) => vrm.humanoid.getNormalizedBoneNode(name);
       bones = {
         head: bone('head'),
@@ -215,6 +416,7 @@ document.addEventListener('DOMContentLoaded', () => {
       camera.bottom = -halfHeight;
       resize();
       syncLoop();
+      startDonor();
     } catch (error) {
       fail('load', error);
     }
@@ -222,37 +424,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function addChunk({i, n, b64}) {
     if (!native || loading) return;
-    chunks ??= new Map();
-    if (chunkCount && chunkCount !== n) {
-      fail('load', 'Inconsistent model chunk count');
-      return;
+    modelChunks ??= createAssembler();
+    try {
+      const bytes = modelChunks.add(i, n, b64);
+      if (bytes) {
+        modelChunks = undefined;
+        loadModel(() => bytes.buffer);
+      }
+    } catch (error) {
+      fail('load', error);
     }
-    chunkCount = n;
-    chunks.set(i, b64);
-    if (chunks.size !== n) return;
-
-    const complete = chunks;
-    chunks = undefined;
-    loadModel(() => {
-      const decodedChunks = [];
-      let byteLength = 0;
-      for (let index = 0; index < n; index += 1) {
-        const decoded = atob(complete.get(index));
-        const chunk = new Uint8Array(decoded.length);
-        for (let byte = 0; byte < chunk.length; byte += 1) {
-          chunk[byte] = decoded.charCodeAt(byte);
-        }
-        decodedChunks.push(chunk);
-        byteLength += chunk.length;
-      }
-      const bytes = new Uint8Array(byteLength);
-      let offset = 0;
-      for (const chunk of decodedChunks) {
-        bytes.set(chunk, offset);
-        offset += chunk.length;
-      }
-      return bytes.buffer;
-    });
   }
 
   function interact(kind, dx = 0) {
@@ -305,6 +486,18 @@ document.addEventListener('DOMContentLoaded', () => {
         colors = Object.fromEntries(Reflect.ownKeys(msg.colors).map((part) => [part, msg.colors[part]]));
         scheduleColors();
         break;
+      case 'setOutfit':
+        outfit = [...msg.items];
+        if (donorState === 'ready') {
+          try {
+            applyOutfit();
+          } catch (error) {
+            failOutfit(error);
+          }
+        } else {
+          startDonor();
+        }
+        break;
       case 'setPaused':
         paused = msg.paused;
         syncLoop();
@@ -317,6 +510,9 @@ document.addEventListener('DOMContentLoaded', () => {
         break;
       case 'loadModelChunk':
         addChunk(msg);
+        break;
+      case 'loadDonorChunk':
+        addDonorChunk(msg);
         break;
     }
   });
@@ -439,10 +635,8 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   if (!native && !failed) {
-    loadModel(async () => {
-      const response = await fetch(resolveModel(location.search), {redirect: 'error'});
-      if (!response.ok) throw new Error(`Model load failed (${response.status})`);
-      return response.arrayBuffer();
-    });
+    const url = resolveModel(location.search);
+    currentModelId = Object.keys(MODELS).find((id) => MODELS[id] === url);
+    loadModel(() => fetchModel(url));
   }
 }, {once: true});

@@ -60,3 +60,42 @@ test('rejects invalid setColors payloads', () => {
     assert.equal(parse(JSON.stringify(msg)).ok, false);
   }
 });
+
+const outfit = 'donut-chan:outfit';
+const shoes = 'donut-chan:shoes';
+const plasters = 'donut-chan:plasters';
+
+test('accepts empty, single-item, and full outfits through native and web', () => {
+  for (const items of [[], [outfit], [outfit, shoes, plasters]]) {
+    const msg = {v: 1, type: 'setOutfit', items};
+    assert.deepEqual(parse(msg), {ok: true, msg});
+    assert.deepEqual(parse(JSON.stringify(msg)), {ok: true, msg});
+  }
+});
+
+test('rejects unknown, repeated, malformed, and extra outfit fields', () => {
+  for (const fields of [
+    {items: ['unknown']}, {items: ['constructor']}, {items: [outfit, outfit]},
+    {items: outfit}, {items: [42]}, {items: [outfit, shoes, plasters, outfit]},
+    {items: [outfit], extra: true}, {items: Array(1)},
+  ]) {
+    const msg = {v: 1, type: 'setOutfit', ...fields};
+    assert.equal(parse(msg).ok, false);
+    assert.equal(parse(JSON.stringify(msg)).ok, false);
+  }
+});
+
+test('accepts donor chunks with the same chunk fields as the base transfer', () => {
+  const msg = {v: 1, type: 'loadDonorChunk', model: 'donut-chan', i: 0, n: 1, b64: 'YQ=='};
+  assert.deepEqual(parse(msg), {ok: true, msg});
+  assert.deepEqual(parse(JSON.stringify(msg)), {ok: true, msg});
+});
+
+test('rejects invalid donor model ids, base64 fields, and chunk indices', () => {
+  const valid = {v: 1, type: 'loadDonorChunk', model: 'donut-chan', i: 0, n: 1, b64: 'YQ=='};
+  for (const fields of [{model: 'pixiv-sample'}, {b64: 'YQ%='}, {i: 1}, {extra: true}]) {
+    const msg = {...valid, ...fields};
+    assert.equal(parse(msg).ok, false);
+    assert.equal(parse(JSON.stringify(msg)).ok, false);
+  }
+});
