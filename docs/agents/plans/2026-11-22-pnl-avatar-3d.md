@@ -274,7 +274,7 @@ Verification: T153 node tests + bundle rebuild + browser part check; T154 RED/GR
 ## Revision 4 — Donut-Chan part fix + outfit mixing (2026-11-24)
 
 Plan ID: PLAN-20261124-pnl-avatar-3d-r4
-Status: READY_FOR_APPROVAL
+Status: APPROVED (user, 2026-11-24)
 Implements: REQ-226..REQ-233; AC-227..AC-234. Decisions D-043..D-046, CD-13..CD-19.
 
 ### Planning workstreams
