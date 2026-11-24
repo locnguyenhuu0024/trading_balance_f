@@ -1,5 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'avatar_colors.dart';
+
 class AvatarModel {
   const AvatarModel({
     required this.id,
@@ -8,6 +10,7 @@ class AvatarModel {
     required this.thumbnail,
     required this.credit,
     required this.licenseText,
+    required this.parts,
   });
 
   final String id;
@@ -16,14 +19,24 @@ class AvatarModel {
   final String thumbnail;
   final String credit;
   final String licenseText;
+  final List<AvatarPart> parts;
 }
 
 const defaultAvatarModelId = 'pixiv-sample';
+
+const _commonParts = [
+  AvatarPart.hair,
+  AvatarPart.eyes,
+  AvatarPart.top,
+  AvatarPart.bottom,
+  AvatarPart.shoes,
+];
 
 const avatarModels = [
   AvatarModel(
     id: defaultAvatarModelId,
     name: 'Pixiv Sample',
+    parts: _commonParts,
     file: 'pixiv-sample.vrm',
     thumbnail: 'assets/avatar/pixiv-sample.png',
     credit:
@@ -36,6 +49,7 @@ const avatarModels = [
   AvatarModel(
     id: 'donut-chan',
     name: 'Donut-Chan',
+    parts: [..._commonParts, AvatarPart.accessory],
     file: 'donut-chan.vrm',
     thumbnail: 'assets/avatar/donut-chan.png',
     credit: 'Donut-Chan by Kana Fuyuko (Public Domain)',

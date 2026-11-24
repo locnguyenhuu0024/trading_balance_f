@@ -7,8 +7,12 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/security/secure_storage_helper.dart';
 import 'package:trading_balance_f/features/avatar/domain/avatar_model.dart';
+import 'package:trading_balance_f/features/avatar/presentation/avatar_renderer.dart';
+import 'package:trading_balance_f/features/settings/presentation/settings_avatar_customize_page.dart';
 import 'package:trading_balance_f/features/settings/presentation/settings_avatar_model_page.dart';
 import 'package:trading_balance_f/features/settings/presentation/settings_screen.dart';
+
+import '../avatar/floating_avatar_test.dart' show FakeAvatarRenderer;
 
 class _AvatarModelStorage extends SecureStorageHelper {
   _AvatarModelStorage({this.enabled = true})
@@ -48,12 +52,15 @@ Future<ProviderContainer> _mount(
   _AvatarModelStorage storage, {
   Widget home = const SettingsScreen(),
   AssetBundle? bundle,
+  AvatarRendererFactory? rendererFactory,
 }) async {
   addTearDown(storage.dispose);
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
         secureStorageProvider.overrideWithValue(storage),
+        if (rendererFactory != null)
+          avatarRendererFactoryProvider.overrideWithValue(rendererFactory),
         vndExchangeRateProvider.overrideWith((ref) async => 25400),
       ],
       child: DefaultAssetBundle(
@@ -71,6 +78,36 @@ bool? _selected(WidgetTester tester, Finder row) =>
 
 void main() {
   FlutterSecureStorage.setMockInitialValues({});
+
+  testWidgets('GREEN-152 customize opens the model without selecting it', (
+    tester,
+  ) async {
+    final storage = _AvatarModelStorage();
+    final renderer = FakeAvatarRenderer();
+    final container = await _mount(
+      tester,
+      storage,
+      home: const SettingsAvatarModelPage(),
+      rendererFactory: (model) {
+        expect(model.id, 'donut-chan');
+        return renderer;
+      },
+    );
+
+    await tester.tap(find.byKey(const ValueKey('avatar-customize-donut-chan')));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<SettingsAvatarCustomizePage>(
+            find.byType(SettingsAvatarCustomizePage),
+          )
+          .modelId,
+      'donut-chan',
+    );
+    expect(find.text('Phụ kiện'), findsOneWidget);
+    expect(container.read(avatarModelIdProvider), 'pixiv-sample');
+    expect(storage.savedId, isNull);
+  });
 
   testWidgets('RED-150 failed save rolls back and reports the error', (
     tester,

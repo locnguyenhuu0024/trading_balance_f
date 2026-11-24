@@ -20,6 +20,7 @@ import 'core/typography/app_text_scale.dart';
 import 'core/widgets/app_page_transition.dart';
 import 'core/widgets/app_startup.dart';
 import 'features/avatar/avatar_licenses.dart';
+import 'features/avatar/domain/avatar_colors.dart';
 import 'features/avatar/domain/avatar_model.dart';
 import 'features/portfolio/presentation/portfolio_screen.dart'
     show hideBalanceProvider;
@@ -37,6 +38,7 @@ class AppStartupData {
     required this.appTextScale,
     this.avatarEnabled = false,
     this.avatarModelId = defaultAvatarModelId,
+    this.avatarColors = const {},
     this.selectedConnectionId = defaultConnectionId,
   });
 
@@ -49,6 +51,7 @@ class AppStartupData {
   final double appTextScale;
   final bool avatarEnabled;
   final String avatarModelId;
+  final Map<String, AvatarColors> avatarColors;
   final String selectedConnectionId;
 }
 
@@ -120,6 +123,13 @@ Future<AppStartupData> initializeAppStartup({
     debugPrint('Avatar model restoration failed; using the default.');
   }
 
+  var avatarColors = const <String, AvatarColors>{};
+  try {
+    avatarColors = decodeAvatarColorsMap(await helper.getAvatarColorsJson());
+  } catch (_) {
+    debugPrint('Avatar colour restoration failed; using defaults.');
+  }
+
   var selectedConnectionId = defaultConnectionId;
   try {
     selectedConnectionId = await helper.getSelectedConnectionId();
@@ -142,6 +152,7 @@ Future<AppStartupData> initializeAppStartup({
     appTextScale: appTextScale,
     avatarEnabled: avatarEnabled,
     avatarModelId: avatarModelId,
+    avatarColors: avatarColors,
     selectedConnectionId: selectedConnectionId,
   );
 }
@@ -176,6 +187,7 @@ Widget buildInitializedApp(AppStartupData startup, {Widget? home}) {
       appTimeZoneProvider.overrideWith((ref) => startup.timeZoneId),
       appTextScaleProvider.overrideWith((ref) => startup.appTextScale),
       avatarEnabledProvider.overrideWith((ref) => startup.avatarEnabled),
+      avatarColorsProvider.overrideWith((ref) => startup.avatarColors),
       avatarModelIdProvider.overrideWith(
         (ref) => avatarModelById(startup.avatarModelId).id,
       ),
@@ -537,6 +549,17 @@ class WebStorageHelper extends SecureStorageHelper {
     final didSave = await _prefs.setString('AVATAR_MODEL_ID', id);
     if (!didSave) {
       throw StateError('Unable to save the avatar model on the web.');
+    }
+  }
+
+  @override
+  Future<String?> getAvatarColorsJson() async =>
+      _prefs.getString('AVATAR_COLORS');
+
+  @override
+  Future<void> saveAvatarColorsJson(String json) async {
+    if (!await _prefs.setString('AVATAR_COLORS', json)) {
+      throw StateError('Unable to save avatar colours on the web.');
     }
   }
 

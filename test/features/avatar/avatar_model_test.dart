@@ -1,9 +1,25 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/features/avatar/avatar_licenses.dart';
+import 'package:trading_balance_f/features/avatar/domain/avatar_colors.dart';
 import 'package:trading_balance_f/features/avatar/domain/avatar_model.dart';
 
 void main() {
+  test('GREEN-152 the catalog lists customizable parts for each model', () {
+    const common = [
+      AvatarPart.hair,
+      AvatarPart.eyes,
+      AvatarPart.top,
+      AvatarPart.bottom,
+      AvatarPart.shoes,
+    ];
+    expect(avatarModelById('pixiv-sample').parts, common);
+    expect(avatarModelById('donut-chan').parts, [
+      ...common,
+      AvatarPart.accessory,
+    ]);
+  });
+
   test('RED-150 unknown and missing ids fall back to Pixiv Sample', () {
     for (final id in [null, '', '../donut-chan', 'DONUT-CHAN', 'unknown']) {
       final model = avatarModelById(id);

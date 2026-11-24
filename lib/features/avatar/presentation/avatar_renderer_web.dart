@@ -5,6 +5,7 @@ import 'dart:ui_web' as ui_web;
 import 'package:flutter/widgets.dart';
 import 'package:web/web.dart' as web;
 
+import '../domain/avatar_colors.dart';
 import '../domain/avatar_model.dart';
 import '../domain/avatar_mood.dart';
 import 'avatar_renderer.dart';
@@ -37,6 +38,7 @@ class _WebAvatarRenderer implements AvatarRenderer {
   final _events = StreamController<AvatarEvent>();
   late final StreamSubscription<web.MessageEvent> _messages;
   AvatarMood _mood = AvatarMood.neutral;
+  AvatarColors _colors = AvatarColors.empty;
   bool _paused = false;
   bool _reducedMotion = false;
   bool _ready = false;
@@ -64,6 +66,7 @@ class _WebAvatarRenderer implements AvatarRenderer {
       _ready = true;
       setReducedMotion(_reducedMotion);
       setMood(_mood);
+      setColors(_colors);
       if (_paused) setPaused(true);
     }
   }
@@ -95,6 +98,12 @@ class _WebAvatarRenderer implements AvatarRenderer {
   void setMood(AvatarMood mood) {
     _mood = mood;
     _send({'type': 'setMood', 'mood': mood.wireName});
+  }
+
+  @override
+  void setColors(AvatarColors colors) {
+    _colors = colors;
+    _send({'type': 'setColors', 'colors': colors.toJson()});
   }
 
   @override

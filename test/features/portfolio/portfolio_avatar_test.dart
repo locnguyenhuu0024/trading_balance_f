@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/currency/currency_display_mode.dart';
 import 'package:trading_balance_f/core/network/okx_websocket_service.dart';
+import 'package:trading_balance_f/features/avatar/domain/avatar_colors.dart';
 import 'package:trading_balance_f/features/avatar/domain/avatar_model.dart';
 import 'package:trading_balance_f/features/avatar/domain/avatar_mood.dart';
 import 'package:trading_balance_f/features/avatar/presentation/avatar_renderer.dart';
@@ -25,6 +26,39 @@ const _sixPercent = OkxAccountData(
 );
 
 void main() {
+  testWidgets('GREEN-152 home sends selected model colours only on change', (
+    tester,
+  ) async {
+    final renderer = FakeAvatarRenderer();
+    const blue = Color(0xff223399);
+    const red = Color(0xff992233);
+    final hair = AvatarColors.empty.withPart(AvatarPart.hair, blue);
+    final container = await _mountPortfolio(
+      tester,
+      load: () async => _sixPercent,
+      factory: (_) => renderer,
+      colors: {'pixiv-sample': hair.withPart(AvatarPart.accessory, red)},
+    );
+    expect(renderer.colors, [hair]);
+
+    final colors = container.read(avatarColorsProvider.notifier);
+    colors.state = {
+      'pixiv-sample': AvatarColors.empty.withPart(AvatarPart.hair, blue),
+      'donut-chan': AvatarColors.empty.withPart(AvatarPart.eyes, red),
+    };
+    await tester.pump();
+    expect(renderer.colors, [hair]);
+
+    final changed = hair.withPart(AvatarPart.hair, red);
+    colors.state = {...colors.state, 'pixiv-sample': changed};
+    await tester.pump();
+    expect(renderer.colors, [hair, changed]);
+
+    colors.state = const {};
+    await tester.pump();
+    expect(renderer.colors, [hair, changed, AvatarColors.empty]);
+  });
+
   testWidgets('GREEN-150 switching models replaces the loading renderer', (
     tester,
   ) async {
@@ -209,6 +243,7 @@ Future<ProviderContainer> _mountPortfolio(
   required AvatarRendererFactory factory,
   bool enabled = true,
   bool hidden = false,
+  Map<String, AvatarColors> colors = const {},
 }) async {
   tester.view.physicalSize = const Size(800, 1200);
   tester.view.devicePixelRatio = 1;
@@ -228,6 +263,7 @@ Future<ProviderContainer> _mountPortfolio(
         themeModeProvider.overrideWith((ref) => ThemeMode.light),
         hideBalanceProvider.overrideWith((ref) => hidden),
         avatarEnabledProvider.overrideWith((ref) => enabled),
+        avatarColorsProvider.overrideWith((ref) => colors),
         avatarRendererFactoryProvider.overrideWithValue(factory),
       ],
       child: const MaterialApp(home: PortfolioScreen()),

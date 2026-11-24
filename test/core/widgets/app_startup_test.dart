@@ -10,6 +10,7 @@ import 'package:trading_balance_f/core/exchange/exchange_scope.dart';
 import 'package:trading_balance_f/core/timezone/app_time_zone.dart';
 import 'package:trading_balance_f/core/typography/app_text_scale.dart';
 import 'package:trading_balance_f/core/widgets/app_startup.dart';
+import 'package:trading_balance_f/features/avatar/domain/avatar_colors.dart';
 import 'package:trading_balance_f/features/avatar/domain/avatar_model.dart';
 import 'package:trading_balance_f/main.dart' as app;
 import 'package:trading_balance_f/features/portfolio/presentation/portfolio_screen.dart'
@@ -27,6 +28,8 @@ class _StartupStorage extends SecureStorageHelper {
     this.failAvatarRead = false,
     this.failAvatarModelRead = false,
     this.avatarModelId,
+    this.avatarColorsJson,
+    this.failAvatarColorsRead = false,
   }) : super(const FlutterSecureStorage());
 
   final bool failBiometricRead;
@@ -37,6 +40,14 @@ class _StartupStorage extends SecureStorageHelper {
   final bool failAvatarRead;
   final bool failAvatarModelRead;
   final String? avatarModelId;
+  final String? avatarColorsJson;
+  final bool failAvatarColorsRead;
+
+  @override
+  Future<String?> getAvatarColorsJson() async {
+    if (failAvatarColorsRead) throw StateError('unreadable avatar colours');
+    return avatarColorsJson;
+  }
 
   @override
   Future<String?> getAvatarModelId() async {
@@ -97,6 +108,70 @@ class _StartupStorage extends SecureStorageHelper {
 }
 
 void main() {
+  for (final failRead in [false, true]) {
+    test(
+      'RED-152 startup tolerates ${failRead ? 'unreadable' : 'corrupt'} colours',
+      () async {
+        final storage = _StartupStorage(
+          avatarModelId: 'donut-chan',
+          avatarColorsJson: '{"donut-chan":',
+          failAvatarColorsRead: failRead,
+        );
+        addTearDown(storage.dispose);
+        final startup = await app.initializeAppStartup(
+          isWeb: false,
+          createNativeStorage: () => storage,
+          initializeTimeZone: () {},
+          retireLegacyBackgroundService: () async {},
+        );
+        expect(startup.avatarModelId, 'donut-chan');
+        expect(startup.avatarColors, isEmpty);
+      },
+    );
+  }
+
+  for (final isWeb in [false, true]) {
+    testWidgets(
+      'GREEN-152 persists and restores avatar colours on ${isWeb ? 'web' : 'native'}',
+      (tester) async {
+        if (isWeb) {
+          SharedPreferences.setMockInitialValues({});
+        } else {
+          FlutterSecureStorage.setMockInitialValues({});
+          addTearDown(() => FlutterSecureStorage.setMockInitialValues({}));
+        }
+
+        Future<app.AppStartupData> start() => app.initializeAppStartup(
+          isWeb: isWeb,
+          initializeTimeZone: () {},
+          retireLegacyBackgroundService: () async {},
+        );
+
+        final first = await start();
+        addTearDown(first.secureStorage.dispose);
+        expect(first.avatarColors, isEmpty);
+        const json =
+            '{"pixiv-sample":{"hair":"#22aadd"},'
+            '"donut-chan":{"accessory":"#116633"}}';
+        await first.secureStorage.saveAvatarColorsJson(json);
+
+        final restored = await start();
+        addTearDown(restored.secureStorage.dispose);
+        expect(restored.avatarColors, decodeAvatarColorsMap(json));
+        await tester.pumpWidget(
+          app.buildInitializedApp(
+            restored,
+            home: Consumer(
+              builder: (_, ref, _) =>
+                  Text(encodeAvatarColorsMap(ref.watch(avatarColorsProvider))),
+            ),
+          ),
+        );
+        expect(find.text(json), findsOneWidget);
+      },
+    );
+  }
+
   for (final failRead in [true, false]) {
     testWidgets(
       'RED-150 ${failRead ? 'failed read' : 'unknown id'} defaults to Pixiv Sample',

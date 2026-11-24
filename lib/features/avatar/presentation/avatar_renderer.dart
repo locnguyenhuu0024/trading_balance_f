@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../domain/avatar_colors.dart';
 import '../domain/avatar_model.dart';
 import '../domain/avatar_mood.dart';
 import 'avatar_renderer_native.dart'
@@ -36,6 +37,7 @@ final class AvatarInteraction extends AvatarEvent {
 abstract class AvatarRenderer {
   Widget buildView();
   void setMood(AvatarMood mood);
+  void setColors(AvatarColors colors);
   void setPaused(bool paused);
   void setReducedMotion(bool reducedMotion);
   void sendPointer(String phase, double x, double y, int tMs);

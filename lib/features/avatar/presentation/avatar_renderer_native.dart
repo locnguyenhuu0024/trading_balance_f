@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import '../domain/avatar_colors.dart';
 import '../domain/avatar_model.dart';
 import '../domain/avatar_mood.dart';
 import 'avatar_renderer.dart';
@@ -25,6 +26,7 @@ class _NativeAvatarRenderer implements AvatarRenderer {
   final _controller = WebViewController();
   final _events = StreamController<AvatarEvent>();
   AvatarMood _mood = AvatarMood.neutral;
+  AvatarColors _colors = AvatarColors.empty;
   bool _paused = false;
   bool _reducedMotion = false;
   bool _ready = false;
@@ -85,6 +87,7 @@ class _NativeAvatarRenderer implements AvatarRenderer {
       await Future.wait<void>([
         _send({'type': 'setReducedMotion', 'on': _reducedMotion}),
         _send({'type': 'setMood', 'mood': _mood.wireName}),
+        _send({'type': 'setColors', 'colors': _colors.toJson()}),
         if (_paused) _send({'type': 'setPaused', 'paused': true}),
       ]);
       if (!_active) return;
@@ -136,6 +139,12 @@ class _NativeAvatarRenderer implements AvatarRenderer {
   void setMood(AvatarMood mood) {
     _mood = mood;
     unawaited(_send({'type': 'setMood', 'mood': mood.wireName}));
+  }
+
+  @override
+  void setColors(AvatarColors colors) {
+    _colors = colors;
+    unawaited(_send({'type': 'setColors', 'colors': colors.toJson()}));
   }
 
   @override

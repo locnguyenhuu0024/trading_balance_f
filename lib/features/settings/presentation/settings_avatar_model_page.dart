@@ -5,6 +5,7 @@ import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/security/secure_storage_helper.dart';
 import '../../../core/widgets/responsive_form_content.dart';
 import '../../avatar/domain/avatar_model.dart';
+import 'settings_avatar_customize_page.dart';
 
 final _isSavingAvatarModelProvider = StateProvider<bool>((ref) => false);
 
@@ -78,9 +79,30 @@ class SettingsAvatarModelPage extends ConsumerWidget {
                             ),
                             title: Text(model.name),
                             subtitle: Text(model.credit),
-                            trailing: model.id == selectedId
-                                ? const Icon(Icons.check_circle)
-                                : null,
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (model.id == selectedId)
+                                  const ExcludeSemantics(
+                                    child: Icon(Icons.check_circle),
+                                  ),
+                                IconButton(
+                                  key: ValueKey('avatar-customize-${model.id}'),
+                                  icon: const Icon(Icons.palette_outlined),
+                                  tooltip: 'Tùy chỉnh',
+                                  onPressed: isSaving
+                                      ? null
+                                      : () => Navigator.of(context).push<void>(
+                                          MaterialPageRoute<void>(
+                                            builder: (_) =>
+                                                SettingsAvatarCustomizePage(
+                                                  modelId: model.id,
+                                                ),
+                                          ),
+                                        ),
+                                ),
+                              ],
+                            ),
                             onTap: isSaving
                                 ? null
                                 : () => _selectModel(context, ref, model),

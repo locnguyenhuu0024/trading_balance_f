@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:trading_balance_f/features/avatar/domain/avatar_colors.dart';
 import 'package:trading_balance_f/features/avatar/domain/avatar_model.dart';
 import 'package:trading_balance_f/features/avatar/domain/avatar_mood.dart';
 import 'package:trading_balance_f/features/avatar/presentation/avatar_renderer.dart';
@@ -108,6 +109,45 @@ void main() {
       );
     },
   );
+
+  testWidgets('GREEN-152 floating view keeps the renderer on colour changes', (
+    tester,
+  ) async {
+    final renderer = FakeAvatarRenderer();
+    final model = avatarModelById(null);
+    final custom = AvatarColors.empty.withPart(
+      AvatarPart.top,
+      const Color(0xff2859b0),
+    );
+
+    Future<void> show(AvatarColors colors) => tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          avatarRendererFactoryProvider.overrideWithValue((_) => renderer),
+        ],
+        child: MaterialApp(
+          home: FloatingAvatar(
+            model: model,
+            mood: AvatarMood.neutral,
+            colors: colors,
+          ),
+        ),
+      ),
+    );
+
+    await show(AvatarColors.empty);
+    renderer.emit(const AvatarModelLoaded());
+    await tester.pump();
+    await show(custom);
+    await show(
+      AvatarColors.empty.withPart(AvatarPart.top, const Color(0xff2859b0)),
+    );
+
+    expect(renderer.colors, [AvatarColors.empty, custom]);
+    expect(renderer.moods, [AvatarMood.neutral]);
+    expect(renderer.disposed, isFalse);
+    expect(find.byKey(avatarFakeKey), findsOneWidget);
+  });
 
   testWidgets('GREEN scales on a narrow viewport and clamps long-press drag', (
     tester,
@@ -223,6 +263,7 @@ Future<void> _mount(
 class FakeAvatarRenderer implements AvatarRenderer {
   final _events = StreamController<AvatarEvent>();
   final moods = <AvatarMood>[];
+  final colors = <AvatarColors>[];
   final pauses = <bool>[];
   final motion = <bool>[];
   final pointers = <({String phase, Offset position, int timeMs})>[];
@@ -238,6 +279,9 @@ class FakeAvatarRenderer implements AvatarRenderer {
 
   @override
   void setMood(AvatarMood mood) => moods.add(mood);
+
+  @override
+  void setColors(AvatarColors value) => colors.add(value);
 
   @override
   void setPaused(bool paused) => pauses.add(paused);
