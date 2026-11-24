@@ -1,6 +1,6 @@
 # Task 151 — Avatar runtime: per-part recolor and `setColors` bridge
 
-Status: READY
+Status: PASS
 Agent Role: implementation_executor
 Executor Class: E3
 Target Model: gpt-6.2-sol
@@ -78,4 +78,11 @@ A three r187 API in §6 missing → BLOCKED with evidence.
 
 ## 12. Coordinator Audit
 
-Verdict: PENDING (coordinator browser check AC-224)
+Attempt `be2432c7…` (1 attempt).
+Scope: PASS — exact allowlist.
+Review: pure recolor module per contract; protocol `setColors` validation (own keys ⊂ PARTS, hex `/i`); main.js caches originals per material and per original texture, clone + new `Source(canvas)`, map + shadeMultiplyTexture, changed parts only, 100 ms coalescing, apply before first frame, dispose on fail/pagehide.
+RED (executor): tests failed before (module missing, setColors unknown). GREEN (coordinator rerun): `node --test tools/avatar/test/` 25/25; isolated bundle rebuild byte-identical.
+AC-224 (coordinator, local Chromium): pixiv hair/eyes/top/bottom/shoes recolored; Donut hair/eyes/top/bottom/shoes/accessory (cat ears) recolored; eye whites/highlights unchanged; `{}` restores originals; colours sent right after `ready` (before model parse) applied at the first frame.
+Note: Donut-Chan's arm plasters live on the Tops texture and follow the top colour (accepted per CD-9).
+Dispatch route: UNVERIFIABLE (explicit). Buildability: PASS.
+Verdict: PASS
