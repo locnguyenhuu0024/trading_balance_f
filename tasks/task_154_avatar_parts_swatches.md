@@ -1,6 +1,6 @@
 # Task 154 — Avatar customize: Donut-Chan parts and original-colour swatches
 
-Status: READY
+Status: PASS
 Agent Role: implementation_executor
 Executor Class: E2
 Target Model: gpt-6.2-sol
@@ -56,11 +56,16 @@ Same files `--plain-name "GREEN-154"`: ordered donut chips; original swatches; n
 
 ### Task Buildability Gate
 Command: `flutter analyze --no-pub --no-fatal-infos --no-fatal-warnings && flutter build web --no-pub`
-Result: PENDING
+Result: PASS (coordinator, host)
 
 ## 12. Coordinator Audit
 
-Verdict: PENDING
+Attempts `f7a16849…` (REWORK, AUD-154-1) and R01 `5f60dc78…`. Scope: exact allowlist both times.
+Review: four parts appended to `AvatarPart` (wire names = enum names, so JSON decode picks them up); `originalColors` const maps match §6 exactly; donut parts ordered per contract; chip swatch and picker fall back to `originalColors`; Semantics split into label `Màu <part>` + value (hex or `Mặc định`). `restrictTo(model.parts)` already applied at home and in the page (§6.4, no new code).
+Host evidence after R01: analyze No issues; RED-154 2/2; GREEN-154 3/3; V4 `flutter test --no-pub` 743/743; `flutter build web --no-pub` ✓.
+AC-230 visual (original-colour start on device) is folded into the T156 simulator walkthrough.
+Dispatch route: UNVERIFIABLE (explicit gpt-6.2-sol / low). Buildability: PASS.
+Verdict: PASS
 
 ## 13. Remediation R01 (coordinator audit attempt 1 → REWORK)
 

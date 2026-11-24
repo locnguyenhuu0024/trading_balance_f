@@ -36,7 +36,6 @@ void main() {
     tester,
   ) async {
     final semantics = tester.ensureSemantics();
-    addTearDown(semantics.dispose);
     await _open(tester, modelId: _donut, donutColors: AvatarColors.empty);
 
     final chips = tester.widgetList<ChoiceChip>(find.byType(ChoiceChip));
@@ -80,6 +79,7 @@ void main() {
       tester.widget<HueRingPicker>(find.byType(HueRingPicker)).pickerColor,
       const Color(0xfff7bdc0),
     );
+    semantics.dispose();
   });
 
   testWidgets('RED-152 Pixiv part chips exclude accessories', (tester) async {
