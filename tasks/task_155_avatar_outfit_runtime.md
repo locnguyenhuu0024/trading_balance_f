@@ -1,6 +1,6 @@
 # Task 155 — Avatar runtime: outfit mixing (Donut-Chan items on Pixiv Sample)
 
-Status: PASS
+Status: READY
 Agent Role: implementation_executor
 Executor Class: E4
 Target Model: gpt-6.2-sol
@@ -91,3 +91,17 @@ Attempt `08464ded…` committed as the starting point. Host evidence: `node --te
 AUD-155-1 (Must; native compatibility regression): `Object.hasOwn` (Safari/WKWebView ≥ 15.4) now runs on the native path — `resolveOutfit` is called in `loadModel` for every model, and `parse` uses it for `setOutfit`. On older iOS WebViews every native model load would throw and hide the avatar. Replace `Object.hasOwn(ITEMS, id)` with `Object.prototype.hasOwnProperty.call(ITEMS, id)` in `tools/avatar/src/items.js` and `tools/avatar/src/protocol.js`; add one assertion in `tools/avatar/test/items.test.js` that the source of `items.js` and `protocol.js` does not contain `Object.hasOwn(`; rebuild the bundle. Nothing else.
 Allowed write files (exact): `tools/avatar/src/items.js`, `tools/avatar/src/protocol.js`, `tools/avatar/test/items.test.js`, `assets/avatar/avatar.bundle.js`.
 RED-155-R01: the new assertion fails before the source edit. GREEN-155-R01: `node --test tools/avatar/test/` all pass; `python3 -I -B tools/avatar/build.py --deps "$DEPS"` exits 0.
+
+## 14. Remediation R02 (post-audit defect reported by the user → REWORK)
+
+User report: after equipping "Váy Donut-Chan" on Pixiv there are black edges on both sides. Coordinator diagnosis (debug bundle, local Chromium):
+- AUD-155-2 (Must): three-vrm's `MToonMaterial` copies `alphaTest` (and other properties) into its shader uniforms only in `material.update(delta)`, which `vrm.update()` calls for that VRM's own materials. Borrowed materials belong to the donor VRM, which is never updated, so `uniforms.alphaTest.value` stays `0`: alpha-cutout texels (RGB 0, A 0) render black — collar wings, sleeve hems and skirt sides. Calling `update(0)` on the borrowed materials removes all of it (black pixel count back to the base level).
+- AUD-155-3 (Must): the borrowed MToon outline pass draws a thick dark V under the neck bow on Pixiv. Rendering borrowed meshes without their outline material gives a clean result matching Donut-Chan's own look.
+Contract:
+1. `rebind.js`: add pure `primaryMaterial(material)` → `[].concat(material)[0]`.
+2. `main.js` `transferDonor`: create each copy as `new SkinnedMesh(mesh.geometry, primaryMaterial(mesh.material))` (no outline material; outline materials are then disposed by `disposeDonor` as unused). Keep `materialName` behaviour.
+3. `main.js`: keep a list of the unique borrowed materials (from all item groups); call `material.update?.(0)` once right after transfer, and call `material.update?.(dt)` for each in the frame step right after `vrm.update(dt)`. Clear the list on donor failure.
+4. Tests in `rebind.test.js`: `primaryMaterial` returns the first entry of an array and the material itself otherwise.
+5. Rebuild the bundle. Nothing else.
+Allowed write files (exact): `tools/avatar/src/rebind.js`, `tools/avatar/src/main.js`, `tools/avatar/test/rebind.test.js`, `assets/avatar/avatar.bundle.js`.
+RED-155-R02: the new `primaryMaterial` test fails before the edit (missing export). GREEN-155-R02: `node --test tools/avatar/test/` all pass; `python3 -I -B tools/avatar/build.py --deps "$DEPS"` exits 0. Coordinator re-runs AC-232 visually (no black edges, no dark V) in Chromium and on the iOS Simulator.
