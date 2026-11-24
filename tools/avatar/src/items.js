@@ -33,7 +33,7 @@ export function resolveOutfit(items, targetId) {
   const hide = [];
   if (targetId === target) {
     for (const id of new Set(items)) {
-      if (!Object.hasOwn(ITEMS, id)) continue;
+      if (!Object.prototype.hasOwnProperty.call(ITEMS, id)) continue;
       show.add(id);
       const rule = ITEMS[id].hide[targetId];
       if (rule) hide.push(rule);

@@ -45,7 +45,7 @@ export function parse(raw) {
     case 'setOutfit': {
       const {items} = msg;
       valid = Array.isArray(items) && items.length <= 3 &&
-        [...items].every((id) => typeof id === 'string' && Object.hasOwn(ITEMS, id)) &&
+        [...items].every((id) => typeof id === 'string' && Object.prototype.hasOwnProperty.call(ITEMS, id)) &&
         new Set(items).size === items.length;
       fieldCount = 1;
       break;

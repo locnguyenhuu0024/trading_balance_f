@@ -1,6 +1,6 @@
 # Task 155 — Avatar runtime: outfit mixing (Donut-Chan items on Pixiv Sample)
 
-Status: READY
+Status: PASS
 Agent Role: implementation_executor
 Executor Class: E4
 Target Model: gpt-6.2-sol
@@ -70,7 +70,7 @@ Before implementing: `node --test tools/avatar/test/` fails (modules missing; se
 
 ### Task Buildability Gate
 Command: `python3 -I -B tools/avatar/build.py --deps "$DEPS" && node --test tools/avatar/test/`
-Result: PENDING
+Result: PASS (coordinator, host)
 
 ## 10. Stop Conditions
 
@@ -78,7 +78,12 @@ A three r187 / three-vrm 3.5.5 API in §6 missing → BLOCKED with evidence. Vis
 
 ## 12. Coordinator Audit
 
-Verdict: PENDING (browser check AC-232)
+Attempts `08464ded…` (REWORK, AUD-155-1) and R01 `430b65d5…`. Scope: exact allowlist both times.
+Review: pure `items`/`rebind`/`chunks` modules per §6; `transferDonor` does one pass with a shared bone map, `donor:` clones for donor-only chains, `flip·inverse`, identity bind matrix, `frustumCulled=false`, hidden groups attached only after every item has meshes; donor resources not kept are disposed (ImageBitmaps closed); target meshes captured before groups are added; `applyOutfit` resets `appliedColors` and forces recolour (CD-18); donor failures go through `failOutfit` (non-fatal); native model id from `vrm.meta` name/title; main-model chunking now shares `createAssembler`.
+GREEN (coordinator, after R01): `node --test tools/avatar/test/` 65/65; isolated bundle rebuild byte-identical; the only remaining `Object.hasOwn` in the bundle is the web-only `resolveModel`.
+AC-232 (coordinator, local Chromium, Pixiv Sample): outfit fits and hides Pixiv shirt/shorts; all three items render together; recolouring dress/bows/hair on borrowed meshes works; `setOutfit []` restores the original clothes; a missing donor file yields only `error{code:'outfit'}` and the base avatar keeps rendering. Shoes and plasters sit outside the upper-body frame (covered by the GLB mapping tests).
+Dispatch route: UNVERIFIABLE (explicit gpt-6.2-sol / high). Buildability: PASS.
+Verdict: PASS
 
 ## 13. Remediation R01 (coordinator audit attempt 1 → REWORK)
 

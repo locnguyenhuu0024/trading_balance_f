@@ -18,6 +18,12 @@ test('catalog exposes three frozen item ids and the single allowed donor', () =>
   assert.equal(itemForMaterial('xN00_008_01_Shoes_01_CLOTH_01'), null);
 });
 
+test('outfit sources avoid Object.hasOwn on older WebViews', () => {
+  const incompatibleFiles = ['items.js', 'protocol.js'].filter((file) =>
+    readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8').includes('Object.hasOwn('));
+  assert.deepEqual(incompatibleFiles, []);
+});
+
 test('resolves each item and combines visibility for Pixiv Sample', () => {
   for (const [items, show, hide] of [
     [[], [], []],
