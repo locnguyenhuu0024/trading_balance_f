@@ -1,5 +1,9 @@
 import {Matrix4, Quaternion} from 'three';
 
+export function primaryMaterial(material) {
+  return [].concat(material)[0];
+}
+
 export function flipFor(donorMetaVersion, targetMetaVersion) {
   const flip = new Matrix4();
   if (donorMetaVersion !== targetMetaVersion) flip.makeRotationY(Math.PI);

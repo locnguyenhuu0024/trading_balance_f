@@ -1,6 +1,6 @@
 # Task 155 — Avatar runtime: outfit mixing (Donut-Chan items on Pixiv Sample)
 
-Status: READY
+Status: PASS
 Agent Role: implementation_executor
 Executor Class: E4
 Target Model: gpt-6.2-sol
@@ -105,3 +105,10 @@ Contract:
 5. Rebuild the bundle. Nothing else.
 Allowed write files (exact): `tools/avatar/src/rebind.js`, `tools/avatar/src/main.js`, `tools/avatar/test/rebind.test.js`, `assets/avatar/avatar.bundle.js`.
 RED-155-R02: the new `primaryMaterial` test fails before the edit (missing export). GREEN-155-R02: `node --test tools/avatar/test/` all pass; `python3 -I -B tools/avatar/build.py --deps "$DEPS"` exits 0. Coordinator re-runs AC-232 visually (no black edges, no dark V) in Chromium and on the iOS Simulator.
+
+### R02 coordinator audit
+
+Attempt `e49a12b9…`. Scope: exact allowlist. Review: borrowed copies use `primaryMaterial` (outline material dropped and disposed as unused); unique borrowed materials get `update(0)` after transfer and `update(dt)` every frame after `vrm.update`; list cleared on donor failure.
+GREEN: `node --test tools/avatar/test/` 66/66; isolated bundle rebuild byte-identical; builds web ✓, apk debug ✓, iOS simulator ✓.
+AC-232 re-check: local Chromium — outfit alone, all three items, recoloured dress/bows: no black collar/sleeve/skirt edges and no dark V under the bow; white blouse and pink bow match Donut-Chan; missing donor still non-fatal. iOS Simulator — home avatar (saved green dress) renders clean natively.
+Verdict: PASS

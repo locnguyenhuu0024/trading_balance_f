@@ -14,7 +14,7 @@ if (process.env.DEPS) {
   register(`data:text/javascript,${encodeURIComponent(hook)}`, import.meta.url);
 }
 
-const {bindMatrix, boneKey, flipFor, flipLocal, planChain, rebindInverse} =
+const {bindMatrix, boneKey, flipFor, flipLocal, planChain, primaryMaterial, rebindInverse} =
   await import('../src/rebind.js');
 const {Matrix4, Quaternion, Vector3} = await import('three');
 
@@ -62,4 +62,11 @@ test('plans the missing donor chain from the nearest mapped ancestor', () => {
   assert.deepEqual(planChain(hem, (key) => key === boneKey(skirt.name)), [hem]);
   assert.deepEqual(planChain(hips, (key) => key === hips.name), []);
   assert.deepEqual(planChain(hem, () => false), [hips, skirt, hem]);
+});
+
+test('selects the primary material from a single material or an array', () => {
+  const surface = {name: 'surface'};
+  const outline = {name: 'outline'};
+  assert.equal(primaryMaterial([surface, outline]), surface);
+  assert.equal(primaryMaterial(surface), surface);
 });

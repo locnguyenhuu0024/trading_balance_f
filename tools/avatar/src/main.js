@@ -13,7 +13,7 @@ import {ITEMS, itemForMaterial, resolveOutfit} from './items.js';
 import {motion, step, targets} from './mood.js';
 import {MODELS, resolveModel} from './models.js';
 import {axisSign, restPose} from './pose.js';
-import {bindMatrix, boneKey, flipFor, flipLocal, planChain, rebindInverse} from './rebind.js';
+import {bindMatrix, boneKey, flipFor, flipLocal, planChain, primaryMaterial, rebindInverse} from './rebind.js';
 import {colorize, luminance, parseHex, partForMaterial} from './recolor.js';
 
 const FRAME_MS = 1000 / 30;
@@ -23,7 +23,7 @@ const EXPRESSIONS = ['happy', 'sad', 'relaxed', 'surprised', 'blink'];
 const ITEM_IDS = Object.keys(ITEMS);
 
 function materialName({material}) {
-  return [].concat(material)[0]?.name;
+  return primaryMaterial(material)?.name;
 }
 
 async function fetchModel(url) {
@@ -107,6 +107,7 @@ function transferDonor(donor, target) {
     group.visible = false;
     return [id, group];
   }));
+  const materials = new Set();
   donor.scene.traverse((mesh) => {
     if (!mesh.isSkinnedMesh) return;
     const group = groups.get(itemForMaterial(materialName(mesh)));
@@ -114,17 +115,19 @@ function transferDonor(donor, target) {
     const {bones, boneInverses} = mesh.skeleton;
     const reboundBones = bones.map(mapBone);
     const inverses = boneInverses.map((inverse) => rebindInverse(flip, inverse));
-    const copy = new SkinnedMesh(mesh.geometry, mesh.material);
+    const material = primaryMaterial(mesh.material);
+    const copy = new SkinnedMesh(mesh.geometry, material);
     copy.bind(new Skeleton(reboundBones, inverses), bindMatrix());
     copy.frustumCulled = false;
     group.add(copy);
+    materials.add(material);
   });
   for (const [id, group] of groups) {
     if (!group.children.length) throw new Error(`No donor meshes found for ${id}`);
   }
   for (const [parent, bone] of boneAttachments) parent.add(bone);
   for (const group of groups.values()) target.scene.add(group);
-  return groups;
+  return {groups, materials: [...materials]};
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -176,6 +179,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let supportsOutfit = false;
   let outfit = [];
   let outfitGroups = new Map();
+  let borrowedMaterials = [];
   const targetMeshes = [];
   let donorState = 'none';
   let donorChunks;
@@ -297,6 +301,7 @@ document.addEventListener('DOMContentLoaded', () => {
     donorState = 'failed';
     donorChunks = undefined;
     donorBytes = undefined;
+    borrowedMaterials = [];
     if (outfitGroups.size) {
       for (const group of outfitGroups.values()) group.visible = false;
       for (const mesh of targetMeshes) mesh.visible = true;
@@ -321,7 +326,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (failed) return;
         const donor = gltf.userData.vrm;
         if (!donor) throw new Error('The donor model has no VRM data');
-        outfitGroups = transferDonor(donor, vrm);
+        const {groups, materials} = transferDonor(donor, vrm);
+        outfitGroups = groups;
+        borrowedMaterials = materials;
+        for (const material of borrowedMaterials) material.update?.(0);
       } finally {
         disposeDonor(gltf.scene, outfitGroups.values());
       }
@@ -578,6 +586,7 @@ document.addEventListener('DOMContentLoaded', () => {
       vrm.lookAt.pitch = 0;
     }
     vrm.update(dt);
+    for (const material of borrowedMaterials) material.update?.(dt);
   }
 
   function frame(time) {
