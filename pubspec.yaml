@@ -54,6 +54,7 @@ dependencies:
   flutter_local_notifications: ^21.0.0
   webview_flutter: ^4.14.1
   web: ^0.5.1
+  flutter_colorpicker: ^1.1.0
 
 dev_dependencies:
   flutter_test:
