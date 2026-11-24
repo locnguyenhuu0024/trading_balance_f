@@ -178,6 +178,7 @@ Default off. Rollback: revert feature files; user removes pubspec entries.
 | Revision | Change | Reason |
 |---|---|---|
 | 1.1 | Executor-facing file names aligned to dispatcher allowlist; `web: ^0.5.1`; offline deps cache pre-staged by coordinator for T146 (downloads authorized by plan approval) | Execution-time constraints; no scope/requirement change. Approved revision 1 remains the governing plan. |
+| 4.0 | Revision 4 added (outfit mixing; supersedes 3.1 plan) — READY_FOR_APPROVAL | User request 2026-11-24 |
 | 3.1 | Revision 3.1 added (Donut part mapping, initial colours) — READY_FOR_APPROVAL | T152 device findings |
 | 3.0 | Revision 3 added (colour customization) — READY_FOR_APPROVAL | User request 2026-11-24 |
 | 2.0 | Revision 2 added (model picker, Donut-Chan, quality) — READY_FOR_APPROVAL | User request 2026-11-22 |
@@ -259,7 +260,7 @@ T151: node tests, bundle build, coordinator browser recolor check of both models
 ## Revision 3.1 — Donut-Chan part mapping and initial colours (2026-11-24)
 
 Plan ID: PLAN-20261124-pnl-avatar-3d-r3b
-Status: READY_FOR_APPROVAL
+Status: SUPERSEDED by revision 4 (never approved; T153/T154 carried over)
 Implements: REQ-226..REQ-228; AC-227..AC-230. Decisions D-043, D-044, CD-13, CD-14.
 Planning workstreams: remediation of revision 3 contracts; evidence gathered by coordinator probe (OBS-235..243); fan-out record of revision 3 (RSN-005/006, PASS) applies.
 
@@ -269,3 +270,29 @@ Planning workstreams: remediation of revision 3 contracts; evidence gathered by 
 | T154 Flutter parts + swatches | REQ-227, REQ-228; AC-229, AC-230 | T153 PASS | E2 | gpt-6.2-sol / low | `lib/features/avatar/domain/avatar_colors.dart`, `lib/features/avatar/domain/avatar_model.dart`, `lib/features/settings/presentation/settings_avatar_customize_page.dart`, `test/features/avatar/avatar_colors_test.dart`, `test/features/avatar/avatar_model_test.dart`, `test/features/settings/settings_avatar_customize_page_test.dart` |
 
 Verification: T153 node tests + bundle rebuild + browser part check; T154 RED/GREEN on host, analyze, web build, V4, iOS simulator.
+
+## Revision 4 — Donut-Chan part fix + outfit mixing (2026-11-24)
+
+Plan ID: PLAN-20261124-pnl-avatar-3d-r4
+Status: READY_FOR_APPROVAL
+Implements: REQ-226..REQ-233; AC-227..AC-234. Decisions D-043..D-046, CD-13..CD-19.
+
+### Planning workstreams
+| Workstream | Material | Independent | Route | Run | Adoption |
+|---|---|---|---|---|---|
+| Runtime outfit mixing | YES | YES | R2 / claude-opus (effort not bindable) | RSN-007 | USED |
+| Flutter outfit tab + storage | YES | YES | R2 / claude-opus (effort not bindable) | RSN-008 | USED |
+Fan-out Required: YES · Required 2 · Actual 2 · Compliance: PASS (effort UNVERIFIABLE). Synthesis: non-fatal `outfit` error code (runtime) ↔ Flutter must not hide on it; donor streamed after `modelLoaded`.
+
+### Tasks (serial, one writer per checkout)
+| Task | REQ/AC | Depends | Class | Route |
+|---|---|---|---|---|
+| T153 runtime part rules | REQ-226; AC-227, AC-228 | T151, T152 | E2 | gpt-6.2-sol / low |
+| T154 Flutter parts + swatches | REQ-227, REQ-228; AC-229, AC-230 | T153 | E2 | gpt-6.2-sol / low |
+| T155 runtime outfit mixing | REQ-229, REQ-230; AC-231, AC-232 | T153 | E4 | gpt-6.2-sol / high |
+| T156 Flutter outfit tab | REQ-231..REQ-233; AC-233, AC-234 | T154, T155 | E3 | gpt-6.2-sol / medium |
+
+T155 is E4 (high): interdependent skinning invariants (bind matrix, flip, bone policy), async donor state machine and disposal.
+
+### Verification
+Each task: RED then GREEN; T153/T155 node tests + bundle + coordinator browser checks; T154/T156 host Flutter tests, analyze, web build; final V4 + apk/ios builds + iOS simulator flow; user Android check.

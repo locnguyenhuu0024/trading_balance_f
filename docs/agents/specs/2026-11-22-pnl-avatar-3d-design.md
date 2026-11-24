@@ -344,3 +344,30 @@ donut-chan — hair `#c4b68b`, eyes `#415130`, dress `#f7bdc0`, bows `#f8a5b0`, 
 - AC-228: coordinator browser check — Donut-Chan `dress` recolors pinafore + blouse only, `bows` the bows + badge, `socks` the socks, `plasters` the plasters.
 - AC-229: Flutter tests — donut-chan chips are the 8 parts in order; pixiv unchanged; unset chip shows the original swatch and the picker starts from it; stale donut `top`/`bottom` colours are dropped.
 - AC-230: iOS simulator check of the Donut-Chan customize page.
+
+## Revision 4 — outfit mixing (2026-11-24)
+
+Status: READY_FOR_PLAN. Includes revision 3.1 (REQ-226..228). Decisions D-045, D-046, CD-15..CD-19. Fan-out RSN-007 (runtime outfit) and RSN-008 (Flutter outfit) collected.
+
+### Observed facts
+| ID | Source | Observation |
+|---|---|---|
+| OBS-244 | node names | 52/52 Donut `J_Bip*` bones exist in Pixiv; `J_Sec*` overlap 44 but positions differ (name collision → wrong attachment if reused). |
+| OBS-245 | coordinator spike | Rebinding by `J_Bip` names with flip·inverse fits Donut shoes, dress set and plasters on Pixiv (front/back renders); hiding Pixiv `Tops_01`/`Bottoms_01` shows an intact body (no holes); ears/tail still misplaced. |
+| OBS-246 | Pixiv `Body` mesh | 5 primitives → separate child SkinnedMeshes; per-material hiding works. |
+
+### Requirements
+- REQ-229 (runtime catalog + rebind): pure `items.js` (`ITEMS`: `donut-chan:outfit` → prefixes `N00_002_03_Tops_01_CLOTH_01/02/03`, `N00_007_01_Tops_01_CLOTH_01/02`, hides pixiv `/^(Tops_01|Bottoms_01)_CLOTH/`; `donut-chan:shoes` → `N00_008_01_Shoes_01_CLOTH_01/02`, hides `/^Shoes_01_CLOTH/`; `donut-chan:plasters` → `N00_010_01_Onepiece_00_CLOTH_03`, hides nothing; `resolveOutfit(items, targetId)`), pure `rebind.js` (flip when meta versions differ, bone key policy, local flip, inverse rebind, clone-chain planning), pure `chunks.js` (chunk assembler shared by model and donor). `main.js` per CD-15/CD-18, donor states none → receiving → parsing → ready | failed, buffering early chunks.
+- REQ-230 (bridge): `setOutfit {items}` — array ≤ 3 of known ids, no duplicates; `loadDonorChunk {model,i,n,b64}` — model ∈ {donut-chan}; non-fatal `error{code:'outfit'}`.
+- REQ-231 (Flutter domain + storage): `AvatarSlot {outfit 'Trang phục', shoes 'Giày', plasters 'Miếng dán'}`, `AvatarItem {id, donorModelId, slot, label, parts, replacesParts}`, availability only for pixiv-sample; `effectiveParts(model, items)` ordered (replaced parts substituted in place, additive parts appended); swatch for a borrowed part from the donor's `originalColors`; `AVATAR_OUTFITS` persisted native + web + startup preload, tolerant decode (known models/items, one per slot, dedupe).
+- REQ-232 (renderer): `setOutfit(List<String>)`; native streams the donor asset once per renderer when needed (serialized, after `modelLoaded`); web sends the message only; `AvatarError` with code `outfit` does not hide the view; home passes saved outfits.
+- REQ-233 (customize page): tabs "Màu sắc" / "Phối đồ" only when the model has items; per slot choice "Đồ gốc" or item; preview updates immediately; colour tab shows `effectiveParts`; one "Lưu" for both; "Bỏ phối đồ" (confirm) on the outfit tab; unsaved guard covers both.
+
+### Acceptance criteria
+- AC-231: node tests (items, rebind incl. identity bind and synthetic F·D⁻¹ check, chunks, protocol, GLB coverage of item prefixes/hide regexes).
+- AC-232: coordinator browser: Pixiv wears each item and all three (front/back), replaced parts hidden, colours apply to borrowed parts, toggling off restores originals, donor failure keeps the avatar.
+- AC-233: Flutter tests (effectiveParts, codec, startup, renderer calls on change only, tabs only for pixiv, save/rollback both, reset semantics, `outfit` error keeps view).
+- AC-234: iOS simulator: equip outfit + shoes on Pixiv, recolour the dress, save, home shows it after restart; Android device check (user).
+
+### Risks
+Second model parse 1–2 s on low-end Android (lazy, after the base avatar is visible); +memory (dispose pass); clipping with hair/arms; borrowed skirt/bows static (no spring physics).

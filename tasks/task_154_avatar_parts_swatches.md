@@ -10,7 +10,7 @@ Routing Policy: EXECUTOR_ROUTING_POLICY.json v3 (OptCodex v1.5.1)
 Route Binding: EXPLICIT
 Parent Route Inheritance: FORBIDDEN
 Specification: `docs/agents/specs/2026-11-22-pnl-avatar-3d-design.md` (Revision 3.1)
-Plan: `docs/agents/plans/2026-11-22-pnl-avatar-3d.md` (Revision 3.1, PLAN-20261124-pnl-avatar-3d-r3b)
+Plan: `docs/agents/plans/2026-11-22-pnl-avatar-3d.md` (Revision 4, PLAN-20261124-pnl-avatar-3d-r4)
 Requirements: REQ-227, REQ-228
 Acceptance Criteria: AC-229, AC-230
 Decisions: D-043, D-044, CD-14

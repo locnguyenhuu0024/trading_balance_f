@@ -118,3 +118,18 @@ Source: user (AUD-152-2). Decision: an unset part shows and starts from its meas
 ### Coordinator design decisions
 - CD-13: Runtime part rules are an ordered list: exact Donut-Chan material-name prefixes first (unique to that model), then the generic VRoid regexes. No model id needed on the page (native receives bytes only).
 - CD-14: Existing saved Donut-Chan `top`/`bottom` colours are dropped by `restrictTo(parts)` (those parts no longer exist for that model) — effectively a reset for Donut-Chan only.
+
+## Revision 4 (2026-11-24) — outfit mixing (supersedes the unapproved revision 3.1 plan; keeps D-043/D-044)
+
+### D-045 — Mix Donut-Chan items onto Pixiv Sample
+Source: user ("Thêm phối đồ giữa nhân vật") after the coordinator spike. Decision: first release = Donut-Chan → Pixiv Sample only: Trang phục (pinafore dress + blouse + hem + back bow + neck bow + chest badge; replaces Pixiv top + bottom), Giày (replaces Pixiv shoes), Miếng dán (adds). Ears/tail deferred (secondary-bone placement unresolved in the spike).
+
+### D-046 — UI and recolour
+Decision: tab "Phối đồ" in the customize page next to "Màu sắc"; borrowed items are recolourable (their parts appear in Màu sắc while equipped; replaced parts hidden).
+
+### Coordinator design decisions
+- CD-15: Runtime rebinds borrowed skinned primitives to the target skeleton: only `J_Bip*` bones matched by name; donor-only bones cloned (key `donor:<name>`) under the nearest mapped ancestor with position flipped and quaternion conjugated when meta versions differ; boneInverse' = flip·donorInverse; **bind matrix = identity** (not the mesh's current world matrix). Transfer all items once into hidden groups; `setOutfit` toggles visibility and hides replaced target materials; donor scene never added; unused donor resources disposed.
+- CD-16: Bridge `setOutfit {items}` (full state) and native `loadDonorChunk {model,i,n,b64}`; Flutter streams the donor once per renderer and only when an item is equipped; web fetches the donor via the allowlist.
+- CD-17: Donor load/transfer failure reports `error{code:'outfit'}` and is NOT fatal; Flutter keeps the avatar visible for that code (other codes still hide, CD-4).
+- CD-18: After any equip change the page re-applies all colours (reset applied-state) so borrowed meshes get the current colours.
+- CD-19: Persist outfits in `AVATAR_OUTFITS` = JSON `{modelId: [itemId]}`, one item per slot, tolerant decode; one "Lưu" saves outfits and colours (both rolled back on failure); "Khôi phục mặc định" resets colours only; "Bỏ phối đồ" resets outfits (confirm).
