@@ -1,6 +1,6 @@
 # Task 152 — Avatar colours: domain, storage, customize page, home wiring
 
-Status: PENDING
+Status: READY
 Agent Role: implementation_executor
 Executor Class: E3
 Target Model: gpt-6.2-sol
@@ -27,7 +27,7 @@ Done when: RED-152 then GREEN-152 pass on host and buildability passes.
 
 ## 3. Preconditions
 
-T151 PASS. User added `flutter_colorpicker: ^1.1.0` and ran `flutter pub get` (coordinator confirms). Executor sandbox cannot run Flutter: write complete code, report RED/GREEN `NOT_RUN`, buildability `BLOCKED` with that reason.
+T151 PASS. User added `flutter_colorpicker: ^1.1.0` (commit 4a6ee8c); coordinator confirmed `flutter_colorpicker` 1.1.0 resolved in `.dart_tool/package_config.json`. Executor sandbox cannot run Flutter: write complete code, report RED/GREEN `NOT_RUN`, buildability `BLOCKED` with that reason.
 
 ## 4. Allowed Scope (exact files)
 
