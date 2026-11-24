@@ -1,6 +1,6 @@
 # Task 153 — Avatar runtime: Donut-Chan part rules
 
-Status: READY
+Status: PASS
 Agent Role: implementation_executor
 Executor Class: E2
 Target Model: gpt-6.2-sol
@@ -63,4 +63,9 @@ Result: PENDING
 
 ## 12. Coordinator Audit
 
-Verdict: PENDING (coordinator browser part check AC-228)
+Attempt `c5b8f0aa…` (1 attempt). Scope: exact allowlist.
+Review: ordered prefix table before generic patterns; PARTS extended; protocol picks it up via PARTS.
+GREEN (coordinator rerun): `node --test tools/avatar/test/` 49/49; isolated bundle rebuild byte-identical.
+AC-228 (coordinator, local Chromium, Donut-Chan, solid green per part): dress → pinafore + blouse; bows → neck bow + chest badge; plasters → arm plasters only; socks outside the framed view (covered by GLB mapping test).
+Dispatch route: UNVERIFIABLE (explicit gpt-6.2-sol / low). Buildability: PASS.
+Verdict: PASS
