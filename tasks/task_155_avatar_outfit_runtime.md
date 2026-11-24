@@ -79,3 +79,10 @@ A three r187 / three-vrm 3.5.5 API in §6 missing → BLOCKED with evidence. Vis
 ## 12. Coordinator Audit
 
 Verdict: PENDING (browser check AC-232)
+
+## 13. Remediation R01 (coordinator audit attempt 1 → REWORK)
+
+Attempt `08464ded…` committed as the starting point. Host evidence: `node --test tools/avatar/test/` 64/64; bundle rebuild byte-identical. AC-232 (local Chromium, Pixiv Sample): outfit fits and hides Áo/Quần; outfit + shoes + plasters render; recolouring dress/bows/hair on borrowed meshes works; `setOutfit []` restores Pixiv clothes; missing donor file → only `error{code:'outfit'}` and the base avatar keeps rendering.
+AUD-155-1 (Must; native compatibility regression): `Object.hasOwn` (Safari/WKWebView ≥ 15.4) now runs on the native path — `resolveOutfit` is called in `loadModel` for every model, and `parse` uses it for `setOutfit`. On older iOS WebViews every native model load would throw and hide the avatar. Replace `Object.hasOwn(ITEMS, id)` with `Object.prototype.hasOwnProperty.call(ITEMS, id)` in `tools/avatar/src/items.js` and `tools/avatar/src/protocol.js`; add one assertion in `tools/avatar/test/items.test.js` that the source of `items.js` and `protocol.js` does not contain `Object.hasOwn(`; rebuild the bundle. Nothing else.
+Allowed write files (exact): `tools/avatar/src/items.js`, `tools/avatar/src/protocol.js`, `tools/avatar/test/items.test.js`, `assets/avatar/avatar.bundle.js`.
+RED-155-R01: the new assertion fails before the source edit. GREEN-155-R01: `node --test tools/avatar/test/` all pass; `python3 -I -B tools/avatar/build.py --deps "$DEPS"` exits 0.
