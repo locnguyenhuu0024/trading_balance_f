@@ -68,3 +68,15 @@ Result: PENDING
 ## 12. Coordinator Audit
 
 Verdict: PENDING
+
+## 13. Remediation R01 (coordinator audit attempt 1 → REWORK)
+
+Attempt `ca14dca8…` committed as the starting point (7fc5d20). Host evidence: analyze clean; RED-156 7/7; GREEN-156 1 fail; V4 760 pass / 1 fail. Product code reviewed and accepted (selection reset, save order, two-provider rollback, outfit error non-fatal, donor streaming once, `decodeAvatarColorsWithOutfits` keeps borrowed-part colours across restart).
+AUD-156-1 (Must; test defect) in "GREEN-156 equipping a dress changes the preview and colour parts":
+- `find.bySemanticsLabel('Chọn màu Tóc')` finds nothing because the picker node merges HueRingPicker's own text (actual label `Chọn màu Tóc\nHex`). Assert the reset selection instead by the `ChoiceChip` whose label text is `Tóc` having `selected == true` (or `find.bySemanticsLabel(RegExp(r'^Chọn màu Tóc'))`).
+- `addTearDown(semantics.dispose)` runs after Flutter's end-of-test handle check (same as AUD-154-1): remove it and call `semantics.dispose();` as the last statement of the test body.
+- The initial `tester.tap(find.text('Áo'))` warns that it misses the hit test; use the file's existing `_tapText` helper (or `ensureVisible` first).
+Nothing else.
+Allowed write files (exact): `test/features/settings/settings_avatar_customize_page_test.dart`.
+RED-156-R01: record `grep -n "Chọn màu Tóc'\|addTearDown(semantics.dispose)" test/features/settings/settings_avatar_customize_page_test.dart` (matches) before editing.
+GREEN-156-R01: coordinator reruns GREEN-156 and V4 on host.
