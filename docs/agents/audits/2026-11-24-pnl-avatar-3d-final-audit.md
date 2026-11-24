@@ -33,3 +33,18 @@ REQ-210..REQ-220 implemented and evidenced in the task audits (T146..T150).
 ## Open items (not blocking)
 - macOS signing (user): select a Team in `macos/Runner.xcworkspace`.
 - Nits: "Chọn nhân vật" row lacks a leading icon (alignment); head hit area small at 160×220; `Object.hasOwn` in web-only model resolution.
+
+## Addendum — revisions 3–4 (T151–T156, PLAN-20261124-pnl-avatar-3d-r3 / -r4)
+
+| Task | Verdict | Attempts |
+|---|---|---|
+| T151 avatar_recolor_runtime | PASS | 1 |
+| T152 avatar_customize_page | PASS | 1 |
+| T153 avatar_part_rules | PASS | 1 |
+| T154 avatar_parts_swatches | PASS | 2 (R01: test semantics handle) |
+| T155 avatar_outfit_runtime | PASS | 2 (R01: `Object.hasOwn` off the native path) |
+| T156 avatar_outfit_tab | PASS | 2 (R01: test assertions) |
+
+Integration evidence after the last code change (318a8b6): `flutter analyze` No issues; `flutter test --no-pub` 761/761; `node --test tools/avatar/test/` 65/65 with a byte-identical bundle rebuild; `flutter build web` ✓, `flutter build apk --debug` ✓, `flutter build ios --simulator --debug` ✓. macOS unchanged (signing BLOCKED_ENVIRONMENT, user-owned).
+Device evidence: iOS Simulator full outfit flow (equip, recolour borrowed dress, save, relaunch → home shows it); local Chromium outfit/failure checks (T155). Android physical-device check of outfit mixing: pending user.
+Open (not blocking): Donut-Chan ears/tail as borrowable items (deferred by user); shoes/plasters are outside the upper-body framing so only GLB-mapping tests cover them visually; picker Semantics label includes HueRingPicker's "Hex".
