@@ -28,6 +28,9 @@ test('accepts each inbound message through native JSON and web objects', () => {
   for (const msg of [
     {v: 1, type: 'setMood', mood: 'mildSad'},
     {v: 1, type: 'setColors', colors: {eyes: '#AAbbCc'}},
+    {v: 1, type: 'setColors', colors: {
+      dress: '#123456', bows: '#234567', socks: '#345678', plasters: '#456789',
+    }},
     {v: 1, type: 'setColors', colors: {}},
     {v: 1, type: 'setPaused', paused: false},
     {v: 1, type: 'setReducedMotion', on: true},

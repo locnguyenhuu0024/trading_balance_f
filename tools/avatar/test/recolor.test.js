@@ -3,14 +3,16 @@ import test from 'node:test';
 import {colorize, luminance, parseHex, partForMaterial, PARTS} from '../src/recolor.js';
 
 test('classifies only recolorable material names', () => {
-  assert.deepEqual(PARTS, ['hair', 'eyes', 'top', 'bottom', 'shoes', 'accessory']);
+  assert.deepEqual(PARTS, [
+    'hair', 'eyes', 'top', 'bottom', 'shoes', 'accessory', 'dress', 'bows', 'socks', 'plasters',
+  ]);
   for (const [name, part] of [
     ['HairBack_00_HAIR', 'hair'],
     ['N00_000_Hair_00_HAIR (Instance) (Outline)', 'hair'],
     ['N00_000_00_EyeIris_00_EYE (Outline)', 'eyes'],
-    ['N00_007_01_Tops_01_CLOTH_01 (Instance)', 'top'],
+    ['Tops_01_CLOTH', 'top'],
     ['Bottoms_01_CLOTH', 'bottom'],
-    ['N00_010_01_Onepiece_00_CLOTH_01', 'bottom'],
+    ['Shoes_01_CLOTH', 'shoes'],
     ['N00_008_01_Shoes_01_CLOTH_01', 'shoes'],
     ['Accessory_FoxTail_01_CLOTH (Instance)', 'accessory'],
     ['N00_Accessory_FoxTail', null],
@@ -23,6 +25,24 @@ test('classifies only recolorable material names', () => {
     assert.equal(partForMaterial(name), part, name);
   }
 });
+
+for (const [prefix, part] of [
+  ['N00_002_03_Tops_01_CLOTH_02', 'dress'],
+  ['N00_002_03_Tops_01_CLOTH_03', 'dress'],
+  ['N00_002_03_Tops_01_CLOTH_01', 'bows'],
+  ['N00_007_01_Tops_01_CLOTH_01', 'bows'],
+  ['N00_007_01_Tops_01_CLOTH_02', 'bows'],
+  ['N00_010_01_Onepiece_00_CLOTH_01', 'socks'],
+  ['N00_010_01_Onepiece_00_CLOTH_02', 'socks'],
+  ['N00_010_01_Onepiece_00_CLOTH_03', 'plasters'],
+]) {
+  for (const suffix of ['', ' (Instance)', ' (Outline)']) {
+    const name = prefix + suffix;
+    test(`classifies ${name} as ${part}`, () => {
+      assert.equal(partForMaterial(name), part);
+    });
+  }
+}
 
 test('parses hex colors in either case', () => {
   assert.deepEqual(parseHex('#00aaff'), [0, 170, 255]);

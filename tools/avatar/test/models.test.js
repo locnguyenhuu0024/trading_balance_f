@@ -25,7 +25,7 @@ test('bundled GLB materials cover the supported recolor parts', async () => {
   const directory = new URL('../../../assets/avatar/', import.meta.url);
   const expected = {
     'pixiv-sample.vrm': ['hair', 'eyes', 'top', 'bottom', 'shoes'],
-    'donut-chan.vrm': ['hair', 'eyes', 'top', 'bottom', 'shoes', 'accessory'],
+    'donut-chan.vrm': ['hair', 'eyes', 'dress', 'bows', 'socks', 'shoes', 'plasters', 'accessory'],
   };
   const files = readdirSync(directory).filter((name) => name.endsWith('.vrm'));
   assert.deepEqual(files.sort(), Object.keys(expected).sort());

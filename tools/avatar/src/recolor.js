@@ -7,10 +7,27 @@ const patterns = {
   accessory: /^Accessory_/,
 };
 
-export const PARTS = Object.keys(patterns);
+const materialPrefixes = [
+  ['N00_002_03_Tops_01_CLOTH_02', 'dress'],
+  ['N00_002_03_Tops_01_CLOTH_03', 'dress'],
+  ['N00_002_03_Tops_01_CLOTH_01', 'bows'],
+  ['N00_007_01_Tops_01_CLOTH_01', 'bows'],
+  ['N00_007_01_Tops_01_CLOTH_02', 'bows'],
+  ['N00_010_01_Onepiece_00_CLOTH_01', 'socks'],
+  ['N00_010_01_Onepiece_00_CLOTH_02', 'socks'],
+  ['N00_010_01_Onepiece_00_CLOTH_03', 'plasters'],
+];
+
+const genericParts = Object.keys(patterns);
+export const PARTS = [...genericParts, 'dress', 'bows', 'socks', 'plasters'];
 
 export function partForMaterial(name) {
-  return PARTS.find((part) => patterns[part].test(name)) ?? null;
+  if (typeof name === 'string') {
+    for (const [prefix, part] of materialPrefixes) {
+      if (name.startsWith(prefix)) return part;
+    }
+  }
+  return genericParts.find((part) => patterns[part].test(name)) ?? null;
 }
 
 export function parseHex(hex) {
