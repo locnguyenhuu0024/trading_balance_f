@@ -27,6 +27,8 @@ test('rejects invalid fields, outbound types, and undeclared data', () => {
 test('accepts each inbound message through native JSON and web objects', () => {
   for (const msg of [
     {v: 1, type: 'setMood', mood: 'mildSad'},
+    {v: 1, type: 'setColors', colors: {eyes: '#AAbbCc'}},
+    {v: 1, type: 'setColors', colors: {}},
     {v: 1, type: 'setPaused', paused: false},
     {v: 1, type: 'setReducedMotion', on: true},
     {v: 1, type: 'pointer', phase: 'down', x: 3, y: 4, t: 0},
@@ -34,5 +36,24 @@ test('accepts each inbound message through native JSON and web objects', () => {
   ]) {
     assert.deepEqual(parse(msg), {ok: true, msg});
     assert.deepEqual(parse(JSON.stringify(msg)), {ok: true, msg});
+  }
+});
+
+test('rejects invalid setColors payloads', () => {
+  for (const fields of [
+    {colors: {skin: '#123456'}},
+    {colors: {['__proto__']: '#123456'}},
+    {colors: {hair: '#fff'}},
+    {colors: {hair: 'red'}},
+    {colors: {hair: '#GGGGGG'}},
+    {colors: {hair: 123456}},
+    {colors: []},
+    {colors: null},
+    {colors: {}, extra: true},
+    {},
+  ]) {
+    const msg = {v: 1, type: 'setColors', ...fields};
+    assert.equal(parse(msg).ok, false);
+    assert.equal(parse(JSON.stringify(msg)).ok, false);
   }
 });

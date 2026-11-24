@@ -1,6 +1,6 @@
 import {
   AmbientLight, DirectionalLight, LoadingManager, Object3D, OrthographicCamera,
-  Scene, Vector3, WebGLRenderer,
+  Scene, Source, Vector3, WebGLRenderer,
 } from 'three';
 import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
 import {VRMLoaderPlugin, VRMUtils} from '@pixiv/three-vrm';
@@ -11,9 +11,11 @@ import {createHitTest} from './hit.js';
 import {motion, step, targets} from './mood.js';
 import {resolveModel} from './models.js';
 import {axisSign, restPose} from './pose.js';
+import {colorize, luminance, parseHex, partForMaterial} from './recolor.js';
 
 const FRAME_MS = 1000 / 30;
 const MAX_DELTA = 1 / 15;
+const COLOR_INTERVAL_MS = 100;
 const EXPRESSIONS = ['happy', 'sad', 'relaxed', 'surprised', 'blink'];
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -76,11 +78,99 @@ document.addEventListener('DOMContentLoaded', () => {
   let previous;
   let accumulator = 0;
   let sinceRender = 0;
+  let colors = {};
+  let appliedColors = {};
+  let colorTimer;
+  const originalMaterials = new Map();
+  const recoloredTextures = new Map();
+
+  function recolorTexture(original, color) {
+    let entry = recoloredTextures.get(original);
+    if (!entry) {
+      const image = original.image;
+      const textureCanvas = document.createElement('canvas');
+      textureCanvas.width = image.width;
+      textureCanvas.height = image.height;
+      const ctx = textureCanvas.getContext('2d', {willReadFrequently: true});
+      ctx.drawImage(image, 0, 0);
+      const imageData = ctx.getImageData(0, 0, textureCanvas.width, textureCanvas.height);
+      const pixels = imageData.data.slice();
+      const {lum, mean} = luminance(pixels);
+      const tex = original.clone();
+      // A clone shares its source until it is explicitly replaced.
+      tex.source = new Source(textureCanvas);
+      entry = {canvas: textureCanvas, ctx, imageData, pixels, lum, mean, tex};
+      recoloredTextures.set(original, entry);
+    }
+    if (entry.color !== color) {
+      const {ctx, imageData, pixels, lum, mean, tex} = entry;
+      imageData.data.set(pixels);
+      colorize(imageData.data, lum, mean, parseHex(color));
+      ctx.putImageData(imageData, 0, 0);
+      tex.needsUpdate = true;
+      entry.color = color;
+    }
+    return entry.tex;
+  }
+
+  function setMaterialTextures(material, map, shade) {
+    if (material.map === map && material.shadeMultiplyTexture === shade) return;
+    material.map = map;
+    if (shade !== undefined) material.shadeMultiplyTexture = shade;
+    material.needsUpdate = true;
+  }
+
+  function applyColors() {
+    vrm.scene.traverse(({material}) => {
+      if (!material) return;
+      for (const item of Array.isArray(material) ? material : [material]) {
+        const part = partForMaterial(item.name);
+        if (!part || colors[part] === appliedColors[part]) continue;
+        let original = originalMaterials.get(item);
+        if (!original) {
+          if (!item.map) continue;
+          original = {map: item.map, shade: item.shadeMultiplyTexture};
+          originalMaterials.set(item, original);
+        }
+        const color = colors[part];
+        const map = color ? recolorTexture(original.map, color) : original.map;
+        const shade = color && original.shade ? map : original.shade;
+        setMaterialTextures(item, map, shade);
+      }
+    });
+    appliedColors = colors;
+  }
+
+  function scheduleColors() {
+    if (!vrm || colorTimer !== undefined) return;
+    colorTimer = setTimeout(() => {
+      colorTimer = undefined;
+      try {
+        applyColors();
+      } catch (error) {
+        fail('webgl', error);
+      }
+    }, COLOR_INTERVAL_MS);
+  }
+
+  function disposeColors() {
+    clearTimeout(colorTimer);
+    colorTimer = undefined;
+    for (const [material, {map, shade}] of originalMaterials) {
+      setMaterialTextures(material, map, shade);
+    }
+    for (const {tex} of recoloredTextures.values()) tex.dispose();
+    originalMaterials.clear();
+    recoloredTextures.clear();
+    colors = {};
+    appliedColors = {};
+  }
 
   function fail(code, error) {
     if (failed) return;
     failed = true;
     chunks = undefined;
+    disposeColors();
     syncLoop();
     send({v: 1, type: 'error', code, message: error instanceof Error ? error.message : String(error)});
   }
@@ -113,6 +203,7 @@ document.addEventListener('DOMContentLoaded', () => {
       surpriseExpression = expressions?.getExpression('surprised') ? 'surprised' : 'Surprised';
       vrm.scene.rotation.y = baseYaw;
       scene.add(vrm.scene);
+      applyColors();
       vrm.scene.updateMatrixWorld(true);
       const framing = frameAvatar({
         headY: bones.head.getWorldPosition(headPosition).y,
@@ -209,6 +300,10 @@ document.addEventListener('DOMContentLoaded', () => {
     switch (msg.type) {
       case 'setMood':
         mood = msg.mood;
+        break;
+      case 'setColors':
+        colors = Object.fromEntries(Reflect.ownKeys(msg.colors).map((part) => [part, msg.colors[part]]));
+        scheduleColors();
         break;
       case 'setPaused':
         paused = msg.paused;
@@ -335,6 +430,9 @@ document.addEventListener('DOMContentLoaded', () => {
     renderer.setClearColor(0x000000, 0);
     resize();
     window.addEventListener('resize', resize);
+    window.addEventListener('pagehide', (event) => {
+      if (!event.persisted) disposeColors();
+    });
     document.addEventListener('visibilitychange', syncLoop);
   } catch (error) {
     fail('webgl', error);

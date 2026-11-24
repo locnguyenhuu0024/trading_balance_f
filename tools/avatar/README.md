@@ -2,6 +2,8 @@
 
 The page runs locally. Flutter supplies the model bytes on native platforms. On web, `index.html?model=donut-chan` loads Donut-Chan from the page directory. The default is `pixiv-sample`.
 
+Send `{"v":1,"type":"setColors","colors":{"hair":"#8844cc","eyes":"#1A9FFF"}}` to recolor model parts. Supported keys are `hair`, `eyes`, `top`, `bottom`, `shoes`, and `accessory`. Only Donut-Chan supports `accessory`. Each message replaces the full color state. Omitted parts use their original textures, and `"colors":{}` resets all parts. Colors received during loading apply before the first frame. Later updates apply at most once per 100 ms using the latest message.
+
 The bundle pins three.js `0.187.0`, `@pixiv/three-vrm` `3.5.5`, and esbuild `0.25.10`. Rebuilding requires Node.js 20 or newer and Python 3. Texture optimization uses macOS `sips`.
 
 With a staged dependency directory `DEPS` containing `node_modules`, `Twist.vrm`, and `Donut-Chan.vrm`, run from the repository root.

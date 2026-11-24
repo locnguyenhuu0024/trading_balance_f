@@ -1,7 +1,9 @@
 import {MOODS} from './mood.js';
+import {PARTS} from './recolor.js';
 
 const moods = Object.keys(MOODS);
 const phases = ['down', 'move', 'up', 'cancel'];
+const hexColor = /^#[0-9a-f]{6}$/i;
 
 export function parse(raw) {
   let msg;
@@ -21,6 +23,15 @@ export function parse(raw) {
       valid = moods.includes(msg.mood);
       fieldCount = 1;
       break;
+    case 'setColors': {
+      const {colors} = msg;
+      valid = Object.prototype.propertyIsEnumerable.call(msg, 'colors') &&
+        colors !== null && typeof colors === 'object' && !Array.isArray(colors) &&
+        Reflect.ownKeys(colors).every((part) =>
+          PARTS.includes(part) && typeof colors[part] === 'string' && hexColor.test(colors[part]));
+      fieldCount = 1;
+      break;
+    }
     case 'setPaused':
       valid = typeof msg.paused === 'boolean';
       fieldCount = 1;
