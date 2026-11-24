@@ -178,6 +178,7 @@ Default off. Rollback: revert feature files; user removes pubspec entries.
 | Revision | Change | Reason |
 |---|---|---|
 | 1.1 | Executor-facing file names aligned to dispatcher allowlist; `web: ^0.5.1`; offline deps cache pre-staged by coordinator for T146 (downloads authorized by plan approval) | Execution-time constraints; no scope/requirement change. Approved revision 1 remains the governing plan. |
+| 3.0 | Revision 3 added (colour customization) — READY_FOR_APPROVAL | User request 2026-11-24 |
 | 2.0 | Revision 2 added (model picker, Donut-Chan, quality) — READY_FOR_APPROVAL | User request 2026-11-22 |
 | 1.2 | D-035 model switch; T146 remediation R01 (arm rest pose, per-chunk base64, CSP `file:`, live swipe yaw, model swap) | T146 audit REWORK + user decision |
 
@@ -220,3 +221,36 @@ Serial (one writer per checkout): T149 → T150 → final integration (V4, analy
 | RISK-217 | App size +~9 MB (Donut) and +1.6 MB (pixiv at 1024) | sparse morphs; thumbnail shrink |
 | RISK-218 | MSAA + DPR 3 cost on low-end Android | small canvas, 30 fps cap, pause; user device check |
 | RISK-219 | Donut-Chan 109 morph targets per face primitive heavier on GPU | observe on device; fall back to pixiv default |
+
+## Revision 3 — per-part colour customization (2026-11-24)
+
+Plan ID: PLAN-20261124-pnl-avatar-3d-r3
+Status: READY_FOR_APPROVAL
+Implements: REQ-221..REQ-225; AC-223..AC-226. Decisions D-040..D-042, CD-9..CD-12.
+
+### Planning workstreams
+| Workstream | Material | Independent | Route | Run | Adoption |
+|---|---|---|---|---|---|
+| Runtime recolor + bridge | YES | YES | R2 / claude-opus (effort not bindable) | RSN-005 | USED |
+| Flutter domain, storage, customize page | YES | YES | R2 / claude-opus (effort not bindable) | RSN-006 | PARTIAL (its "JS material tint" note superseded by texture colorize CD-9) |
+
+Fan-out Required: YES · Required 2 · Actual 2 · Compliance: PASS (effort UNVERIFIABLE).
+
+### Tasks (serial)
+| Task | REQ/AC | Depends | Class | Route | Allowed writes |
+|---|---|---|---|---|---|
+| T151 runtime recolor | REQ-221, REQ-222; AC-223, AC-224 | — | E3 | gpt-6.2-sol / medium | `tools/avatar/src/{recolor,protocol,main}.js`, `tools/avatar/test/{recolor,protocol,models}.test.js`, `assets/avatar/avatar.bundle.js`, `tools/avatar/README.md` |
+| T152 Flutter customize | REQ-223..REQ-225; AC-225, AC-226 | T151 + user pubspec action | E3 | gpt-6.2-sol / medium | listed in T152 |
+
+### User action before T152
+Add `flutter_colorpicker: ^1.1.0` under `dependencies:` in `pubspec.yaml`, run `flutter pub get`, commit (pubspec.lock / plugin registrants as generated).
+
+### Verification
+T151: node tests, bundle build, coordinator browser recolor check of both models. T152: RED/GREEN on host, analyze, web/apk/ios builds, V4, iOS simulator customize flow; user Android check.
+
+### Risks
+| ID | Risk | Mitigation |
+|---|---|---|
+| RISK-221 | Recolor jank on low-end Android while dragging (Donut top 5.2 Mpx) | cached luminance, changed parts only, 100 ms coalescing both sides |
+| RISK-222 | Extra memory for caches (~15–20 MB worst case) | lazy per part; freed on teardown |
+| RISK-223 | Hair highlights (emissive) keep original hue | accepted for now; revisit after visual check |

@@ -89,3 +89,20 @@ Impacts: REQ-217, T149, T150
 - CD-6: Switching model recreates the host (widget keyed by model id); no new bridge message. Web passes `?model=<id>` validated by an allowlist in the page; native sends the chosen asset's bytes.
 - CD-7: Donut-Chan morph targets re-encoded as glTF sparse accessors (lossless; three.js decodes natively) to cut ~6 MB; verified by a decode round-trip equality check. Blendshape groups are not pruned.
 - CD-8: The CCB dispatcher allowlist must accept `.png` for the thumbnails (needs explicit user approval; same pattern as the `.vrm` addition).
+
+## Revision 3 (2026-11-24) — per-part colour customization
+
+### D-040 — Customization approach A (recolor in app)
+Source: user, after options A/B/C. Decision: recolor parts inside the app; shapes (hairstyle, outfit cut) unchanged.
+
+### D-041 — Entry and preview
+Decision: each row of "Chọn nhân vật" gets a customize button opening a customize page for that model, with a live 3D preview.
+
+### D-042 — Parts and colour input
+Decision: parts hair, eyes, top, bottom (incl. one-piece dress), shoes, accessory (only models that have accessories); free colour wheel via `flutter_colorpicker` (user adds the dependency). Lips dropped: VRoid `FaceMouth` is the mouth interior (teeth/tongue), lips are only a line on the face texture (user chose to drop).
+
+### Coordinator design decisions (for revision 3 approval)
+- CD-9: Recolor = luminance-relative colorize of the part's base texture (`k = min(1.6, L/meanL)`, out = target·k, alpha untouched) applied to `map` + `shadeMultiplyTexture`; emissive/normal/matcap untouched. Validated by a scratch spike on both models (white shirt → blue/black, brown hair → pink/silver). Multi-colour patterns on one texture become one colour (accepted).
+- CD-10: Bridge `setColors {colors:{part:'#rrggbb'}}` always carries the full state (missing = original, `{}` = reset); page stores it, applies after model load before the first frame, coalesces updates to ≤ 1 per 100 ms. Parts per model are static in the Flutter catalog.
+- CD-11: Customize page edits a draft: preview updates live; "Lưu" persists and updates the home avatar; back with unsaved changes asks to discard; "Khôi phục mặc định" clears the draft (saved on "Lưu").
+- CD-12: Storage: one key `AVATAR_COLORS` = JSON `{modelId: {part: "#rrggbb"}}`, tolerant decode (bad data dropped), native + web, startup preload.

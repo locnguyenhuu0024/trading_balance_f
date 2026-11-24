@@ -283,3 +283,32 @@ Status: READY_FOR_PLAN. Decisions D-037..D-039, CD-5..CD-8. Evidence: MAN-148 An
 
 ### Protected configuration
 None — `pubspec.yaml` already declares the `assets/avatar/` directory, which covers the new files.
+
+## Revision 3 — per-part colour customization (2026-11-24)
+
+Status: READY_FOR_PLAN. Decisions D-040..D-042, CD-9..CD-12. Fan-out RSN-005 (runtime recolor) and RSN-006 (Flutter customize) collected.
+
+### Observed facts
+| ID | Source | Observation |
+|---|---|---|
+| OBS-230 | both VRMs, material names | VRoid naming: hair `_HAIR`, iris `EyeIris`, top `Tops_`, bottom `Bottoms_`/`Onepiece_`, shoes `Shoes_`, accessory `Accessory_` (Donut only); `EyeWhite`/`EyeHighlight` separate. |
+| OBS-231 | `FaceMouth` texture (both) | Teeth, tongue, mouth interior — not lips. |
+| OBS-232 | GLTFLoader / three r187 | map and shadeMultiplyTexture of a material are the same Texture object; outline clones share it; textures must be replaced via `orig.clone()` + new `Source(canvas)` (assigning `image` on a clone corrupts the shared source). Blob-URL images are origin-clean (`getImageData` allowed). |
+| OBS-233 | texture counts | worst part Donut top 5 × 1024² (~5.2 Mpx); whole Donut ~11 Mpx. |
+| OBS-234 | scratch spike | colorize result acceptable on both models. |
+
+### Requirements
+- REQ-221 (runtime recolor): pure `recolor.js` — `partForMaterial(name)`, `parseHex`, `luminance(pixels)` → `{lum, mean}` (mean over alpha > 8, fallback 128), `colorize(pixels, lum, mean, rgb)` (alpha unchanged, clamp 255). `main.js` keeps `colors` state; for each changed part, every original base texture of matching materials is recolored once (cache per original texture: canvas, imageData, lum, mean, recolored clone) and assigned to `map` and `shadeMultiplyTexture`; reset restores originals; applied after load before the first frame; updates coalesced ≤ 1 per 100 ms; parts without materials ignored; caches freed on teardown.
+- REQ-222 (bridge): `setColors {colors}`; protocol accepts only keys hair/eyes/top/bottom/shoes/accessory with `^#[0-9a-fA-F]{6}$`, no extra fields; `{}` valid.
+- REQ-223 (domain + storage): `AvatarPart` enum with labels Tóc/Mắt/Áo/Quần-Váy/Giày/Phụ kiện; `AvatarModel.parts` (pixiv: hair, eyes, top, bottom, shoes; donut-chan: + accessory); immutable `AvatarColors` with value equality and tolerant JSON; `AVATAR_COLORS` persisted native + web, preloaded at startup into `avatarColorsProvider` (`Map<String, AvatarColors>`); corrupt data → empty, startup continues.
+- REQ-224 (renderer + home): `AvatarRenderer.setColors(AvatarColors)` (native/web keep latest and resend after ready); shared non-floating `AvatarView` extracted from `FloatingAvatar`; home passes the selected model's saved colours; `setColors` sent only when colours change.
+- REQ-225 (customize page): button per model row in the picker (does not change selection) → `SettingsAvatarCustomizePage(modelId)`: live 3D preview (height clamp(240, 40% screen, 360)), part chips from `model.parts` with swatch + Semantics label, `HueRingPicker` (no alpha), draft colours sent to the preview throttled to 100 ms (trailing value), "Lưu" persists (rollback + SnackBar on failure), "Khôi phục mặc định" with confirm, back with unsaved changes confirms discard; scrollable for text scale.
+
+### Acceptance criteria
+- AC-223: node tests for recolor/protocol pass; GLB coverage test: every declared part matches ≥ 1 material, pixiv has no accessory.
+- AC-224: coordinator browser check: setColors recolors hair/eyes/top/bottom/shoes on pixiv and + accessory on Donut; `{}` restores originals; whites/highlights of eyes unchanged.
+- AC-225: Flutter tests: JSON tolerance, per-model isolation, save/rollback, reset, throttled preview calls, picker button navigation, startup restore native/web, home receives saved colours.
+- AC-226: iOS simulator: customize Pixiv Sample and Donut-Chan, save, home shows the colours after restart (coordinator); Android device check (user).
+
+### Protected configuration (user-owned)
+`pubspec.yaml` → `dependencies:` add `flutter_colorpicker: ^1.1.0`; run `flutter pub get`. Blocks T152 build: YES.
