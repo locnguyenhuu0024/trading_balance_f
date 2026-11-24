@@ -140,7 +140,7 @@ class _SettingsAvatarCustomizePageState
         .clamp(240.0, 360.0)
         .toDouble();
     final pickerColor =
-        _draft[_selectedPart] ?? Theme.of(context).colorScheme.primary;
+        _draft[_selectedPart] ?? _model.originalColors[_selectedPart]!;
 
     return PopScope<void>(
       canPop: !_saving && !_dirty,
@@ -213,10 +213,11 @@ class _SettingsAvatarCustomizePageState
   }
 
   Widget _partChip(AvatarPart part) {
-    final color = _draft[part];
+    final color = _draft[part] ?? _model.originalColors[part];
     final description = _draft.toJson()[part.wireName] ?? 'Mặc định';
     return Semantics(
-      label: 'Màu ${part.label}: $description',
+      label: 'Màu ${part.label}',
+      value: description,
       child: ConstrainedBox(
         constraints: const BoxConstraints(minHeight: 48, minWidth: 48),
         child: ChoiceChip(

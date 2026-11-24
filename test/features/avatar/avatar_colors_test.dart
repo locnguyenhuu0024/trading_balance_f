@@ -1,8 +1,34 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/features/avatar/domain/avatar_colors.dart';
+import 'package:trading_balance_f/features/avatar/domain/avatar_model.dart';
 
 void main() {
+  test('RED-154 Donut-Chan filters stale top and bottom colours', () {
+    const json = '{"donut-chan":{"hair":"#112233",'
+        '"top":"#445566","bottom":"#778899"}}';
+    final stale = AvatarColors.empty
+        .withPart(AvatarPart.hair, const Color(0xff112233))
+        .withPart(AvatarPart.top, const Color(0xff445566))
+        .withPart(AvatarPart.bottom, const Color(0xff778899));
+    final filtered = stale.restrictTo(avatarModelById('donut-chan').parts);
+
+    expect(filtered.toJson(), {'hair': '#112233'});
+    expect(decodeAvatarColorsMap(json), {'donut-chan': filtered});
+  });
+
+  test('GREEN-154 round-trips the new Donut-Chan outfit colours', () {
+    const json = '{"donut-chan":{"dress":"#112233","bows":"#445566",'
+        '"socks":"#778899","plasters":"#aabbcc"}}';
+    final decoded = decodeAvatarColorsMap(json);
+    final donut = decoded['donut-chan']!;
+    expect(donut[AvatarPart.dress], const Color(0xff112233));
+    expect(donut[AvatarPart.bows], const Color(0xff445566));
+    expect(donut[AvatarPart.socks], const Color(0xff778899));
+    expect(donut[AvatarPart.plasters], const Color(0xffaabbcc));
+    expect(encodeAvatarColorsMap(decoded), json);
+  });
+
   test('RED-152 rejects corrupt JSON and non-object roots', () {
     for (final json in [null, 'not json', '[]', 'null', '42']) {
       expect(decodeAvatarColorsMap(json), isEmpty, reason: '$json');

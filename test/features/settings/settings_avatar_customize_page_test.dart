@@ -22,6 +22,66 @@ final _savedHair = AvatarColors.empty.withPart(AvatarPart.hair, _blue);
 final _otherModel = AvatarColors.empty.withPart(AvatarPart.accessory, _green);
 
 void main() {
+  testWidgets('RED-154 the unset Donut-Chan picker starts at original hair', (
+    tester,
+  ) async {
+    await _open(tester, modelId: _donut);
+    expect(
+      tester.widget<HueRingPicker>(find.byType(HueRingPicker)).pickerColor,
+      const Color(0xffc4b68b),
+    );
+  });
+
+  testWidgets('GREEN-154 Donut-Chan shows ordered parts and original swatches', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    addTearDown(semantics.dispose);
+    await _open(tester, modelId: _donut, donutColors: AvatarColors.empty);
+
+    final chips = tester.widgetList<ChoiceChip>(find.byType(ChoiceChip));
+    expect(
+      chips.map((chip) => ((chip.label as ExcludeSemantics).child! as Text).data),
+      [
+        'Tóc',
+        'Mắt',
+        'Váy',
+        'Nơ & huy hiệu',
+        'Tất',
+        'Giày',
+        'Miếng dán',
+        'Phụ kiện',
+      ],
+    );
+    expect(
+      chips.map((chip) {
+        final swatch = chip.avatar! as DecoratedBox;
+        return (swatch.decoration as BoxDecoration).color;
+      }),
+      const [
+        Color(0xffc4b68b),
+        Color(0xff415130),
+        Color(0xfff7bdc0),
+        Color(0xfff8a5b0),
+        Color(0xfff5b4bd),
+        Color(0xfff0bec4),
+        Color(0xffd6cac6),
+        Color(0xffe5d9b6),
+      ],
+    );
+    expect(
+      tester.getSemantics(find.bySemanticsLabel('Màu Váy')).value,
+      'Mặc định',
+    );
+
+    await tester.tap(find.text('Váy'));
+    await tester.pump();
+    expect(
+      tester.widget<HueRingPicker>(find.byType(HueRingPicker)).pickerColor,
+      const Color(0xfff7bdc0),
+    );
+  });
+
   testWidgets('RED-152 Pixiv part chips exclude accessories', (tester) async {
     await _open(tester);
     expect(find.text('Tùy chỉnh Pixiv Sample'), findsOneWidget);
@@ -159,7 +219,11 @@ Future<void> _changeColor(WidgetTester tester, Color color) async {
 Future<
   ({ProviderContainer container, FakeAvatarRenderer renderer, _Storage storage})
 >
-_open(WidgetTester tester) async {
+_open(
+  WidgetTester tester, {
+  String modelId = _pixiv,
+  AvatarColors? donutColors,
+}) async {
   final storage = _Storage();
   final renderer = FakeAvatarRenderer();
   addTearDown(storage.dispose);
@@ -168,7 +232,7 @@ _open(WidgetTester tester) async {
       overrides: [
         secureStorageProvider.overrideWithValue(storage),
         avatarColorsProvider.overrideWith(
-          (ref) => {_pixiv: _savedHair, _donut: _otherModel},
+          (ref) => {_pixiv: _savedHair, _donut: donutColors ?? _otherModel},
         ),
         avatarRendererFactoryProvider.overrideWithValue((_) => renderer),
       ],
@@ -178,8 +242,7 @@ _open(WidgetTester tester) async {
             builder: (context) => TextButton(
               onPressed: () => Navigator.of(context).push<void>(
                 MaterialPageRoute<void>(
-                  builder: (_) =>
-                      const SettingsAvatarCustomizePage(modelId: _pixiv),
+                  builder: (_) => SettingsAvatarCustomizePage(modelId: modelId),
                 ),
               ),
               child: const Text('Open'),

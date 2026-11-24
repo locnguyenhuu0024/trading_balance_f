@@ -12,7 +12,11 @@ enum AvatarPart {
   top('Áo'),
   bottom('Quần/Váy'),
   shoes('Giày'),
-  accessory('Phụ kiện');
+  accessory('Phụ kiện'),
+  dress('Váy'),
+  bows('Nơ & huy hiệu'),
+  socks('Tất'),
+  plasters('Miếng dán');
 
   const AvatarPart(this.label);
 
