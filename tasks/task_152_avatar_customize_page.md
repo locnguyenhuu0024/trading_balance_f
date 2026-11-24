@@ -1,6 +1,6 @@
 # Task 152 — Avatar colours: domain, storage, customize page, home wiring
 
-Status: READY
+Status: PASS
 Agent Role: implementation_executor
 Executor Class: E3
 Target Model: gpt-6.2-sol
@@ -70,4 +70,11 @@ Result: PENDING
 
 ## 12. Coordinator Audit
 
-Verdict: PENDING
+Attempt `c211d70a…` (1 attempt).
+Scope: PASS — exact allowlist.
+Host evidence: analyze No issues; RED-152 7/7 then GREEN-152 10/10; V4 `flutter test --no-pub` 739/739; builds web ✓, apk debug ✓, iOS simulator ✓.
+iOS Simulator (coordinator): picker rows show palette buttons; customize page for Donut-Chan shows live preview, part chips incl. "Phụ kiện", HueRingPicker; choosing Tóc + red recolors the preview at once and updates the chip swatch; "Lưu" saves and pops; home avatar shows the saved colours.
+Findings outside this task's contract (follow-up T153):
+- AUD-152-1 (Must, runtime mapping from T151/CD-9): Donut-Chan material names do not match visible parts — `N00_002_03_Tops_01_CLOTH_02` is the whole pink pinafore dress, `N00_007_01_Tops_01_CLOTH_01/02` the chest badge and bow, `Onepiece_00_CLOTH_03` the arm plasters. So "Áo" recolors the dress and "Quần/Váy" recolors the plasters. The T151 audit misattributed the plasters to the top texture.
+- AUD-152-2 (Should, UX gap in contract): an unset part starts the colour wheel at black, so the first touch paints the part black.
+Verdict: PASS (Flutter contract met; findings tracked in T153)
