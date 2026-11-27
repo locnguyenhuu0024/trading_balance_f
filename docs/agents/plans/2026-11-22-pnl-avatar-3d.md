@@ -178,6 +178,7 @@ Default off. Rollback: revert feature files; user removes pubspec entries.
 | Revision | Change | Reason |
 |---|---|---|
 | 1.1 | Executor-facing file names aligned to dispatcher allowlist; `web: ^0.5.1`; offline deps cache pre-staged by coordinator for T146 (downloads authorized by plan approval) | Execution-time constraints; no scope/requirement change. Approved revision 1 remains the governing plan. |
+| 5.0 | Revision 5 added (full-body framing, size slider) — APPROVED 2026-11-27 | User request 2026-11-27 |
 | 4.0 | Revision 4 added (outfit mixing; supersedes 3.1 plan) — READY_FOR_APPROVAL | User request 2026-11-24 |
 | 3.1 | Revision 3.1 added (Donut part mapping, initial colours) — READY_FOR_APPROVAL | T152 device findings |
 | 3.0 | Revision 3 added (colour customization) — READY_FOR_APPROVAL | User request 2026-11-24 |
@@ -296,3 +297,25 @@ T155 is E4 (high): interdependent skinning invariants (bind matrix, flip, bone p
 
 ### Verification
 Each task: RED then GREEN; T153/T155 node tests + bundle + coordinator browser checks; T154/T156 host Flutter tests, analyze, web build; final V4 + apk/ios builds + iOS simulator flow; user Android check.
+
+## Revision 5 — full-body framing and avatar size (2026-11-27)
+
+Plan ID: PLAN-20261127-pnl-avatar-3d-r5
+Status: APPROVED (user, 2026-11-27)
+Implements: REQ-234..REQ-236; AC-235..AC-238. Decisions D-047, D-048, CD-20, CD-21.
+
+### Planning workstreams
+| Workstream | Material | Independent | Route | Run | Adoption |
+|---|---|---|---|---|---|
+| Runtime full-body framing | YES | YES | R2 / claude-opus (effort not bindable) | RSN-009 | USED |
+| Flutter settings + sizing | YES | YES | R2 / claude-opus (effort not bindable) | RSN-010 | PARTIAL (half box kept at 160×220, not 160×200) |
+Fan-out Required: YES · Required 2 · Actual 2 · Compliance: PASS (effort UNVERIFIABLE). Synthesis: message `setFraming {mode}`; runtime default `full` = Flutter default; full box 1:2 matches the runtime frame (~1.7 m × ≥0.6 m).
+
+### Tasks (serial, one writer per checkout)
+| Task | REQ/AC | Depends | Class | Route |
+|---|---|---|---|---|
+| T157 runtime framing | REQ-234, REQ-235; AC-235, AC-236 | T155 | E2 | gpt-6.2-sol / low |
+| T158 Flutter framing + size settings | REQ-236; AC-237, AC-238 | T156, T157 | E3 | gpt-6.2-sol / medium |
+
+### Verification
+T157: RED/GREEN node tests, reproducible bundle, coordinator browser check (both models, both framings). T158: host RED/GREEN, analyze, V4, web/apk/ios builds, iOS simulator flow; user Android check.

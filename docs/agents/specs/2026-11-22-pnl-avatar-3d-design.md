@@ -371,3 +371,31 @@ Status: READY_FOR_PLAN. Includes revision 3.1 (REQ-226..228). Decisions D-045, D
 
 ### Risks
 Second model parse 1–2 s on low-end Android (lazy, after the base avatar is visible); +memory (dispose pass); clipping with hair/arms; borrowed skirt/bows static (no spring physics).
+
+## Revision 5 — full-body framing and avatar size (2026-11-27)
+
+Status: READY_FOR_PLAN. Decisions D-047, D-048, CD-20, CD-21. Fan-out RSN-009 (runtime framing) and RSN-010 (Flutter settings/sizing) collected.
+
+### Clarifications (user, 2026-11-27)
+Framing is a Settings choice "Nửa người" / "Toàn thân", default Toàn thân (D-047). Size is a slider 60–160 %, step 10, default 100, home updates live (D-048). The customize-page preview follows the chosen framing; the slider does not apply to it (CD-20).
+
+### Observed facts
+| ID | Source | Observation |
+|---|---|---|
+| OBS-247 | glTF bind pose | Foot (ankle) Y: pixiv 0.100, donut 0.116; toes optional in VRM → use `leftFoot`/`rightFoot` (required bones). |
+| OBS-248 | `hit.js` | Hit radii are world-space and projected via the live camera → valid in either framing; legs return `outside`. |
+| OBS-249 | `floating_avatar.dart` | Box 160×220 dp (×0.8 under 360 dp), each side clamped independently (can distort aspect). |
+
+### Requirements
+- REQ-234 (runtime framing): `framing.js` exports frozen `FRAMING_MODES = ['half','full']`; `frame({headY,hipsY,footY}, mode='half')`: half unchanged; full with S=H−P, F=min foot Y: top=H+0.60·S, bottom=F−0.30·S; full throws `RangeError` unless `footY` finite and < hipsY; unknown mode throws. Margins subject to AC-236 visual check (CD-21: margins may be tuned only within the task, tests updated accordingly).
+- REQ-235 (bridge): `setFraming {mode}` with mode ∈ `FRAMING_MODES`, one field. Runtime default `full`; bones measured once at load (cached, before animation); framing applied on load and on every change (before load: stored only); after a change the frame is re-rendered even when paused.
+- REQ-236 (Flutter): `avatar_display.dart` — `AvatarFraming {half 'Nửa người' 160×220, full 'Toàn thân' 150×300}` with `wireName`, `fromWire` (unknown/null → full); `AvatarScale` int percent normalize (round to 10, clamp 60..160, bad → 100); providers; storage keys `AVATAR_FRAMING`, `AVATAR_SCALE` (+ Web overrides, `StateError` on failed save); startup preload each in its own try/catch. Renderer `setFraming` (native initial messages; web replay on ready); `AvatarView` sends on init and only on change. `FloatingAvatar`: size = base × scale × small-screen factor, fitted to constraints keeping aspect; resize keeps the bottom-right corner and stays in bounds; renderer not recreated on size change. Settings: rows "Khung hình" (segmented control) and "Kích thước nhân vật" (slider, trailing `N%`) under the avatar rows, disabled when the avatar is off, 48 dp targets; framing saves immediately with rollback + SnackBar; slider updates the provider live and saves on change end, coalescing saves, rollback to the last persisted value on failure. Customize preview uses the framing's aspect ratio.
+
+### Acceptance criteria
+- AC-235: node tests — full frame values for both models, invalid footY/mode, half unchanged; protocol accepts/rejects `setFraming`.
+- AC-236: coordinator browser — both models in full frame show hair/ears top and shoes bottom with no crop; half identical to before; switching live without reload.
+- AC-237: Flutter tests — codec/normalize, startup restore and read failure, renderer calls on change only, sizes per framing/scale incl. aspect fit and re-clamp, settings disabled state, save/rollback, live provider update with one save per drag, preview framing.
+- AC-238: iOS simulator — switch framing and drag the slider in Settings, home updates live, persists after relaunch; Android device check (user).
+
+### Risks
+Smaller head hit target in full frame; slider keyboard/a11y changes may not fire `onChangeEnd` (fallback: debounced save); WebGL resize churn while dragging; default home avatar size changes.
