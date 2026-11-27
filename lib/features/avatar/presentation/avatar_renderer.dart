@@ -4,6 +4,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/avatar_colors.dart';
+import '../domain/avatar_display.dart';
 import '../domain/avatar_model.dart';
 import '../domain/avatar_mood.dart';
 import 'avatar_renderer_native.dart'
@@ -39,6 +40,7 @@ abstract class AvatarRenderer {
   void setMood(AvatarMood mood);
   void setColors(AvatarColors colors);
   void setOutfit(List<String> itemIds);
+  void setFraming(AvatarFraming framing);
   void setPaused(bool paused);
   void setReducedMotion(bool reducedMotion);
   void sendPointer(String phase, double x, double y, int tMs);

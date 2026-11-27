@@ -6,6 +6,7 @@ import 'package:flutter/widgets.dart';
 import 'package:web/web.dart' as web;
 
 import '../domain/avatar_colors.dart';
+import '../domain/avatar_display.dart';
 import '../domain/avatar_model.dart';
 import '../domain/avatar_mood.dart';
 import 'avatar_renderer.dart';
@@ -40,6 +41,7 @@ class _WebAvatarRenderer implements AvatarRenderer {
   AvatarMood _mood = AvatarMood.neutral;
   AvatarColors _colors = AvatarColors.empty;
   List<String> _outfit = const [];
+  AvatarFraming _framing = AvatarFraming.full;
   bool _paused = false;
   bool _reducedMotion = false;
   bool _ready = false;
@@ -69,6 +71,7 @@ class _WebAvatarRenderer implements AvatarRenderer {
       setMood(_mood);
       setColors(_colors);
       setOutfit(_outfit);
+      setFraming(_framing);
       if (_paused) setPaused(true);
     }
   }
@@ -112,6 +115,12 @@ class _WebAvatarRenderer implements AvatarRenderer {
   void setOutfit(List<String> itemIds) {
     _outfit = List.unmodifiable(itemIds);
     _send({'type': 'setOutfit', 'items': _outfit});
+  }
+
+  @override
+  void setFraming(AvatarFraming framing) {
+    _framing = framing;
+    _send({'type': 'setFraming', 'mode': framing.wireName});
   }
 
   @override

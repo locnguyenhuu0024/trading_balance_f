@@ -8,6 +8,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../features/avatar/domain/avatar_display.dart';
 import '../timezone/app_time_zone.dart';
 import '../typography/app_text_scale.dart';
 
@@ -179,6 +180,8 @@ class SecureStorageHelper {
   static const String _avatarModelId = 'AVATAR_MODEL_ID';
   static const String _avatarColors = 'AVATAR_COLORS';
   static const String _avatarOutfits = 'AVATAR_OUTFITS';
+  static const String _avatarFraming = 'AVATAR_FRAMING';
+  static const String _avatarScale = 'AVATAR_SCALE';
   static const String _rememberedTradePasswordPrefix =
       'REMEMBERED_TRADE_PASSWORD_V1_';
   final Map<String, Future<void>> _rememberedTradePasswordTails = {};
@@ -374,6 +377,19 @@ class SecureStorageHelper {
   Future<void> saveAvatarOutfitsJson(String json) {
     return _storage.write(key: _avatarOutfits, value: json);
   }
+
+  Future<String?> getAvatarFraming() => _storage.read(key: _avatarFraming);
+
+  Future<void> saveAvatarFraming(String framing) =>
+      _storage.write(key: _avatarFraming, value: framing);
+
+  Future<int> getAvatarScale() async =>
+      AvatarScale.normalize(await _storage.read(key: _avatarScale));
+
+  Future<void> saveAvatarScale(int percent) => _storage.write(
+    key: _avatarScale,
+    value: AvatarScale.normalize(percent).toString(),
+  );
 
   /// NÂNG CẤP: Lưu trữ Tùy chọn ứng dụng bao gồm cả Theme và Currency
   Future<void> saveAppPreferences({

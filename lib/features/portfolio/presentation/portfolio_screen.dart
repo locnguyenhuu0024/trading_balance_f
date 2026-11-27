@@ -23,6 +23,7 @@ import '../../../core/exchange/exchange_registry.dart';
 import '../../../core/exchange/exchange_scope.dart';
 import '../../../core/exchange/scoped_read.dart';
 import '../../avatar/domain/avatar_colors.dart';
+import '../../avatar/domain/avatar_display.dart';
 import '../../avatar/domain/avatar_model.dart';
 import '../../avatar/domain/avatar_mood.dart';
 import '../../avatar/domain/avatar_outfit.dart';
@@ -355,6 +356,8 @@ class _PortfolioScreenState extends ConsumerState<PortfolioScreen> {
                   model: model,
                   mood: avatarMoodFor(avatarRatio, hidden: isBalanceHidden),
                   outfit: outfit,
+                  framing: ref.watch(avatarFramingProvider),
+                  scalePercent: ref.watch(avatarScalePercentProvider),
                   colors:
                       (ref.watch(avatarColorsProvider)[model.id] ??
                               AvatarColors.empty)

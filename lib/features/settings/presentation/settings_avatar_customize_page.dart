@@ -9,6 +9,7 @@ import '../../../core/navigation/navigation_content_frame.dart';
 import '../../../core/security/secure_storage_helper.dart';
 import '../../../core/widgets/responsive_form_content.dart';
 import '../../avatar/domain/avatar_colors.dart';
+import '../../avatar/domain/avatar_display.dart';
 import '../../avatar/domain/avatar_model.dart';
 import '../../avatar/domain/avatar_mood.dart';
 import '../../avatar/domain/avatar_outfit.dart';
@@ -207,9 +208,12 @@ class _SettingsAvatarCustomizePageState
 
   @override
   Widget build(BuildContext context) {
-    final previewHeight = (MediaQuery.sizeOf(context).height * 0.4)
-        .clamp(240.0, 360.0)
-        .toDouble();
+    final framing = ref.watch(avatarFramingProvider);
+    final screenHeight = MediaQuery.sizeOf(context).height;
+    final previewHeight = switch (framing) {
+      AvatarFraming.full => (screenHeight * 0.45).clamp(300.0, 420.0),
+      AvatarFraming.half => (screenHeight * 0.4).clamp(240.0, 360.0),
+    }.toDouble();
 
     return PopScope<void>(
       canPop: !_saving && !_dirty,
@@ -236,12 +240,18 @@ class _SettingsAvatarCustomizePageState
                   children: [
                     SizedBox(
                       height: previewHeight,
-                      child: AvatarView(
-                        model: _model,
-                        mood: AvatarMood.neutral,
-                        colors: _previewColors.restrictTo(_parts),
-                        outfit: _outfit,
-                        semanticsLabel: 'Xem trước nhân vật 3D',
+                      child: Center(
+                        child: AspectRatio(
+                          aspectRatio: framing.baseSize.aspectRatio,
+                          child: AvatarView(
+                            model: _model,
+                            mood: AvatarMood.neutral,
+                            colors: _previewColors.restrictTo(_parts),
+                            outfit: _outfit,
+                            framing: framing,
+                            semanticsLabel: 'Xem trước nhân vật 3D',
+                          ),
+                        ),
                       ),
                     ),
                     if (_tabs case final TabController tabs)

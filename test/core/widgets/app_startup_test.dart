@@ -11,6 +11,7 @@ import 'package:trading_balance_f/core/timezone/app_time_zone.dart';
 import 'package:trading_balance_f/core/typography/app_text_scale.dart';
 import 'package:trading_balance_f/core/widgets/app_startup.dart';
 import 'package:trading_balance_f/features/avatar/domain/avatar_colors.dart';
+import 'package:trading_balance_f/features/avatar/domain/avatar_display.dart';
 import 'package:trading_balance_f/features/avatar/domain/avatar_model.dart';
 import 'package:trading_balance_f/features/avatar/domain/avatar_outfit.dart';
 import 'package:trading_balance_f/main.dart' as app;
@@ -32,6 +33,8 @@ class _StartupStorage extends SecureStorageHelper {
     this.avatarColorsJson,
     this.failAvatarColorsRead = false,
     this.failAvatarOutfitsRead = false,
+    this.failAvatarFramingRead = false,
+    this.failAvatarScaleRead = false,
   }) : super(const FlutterSecureStorage());
 
   final bool failBiometricRead;
@@ -45,6 +48,20 @@ class _StartupStorage extends SecureStorageHelper {
   final String? avatarColorsJson;
   final bool failAvatarColorsRead;
   final bool failAvatarOutfitsRead;
+  final bool failAvatarFramingRead;
+  final bool failAvatarScaleRead;
+
+  @override
+  Future<String?> getAvatarFraming() async {
+    if (failAvatarFramingRead) throw StateError('unreadable avatar framing');
+    return 'half';
+  }
+
+  @override
+  Future<int> getAvatarScale() async {
+    if (failAvatarScaleRead) throw StateError('unreadable avatar scale');
+    return 130;
+  }
 
   @override
   Future<String?> getAvatarOutfitsJson() async {
@@ -117,6 +134,74 @@ class _StartupStorage extends SecureStorageHelper {
 }
 
 void main() {
+  test('RED-158 avatar preference read failures are isolated', () async {
+    for (final (failFraming, failScale) in [
+      (true, false),
+      (false, true),
+      (true, true),
+    ]) {
+      final storage = _StartupStorage(
+        failAvatarFramingRead: failFraming,
+        failAvatarScaleRead: failScale,
+      );
+      addTearDown(storage.dispose);
+      final startup = await app.initializeAppStartup(
+        isWeb: false,
+        createNativeStorage: () => storage,
+        initializeTimeZone: () {},
+        retireLegacyBackgroundService: () async {},
+      );
+      expect(
+        startup.avatarFraming,
+        failFraming ? AvatarFraming.full : AvatarFraming.half,
+      );
+      expect(startup.avatarScalePercent, failScale ? 100 : 130);
+    }
+  });
+
+  for (final isWeb in [false, true]) {
+    testWidgets(
+      'GREEN-158 restores framing and scale into providers on ${isWeb ? 'web' : 'native'}',
+      (tester) async {
+        if (isWeb) {
+          SharedPreferences.setMockInitialValues({});
+        } else {
+          FlutterSecureStorage.setMockInitialValues({});
+          addTearDown(() => FlutterSecureStorage.setMockInitialValues({}));
+        }
+        Future<app.AppStartupData> start() => app.initializeAppStartup(
+          isWeb: isWeb,
+          initializeTimeZone: () {},
+          retireLegacyBackgroundService: () async {},
+        );
+        final first = await start();
+        addTearDown(first.secureStorage.dispose);
+        expect(first.avatarFraming, AvatarFraming.full);
+        expect(first.avatarScalePercent, 100);
+        await first.secureStorage.saveAvatarFraming('half');
+        await first.secureStorage.saveAvatarScale(130);
+        final restored = await start();
+        addTearDown(restored.secureStorage.dispose);
+        expect(restored.avatarFraming, AvatarFraming.half);
+        expect(restored.avatarScalePercent, 130);
+
+        await tester.pumpWidget(
+          app.buildInitializedApp(
+            restored,
+            home: Consumer(
+              builder: (_, ref, _) => Text(
+                '${ref.watch(avatarFramingProvider).wireName} '
+                '${ref.watch(avatarScalePercentProvider)}%',
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('half 130%'), findsOneWidget);
+      },
+    );
+  }
+
   test(
     'RED-156 outfit read failure leaves model and colour restoration intact',
     () async {

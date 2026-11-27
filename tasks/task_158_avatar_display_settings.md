@@ -1,6 +1,6 @@
 # Task 158 — Avatar Settings: framing choice and size slider
 
-Status: READY (after T157 PASS)
+Status: PASS
 Agent Role: implementation_executor
 Executor Class: E3
 Target Model: gpt-6.2-sol
@@ -49,4 +49,14 @@ Protected files; `assets/**`, `tools/**`; PnL math; unrelated settings.
 Same files plus `test/features/settings/settings_avatar_customize_page_test.dart`, `test/features/portfolio/portfolio_avatar_test.dart`, `--plain-name "GREEN-158"`.
 ### Task Buildability Gate
 Command: `flutter analyze --no-pub --no-fatal-infos --no-fatal-warnings && flutter build web --no-pub`
-Result: PENDING
+Result: PASS (coordinator, host)
+
+## 12. Coordinator Audit
+
+Attempt `ccfdf05e…` (1 attempt; executor BLOCKED only because the sandbox cannot run Flutter). Scope: exact allowlist, no unexpected paths.
+Review: `avatar_display.dart` per §6.1 (normalize rounds to step after clamp, invalid → 100; `fromWire` unknown → full). Storage keys + Web overrides, startup preload in separate try/catch. Renderers store and send/replay `setFraming`; `AvatarView` sends on init and only on change. `FloatingAvatar` fits target to constraints keeping aspect, keeps bottom-right on resize, `AvatarView` key unchanged. Settings: segmented framing (optimistic, rollback + SnackBar), slider live provider + save on change end with a coalescing saver that reverts only when the provider still holds the failed value. Customize preview follows framing.
+Host evidence: analyze No issues; RED-158 6/6; GREEN-158 10/10; V4 `flutter test --no-pub` 777/777; builds web ✓, apk debug ✓, iOS simulator ✓.
+iOS Simulator (coordinator, iPhone 16): home shows Pixiv (Donut outfit, green) full-body by default; Settings shows "Khung hình" Nửa người/Toàn thân and "Kích thước nhân vật" slider; switching framing and dragging to 130 % then relaunching → home avatar full-body at 130 %.
+Nit: the "Khung hình"/"Kích thước nhân vật" titles use default text style rather than the row title style.
+Dispatch route: UNVERIFIABLE (explicit gpt-6.2-sol / medium). Buildability: PASS.
+Verdict: PASS

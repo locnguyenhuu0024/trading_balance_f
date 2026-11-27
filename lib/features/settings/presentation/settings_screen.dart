@@ -18,6 +18,7 @@ import '../../../core/widgets/app_motion.dart';
 import '../../../core/widgets/manual_refresh_button.dart';
 import '../../../core/widgets/responsive_form_content.dart';
 import '../../../core/widgets/scope_bar.dart';
+import '../../avatar/domain/avatar_display.dart';
 import '../../avatar/domain/avatar_model.dart';
 import '../../fractal_tracker/presentation/providers/fractal_provider.dart';
 import '../../portfolio/presentation/portfolio_screen.dart';
@@ -30,6 +31,59 @@ final currencyProvider = StateProvider<String>((ref) => 'USD');
 final defaultHideBalanceProvider = StateProvider<bool>((ref) => false);
 final avatarEnabledProvider = StateProvider<bool>((ref) => false);
 final biometricAuthProvider = StateProvider<bool>((ref) => true);
+
+final _avatarFramingSavingProvider = StateProvider<bool>((ref) => false);
+
+final _avatarScaleSaverProvider = Provider<_AvatarScaleSaver>(
+  (ref) => _AvatarScaleSaver(
+    ref.watch(secureStorageProvider),
+    ref.read(avatarScalePercentProvider.notifier),
+  ),
+);
+
+void _showAvatarSaveError(ScaffoldMessengerState messenger) {
+  if (messenger.mounted) {
+    messenger.showSnackBar(
+      const SnackBar(content: Text('Không lưu được cài đặt')),
+    );
+  }
+}
+
+// Keep the last persisted value and queued writes across Settings visits.
+class _AvatarScaleSaver {
+  _AvatarScaleSaver(this._storage, this._scale) : _persisted = _scale.state;
+
+  final SecureStorageHelper _storage;
+  final StateController<int> _scale;
+  int _persisted;
+  bool _saving = false;
+  ({int percent, ScaffoldMessengerState messenger})? _pending;
+
+  Future<void> save(int percent, ScaffoldMessengerState messenger) async {
+    _pending = (percent: percent, messenger: messenger);
+    if (_saving) return;
+    _saving = true;
+    try {
+      while (_pending != null) {
+        final request = _pending!;
+        _pending = null;
+        try {
+          await _storage.saveAvatarScale(request.percent);
+          _persisted = request.percent;
+        } catch (_) {
+          if (_scale.mounted &&
+              _scale.state == request.percent &&
+              _pending?.percent != request.percent) {
+            _scale.state = _persisted;
+          }
+          _showAvatarSaveError(request.messenger);
+        }
+      }
+    } finally {
+      _saving = false;
+    }
+  }
+}
 
 // --- Provider lấy tỷ giá ---
 final vndExchangeRateProvider = FutureProvider<double>((ref) async {
@@ -160,6 +214,29 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       }
     } finally {
       if (mounted) setState(() => _isSavingAvatar = false);
+    }
+  }
+
+  Future<void> _saveAvatarFraming(AvatarFraming framing) async {
+    final saving = ref.read(_avatarFramingSavingProvider.notifier);
+    if (saving.state) return;
+    final selection = ref.read(avatarFramingProvider.notifier);
+    final previous = selection.state;
+    if (previous == framing) return;
+
+    final storage = ref.read(secureStorageProvider);
+    final messenger = ScaffoldMessenger.of(context);
+    selection.state = framing;
+    saving.state = true;
+    try {
+      await storage.saveAvatarFraming(framing.wireName);
+    } catch (_) {
+      if (selection.mounted && selection.state == framing) {
+        selection.state = previous;
+      }
+      _showAvatarSaveError(messenger);
+    } finally {
+      if (saving.mounted) saving.state = false;
     }
   }
 
@@ -333,6 +410,85 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ),
       subtitle: compact ? dropdown : null,
       trailing: compact ? null : dropdown,
+    );
+  }
+
+  Widget _buildAvatarDisplaySettings(
+    BuildContext context,
+    WidgetRef ref,
+    bool enabled,
+  ) {
+    final framing = ref.watch(avatarFramingProvider);
+    final framingSaving = ref.watch(_avatarFramingSavingProvider);
+    final scale = ref.watch(avatarScalePercentProvider);
+    final scaleSaver = ref.watch(_avatarScaleSaverProvider);
+    final scaleLabel = '$scale%';
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text('Khung hình'),
+          const SizedBox(height: 4),
+          SegmentedButton<AvatarFraming>(
+            key: const Key('settings-avatar-framing'),
+            expandedInsets: EdgeInsets.zero,
+            style: const ButtonStyle(
+              visualDensity: VisualDensity.standard,
+              tapTargetSize: MaterialTapTargetSize.padded,
+            ),
+            segments: [
+              for (final option in AvatarFraming.values)
+                ButtonSegment(
+                  value: option,
+                  label: Text(option.label, textAlign: TextAlign.center),
+                ),
+            ],
+            selected: {framing},
+            onSelectionChanged: enabled && !framingSaving
+                ? (selected) => _saveAvatarFraming(selected.single)
+                : null,
+          ),
+          const SizedBox(height: 12),
+          ExcludeSemantics(
+            child: Row(
+              children: [
+                const Expanded(child: Text('Kích thước nhân vật')),
+                Text(scaleLabel),
+              ],
+            ),
+          ),
+          Semantics(
+            label: 'Kích thước nhân vật',
+            child: SizedBox(
+              height: AppTokens.minimumTouchTarget,
+              child: Slider(
+                key: const Key('settings-avatar-scale-slider'),
+                min: AvatarScale.min.toDouble(),
+                max: AvatarScale.max.toDouble(),
+                divisions:
+                    (AvatarScale.max - AvatarScale.min) ~/ AvatarScale.step,
+                value: scale.toDouble(),
+                label: scaleLabel,
+                semanticFormatterCallback: (value) => '${value.round()}%',
+                onChanged: enabled
+                    ? (value) {
+                        ref.read(avatarScalePercentProvider.notifier).state =
+                            value.round();
+                      }
+                    : null,
+                onChangeEnd: enabled
+                    ? (value) => scaleSaver.save(
+                        value.round(),
+                        ScaffoldMessenger.of(context),
+                      )
+                    : null,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -748,6 +904,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                   fontSize: 12,
                                 ),
                               ),
+                            ),
+                            Consumer(
+                              builder: (context, ref, _) =>
+                                  _buildAvatarDisplaySettings(
+                                    context,
+                                    ref,
+                                    avatarEnabled,
+                                  ),
                             ),
                             Divider(
                               height: 1,

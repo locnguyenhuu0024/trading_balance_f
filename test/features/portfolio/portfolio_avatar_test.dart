@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/currency/currency_display_mode.dart';
 import 'package:trading_balance_f/core/network/okx_websocket_service.dart';
 import 'package:trading_balance_f/features/avatar/domain/avatar_colors.dart';
+import 'package:trading_balance_f/features/avatar/domain/avatar_display.dart';
 import 'package:trading_balance_f/features/avatar/domain/avatar_model.dart';
 import 'package:trading_balance_f/features/avatar/domain/avatar_mood.dart';
 import 'package:trading_balance_f/features/avatar/domain/avatar_outfit.dart';
@@ -27,6 +28,30 @@ const _sixPercent = OkxAccountData(
 );
 
 void main() {
+  testWidgets('GREEN-158 home resizes live from both display providers', (
+    tester,
+  ) async {
+    final renderer = FakeAvatarRenderer();
+    final container = await _mountPortfolio(
+      tester,
+      load: () async => _sixPercent,
+      factory: (_) => renderer,
+    );
+    final avatar = find.byKey(avatarFakeKey);
+    expect(tester.getSize(avatar), const Size(150, 300));
+
+    container.read(avatarScalePercentProvider.notifier).state = 160;
+    await tester.pump();
+    expect(tester.getSize(avatar), const Size(240, 480));
+    expect(renderer.framings, [AvatarFraming.full]);
+
+    container.read(avatarFramingProvider.notifier).state = AvatarFraming.half;
+    await tester.pump();
+    expect(tester.getSize(avatar), const Size(256, 352));
+    expect(renderer.framings, [AvatarFraming.full, AvatarFraming.half]);
+    expect(renderer.disposed, isFalse);
+  });
+
   testWidgets('GREEN-156 home filters stale outfits and restricts colours', (
     tester,
   ) async {

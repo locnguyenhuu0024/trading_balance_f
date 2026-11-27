@@ -7,12 +7,14 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/core/security/secure_storage_helper.dart';
 import 'package:trading_balance_f/features/avatar/domain/avatar_colors.dart';
+import 'package:trading_balance_f/features/avatar/domain/avatar_display.dart';
 import 'package:trading_balance_f/features/avatar/domain/avatar_mood.dart';
 import 'package:trading_balance_f/features/avatar/domain/avatar_outfit.dart';
 import 'package:trading_balance_f/features/avatar/presentation/avatar_renderer.dart';
 import 'package:trading_balance_f/features/settings/presentation/settings_avatar_customize_page.dart';
 
-import '../avatar/floating_avatar_test.dart' show FakeAvatarRenderer;
+import '../avatar/floating_avatar_test.dart'
+    show FakeAvatarRenderer, avatarFakeKey;
 
 const _red = Color(0xffad1020);
 const _green = Color(0xff228833);
@@ -25,6 +27,27 @@ final _savedHair = AvatarColors.empty.withPart(AvatarPart.hair, _blue);
 final _otherModel = AvatarColors.empty.withPart(AvatarPart.accessory, _green);
 
 void main() {
+  testWidgets('GREEN-158 preview follows framing and ignores home scale', (
+    tester,
+  ) async {
+    final fixture = await _open(tester);
+    final preview = find.byKey(avatarFakeKey);
+    expect(tester.getSize(preview), const Size(150, 300));
+    expect(fixture.renderer.framings, [AvatarFraming.full]);
+
+    fixture.container.read(avatarScalePercentProvider.notifier).state = 160;
+    await tester.pump();
+    expect(tester.getSize(preview), const Size(150, 300));
+
+    fixture.container.read(avatarFramingProvider.notifier).state =
+        AvatarFraming.half;
+    await tester.pump();
+    final half = tester.getSize(preview);
+    expect(half.height, 240);
+    expect(half.aspectRatio, closeTo(160 / 220, 0.001));
+    expect(fixture.renderer.framings, [AvatarFraming.full, AvatarFraming.half]);
+  });
+
   testWidgets('RED-156 Donut-Chan customization has no tabs', (tester) async {
     await _open(tester, modelId: _donut);
     expect(find.byType(TabBar), findsNothing);

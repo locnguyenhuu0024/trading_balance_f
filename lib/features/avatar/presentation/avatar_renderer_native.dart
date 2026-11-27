@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../domain/avatar_colors.dart';
+import '../domain/avatar_display.dart';
 import '../domain/avatar_model.dart';
 import '../domain/avatar_mood.dart';
 import '../domain/avatar_outfit.dart';
@@ -29,6 +30,7 @@ class _NativeAvatarRenderer implements AvatarRenderer {
   AvatarMood _mood = AvatarMood.neutral;
   AvatarColors _colors = AvatarColors.empty;
   List<String> _outfit = const [];
+  AvatarFraming _framing = AvatarFraming.full;
   final _streamedDonors = <String>{};
   bool _modelLoaded = false;
   bool _streamingDonors = false;
@@ -98,6 +100,7 @@ class _NativeAvatarRenderer implements AvatarRenderer {
         _send({'type': 'setMood', 'mood': _mood.wireName}),
         _send({'type': 'setColors', 'colors': _colors.toJson()}),
         _send({'type': 'setOutfit', 'items': _outfit}),
+        _send({'type': 'setFraming', 'mode': _framing.wireName}),
         if (_paused) _send({'type': 'setPaused', 'paused': true}),
       ]);
       if (_active) await _streamModel(_model);
@@ -187,6 +190,12 @@ class _NativeAvatarRenderer implements AvatarRenderer {
     _outfit = List.unmodifiable(itemIds);
     unawaited(_send({'type': 'setOutfit', 'items': _outfit}));
     unawaited(_streamDonors());
+  }
+
+  @override
+  void setFraming(AvatarFraming framing) {
+    _framing = framing;
+    unawaited(_send({'type': 'setFraming', 'mode': framing.wireName}));
   }
 
   @override

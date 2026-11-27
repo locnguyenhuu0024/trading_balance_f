@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trading_balance_f/features/avatar/domain/avatar_colors.dart';
+import 'package:trading_balance_f/features/avatar/domain/avatar_display.dart';
 import 'package:trading_balance_f/features/avatar/domain/avatar_model.dart';
 import 'package:trading_balance_f/features/avatar/domain/avatar_mood.dart';
 import 'package:trading_balance_f/features/avatar/presentation/avatar_renderer.dart';
@@ -15,6 +16,104 @@ const avatarFakeKey = Key('avatar-fake');
 const _frameKey = Key('avatar-frame');
 
 void main() {
+  testWidgets('RED-158 resizing a dragged avatar fits and clamps it', (
+    tester,
+  ) async {
+    final renderer = FakeAvatarRenderer();
+    await _mount(tester, renderer);
+    renderer.emit(const AvatarModelLoaded());
+    await tester.pump();
+
+    final avatar = find.byKey(avatarFakeKey);
+    final drag = await tester.startGesture(tester.getCenter(avatar));
+    await tester.pump(const Duration(milliseconds: 600));
+    await drag.moveBy(const Offset(500, 500));
+    await drag.up();
+    await tester.pump();
+
+    tester.view.physicalSize = const Size(320, 100);
+    await tester.pump();
+    final rect = tester.getRect(avatar);
+    final frame = tester.getRect(find.byKey(_frameKey));
+    expect(rect.size, const Size(50, 100));
+    expect(rect.bottomRight, frame.bottomRight);
+
+    tester.view.physicalSize = const Size(65, 400);
+    await tester.pump();
+    final narrowRect = tester.getRect(avatar);
+    expect(narrowRect.size.width, closeTo(65, 0.001));
+    expect(narrowRect.size.height, closeTo(130, 0.001));
+    expect(narrowRect.topLeft, tester.getTopLeft(find.byKey(_frameKey)));
+  });
+
+  for (final width in [400.0, 320.0]) {
+    testWidgets('GREEN-158 sizes for both framings at viewport width $width', (
+      tester,
+    ) async {
+      final renderer = FakeAvatarRenderer();
+      final container = await _mount(tester, renderer, width: width);
+      final avatar = find.byKey(avatarFakeKey);
+      final factor = width < 360 ? 0.8 : 1;
+      for (final (framing, baseWidth, baseHeight) in [
+        (AvatarFraming.full, 150, 300),
+        (AvatarFraming.half, 160, 220),
+      ]) {
+        container.read(avatarFramingProvider.notifier).state = framing;
+        for (final percent in [60, 100, 160]) {
+          container.read(avatarScalePercentProvider.notifier).state = percent;
+          await tester.pump();
+          final size = tester.getSize(avatar);
+          expect(
+            size.width,
+            closeTo(baseWidth * percent / 100 * factor, 0.001),
+          );
+          expect(
+            size.height,
+            closeTo(baseHeight * percent / 100 * factor, 0.001),
+          );
+        }
+      }
+      expect(renderer.framings, [AvatarFraming.full, AvatarFraming.half]);
+      expect(renderer.disposed, isFalse);
+    });
+  }
+
+  testWidgets('GREEN-158 drag anchor survives a resize in the same view', (
+    tester,
+  ) async {
+    final renderer = FakeAvatarRenderer();
+    final container = await _mount(tester, renderer);
+    renderer.emit(const AvatarModelLoaded());
+    await tester.pump();
+    final avatar = find.byKey(avatarFakeKey);
+    final initial = tester.getRect(avatar);
+    final drag = await tester.startGesture(tester.getCenter(avatar));
+    await tester.pump(const Duration(milliseconds: 600));
+    await drag.moveBy(const Offset(-40, -50));
+    await drag.up();
+    await tester.pump();
+
+    final dragged = tester.getRect(avatar);
+    expect(dragged.left, lessThan(initial.left));
+    expect(dragged.top, lessThan(initial.top));
+    final scale = container.read(avatarScalePercentProvider.notifier);
+    scale.state = 60;
+    await tester.pump();
+    expect(tester.getRect(avatar).bottomRight, dragged.bottomRight);
+    expect(tester.getSize(avatar), const Size(90, 180));
+    scale.state = 100;
+    await tester.pump();
+    expect(tester.getRect(avatar), dragged);
+    expect(renderer.framings, [AvatarFraming.full]);
+    expect(renderer.disposed, isFalse);
+
+    renderer.emit(const AvatarError('load', 'model unavailable'));
+    await tester.pump();
+    container.read(avatarFramingProvider.notifier).state = AvatarFraming.half;
+    await tester.pump();
+    expect(renderer.framings, [AvatarFraming.full]);
+  });
+
   test('RED rejects malformed or unknown bridge events', () {
     for (final value in [
       '{"v":2}',
@@ -205,7 +304,13 @@ void main() {
     tester,
   ) async {
     final renderer = FakeAvatarRenderer();
-    await _mount(tester, renderer, width: 320, reducedMotion: true);
+    await _mount(
+      tester,
+      renderer,
+      width: 320,
+      reducedMotion: true,
+      framing: AvatarFraming.half,
+    );
     final avatar = find.byKey(avatarFakeKey);
     final frame = tester.getRect(find.byKey(_frameKey));
     expect(renderer.motion, [true]);
@@ -271,11 +376,12 @@ void main() {
   });
 }
 
-Future<void> _mount(
+Future<ProviderContainer> _mount(
   WidgetTester tester,
   FakeAvatarRenderer renderer, {
   double width = 400,
   bool reducedMotion = false,
+  AvatarFraming framing = AvatarFraming.full,
 }) async {
   tester.view.physicalSize = Size(width, 600);
   tester.view.devicePixelRatio = 1;
@@ -285,6 +391,7 @@ Future<void> _mount(
     ProviderScope(
       overrides: [
         avatarRendererFactoryProvider.overrideWithValue((_) => renderer),
+        avatarFramingProvider.overrideWith((_) => framing),
       ],
       child: MaterialApp(
         home: Builder(
@@ -297,9 +404,13 @@ Future<void> _mount(
                 key: _frameKey,
                 child: Stack(
                   children: [
-                    FloatingAvatar(
-                      model: avatarModelById(null),
-                      mood: AvatarMood.neutral,
+                    Consumer(
+                      builder: (_, ref, _) => FloatingAvatar(
+                        model: avatarModelById(null),
+                        mood: AvatarMood.neutral,
+                        framing: ref.watch(avatarFramingProvider),
+                        scalePercent: ref.watch(avatarScalePercentProvider),
+                      ),
                     ),
                   ],
                 ),
@@ -310,6 +421,7 @@ Future<void> _mount(
       ),
     ),
   );
+  return ProviderScope.containerOf(tester.element(find.byKey(_frameKey)));
 }
 
 class FakeAvatarRenderer implements AvatarRenderer {
@@ -317,6 +429,7 @@ class FakeAvatarRenderer implements AvatarRenderer {
   final moods = <AvatarMood>[];
   final colors = <AvatarColors>[];
   final outfits = <List<String>>[];
+  final framings = <AvatarFraming>[];
   final pauses = <bool>[];
   final motion = <bool>[];
   final pointers = <({String phase, Offset position, int timeMs})>[];
@@ -338,6 +451,9 @@ class FakeAvatarRenderer implements AvatarRenderer {
 
   @override
   void setOutfit(List<String> itemIds) => outfits.add(List.of(itemIds));
+
+  @override
+  void setFraming(AvatarFraming framing) => framings.add(framing);
 
   @override
   void setPaused(bool paused) => pauses.add(paused);

@@ -21,6 +21,7 @@ import 'core/widgets/app_page_transition.dart';
 import 'core/widgets/app_startup.dart';
 import 'features/avatar/avatar_licenses.dart';
 import 'features/avatar/domain/avatar_colors.dart';
+import 'features/avatar/domain/avatar_display.dart';
 import 'features/avatar/domain/avatar_model.dart';
 import 'features/avatar/domain/avatar_outfit.dart';
 import 'features/portfolio/presentation/portfolio_screen.dart'
@@ -41,6 +42,8 @@ class AppStartupData {
     this.avatarModelId = defaultAvatarModelId,
     this.avatarColors = const {},
     this.avatarOutfits = const {},
+    this.avatarFraming = AvatarFraming.full,
+    this.avatarScalePercent = AvatarScale.defaultPercent,
     this.selectedConnectionId = defaultConnectionId,
   });
 
@@ -55,6 +58,8 @@ class AppStartupData {
   final String avatarModelId;
   final Map<String, AvatarColors> avatarColors;
   final Map<String, List<String>> avatarOutfits;
+  final AvatarFraming avatarFraming;
+  final int avatarScalePercent;
   final String selectedConnectionId;
 }
 
@@ -143,6 +148,20 @@ Future<AppStartupData> initializeAppStartup({
     debugPrint('Avatar colour restoration failed; using defaults.');
   }
 
+  var avatarFraming = AvatarFraming.full;
+  try {
+    avatarFraming = AvatarFraming.fromWire(await helper.getAvatarFraming());
+  } catch (_) {
+    debugPrint('Avatar framing restoration failed; using the default.');
+  }
+
+  var avatarScalePercent = AvatarScale.defaultPercent;
+  try {
+    avatarScalePercent = await helper.getAvatarScale();
+  } catch (_) {
+    debugPrint('Avatar scale restoration failed; using the default.');
+  }
+
   var selectedConnectionId = defaultConnectionId;
   try {
     selectedConnectionId = await helper.getSelectedConnectionId();
@@ -167,6 +186,8 @@ Future<AppStartupData> initializeAppStartup({
     avatarModelId: avatarModelId,
     avatarColors: avatarColors,
     avatarOutfits: avatarOutfits,
+    avatarFraming: avatarFraming,
+    avatarScalePercent: avatarScalePercent,
     selectedConnectionId: selectedConnectionId,
   );
 }
@@ -203,6 +224,10 @@ Widget buildInitializedApp(AppStartupData startup, {Widget? home}) {
       avatarEnabledProvider.overrideWith((ref) => startup.avatarEnabled),
       avatarColorsProvider.overrideWith((ref) => startup.avatarColors),
       avatarOutfitsProvider.overrideWith((ref) => startup.avatarOutfits),
+      avatarFramingProvider.overrideWith((ref) => startup.avatarFraming),
+      avatarScalePercentProvider.overrideWith(
+        (ref) => startup.avatarScalePercent,
+      ),
       avatarModelIdProvider.overrideWith(
         (ref) => avatarModelById(startup.avatarModelId).id,
       ),
@@ -586,6 +611,28 @@ class WebStorageHelper extends SecureStorageHelper {
   Future<void> saveAvatarOutfitsJson(String json) async {
     if (!await _prefs.setString('AVATAR_OUTFITS', json)) {
       throw StateError('Unable to save avatar outfits on the web.');
+    }
+  }
+
+  @override
+  Future<String?> getAvatarFraming() async =>
+      _prefs.getString('AVATAR_FRAMING');
+
+  @override
+  Future<void> saveAvatarFraming(String framing) async {
+    if (!await _prefs.setString('AVATAR_FRAMING', framing)) {
+      throw StateError('Unable to save avatar framing on the web.');
+    }
+  }
+
+  @override
+  Future<int> getAvatarScale() async =>
+      AvatarScale.normalize(_prefs.get('AVATAR_SCALE'));
+
+  @override
+  Future<void> saveAvatarScale(int percent) async {
+    if (!await _prefs.setInt('AVATAR_SCALE', AvatarScale.normalize(percent))) {
+      throw StateError('Unable to save avatar scale on the web.');
     }
   }
 

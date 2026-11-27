@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/avatar_colors.dart';
+import '../domain/avatar_display.dart';
 import '../domain/avatar_model.dart';
 import '../domain/avatar_mood.dart';
 import 'avatar_renderer.dart';
@@ -17,6 +18,7 @@ class AvatarView extends ConsumerStatefulWidget {
     required this.mood,
     required this.colors,
     this.outfit = const [],
+    this.framing = AvatarFraming.full,
     required this.semanticsLabel,
     this.onDragStart,
     this.onDragUpdate,
@@ -28,6 +30,7 @@ class AvatarView extends ConsumerStatefulWidget {
   final AvatarMood mood;
   final AvatarColors colors;
   final List<String> outfit;
+  final AvatarFraming framing;
   final String semanticsLabel;
   final VoidCallback? onDragStart;
   final GestureLongPressMoveUpdateCallback? onDragUpdate;
@@ -59,6 +62,7 @@ class _AvatarViewState extends ConsumerState<AvatarView>
     _renderer.setMood(widget.mood);
     _renderer.setColors(widget.colors);
     _renderer.setOutfit(widget.outfit);
+    _renderer.setFraming(widget.framing);
     final binding = WidgetsBinding.instance;
     binding.addObserver(this);
     final lifecycle = binding.lifecycleState;
@@ -87,6 +91,9 @@ class _AvatarViewState extends ConsumerState<AvatarView>
     }
     if (!listEquals(widget.outfit, oldWidget.outfit)) {
       _renderer.setOutfit(widget.outfit);
+    }
+    if (widget.framing != oldWidget.framing) {
+      _renderer.setFraming(widget.framing);
     }
     if (widget.colors != oldWidget.colors) {
       _renderer.setColors(widget.colors);
