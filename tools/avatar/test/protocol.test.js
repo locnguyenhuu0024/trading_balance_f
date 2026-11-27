@@ -99,3 +99,19 @@ test('rejects invalid donor model ids, base64 fields, and chunk indices', () => 
     assert.equal(parse(JSON.stringify(msg)).ok, false);
   }
 });
+
+test('RED-157 / GREEN-157 accepts setFraming in native JSON and web objects', () => {
+  for (const mode of ['half', 'full']) {
+    const msg = {v: 1, type: 'setFraming', mode};
+    assert.deepEqual(parse(msg), {ok: true, msg});
+    assert.deepEqual(parse(JSON.stringify(msg)), {ok: true, msg});
+  }
+});
+
+test('RED-157 / GREEN-157 rejects invalid setFraming payloads', () => {
+  for (const fields of [{mode: 'FULL'}, {mode: 1}, {}, {mode: 'half', extra: true}]) {
+    const msg = {v: 1, type: 'setFraming', ...fields};
+    assert.equal(parse(msg).ok, false);
+    assert.equal(parse(JSON.stringify(msg)).ok, false);
+  }
+});

@@ -1,3 +1,4 @@
+import {FRAMING_MODES} from './framing.js';
 import {DONORS, ITEMS} from './items.js';
 import {MOODS} from './mood.js';
 import {PARTS} from './recolor.js';
@@ -27,6 +28,10 @@ export function parse(raw) {
   switch (msg.type) {
     case 'setMood':
       valid = moods.includes(msg.mood);
+      fieldCount = 1;
+      break;
+    case 'setFraming':
+      valid = FRAMING_MODES.includes(msg.mode);
       fieldCount = 1;
       break;
     case 'setColors': {

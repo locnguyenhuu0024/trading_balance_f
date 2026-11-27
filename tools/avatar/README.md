@@ -2,6 +2,8 @@
 
 The page runs locally. Flutter supplies the model bytes on native platforms. On web, `index.html?model=donut-chan` loads Donut-Chan from the page directory. The default is `pixiv-sample`.
 
+The avatar starts in full-body framing. Send `{"v":1,"type":"setFraming","mode":"half"}` to switch to half-body framing or use `"mode":"full"` to switch back. A message sent before the model loads sets the framing for the first frame.
+
 Send `{"v":1,"type":"setColors","colors":{"hair":"#8844cc","eyes":"#1A9FFF"}}` to recolor model parts. Both models support `hair`, `eyes`, and `shoes`. The pixiv sample also supports `top` and `bottom`. Donut-Chan also supports `accessory`, `dress`, `bows`, `socks`, and `plasters`. Each message replaces the full color state. Omitted parts use their original textures, and `"colors":{}` resets all parts. Colors received during loading apply before the first frame. Later updates apply at most once per 100 ms using the latest message.
 
 Send `{"v":1,"type":"setOutfit","items":["donut-chan:outfit","donut-chan:shoes","donut-chan:plasters"]}` to dress Pixiv Sample in Donut-Chan items. The list replaces the full outfit and accepts up to three distinct IDs. The outfit replaces the default top and bottom, the shoes replace the default shoes, and the plasters add to the base model. Use `"items":[]` to restore the original outfit. Outfit changes reapply the current colors immediately, including `dress`, `bows`, `shoes`, and `plasters` on borrowed items.

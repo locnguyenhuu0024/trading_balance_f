@@ -166,6 +166,8 @@ document.addEventListener('DOMContentLoaded', () => {
   let renderer;
   let vrm;
   let bones;
+  let framingMode = 'full';
+  let bounds;
   let halfHeight = camera.top;
   let baseYaw;
   let boneSign;
@@ -414,15 +416,15 @@ document.addEventListener('DOMContentLoaded', () => {
       scene.add(vrm.scene);
       applyColors();
       vrm.scene.updateMatrixWorld(true);
-      const framing = frameAvatar({
+      bounds = {
         headY: bones.head.getWorldPosition(headPosition).y,
         hipsY: bones.hips.getWorldPosition(headPosition).y,
-      });
-      camera.position.y = framing.centerY;
-      halfHeight = framing.halfHeight;
-      camera.top = halfHeight;
-      camera.bottom = -halfHeight;
-      resize();
+        footY: Math.min(
+          bone('leftFoot').getWorldPosition(headPosition).y,
+          bone('rightFoot').getWorldPosition(headPosition).y,
+        ),
+      };
+      applyFraming();
       syncLoop();
       startDonor();
     } catch (error) {
@@ -490,6 +492,10 @@ document.addEventListener('DOMContentLoaded', () => {
       case 'setMood':
         mood = msg.mood;
         break;
+      case 'setFraming':
+        framingMode = msg.mode;
+        applyFraming();
+        break;
       case 'setColors':
         colors = Object.fromEntries(Reflect.ownKeys(msg.colors).map((part) => [part, msg.colors[part]]));
         scheduleColors();
@@ -524,6 +530,17 @@ document.addEventListener('DOMContentLoaded', () => {
         break;
     }
   });
+
+  function applyFraming() {
+    if (!bounds) return;
+    const framing = frameAvatar(bounds, framingMode);
+    camera.position.y = framing.centerY;
+    halfHeight = framing.halfHeight;
+    camera.top = halfHeight;
+    camera.bottom = -halfHeight;
+    resize();
+    if (renderer && loadedFrame) renderer.render(scene, camera);
+  }
 
   function resize() {
     const width = canvas.clientWidth;
