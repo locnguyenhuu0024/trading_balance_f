@@ -48,3 +48,12 @@ Before editing, run the new tests → full-mode/protocol cases fail. Record.
 ### Task Buildability Gate
 Command: `python3 -I -B tools/avatar/build.py --deps "$DEPS" && node --test tools/avatar/test/`
 Result: PENDING
+
+## 13. Remediation R01 (coordinator audit attempt 1 → REWORK)
+
+Attempt `276671b1…` committed as the starting point. Executor BLOCKED only on a purged offline deps dir; coordinator re-staged the pinned deps (base rebuild byte-identical to the committed bundle), rebuilt (reproducible, sha e39e6fe9…) and ran `node --test` 73/73. Code review: half path numerically unchanged, protocol/main per contract.
+AUD-157-1 (Must; AC-236): in the 1:2 full-body frame Donut-Chan's heart ahoge touches the top edge and the feet sit on the bottom edge (local Chromium). Per CD-21 widen the full margins: top = headY + 0.75·S, bottom = footY − 0.35·S. Update the full-body tests: pixiv `{1.395, 0.908, 0.100}` → centerY 0.8449, halfHeight 0.91535 (±1e-4); donut → top ≥ head + 0.36, bottom ≤ foot − 0.16. Rebuild the bundle. Nothing else.
+Allowed write files (exact): `tools/avatar/src/framing.js`, `tools/avatar/test/framing.test.js`, `assets/avatar/avatar.bundle.js`.
+Offline deps: `DEPS=/private/tmp/claude-501/-Users-locnguyen-projects-trading-balance-f/02dda968-4471-429d-89b5-19ee52747604/scratchpad/avatar-deps`.
+RED-157-R01: run the updated tests before editing `framing.js` → the full-body value cases fail.
+GREEN-157-R01: `node --test tools/avatar/test/` all pass; bundle rebuild exits 0.
