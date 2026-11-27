@@ -22,18 +22,18 @@ test('rejects invalid bone coordinates', () => {
   }
 });
 
-test('RED-157 / GREEN-157 frames the pixiv sample full-body', () => {
+test('RED-157-R01 / GREEN-157-R01 frames the pixiv sample full-body', () => {
   const {centerY, halfHeight} = frame({headY: 1.395, hipsY: 0.908, footY: 0.100}, 'full');
-  assert.ok(Math.abs(centerY - 0.82055) < 1e-4);
-  assert.ok(Math.abs(halfHeight - 0.86665) < 1e-4);
+  assert.ok(Math.abs(centerY - 0.8449) < 1e-4);
+  assert.ok(Math.abs(halfHeight - 0.91535) < 1e-4);
 });
 
-test('RED-157 / GREEN-157 keeps full-body clearance for Donut-Chan', () => {
+test('RED-157-R01 / GREEN-157-R01 keeps full-body clearance for Donut-Chan', () => {
   const headY = 1.368;
   const footY = 0.116;
   const {centerY, halfHeight} = frame({headY, hipsY: 0.887, footY}, 'full');
-  assert.ok(centerY + halfHeight >= headY + 0.28);
-  assert.ok(centerY - halfHeight <= footY - 0.14);
+  assert.ok(centerY + halfHeight >= headY + 0.36);
+  assert.ok(centerY - halfHeight <= footY - 0.16);
 });
 
 test('RED-157 / GREEN-157 rejects invalid full-body foot positions', () => {

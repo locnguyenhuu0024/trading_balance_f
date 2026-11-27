@@ -1,6 +1,6 @@
 # Task 157 — Avatar runtime: full-body framing and `setFraming`
 
-Status: READY
+Status: PASS
 Agent Role: implementation_executor
 Executor Class: E2
 Target Model: gpt-6.2-sol
@@ -47,7 +47,7 @@ Before editing, run the new tests → full-mode/protocol cases fail. Record.
 `node --test tools/avatar/test/` all pass; bundle rebuild exits 0 and is reproducible.
 ### Task Buildability Gate
 Command: `python3 -I -B tools/avatar/build.py --deps "$DEPS" && node --test tools/avatar/test/`
-Result: PENDING
+Result: PASS (coordinator, host)
 
 ## 13. Remediation R01 (coordinator audit attempt 1 → REWORK)
 
@@ -57,3 +57,12 @@ Allowed write files (exact): `tools/avatar/src/framing.js`, `tools/avatar/test/f
 Offline deps: `DEPS=/private/tmp/claude-501/-Users-locnguyen-projects-trading-balance-f/02dda968-4471-429d-89b5-19ee52747604/scratchpad/avatar-deps`.
 RED-157-R01: run the updated tests before editing `framing.js` → the full-body value cases fail.
 GREEN-157-R01: `node --test tools/avatar/test/` all pass; bundle rebuild exits 0.
+
+## 14. Coordinator Audit
+
+Attempts `276671b1…` (BLOCKED on purged deps; REWORK AUD-157-1) and R01 `6b393a4c…`. Scope: exact allowlist both times.
+Review: `FRAMING_MODES` frozen; half path numerically unchanged; full uses required `leftFoot`/`rightFoot`, bounds cached at load; `setFraming` validated via `FRAMING_MODES`, applied live with a one-off render; R01 margins 0.75·S / 0.35·S.
+GREEN (coordinator): `node --test tools/avatar/test/` 73/73; bundle rebuild reproducible (sha 616439c5…).
+AC-236 (coordinator, local Chromium, 150×300 full / 160×220 half): pixiv, donut and pixiv wearing the Donut outfit + shoes show hair/ahoge and shoes with clearance; half frames unchanged; `setFraming` switches full↔half live without reload, no errors.
+Dispatch route: UNVERIFIABLE (explicit gpt-6.2-sol / low). Buildability: PASS.
+Verdict: PASS

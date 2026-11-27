@@ -12,7 +12,7 @@ export function frame({headY, hipsY, footY}, mode = 'half') {
   if (full && (!Number.isFinite(footY) || footY >= hipsY)) {
     throw new RangeError('Expected a finite foot coordinate below the hips');
   }
-  const top = headY + (full ? 0.60 : 0.73) * span;
-  const bottom = full ? footY - 0.30 * span : hipsY - 0.20 * span;
+  const top = headY + (full ? 0.75 : 0.73) * span;
+  const bottom = full ? footY - 0.35 * span : hipsY - 0.20 * span;
   return {centerY: top / 2 + bottom / 2, halfHeight: top / 2 - bottom / 2};
 }
